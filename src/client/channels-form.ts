@@ -27,6 +27,8 @@ export interface ChannelDraft {
   auth?: 'api-key' | 'subscription'
   subscription?: SubscriptionProvider
   models: ModelMapping[]
+  /** Video model catalog (alias → upstream id); independent of `models`. */
+  videoModels?: ModelMapping[]
 }
 
 /** One staged key edit for a channel. */
@@ -42,6 +44,8 @@ export interface ChannelsFormState {
   defaultChannelId: string
   /** The effective default image-model alias (first model when unset). */
   defaultModel: string
+  /** The effective default video-model alias (first video model when unset). */
+  defaultVideoModel: string
   /** Whether a save would write anything. */
   dirty: boolean
   /** Whether the document accepts writes. */
@@ -62,6 +66,8 @@ export interface ChannelsFormActions {
   setDefaultChannel: (id: string) => void
   /** Stage the default image-model alias. */
   setDefaultModel: (model: string) => void
+  /** Stage the default video-model alias. */
+  setDefaultVideoModel: (model: string) => void
   /** Write every staged edit, then re-seed from what the Host accepted. */
   commit: () => Promise<void>
   /** Drop every staged edit. */
@@ -88,6 +94,9 @@ function stripChannel(channel: ChannelDraft): ChannelDraft {
   const models = channel.models
     .map(model => ({ alias: model.alias.trim(), id: model.id.trim() === '' ? model.alias.trim() : model.id.trim() }))
     .filter(model => model.alias !== '')
+  const videoModels = (channel.videoModels ?? [])
+    .map(model => ({ alias: model.alias.trim(), id: model.id.trim() === '' ? model.alias.trim() : model.id.trim() }))
+    .filter(model => model.alias !== '')
   return {
     id: channel.id,
     preset: channel.preset,
@@ -98,6 +107,7 @@ function stripChannel(channel: ChannelDraft): ChannelDraft {
     ...channel.auth === undefined ? {} : { auth: channel.auth },
     ...channel.subscription === undefined ? {} : { subscription: channel.subscription },
     models: [...new Map(models.map(model => [model.alias, model])).values()],
+    videoModels: [...new Map(videoModels.map(model => [model.alias, model])).values()],
   }
 }
 
@@ -106,6 +116,7 @@ export class ChannelsForm {
   private readonly stagedKeys = new Map<string, KeyEdit>()
   private stagedDefault: string | null = null
   private stagedDefaultModel: string | null = null
+  private stagedDefaultVideoModel: string | null = null
   private readonly listeners = new Set<() => void>()
   private saving = false
   private failed = false
@@ -161,10 +172,22 @@ export class ChannelsForm {
     return models[0] ?? ''
   }
 
+  private videoModelAliases(): string[] {
+    return [...new Set(this.channelsValue().flatMap(channel => (channel.videoModels ?? []).map(model => model.alias)).filter(alias => alias !== ''))]
+  }
+
+  private defaultVideoModelValue(): string {
+    if (this.stagedDefaultVideoModel !== null) return this.stagedDefaultVideoModel
+    const models = this.videoModelAliases()
+    const view = this.scope.getSnapshot().value as { defaultVideoModel?: string } | undefined
+    if (typeof view?.defaultVideoModel === 'string' && models.includes(view.defaultVideoModel)) return view.defaultVideoModel
+    return models[0] ?? ''
+  }
+
   private dirtyValue(): boolean {
     const channels = this.channelsValue()
     const stagedChanged = this.stagedChannels !== null && !deepEqualJson(this.stagedChannels, scopeChannelsOf(this.scope))
-    const scopeView = this.scope.getSnapshot().value as { defaultChannelId?: string; defaultModel?: string } | undefined
+    const scopeView = this.scope.getSnapshot().value as { defaultChannelId?: string; defaultModel?: string; defaultVideoModel?: string } | undefined
     const scopeDefault = scopeView?.defaultChannelId ?? channels[0]?.id ?? ''
     const defaultChanged = this.stagedDefault !== null && this.stagedDefault !== scopeDefault
     const models = this.modelAliases()
@@ -172,7 +195,12 @@ export class ChannelsForm {
       ? scopeView.defaultModel
       : models[0] ?? ''
     const modelChanged = this.stagedDefaultModel !== null && this.stagedDefaultModel !== storedModel
-    return stagedChanged || defaultChanged || modelChanged || this.stagedKeys.size > 0
+    const videoModels = this.videoModelAliases()
+    const storedVideo = typeof scopeView?.defaultVideoModel === 'string' && videoModels.includes(scopeView.defaultVideoModel)
+      ? scopeView.defaultVideoModel
+      : videoModels[0] ?? ''
+    const videoChanged = this.stagedDefaultVideoModel !== null && this.stagedDefaultVideoModel !== storedVideo
+    return stagedChanged || defaultChanged || modelChanged || videoChanged || this.stagedKeys.size > 0
   }
 
   /** The card-facing snapshot. */
@@ -185,6 +213,7 @@ export class ChannelsForm {
       keySet,
       defaultChannelId: this.defaultValue(),
       defaultModel: this.defaultModelValue(),
+      defaultVideoModel: this.defaultVideoModelValue(),
       dirty: this.dirtyValue(),
       writable: this.scope.getSnapshot().writable !== false,
       saving: this.saving,
@@ -199,13 +228,15 @@ export class ChannelsForm {
       setChannelKey: (id, value) => { this.stageKey(id, value) },
       setDefaultChannel: (id) => { this.stagedDefault = id; this.failed = false; this.publish() },
       setDefaultModel: (model) => { this.stagedDefaultModel = model; this.failed = false; this.publish() },
+      setDefaultVideoModel: (model) => { this.stagedDefaultVideoModel = model; this.failed = false; this.publish() },
       commit: () => this.commit(),
       discard: () => {
-        if (this.stagedChannels === null && this.stagedKeys.size === 0 && this.stagedDefault === null && this.stagedDefaultModel === null && !this.failed) return
+        if (this.stagedChannels === null && this.stagedKeys.size === 0 && this.stagedDefault === null && this.stagedDefaultModel === null && this.stagedDefaultVideoModel === null && !this.failed) return
         this.stagedChannels = null
         this.stagedKeys.clear()
         this.stagedDefault = null
         this.stagedDefaultModel = null
+        this.stagedDefaultVideoModel = null
         this.failed = false
         this.publish()
       },
@@ -256,6 +287,11 @@ export class ChannelsForm {
         ? { op: 'unset', path: ['defaultModel'] }
         : { op: 'set', path: ['defaultModel'], value: this.stagedDefaultModel })
     }
+    if (this.stagedDefaultVideoModel !== null) {
+      ops.push(this.stagedDefaultVideoModel === ''
+        ? { op: 'unset', path: ['defaultVideoModel'] }
+        : { op: 'set', path: ['defaultVideoModel'], value: this.stagedDefaultVideoModel })
+    }
     return ops
   }
 
@@ -276,6 +312,7 @@ export class ChannelsForm {
       this.stagedKeys.clear()
       this.stagedDefault = null
       this.stagedDefaultModel = null
+      this.stagedDefaultVideoModel = null
       this.failed = false
     } catch {
       this.failed = true
@@ -292,7 +329,7 @@ export class ChannelsForm {
 
 /** Project a stored channel into a draft (secrets never travel in channels). */
 function toDraft(channel: ChannelConfig): ChannelDraft {
-  return { id: channel.id, preset: channel.preset, name: channel.name, apiUrl: channel.apiUrl, apiUrlFull: channel.apiUrlFull === true, ...channel.protocol === undefined ? {} : { protocol: channel.protocol }, ...channel.auth === undefined ? {} : { auth: channel.auth }, ...channel.subscription === undefined ? {} : { subscription: channel.subscription }, models: channel.models.map(model => ({ ...model })) }
+  return { id: channel.id, preset: channel.preset, name: channel.name, apiUrl: channel.apiUrl, apiUrlFull: channel.apiUrlFull === true, ...channel.protocol === undefined ? {} : { protocol: channel.protocol }, ...channel.auth === undefined ? {} : { auth: channel.auth }, ...channel.subscription === undefined ? {} : { subscription: channel.subscription }, models: channel.models.map(model => ({ ...model })), videoModels: (channel.videoModels ?? []).map(model => ({ ...model })) }
 }
 
 /** The scope's current channels value (a plain array), for change detection. */

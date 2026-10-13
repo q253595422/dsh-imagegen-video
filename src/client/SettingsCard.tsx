@@ -20,6 +20,7 @@ import { CardForm, booleanField, secretField, textField, type CardActions, type 
 import { ChannelsForm, type ChannelDraft, type ChannelsFormActions, type ChannelsFormState } from './channels-form.ts'
 import type { ImageGenScope } from './settings-scope.ts'
 import { describeModel } from '../model-catalog.ts'
+import { DEFAULT_VIDEO_MODELS, describeVideoModel } from '../video-model-catalog.ts'
 import { IMAGE_MODEL_API, PRESETS_API, PROMPT_ENHANCE_API, USAGE_API, CANVAS_SKILL_API, SUBSCRIPTION_API, SUBSCRIPTION_PROVIDERS, SUBSCRIPTION_PROVIDER_DISPLAY_NAMES, DEFAULT_SUBSCRIPTION_MODELS, EXPERIMENTAL_SUBSCRIPTION_PROVIDERS, isChatCompletionsUrl, isSubscriptionProvider, resolveChannelProtocol, type ModelMapping, type PresetProviderView, type SubscriptionProvider } from '../protocol.ts'
 import type { ImageGenKey } from './locales.ts'
 import { tt, type TranslateValues } from './helpers.ts'
@@ -1084,6 +1085,7 @@ export function ImageGenSettingsSection(props: ImageGenSettingsSectionProps) {
           writable={state.writable}
           onPatch={(patch) => { replaceChannel(channels, editing.id, patch, props.channels) }}
           onSetModels={(models) => { props.channels.setChannels(channels.map(channel => channel.id === editing.id ? { ...channel, models } : channel)) }}
+          onSetVideoModels={(videoModels) => { props.channels.setChannels(channels.map(channel => channel.id === editing.id ? { ...channel, videoModels } : channel)) }}
           onSetKey={(value) => { props.channels.setChannelKey(editing.id, value) }}
           subscriptionStatus={editing.subscription === undefined ? undefined : subscriptionStatus[editing.subscription]}
           subscriptionBusy={editing.subscription === undefined ? undefined : subscriptionBusy[editing.subscription]}
@@ -1219,6 +1221,8 @@ function ChannelEditor(props: {
   writable: boolean
   onPatch: (patch: Partial<ChannelDraft>) => void
   onSetModels: (models: ModelMapping[]) => void
+  /** Replace this channel's video model catalog (alias → upstream id). */
+  onSetVideoModels: (models: ModelMapping[]) => void
   onSetKey: (value: string | undefined) => void
   subscriptionStatus?: SubscriptionStatus
   subscriptionBusy?: 'login' | 'logout'
@@ -1243,6 +1247,8 @@ function ChannelEditor(props: {
   const [manualAuthInput, setManualAuthInput] = useState('')
   const [showKey, setShowKey] = useState(false)
   const [editingModelIndex, setEditingModelIndex] = useState<number | null>(null)
+  const [editingVideoIndex, setEditingVideoIndex] = useState<number | null>(null)
+  const [manualVideoId, setManualVideoId] = useState('')
 
   const generatedCount = (alias: string): number => {
     if (props.usage === null) return 0
@@ -1287,6 +1293,15 @@ function ChannelEditor(props: {
     if (!next.some(model => model.alias === alias)) next.push({ alias, id })
     props.onSetModels(next)
     setManualId('')
+  }
+
+  const addManualVideo = (): void => {
+    const id = manualVideoId.trim()
+    if (id === '') return
+    const next = [...(channel.videoModels ?? [])]
+    if (!next.some(model => model.alias === id)) next.push({ alias: id, id })
+    props.onSetVideoModels(next)
+    setManualVideoId('')
   }
 
   const copyFromChannel = (): void => {
@@ -1535,6 +1550,69 @@ function ChannelEditor(props: {
           </div>
         ) : null}
         </div>
+
+        <div className={css.modelCatalog}>
+          <div className={css.editorSectionHeader}>
+            <h4 className={css.label}>{t('channels.videoCatalogTitle')}</h4>
+          </div>
+          <p className={css.sectionHint}>{t('channels.videoCatalogHint')}</p>
+          {(channel.videoModels ?? []).length === 0
+            ? <p className={css.sectionHint}>{t('channels.noVideoModelsHint')}</p>
+            : (
+              <ul className={css.modelRows}>
+                {(channel.videoModels ?? []).map((model, index) => {
+                  const entry = describeVideoModel(model.id || model.alias)
+                  return (
+                    <li key={`v-${model.alias}-${index}`} className={css.modelRow} data-editing={editingVideoIndex === index ? '' : undefined}>
+                      {editingVideoIndex === index ? (
+                        <div className={css.modelRowEditor}>
+                          <div className={css.modelRowInputs}>
+                            <input className={css.input} value={model.alias} aria-label={t('channels.modelAliasLabel')} disabled={!props.writable} onChange={event => {
+                              const next = [...(channel.videoModels ?? [])]
+                              next[index] = { ...model, alias: event.target.value }
+                              props.onSetVideoModels(next)
+                            }} />
+                            <span className={css.modelArrow}>→</span>
+                            <input className={css.input} value={model.id} aria-label={t('channels.modelIdLabel')} disabled={!props.writable} onChange={event => {
+                              const next = [...(channel.videoModels ?? [])]
+                              next[index] = { ...model, id: event.target.value }
+                              props.onSetVideoModels(next)
+                            }} />
+                          </div>
+                          <button type="button" className={css.modelRowDone} onClick={() => { setEditingVideoIndex(null) }}>{t('channels.done')}</button>
+                        </div>
+                      ) : (
+                        <div className={css.modelRowSummary}>
+                          <div className={css.modelRowTitle}>
+                            <span className={css.modelRowName} title={model.alias}>{model.alias}</span>
+                            <span className={css.modelBadge}>{entry.labelZh}{entry.known ? '' : ` · ${t('channels.unknownProtocol')}`}</span>
+                          </div>
+                          {model.id !== model.alias ? <span className={css.modelRowUpstream} title={model.id}>→ {model.id}</span> : null}
+                        </div>
+                      )}
+                      <div className={css.modelRowActions}>
+                        {editingVideoIndex === index ? null : (
+                          <button type="button" className={css.modelRowEdit} disabled={!props.writable} onClick={() => { setEditingVideoIndex(index) }}>{t('channels.edit')}</button>
+                        )}
+                        <button type="button" className={css.modelRowRemove} disabled={!props.writable} aria-label={`${t('channels.removeModel')}: ${model.alias}`} onClick={() => { setEditingVideoIndex(null); props.onSetVideoModels((channel.videoModels ?? []).filter((_, i) => i !== index)) }}>×</button>
+                      </div>
+                    </li>
+                  )
+                })}
+              </ul>
+            )}
+          <div className={css.manualModelRow}>
+            <input className={css.input} value={manualVideoId} placeholder={t('channels.videoAddPlaceholder')} disabled={!props.writable} onChange={event => { setManualVideoId(event.target.value) }} onKeyDown={event => { if (event.key === 'Enter') { event.preventDefault(); addManualVideo() } }} />
+            <button type="button" className={css.addModel} disabled={!props.writable || manualVideoId.trim() === ''} onClick={addManualVideo}>{t('channels.addModelConfirm')}</button>
+          </div>
+          <button type="button" className={css.addModel} disabled={!props.writable} onClick={() => {
+            const existing = new Set((channel.videoModels ?? []).map(model => model.alias))
+            const additions = DEFAULT_VIDEO_MODELS.filter(model => !existing.has(model)).map(model => ({ alias: model, id: model }))
+            if (additions.length > 0) props.onSetVideoModels([...(channel.videoModels ?? []), ...additions])
+          }}>{t('channels.videoAddPresets')}</button>
+        </div>
+
+        <div className={css.editorDivider} />
 
         <div className={css.editorTools}>
           <div className={css.manualModelRow}>
