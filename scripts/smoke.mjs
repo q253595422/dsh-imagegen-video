@@ -3646,9 +3646,13 @@ await check('E1 client apply mounts the sidebar entry and studio (jsdom)', async
         { alias: 'gpt-image-2', id: 'gpt-image-2' },
         { alias: 'gpt-image-2-alt', id: 'gpt-image-2' },
       ],
+      videoModels: [
+        { alias: 'agnes-video-2.5-flash', id: 'agnes-video-2.5-flash' },
+      ],
     }],
     defaultChannelId: 'default',
     defaultModel: 'gpt-image-2-alt',
+    defaultVideoModel: 'agnes-video-2.5-flash',
     promptModel: 'chat-test',
   }
   const channelSecrets = () => [{ path: ['channelSecrets', 'default'], set: keyState.set }]
@@ -3659,6 +3663,9 @@ await check('E1 client apply mounts the sidebar entry and studio (jsdom)', async
   const canvasTasks = []
   /** Documents the workspace persisted through /canvas/save. */
   const canvasSaves = []
+  /** Video tasks the panel sees when polling, and submissions it makes. */
+  const videoTasks = []
+  const videoSubmissions = []
   const canvasImageAsset = {
     assetId: `${'a'.repeat(64)}.png`,
     url: `/api/dsh-imagegen/canvas/asset/${'a'.repeat(64)}.png`,
@@ -3729,6 +3736,18 @@ await check('E1 client apply mounts the sidebar entry and studio (jsdom)', async
           },
         }),
       }
+    }
+    if (path.endsWith('/video/tasks/list')) {
+      return { ok: true, json: async () => ({ ok: true, tasks: videoTasks }) }
+    }
+    if (path.endsWith('/video/history/list')) {
+      return { ok: true, json: async () => ({ ok: true, entries: [] }) }
+    }
+    if (path.endsWith('/video/tasks/submit')) {
+      videoSubmissions.push(JSON.parse(init.body))
+      const task = { id: `vt-${videoSubmissions.length}`, request: JSON.parse(init.body), status: 'queued', createdAt: Date.now() }
+      videoTasks.push(task)
+      return { ok: true, json: async () => ({ ok: true, task }) }
     }
     if (path.endsWith('/settings/mutate')) {
       const payload = JSON.parse(init.body)
@@ -4356,6 +4375,62 @@ await check('E1 client apply mounts the sidebar entry and studio (jsdom)', async
     inspirationTile.click()
     await new Promise(resolve => setTimeout(resolve, 20))
     assert.equal(jsdomDocument.querySelector('textarea')?.value, 'A reusable template prompt', 'inspiration tile filled the prompt')
+
+    // ---------------------------------------------------------- video studio
+    // The video tab is a separate surface: selecting it must render the video
+    // composer (not the image one), offer the configured video model, and
+    // submit through the video route with the chosen mode/params.
+    const videoTab = [...view.querySelectorAll('[role="tablist"] button')]
+      .find(button => button.textContent?.includes('生视频'))
+    assert.ok(videoTab !== undefined, 'video mode entry is present')
+    videoTab.click()
+    await waitForSelector(view, '[id="dsh-video-prompt"]')
+    assert.ok(view.querySelector('[id="dsh-video-prompt"]') !== null, 'video prompt renders')
+    assert.equal(view.querySelector('button[class*="generateButton"]'), null, 'the image generate button is replaced in video mode')
+    assert.ok(view.querySelector('button[class*="videoGenerate"]') !== null, 'video generate button renders')
+
+    // The configured video model is offered; image-only models are not.
+    const videoModelSelect = view.querySelector('[class*="videoSelect"]')
+    assert.ok(videoModelSelect !== null, 'video model picker renders')
+    assert.ok(videoModelSelect.textContent?.includes('agnes-video-2.5-flash'), 'the configured video model is offered')
+    assert.equal(videoModelSelect.textContent?.includes('gpt-image-2'), false, 'image models are not offered as video models')
+
+    // Mode buttons come from the family's own capabilities: Agnes supports
+    // text / image / keyframe / reference, so all four appear.
+    const modeButtons = [...view.querySelectorAll('[class*="videoModeButton"]')].map(button => button.textContent)
+    assert.deepEqual(modeButtons, ['文生视频', '图生视频', '首尾帧', '参考图'], 'video modes follow the model family capabilities')
+
+    // Generating with an empty prompt stays disabled.
+    const videoGenerate = view.querySelector('button[class*="videoGenerate"]')
+    assert.equal(videoGenerate.disabled, true, 'video generate is disabled without a prompt')
+
+    // Type a prompt and submit: the request must carry the mode and params.
+    const videoPrompt = view.querySelector('[id="dsh-video-prompt"]')
+    // React 18 + jsdom: the plain `.value =` assignment does not notify the
+    // controlled component, so write through the native setter and dispatch.
+    const videoTextAreaSetter = Object.getOwnPropertyDescriptor(jsdomWindow.HTMLTextAreaElement.prototype, 'value').set
+    videoTextAreaSetter.call(videoPrompt, 'a cat on a windowsill')
+    videoPrompt.dispatchEvent(new jsdomWindow.Event('input', { bubbles: true }))
+    await new Promise(resolve => setTimeout(resolve, 30))
+    assert.equal(videoGenerate.disabled, false, 'video generate enables once a prompt exists')
+    videoGenerate.click()
+    await new Promise(resolve => setTimeout(resolve, 50))
+    assert.equal(videoSubmissions.length, 1, 'submitting reached the video route exactly once')
+    assert.equal(videoSubmissions[0].prompt, 'a cat on a windowsill')
+    assert.equal(videoSubmissions[0].model, 'agnes-video-2.5-flash')
+    assert.equal(videoSubmissions[0].mode, 'text', 'text-to-video is the default mode')
+    assert.equal(videoSubmissions[0].seconds, 5, 'the default duration is sent')
+    assert.equal(videoSubmissions[0].resolution, '720P', 'the default resolution is sent')
+
+    // The theme toggle must clear a frame error surfaced by the tab, so go back
+    // to the image mode and confirm the composer returns unchanged.
+    const textTab = [...view.querySelectorAll('[role="tablist"] button')]
+      .find(button => button.textContent?.includes('文生图'))
+    assert.ok(textTab !== undefined, 'text-to-image entry is present')
+    textTab.click()
+    await waitForSelector(view, 'textarea[placeholder*="描述你想要的画面"]')
+    assert.ok(view.querySelector('textarea[placeholder*="描述你想要的画面"]') !== null, 'the image composer returns after video mode')
+    assert.equal(view.querySelector('[id="dsh-video-prompt"]'), null, 'the video composer is unmounted outside video mode')
 
     // Template-library regression: choose a card, use its prompt, and verify
     // the text editor receives it while the modal closes.
