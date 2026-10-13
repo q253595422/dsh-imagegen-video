@@ -3,7 +3,7 @@
  * data access path the panel uses — plain fetch, same origin.
  */
 
-import { CANVAS_API, CANVAS_SKILL_API, CONVERSATION_IMAGE_API, DATA_FOLDER_API, GALLERY_API, GENERATE_API, HISTORY_API, PROMPT_ENHANCE_API, STORAGE_API, TASK_API, TEMPLATE_FAVORITES_API, TEMPLATES_API, UPDATE_API, type CanvasAssetRef, type CanvasDocument, type CanvasFilePreview, type CanvasLayerPlan, type CanvasSkillCatalog, type CanvasSkillConfigApplyRequest, type CanvasSkillConfigApplyResult, type CanvasSkillConfigSaveRequest, type CanvasSkillConfigSaveResult, type CanvasSkillInstallRequest, type CanvasSkillInstallResult, type CanvasSkillLibrary, type CanvasSkillRemoveResult, type CanvasSkillRunRequest, type CanvasSkillTask, type CanvasSummary, type GenerateRequest, type GenerateResult, type GenerationTask, type GenerationTaskSummary, type HistoryEntry, type HistoryEntryInput, type TemplateCase, type TemplateFavorite, type TemplateListResult, type TemplateRefreshResult, type TemplateSample, type UpdateInfo } from '../protocol.ts'
+import { CANVAS_API, CANVAS_SKILL_API, CONVERSATION_IMAGE_API, DATA_FOLDER_API, GALLERY_API, GENERATE_API, HISTORY_API, PROMPT_ENHANCE_API, STORAGE_API, TASK_API, TEMPLATE_FAVORITES_API, TEMPLATES_API, UPDATE_API, VIDEO_API, type CanvasAssetRef, type CanvasDocument, type CanvasFilePreview, type CanvasLayerPlan, type CanvasSkillCatalog, type CanvasSkillConfigApplyRequest, type CanvasSkillConfigApplyResult, type CanvasSkillConfigSaveRequest, type CanvasSkillConfigSaveResult, type CanvasSkillInstallRequest, type CanvasSkillInstallResult, type CanvasSkillLibrary, type CanvasSkillRemoveResult, type CanvasSkillRunRequest, type CanvasSkillTask, type CanvasSummary, type GenerateRequest, type GenerateResult, type GenerationTask, type GenerationTaskSummary, type HistoryEntry, type HistoryEntryInput, type TemplateCase, type TemplateFavorite, type TemplateListResult, type TemplateRefreshResult, type TemplateSample, type UpdateInfo, type VideoGenerateRequest, type VideoGenerateResult, type VideoHistoryEntry, type VideoTask, type VideoTaskSummary } from '../protocol.ts'
 import { activeImageGenLanguage } from './helpers.ts'
 
 /** Error carrying the route's JSON error message. */
@@ -72,6 +72,67 @@ export class ImageGenApi {
       ...body.history === undefined ? {} : { history: body.history },
       ...body.historyError === undefined ? {} : { historyError: body.historyError },
     }
+  }
+
+  /**
+   * Submit one video generation and wait for the finished clip.
+   *
+   * Unlike `generate`, the response carries no bytes: the host persisted the
+   * clip and answers with servable URLs. Video rendering takes minutes, so the
+   * panel normally uses `videoTaskSubmit` + polling instead of blocking here.
+   */
+  async videoGenerate(request: VideoGenerateRequest): Promise<VideoGenerateResult> {
+    const response = await fetch(VIDEO_API.generate, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify(request),
+    })
+    const body = await readEnvelope<{ ok: true; videos: VideoGenerateResult['videos']; history?: VideoHistoryEntry[]; historyError?: string }>(response)
+    return {
+      videos: body.videos,
+      ...body.history === undefined ? {} : { history: body.history },
+      ...body.historyError === undefined ? {} : { historyError: body.historyError },
+    }
+  }
+
+  async videoTaskSubmit(request: VideoGenerateRequest): Promise<VideoTask> {
+    const response = await fetch(VIDEO_API.submit, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(request) })
+    return (await readEnvelope<{ ok: true; task: VideoTask }>(response)).task
+  }
+
+  async videoTaskList(): Promise<VideoTaskSummary[]> {
+    const response = await fetch(VIDEO_API.list, { method: 'POST' })
+    return (await readEnvelope<{ ok: true; tasks: VideoTaskSummary[] }>(response)).tasks
+  }
+
+  async videoTaskGet(id: string): Promise<VideoTask> {
+    const response = await fetch(VIDEO_API.get, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ id }) })
+    return (await readEnvelope<{ ok: true; task: VideoTask }>(response)).task
+  }
+
+  async videoTaskCancel(id: string): Promise<VideoTask> {
+    const response = await fetch(VIDEO_API.cancel, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ id }) })
+    return (await readEnvelope<{ ok: true; task: VideoTask }>(response)).task
+  }
+
+  async videoTaskRetry(id: string): Promise<VideoTask> {
+    const response = await fetch(VIDEO_API.retry, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ id }) })
+    return (await readEnvelope<{ ok: true; task: VideoTask }>(response)).task
+  }
+
+  async videoHistoryList(): Promise<VideoHistoryEntry[]> {
+    const response = await fetch(VIDEO_API.historyList, { method: 'POST' })
+    return (await readEnvelope<{ ok: true; entries: VideoHistoryEntry[] }>(response)).entries
+  }
+
+  async videoHistoryRemove(id: string): Promise<VideoHistoryEntry[]> {
+    const response = await fetch(VIDEO_API.historyRemove, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ id }) })
+    return (await readEnvelope<{ ok: true; entries: VideoHistoryEntry[] }>(response)).entries
+  }
+
+  async videoHistoryClear(): Promise<VideoHistoryEntry[]> {
+    const response = await fetch(VIDEO_API.historyClear, { method: 'POST' })
+    return (await readEnvelope<{ ok: true; entries: VideoHistoryEntry[] }>(response)).entries
   }
 
   /** Ask the configured chat model to expand a concise image prompt. */

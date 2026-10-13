@@ -11,26 +11,9 @@
  */
 
 import { randomUUID } from 'node:crypto'
-import type { VideoGenerateRequest, VideoGenerateResult, VideoMode } from './protocol.ts'
+import type { VideoGenerateRequest, VideoGenerateResult, VideoMode, VideoTask, VideoTaskSummary } from './protocol.ts'
 
-export type VideoTaskStatus = 'queued' | 'running' | 'completed' | 'failed' | 'cancelled'
-
-/** One queued or finished video generation (host-side, result included). */
-export interface VideoTask {
-  id: string
-  request: VideoGenerateRequest
-  status: VideoTaskStatus
-  createdAt: number
-  startedAt?: number
-  finishedAt?: number
-  result?: VideoGenerateResult
-  error?: string
-}
-
-/** Poll payload: the summary keeps the result URL but never the raw frames. */
-export interface VideoTaskSummary extends Omit<VideoTask, 'result'> {
-  resultAvailable: boolean
-}
+export type { VideoTask, VideoTaskSummary, VideoTaskStatus } from './protocol.ts'
 
 export type VideoTaskListener = (task: VideoTask) => void
 

@@ -517,6 +517,32 @@ export interface VideoHistoryEntryInput {
   channel?: string
 }
 
+/** Lifecycle of one host-resident video generation task. */
+export type VideoTaskStatus = 'queued' | 'running' | 'completed' | 'failed' | 'cancelled'
+
+/**
+ * One queued or finished video generation as the browser consumes it.
+ *
+ * Shared by the host queue and the panel, so the wire shape is declared once
+ * here rather than in the host-only queue module (which the browser bundle
+ * must not import).
+ */
+export interface VideoTask {
+  id: string
+  request: VideoGenerateRequest
+  status: VideoTaskStatus
+  createdAt: number
+  startedAt?: number
+  finishedAt?: number
+  result?: VideoGenerateResult
+  error?: string
+}
+
+/** Poll payload: keeps the result URL but never the raw reference frames. */
+export interface VideoTaskSummary extends Omit<VideoTask, 'result'> {
+  resultAvailable: boolean
+}
+
 /** Origin information carried by a generation started from the canvas. */
 export interface CanvasTaskMeta {
   canvasId: string
