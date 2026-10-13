@@ -12,9 +12,10 @@ import {
   Layers, Map as MapIcon, Maximize, Maximize2, MousePointer2, Palette, Pencil, Plus, Redo2, Scissors, SendHorizonal, Sparkles, Star,
   SquareDashedMousePointer, Trash2, Type, Undo2, Upload, Wand2, Wallpaper, X,
 } from 'lucide-react'
-import type { CanvasAnnotation, CanvasAssetRef, CanvasConnection, CanvasDocument, CanvasFileKind, CanvasLayerInfo, CanvasLayerPlanItem, CanvasNode, CanvasRect, CanvasSkillConfigApplyResult, CanvasSkillConfigField, CanvasSkillConfigSaveResult, CanvasSkillConfigStep, CanvasSkillConfigView, CanvasSkillDescriptor, CanvasSkillLibrary, CanvasSkillOutput, CanvasSkillRunRequest, CanvasSkillTask, CanvasSketchStroke, GenerateRequest, GenerationTask, HistoryEntry } from '../protocol.ts'
+import type { CanvasAnnotation, CanvasAssetRef, CanvasConnection, CanvasDocument, CanvasFileKind, CanvasLayerInfo, CanvasLayerPlanItem, CanvasNode, CanvasRect, CanvasVideoRef, CanvasSkillConfigApplyResult, CanvasSkillConfigField, CanvasSkillConfigSaveResult, CanvasSkillConfigStep, CanvasSkillConfigView, CanvasSkillDescriptor, CanvasSkillLibrary, CanvasSkillOutput, CanvasSkillRunRequest, CanvasSkillTask, CanvasSketchStroke, GenerateRequest, GenerationTask, HistoryEntry } from '../protocol.ts'
 import type { ImageGenApi } from './api.ts'
 import { errorMessage, tt } from './helpers.ts'
+import type { ImageGenKey } from './locales.ts'
 import { autoRemoveBackground, canvasToDataUrl, compositeAnnotatedResult, containRect, cropRaster, drawAnnotation, loadRaster, rectBetween, transparencyRatio } from './image-ops.ts'
 import { TemplateLibrary } from './TemplateLibrary.tsx'
 import { ModelPicker, resolveModelChoice, type ModelPickerValue } from './ModelPicker.tsx'
@@ -235,6 +236,18 @@ function nodeMetadata(node: CanvasNode): NonNullable<CanvasNode['metadata']> {
 function assetOf(node: CanvasNode): CanvasAssetRef | undefined {
   if (node.type === 'image') return nodeMetadata(node).asset
   return node.type === 'file' ? nodeMetadata(node).asset : undefined
+}
+
+/**
+ * The clip carried by a video node, or undefined.
+ *
+ * A clip is not a {@link CanvasAssetRef}: it lives in the video store and is
+ * referenced by URL, so it never round-trips through the canvas asset upload
+ * path. Everything that reads a node's media goes through `assetOf` (images and
+ * files) or `videoOf` (clips), never a cast between the two.
+ */
+function videoOf(node: CanvasNode): CanvasVideoRef | undefined {
+  return node.type === 'video' ? nodeMetadata(node).video : undefined
 }
 
 function usableAsset(node: CanvasNode): CanvasAssetRef | undefined {
@@ -3522,6 +3535,9 @@ export function CanvasWorkspace(props: CanvasWorkspaceProps): React.JSX.Element 
     const hasImage = asset !== undefined && asset.url !== ''
     const isConfig = node.type === 'config'
     const isFile = node.type === 'file'
+    const isVideo = node.type === 'video'
+    const video = videoOf(node)
+    const hasVideo = video !== undefined && video.url !== ''
     const isSketch = isSketchNode(node)
     const fileKind = isFile ? (metadata.fileKind ?? fileKindOfAsset(asset ?? { assetId: '', url: '', mime: 'application/octet-stream', bytes: 0, width: 0, height: 0, origin: 'upload' })) : 'other'
     const hasFile = isFile && asset !== undefined && asset.url !== ''
@@ -3562,6 +3578,10 @@ export function CanvasWorkspace(props: CanvasWorkspaceProps): React.JSX.Element 
       }}
     >
       <div className={css.nodeGlow} aria-hidden="true" />
+      {isVideo ? <header className={css.nodeHeader}>
+        <span className={css.nodeTitle}>{node.title}</span>
+        {metadata.videoMode !== undefined ? <span className={css.nodeTag}>{tt(`video.mode.${metadata.videoMode}` as ImageGenKey)}</span> : null}
+      </header> : null}
       {isTextual || isSketch ? <header className={css.nodeHeader}>
         <span className={css.nodeTitle}>{node.title}</span>
         {metadata.annotation !== undefined ? <span className={css.nodeTag}>{tt('canvas.annotationTag')}</span> : null}
@@ -3635,6 +3655,23 @@ export function CanvasWorkspace(props: CanvasWorkspaceProps): React.JSX.Element 
             onStrokesChange={strokes => patchSketchStrokes(node.id, strokes)}
             onAssetChange={asset => patchSketchAsset(node.id, asset)}
           />
+        : isVideo
+        ? <div className={css.fileBody} data-video-body="">
+            {hasVideo
+              ? <video
+                  className={css.fileVideo}
+                  controls
+                  preload="metadata"
+                  // The clip is served from the video store with Range support,
+                  // so pointing the element straight at that route lets the user
+                  // seek without any asset copy inside the canvas.
+                  src={video.url}
+                  onPointerDown={event => event.stopPropagation()}
+                />
+              : isGenerating || metadata.status === 'idle'
+                ? <div className={css.nodeState}><span className={css.nodeSpinner} aria-hidden="true" /><span>{tt('canvas.videoGeneratingNode')}</span></div>
+                : <div className={css.nodeStateError}>{metadata.error ?? tt('canvas.generateFailed')}</div>}
+          </div>
         : isFile
         ? hasFile
           ? <CanvasFileBody
@@ -3692,6 +3729,16 @@ export function CanvasWorkspace(props: CanvasWorkspaceProps): React.JSX.Element 
                 : ''}
         </span>
         {asset.width > 1 ? <span className={css.imageFooterSize}>{asset.width}×{asset.height}</span> : null}
+      </div> : null}
+      {isVideo ? <div className={css.imageFooter} data-video-footer="">
+        <span className={css.imageFooterLabel}>
+          {hasVideo
+            ? `${metadata.model ?? tt('canvas.videoSourceBadge')}${metadata.videoMode === undefined ? '' : ` · ${tt(`video.mode.${metadata.videoMode}` as ImageGenKey)}`}`
+            : tt('canvas.videoEmptyNode')}
+        </span>
+        {hasVideo && metadata.seconds !== undefined
+          ? <span className={css.imageFooterSize}>{tt('canvas.videoDuration', { seconds: metadata.seconds })}</span>
+          : null}
       </div> : null}
       {isFile ? <div className={css.imageFooter} data-file-footer="">
         <span className={css.imageFooterLabel}>
