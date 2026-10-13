@@ -371,6 +371,29 @@ await check('V3 the video routes answer over real HTTP', async () => {
     const history = await post('/api/dsh-imagegen/video/history/list')
     assert.equal(history.json.ok, true)
 
+    // Canvas lineage must survive the route's request parser. It is how the
+    // canvas matches a finished render to its placeholder node; dropping it made
+    // every canvas run look failed while the render had actually succeeded.
+    const canvasRun = await post('/api/dsh-imagegen/video/tasks/submit', {
+      prompt: 'from the canvas',
+      model: 'agnes-video-2.5-flash',
+      mode: 'text',
+      canvas: { canvasId: 'canvas-77', sourceNodeId: 'cfg-9', nodeId: 'ph-9', referenceNodeIds: ['img-1', 'img-2'] },
+    })
+    assert.equal(canvasRun.json.ok, true, 'a canvas-originated submit is accepted')
+    const queued = tasks.at(-1)
+    assert.equal(queued.request.canvas?.canvasId, 'canvas-77', 'the canvas id survives the request parser')
+    assert.equal(queued.request.canvas?.nodeId, 'ph-9', 'the placeholder node id survives')
+    assert.equal(queued.request.canvas?.sourceNodeId, 'cfg-9', 'the source config node survives')
+    assert.deepEqual(queued.request.canvas?.referenceNodeIds, ['img-1', 'img-2'], 'the reference node ids survive')
+
+    // A malformed canvas block is ignored rather than polluting the task.
+    const badCanvas = await post('/api/dsh-imagegen/video/tasks/submit', {
+      prompt: 'no canvas id', model: 'agnes-video-2.5-flash', mode: 'text', canvas: { sourceNodeId: 'x' },
+    })
+    assert.equal(badCanvas.json.ok, true, 'a submit without a usable canvas id is still accepted')
+    assert.equal(tasks.at(-1).request.canvas, undefined, 'a canvas block without an id is dropped, not stored half-formed')
+
     // One queued id resolves; an unknown id reports not-found.
     const found = await post('/api/dsh-imagegen/video/tasks/get', { id: 'vt-1' })
     assert.equal(found.json.ok, true)

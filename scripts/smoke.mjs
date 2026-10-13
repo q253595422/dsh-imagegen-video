@@ -4831,7 +4831,14 @@ await check('E1 client apply mounts the sidebar entry and studio (jsdom)', async
 
     midClip.querySelector('[data-dsh-imagegen-history-main]').dispatchEvent(new jsdomWindow.MouseEvent('click', { bubbles: true, cancelable: true }))
     await new Promise(resolve => setTimeout(resolve, 60))
-    assert.ok(await waitUntil(() => view.querySelector('[id="dsh-video-prompt"]') !== null), 'clicking a clip row switches to the video studio')
+    // A clip opens on the RESULT BOARD (where image results appear), which is
+    // where the user is already looking -- not by jumping to the video studio.
+    assert.ok(await waitUntil(() => view.querySelector('[data-video-board]') !== null), 'clicking a clip row shows it on the result board')
+    const board = view.querySelector('[data-video-board]')
+    assert.ok(board.querySelector('video') !== null, 'the result board plays the clip')
+    assert.match(board.querySelector('video').getAttribute('src'), /video\/file\//, 'the board uses the served clip URL')
+    assert.ok(board.querySelector('[data-video-board-canvas]') !== null, 'the board offers add-to-canvas')
+    assert.ok(board.querySelector('[data-video-board-conversation]') !== null, 'the board offers add-to-chat')
 
     // Leave the panel where the rest of this case expects it: the canvas
     // workspace. The clip click above moves the studio to the video surface, and

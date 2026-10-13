@@ -495,6 +495,17 @@ type PanelTab = GenerateMode | 'video' | 'gallery'
  *  more task-oriented modes (prototype, …) can join alongside 'ecommerce'. */
 type PanelWorkspace = 'normal' | 'ecommerce' | 'canvas'
 
+/**
+ * What the panel hands the canvas when the user asks to add something.
+ *
+ * Images are imported by COPY (the host writes them into the canvas asset
+ * store); a clip is imported BY REFERENCE (its served URL), because copying a
+ * clip would duplicate tens of megabytes per node.
+ */
+type CanvasImportRequest =
+  | { source: 'history' | 'gallery'; entryId: string; imageIndex: number }
+  | { source: 'video'; url: string; mime: string; duration?: number; title?: string }
+
 type GalleryFilter = string
 type ComparisonSession = { taskIds: string[]; prompt: string; comparisonId: string }
 type HistoryGroup = { key: string; entries: HistoryEntry[]; models: string[] }
@@ -737,7 +748,7 @@ export function ImageGenPanel(props: {
 
   const [tab, setTab] = useState<PanelTab>('text')
   const [workspace, setWorkspace] = useState<PanelWorkspace>('normal')
-  const [canvasImportRequest, setCanvasImportRequest] = useState<{ source: 'history' | 'gallery'; entryId: string; imageIndex: number } | undefined>()
+  const [canvasImportRequest, setCanvasImportRequest] = useState<CanvasImportRequest | undefined>()
   /** Switch to a normal-generation tab, leaving any task workspace. */
   const openTab = (next: PanelTab): void => {
     setWorkspace('normal')
@@ -1687,9 +1698,29 @@ export function ImageGenPanel(props: {
    * and for a clip that means the video surface.
    */
   const openVideoFromHistory = useCallback((entry: VideoHistoryEntry): void => {
-    setWorkspace('normal')
-    setTab('video')
+    // Show the clip on the RESULT BOARD (the same area an image history entry
+    // fills) rather than only flipping tabs: clicking a history row is "show me
+    // that generation", and for a clip that means playing it where the user is
+    // already looking. The video tab stays reachable for new runs.
+    openTab('text')
+    setImages([])
+    setComparison(null)
+    setViewingHistoryId(null)
+    setGalleryViewingId(null)
     setViewingVideoId(entry.id)
+    setError(null)
+  }, [])
+
+  /**
+   * Add one clip to the canvas as a referenced video node.
+   *
+   * Deliberately NOT the image import path: that one calls the host to COPY the
+   * asset into the canvas store, which for a clip would duplicate tens of
+   * megabytes. The canvas takes the served URL instead.
+   */
+  const addClipToCanvas = useCallback((url: string, mime = 'video/mp4', duration?: number, title?: string): void => {
+    setCanvasImportRequest({ source: 'video', url, mime, ...duration === undefined ? {} : { duration }, ...title === undefined ? {} : { title } })
+    setWorkspace('canvas')
   }, [])
 
   /** Favorite one clip into the gallery (the host copies it; see appendGalleryVideo). */
@@ -2186,6 +2217,8 @@ export function ImageGenPanel(props: {
   const conversationBusy = addingToConversation !== null || galleryConversationAddingId !== null || historyConversationAddingId !== null
   const viewingEntry = viewingHistoryId === null ? null : history.find(entry => entry.id === viewingHistoryId) ?? null
   const viewingGalleryEntry = galleryViewingId === null ? null : gallery.find(entry => entry.id === galleryViewingId) ?? null
+  /** The clip currently shown on the result board (null when none). */
+  const viewingVideoEntry = viewingVideoId === null ? null : videoHistory.find(entry => entry.id === viewingVideoId) ?? null
   const previewImage = preview === null ? null : preview.images[preview.index] ?? null
   const comparisonTasks = comparison === null ? [] : comparison.taskIds.map(id => tasks.find(task => task.id === id)).filter((task): task is GenerationTask => task !== undefined)
   const comparisonResults = comparisonTasks.filter(task => task.status === 'completed' && task.result !== undefined)
@@ -3449,6 +3482,45 @@ export function ImageGenPanel(props: {
                 setError(null)
               }}
             />
+          ) : null}
+
+          {isGeneration && viewingVideoEntry !== null ? (
+            <div className={css.canvasBody} data-video-board="">
+              <div className={css.canvasMeta}>
+                <span>{tt('history.video')}</span>
+                <span className={css.canvasHistoryTag}>{tt('history.viewing', { time: formatTime(viewingVideoEntry.createdAt) })}</span>
+              </div>
+              {viewingVideoEntry.videos.map(clip => (
+                <figure key={clip.url} className={css.imageCard} data-clip-figure="">
+                  <video className={css.videoBoardPlayer} src={clip.url} controls autoPlay preload="metadata" />
+                  <button
+                    type="button"
+                    className={css.galleryAdd}
+                    data-video-board-canvas=""
+                    title={tt('canvas.addToCanvas')}
+                    onClick={() => { addClipToCanvas(clip.url, clip.mime, clip.duration, viewingVideoEntry.prompt) }}
+                  >
+                    <svg viewBox="0 0 16 16" width="12" height="12" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><rect x="2.5" y="2.5" width="11" height="11" rx="1.5"/><path d="M5 8h6M8 5v6"/></svg>
+                    {tt('canvas.addToCanvas')}
+                  </button>
+                  <button
+                    type="button"
+                    className={css.conversationAdd}
+                    data-video-board-conversation=""
+                    disabled={addingToConversation !== null}
+                    title={tt('conversation.addVideoHint')}
+                    onClick={() => { void addClipToConversation(clip.url, `board:${viewingVideoEntry.id}`) }}
+                  >
+                    <svg viewBox="0 0 16 16" width="12" height="12" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M3 4.5h10v7H3z"/><path d="M5.5 2.5h5M8 6v4M6 8h4"/></svg>
+                    {addingToConversation === `board:${viewingVideoEntry.id}` ? tt('conversation.adding') : tt('conversation.add')}
+                  </button>
+                  <a className={css.download} href={clip.url} download onClick={event => event.stopPropagation()}>{tt('download')}</a>
+                  <figcaption className={css.imageCaption}>
+                    {viewingVideoEntry.model} · {viewingVideoEntry.aspectRatio} · {viewingVideoEntry.seconds}s
+                  </figcaption>
+                </figure>
+              ))}
+            </div>
           ) : null}
 
           {isGeneration && !generating && images.length > 0 ? (

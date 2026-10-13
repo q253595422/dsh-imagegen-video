@@ -3508,3 +3508,11 @@ a.galleryCardAction {
   border-radius: 10px;
   background: #000;
 }
+
+/* The clip shown on the result board (the area image results use). */
+.videoBoardPlayer {
+  width: 100%;
+  max-height: 420px;
+  border-radius: 10px;
+  background: #000;
+}

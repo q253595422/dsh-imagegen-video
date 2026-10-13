@@ -83,7 +83,15 @@ interface CanvasWorkspaceProps {
   videoGroups?: ImageModelGroup[]
   /** Video queue summaries, so video nodes can resolve their pending renders. */
   videoTasks?: VideoTaskSummary[]
-  importRequest?: { source: 'history' | 'gallery'; entryId: string; imageIndex: number }
+  /**
+   * An import the parent asked for. A clip is imported BY REFERENCE (its served
+   * URL), never copied into the canvas asset store — the same rule the
+   * generated-clip nodes follow.
+   */
+  importRequest?: (
+    | { source: 'history' | 'gallery'; entryId: string; imageIndex: number }
+    | { source: 'video'; url: string; mime: string; duration?: number; title?: string }
+  )
   onImportRequestHandled?: () => void
   onOpenSettings?: (kind?: 'generation' | 'enhancement') => void
 }
@@ -3196,6 +3204,35 @@ export function CanvasWorkspace(props: CanvasWorkspaceProps): React.JSX.Element 
       return
     }
     if (document === null) return
+    if (importRequest.source === 'video') {
+      const key = `video:${importRequest.url}`
+      if (processedImport.current === key) return
+      processedImport.current = key
+      // Reference the clip: build a video node pointing at the served URL. No
+      // bytes are copied, so adding the same clip twice is cheap.
+      const footprint = nodeSizeFromRatio('16:9', IMAGE_NODE_SIZE)
+      const center = canvasCenter()
+      const id = newId('node')
+      mutate(previous => ({
+        ...previous,
+        nodes: [...previous.nodes, {
+          id, type: 'video', title: importRequest.title !== undefined && importRequest.title !== '' ? importRequest.title : tt('canvas.videoNode'),
+          x: Math.round(center.x - footprint.width / 2), y: Math.round(center.y - footprint.height / 2),
+          width: footprint.width, height: footprint.height,
+          metadata: {
+            status: 'success',
+            video: {
+              url: importRequest.url,
+              mime: importRequest.mime,
+              ...importRequest.duration === undefined ? {} : { duration: importRequest.duration },
+            },
+          },
+        }],
+      }))
+      setNotice(tt('canvas.videoAdded'))
+      onImportRequestHandled?.()
+      return
+    }
     const requestKey = `${importRequest.source}:${importRequest.entryId}:${importRequest.imageIndex}`
     if (processedImport.current === requestKey) return
     const sourceEntries = importRequest.source === 'history' ? history : gallery

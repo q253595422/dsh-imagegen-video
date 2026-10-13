@@ -31,7 +31,7 @@ import { addTemplateFavorite, listTemplateFavorites, removeTemplateFavorite } fr
 import { testStorage, type StorageSyncConfig } from './storage-sync.ts'
 import { checkForUpdate, CURRENT_VERSION, installUpdate } from './updater.ts'
 import { IMAGE_PRESETS } from './presets.ts'
-import { AGENT_IMAGE_API, CANVAS_API, CANVAS_SKILL_API, CONVERSATION_IMAGE_API, DATA_FOLDER_API, DEFAULT_TEMPLATE_SOURCE_ID, GALLERY_API, GENERATE_API, HISTORY_API, IMAGEGEN_SETTINGS_NAMESPACE, IMAGE_MODEL_API, PRESETS_API, PROMPT_ENHANCE_API, SETTINGS_API, STORAGE_API, SUBSCRIPTION_API, SUBSCRIPTION_PROVIDERS, TASK_API, TEMPLATE_FAVORITES_API, TEMPLATES_API, UPDATE_API, USAGE_API, VIDEO_API, isChannelProtocolPreference, isTemplateSourceId, type CanvasAssetRef, type CanvasDocument, type CanvasSkillCatalog, type CanvasSkillConfigApplyRequest, type CanvasSkillConfigApplyResult, type CanvasSkillConfigSaveRequest, type CanvasSkillConfigSaveResult, type CanvasSkillInstallRequest, type CanvasSkillInstallResult, type CanvasSkillLibrary, type CanvasSkillRemoveResult, type CanvasSkillRunRequest, type CanvasSkillTask, type GeneratedImage, type GenerateRequest, type HistoryEntry, type HistoryEntryInput, type ModelMapping, type PresetProviderView, type TemplateFavorite, type TemplateListResult, type TemplateRefreshResult, type TemplateSample, type VideoGenerateRequest, type VideoHistoryEntry } from './protocol.ts'
+import { AGENT_IMAGE_API, CANVAS_API, CANVAS_SKILL_API, CONVERSATION_IMAGE_API, DATA_FOLDER_API, DEFAULT_TEMPLATE_SOURCE_ID, GALLERY_API, GENERATE_API, HISTORY_API, IMAGEGEN_SETTINGS_NAMESPACE, IMAGE_MODEL_API, PRESETS_API, PROMPT_ENHANCE_API, SETTINGS_API, STORAGE_API, SUBSCRIPTION_API, SUBSCRIPTION_PROVIDERS, TASK_API, TEMPLATE_FAVORITES_API, TEMPLATES_API, UPDATE_API, USAGE_API, VIDEO_API, isChannelProtocolPreference, isTemplateSourceId, type CanvasAssetRef, type CanvasDocument, type CanvasSkillCatalog, type CanvasSkillConfigApplyRequest, type CanvasSkillConfigApplyResult, type CanvasSkillConfigSaveRequest, type CanvasSkillConfigSaveResult, type CanvasSkillInstallRequest, type CanvasSkillInstallResult, type CanvasSkillLibrary, type CanvasSkillRemoveResult, type CanvasSkillRunRequest, type CanvasSkillTask, type GeneratedImage, type GenerateRequest, type HistoryEntry, type HistoryEntryInput, type ModelMapping, type PresetProviderView, type TemplateFavorite, type TemplateListResult, type TemplateRefreshResult, type TemplateSample, type CanvasVideoTaskMeta, type VideoGenerateRequest, type VideoHistoryEntry } from './protocol.ts'
 
 /** Cap on JSON request bodies (settings ops and generate payloads are small). */
 const MAX_JSON_BODY_BYTES = 24 * 1024 * 1024
@@ -416,6 +416,12 @@ function parseVideoRequest(
   const channel = deps.resolveChannels === undefined
     ? undefined
     : view.channels.find(candidate => (candidate.videoModels ?? []).some(row => row.alias === model))
+  // Canvas lineage MUST survive this parser: the canvas matches a finished
+  // render to its placeholder node by task id + canvasId. Dropping it here left
+  // every canvas-started run unmatched, so the node sat at "generating" until
+  // the orphan detector declared it failed -- while the render had in fact
+  // succeeded and been persisted.
+  const canvas = parseCanvasVideoMeta(body.canvas)
   return {
     mode,
     model,
@@ -423,6 +429,7 @@ function parseVideoRequest(
     aspectRatio: typeof body.aspectRatio === 'string' && body.aspectRatio.trim() !== '' ? body.aspectRatio.trim() : '16:9',
     resolution: (resolution === '480P' || resolution === '720P' || resolution === '1080P' ? resolution : '720P'),
     seconds: Number.isFinite(seconds) ? seconds : 5,
+    ...canvas === undefined ? {} : { canvas },
     ...typeof body.image === 'string' && body.image !== '' ? { image: body.image } : {},
     ...images.length > 0 ? { images } : {},
     ...typeof body.firstFrame === 'string' && body.firstFrame !== '' ? { firstFrame: body.firstFrame } : {},
@@ -431,6 +438,22 @@ function parseVideoRequest(
     ...typeof body.channelId === 'string' && body.channelId !== '' ? { channelId: body.channelId } : {},
     ...channel === undefined ? {} : { channel: channel.name },
     ...typeof body.seed === 'number' && Number.isFinite(body.seed) ? { seed: body.seed } : {},
+  }
+}
+
+/** Validate the canvas lineage a video request may carry. */
+function parseCanvasVideoMeta(value: unknown): CanvasVideoTaskMeta | undefined {
+  if (value === null || typeof value !== 'object') return undefined
+  const raw = value as Record<string, unknown>
+  if (typeof raw.canvasId !== 'string' || raw.canvasId.trim() === '') return undefined
+  const references = Array.isArray(raw.referenceNodeIds)
+    ? raw.referenceNodeIds.filter((item): item is string => typeof item === 'string' && item !== '').slice(0, 4)
+    : []
+  return {
+    canvasId: raw.canvasId.trim(),
+    ...typeof raw.sourceNodeId === 'string' && raw.sourceNodeId.trim() !== '' ? { sourceNodeId: raw.sourceNodeId.trim() } : {},
+    ...typeof raw.nodeId === 'string' && raw.nodeId.trim() !== '' ? { nodeId: raw.nodeId.trim() } : {},
+    ...references.length === 0 ? {} : { referenceNodeIds: references },
   }
 }
 
