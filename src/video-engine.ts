@@ -254,15 +254,21 @@ async function getJson(url: string, apiKey: string, signal: AbortSignal): Promis
 
 /** Extract the task id from any of the submit response shapes we have seen. */
 function taskIdOf(payload: Record<string, unknown>): string {
+  // The poll route is `GET <base>/videos/{id}`, so the id must be the RESOURCE
+  // id, never the task id: comemoe returns both in one flat body, and polling
+  // by its `task_id` would 404. Resource ids come first; `task_id` is only a
+  // last resort for relays that return nothing else.
+  //
   // comemoe returns a FLAT body ({"id","status","task_id"}), contradicting its
   // own documentation, which shows {"task":{"id":…}}. Agnes returns
   // video_id/task_id. Accept every shape rather than trusting one.
   const nested = payload.task
   const candidates = [
     payload.video_id,
-    payload.task_id,
     payload.id,
     nested !== null && typeof nested === 'object' ? (nested as Record<string, unknown>).id : undefined,
+    payload.task_id,
+    nested !== null && typeof nested === 'object' ? (nested as Record<string, unknown>).task_id : undefined,
   ]
   for (const candidate of candidates) {
     if (typeof candidate === 'string' && candidate.trim() !== '') return candidate.trim()
