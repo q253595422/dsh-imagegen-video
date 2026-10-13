@@ -298,6 +298,7 @@ function mimeOfPath(filePath: string): string {
 }
 import { ImageGenerationRuntime, type ChannelsView, type RuntimeChannel } from './generation-runtime.ts'
 import { registerAgentImageTools } from './agent-image-tools.ts'
+import { registerAgentVideoTools } from './agent-video-tools.ts'
 import { registerEditImageCommand } from './edit-image-command.ts'
 import { setImageDataRoot, imageDataRoot } from './image-storage-path.ts'
 import { presetById } from './presets.ts'
@@ -1121,7 +1122,21 @@ export function apply(ctx: Context, config?: Config): (() => void) | void {
           defaultModel: value.defaultModel,
         }
       }
+      const resolveVideoToolConfig = () => {
+        const value = resolve()
+        return {
+          enabled: value.enabled,
+          allowAgentVideoGeneration: value.allowAgentVideoGeneration,
+          channels: value.channels,
+          defaultChannelId: value.defaultChannelId,
+          defaultVideoModel: value.defaultVideoModel,
+        }
+      }
       const disposeTools = registerAgentImageTools(tctx, runtime, resolveAgentConfig)
+      // Video tools mount alongside the image ones and share the same runtime,
+      // so a task started by an Agent and one started in the panel are visible
+      // to each other and to the same persisted history.
+      const disposeVideoTools = registerAgentVideoTools(tctx, runtime, resolveVideoToolConfig)
       const disposeCommand = registerEditImageCommand(tctx, runtime, resolveAgentConfig, {
         get: sessionId => pendingConversationImages.get(sessionId),
         consume: (sessionId, ref) => {
@@ -1130,6 +1145,7 @@ export function apply(ctx: Context, config?: Config): (() => void) | void {
       })
       return () => {
         disposeCommand()
+        disposeVideoTools()
         disposeTools()
       }
     }, 'dsh-imagegen: agent image tools and commands')
