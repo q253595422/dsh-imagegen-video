@@ -332,6 +332,21 @@ function readPoll(payload: Record<string, unknown>): PollOutcome {
   return { kind: 'pending' }
 }
 
+/**
+ * Delay before poll number `attempt` (0-based).
+ *
+ * Polling is quick-start then steady: the first few checks come fast so a fast
+ * render (or an immediate rejection) surfaces in seconds, and the cadence then
+ * settles into the family interval. A flat interval would make every user wait
+ * the full 6-8s before even the first status, which is the worst case for the
+ * common "provider rejected it instantly" path.
+ */
+function pollDelayMs(policy: { intervalMs: number }, attempt: number): number {
+  if (attempt === 0) return 1_500
+  if (attempt === 1) return 3_000
+  return policy.intervalMs
+}
+
 /** Poll one task until terminal or the family deadline passes. */
 async function pollUntilDone(
   upstream: VideoUpstreamConfig,
@@ -343,8 +358,10 @@ async function pollUntilDone(
   const policy = POLL_POLICY[family] ?? POLL_POLICY.unknown!
   const deadline = Date.now() + policy.deadlineMs
   const statusUrl = `${baseUrl}/videos/${encodeURIComponent(taskId)}`
+  let attempt = 0
   while (Date.now() < deadline) {
-    await waitForPoll(policy.intervalMs, signal)
+    await waitForPoll(pollDelayMs(policy, attempt), signal)
+    attempt += 1
     const budget = requestSignal(signal, SUBMIT_TIMEOUT_MS)
     try {
       const payload = await getJson(statusUrl, upstream.apiKey, budget.signal)
