@@ -120,6 +120,23 @@ export class ImageGenApi {
     return (await readEnvelope<{ ok: true; task: VideoTask }>(response)).task
   }
 
+  /**
+   * Favorite one finished clip into the gallery.
+   *
+   * Names the video-history entry, never the bytes: the host resolves and
+   * copies the file itself, so this stays a small JSON call regardless of clip
+   * size.
+   */
+  async galleryAppendVideo(input: { entryId: string; tags?: string[] }): Promise<HistoryEntry[]> {
+    const response = await fetch(GALLERY_API.video, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify(input),
+    })
+    const body = await readEnvelope<{ ok: true; entries: HistoryEntry[]; added: boolean }>(response)
+    return body.entries
+  }
+
   async videoHistoryList(): Promise<VideoHistoryEntry[]> {
     const response = await fetch(VIDEO_API.historyList, { method: 'POST' })
     return (await readEnvelope<{ ok: true; entries: VideoHistoryEntry[] }>(response)).entries

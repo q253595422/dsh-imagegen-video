@@ -2367,6 +2367,100 @@ export function CanvasWorkspace(props: CanvasWorkspaceProps): React.JSX.Element 
     }
   }, [])
 
+  /** Download one clip (the served URL is same-origin and complete). */
+  const downloadVideoNode = useCallback((node: CanvasNode): void => {
+    const clip = videoOf(node)
+    if (clip === undefined || clip.url === '') return
+    const extension = clip.mime.split('/')[1] ?? 'mp4'
+    const link = globalThis.document.createElement('a')
+    link.href = clip.url
+    link.download = `${node.title || 'canvas-video'}.${extension}`
+    link.target = '_blank'
+    link.rel = 'noopener'
+    link.click()
+  }, [])
+
+  /**
+   * Favorite one clip into the gallery.
+   *
+   * The host copies the bytes (by naming the video-history entry), so no video
+   * ever crosses this call and the favorite survives the video history's size
+   * cap.
+   */
+  const favoriteVideoNode = useCallback((node: CanvasNode): void => {
+    const clip = videoOf(node)
+    if (clip === undefined || clip.entryId === undefined) return
+    void withNodeBusy(node.id, tt('canvas.videoFavorite'), async () => {
+      await api.galleryAppendVideo({ entryId: clip.entryId! })
+      setNotice(tt('canvas.videoFavorited'))
+    }).catch(() => { setError(tt('canvas.videoFavoriteFailed')) })
+  }, [api, withNodeBusy])
+
+  /**
+   * Grab the clip's current frame as a new image node.
+   *
+   * Runs in the browser: the clip is same-origin and already Range-served, so
+   * seeking it to a timestamp and reading the pixels costs nothing upstream and
+   * needs no new host route. The frame lands as an ordinary image node, which
+   * means it can immediately feed an image edit or a video keyframe run.
+   */
+  const grabVideoFrame = useCallback(async (node: CanvasNode): Promise<void> => {
+    const clip = videoOf(node)
+    if (clip === undefined || clip.url === '') return
+    await withNodeBusy(node.id, tt('canvas.videoGrabFrame'), async () => {
+      const video = globalThis.document.createElement('video')
+      // `crossOrigin` is unnecessary (same-origin) and would add a preflight for
+      // no benefit; the served clip already carries no credentials requirement.
+      video.src = clip.url
+      video.muted = true
+      video.preload = 'auto'
+      await new Promise<void>((resolve, reject) => {
+        const fail = (): void => { reject(new Error(tt('canvas.videoGrabFailed'))) }
+        video.addEventListener('loadeddata', () => { resolve() }, { once: true })
+        video.addEventListener('error', fail, { once: true })
+        // A clip whose metadata never arrives must not hang the node forever.
+        window.setTimeout(fail, 15_000)
+      })
+      // Prefer the middle of the clip: the first frame of a generated shot is
+      // often still settling, and the middle is the most representative frame.
+      const duration = Number.isFinite(video.duration) && video.duration > 0 ? video.duration : 0
+      const target = duration > 0 ? duration / 2 : 0
+      if (target > 0) {
+        await new Promise<void>((resolve) => {
+          video.addEventListener('seeked', () => { resolve() }, { once: true })
+          video.currentTime = target
+        })
+      }
+      const width = video.videoWidth
+      const height = video.videoHeight
+      if (width === 0 || height === 0) throw new Error(tt('canvas.videoGrabFailed'))
+      const bitmapCanvas = globalThis.document.createElement('canvas')
+      bitmapCanvas.width = width
+      bitmapCanvas.height = height
+      const context = bitmapCanvas.getContext('2d')
+      if (context === null) throw new Error(tt('canvas.videoGrabFailed'))
+      context.drawImage(video, 0, 0, width, height)
+      const dataUrl = bitmapCanvas.toDataURL('image/png')
+      const uploaded = await api.canvasUpload(dataUrl, width, height, { origin: 'generated', originId: node.id })
+      const footprint = nodeSizeFromRatio(`${width}:${height}`, IMAGE_NODE_SIZE)
+      mutate(previous => {
+        const id = newId('node')
+        return {
+          ...previous,
+          nodes: [...previous.nodes, {
+            id, type: 'image', title: tt('canvas.videoFrameNode'),
+            x: Math.round(node.x + node.width + 80), y: Math.round(node.y),
+            width: footprint.width, height: footprint.height,
+            metadata: { asset: uploaded, status: 'success', sourceNodeId: node.id },
+          }],
+          connections: [...previous.connections, { id: newId('edge'), fromNodeId: node.id, toNodeId: id }],
+        }
+      })
+      setNotice(tt('canvas.videoGrabFrame'))
+    })
+  }, [api, mutate, withNodeBusy])
+
+
   /** Compose the 标注 edit reference: the source image plus numbered boxes,
    *  together with the constraint text that pins the edit to those boxes. */
   const annotatedReference = useCallback(async (
@@ -2801,9 +2895,61 @@ export function CanvasWorkspace(props: CanvasWorkspaceProps): React.JSX.Element 
 
   /** Re-run a failed image node's generation from its recorded prompt/model,
    * re-deriving the edit base from the connected source config node. */
+  /** Retry one failed video node by resubmitting its stored run parameters. */
+  const retryVideoGeneration = useCallback(async (node: CanvasNode): Promise<void> => {
+    const current = documentRef.current
+    if (current === null) return
+    const metadata = nodeMetadata(node)
+    const prompt = (metadata.prompt ?? '').trim()
+    if (prompt === '') { setError(tt('canvas.videoNeedPrompt')); return }
+    const groups = videoGroups ?? []
+    const choice = resolveModelChoice(groups, { channelId: metadata.channelId, model: metadata.model }, defaultChannelId)
+    if (choice.model === '') { setError(tt('canvas.videoNeedModel')); return }
+    if (!(choice.channelId === '' || channelIsConnected(choice.channelId))) { setError(tt('canvas.needApi')); onOpenSettings?.(); return }
+    // Re-send the references the node was built from, so a retry reproduces the
+    // same run rather than silently degrading to text-only.
+    const frame = metadata.sourceNodeId === undefined
+      ? undefined
+      : current.nodes.find(item => item.id === metadata.sourceNodeId)
+    try {
+      const frames: { image?: string; firstFrame?: string; lastFrame?: string; refName?: string } = {}
+      const mode: VideoMode = metadata.videoMode ?? 'text'
+      if (mode === 'keyframe' && frame !== undefined && frame.type === 'image') {
+        const asset = usableAsset(frame)
+        if (asset !== undefined) frames.firstFrame = await assetToDataUrl(asset)
+      } else if (mode === 'image' && frame !== undefined && frame.type === 'image') {
+        const asset = usableAsset(frame)
+        if (asset !== undefined) { frames.image = await assetToDataUrl(asset); frames.refName = 'canvas-reference.png' }
+      }
+      const request: VideoGenerateRequest = {
+        mode,
+        model: choice.model,
+        prompt,
+        aspectRatio: metadata.aspectRatio ?? '16:9',
+        resolution: (metadata.resolution ?? '720P') as VideoResolution,
+        seconds: metadata.seconds ?? 5,
+        ...(choice.channelId === '' ? {} : { channelId: choice.channelId }),
+        ...frames,
+        canvas: {
+          canvasId: current.id,
+          ...(metadata.sourceNodeId === undefined ? {} : { sourceNodeId: metadata.sourceNodeId }),
+          nodeId: node.id,
+        },
+      }
+      const task = await api.videoTaskSubmit(request)
+      localVideoTaskIds.current.add(task.id)
+      processedVideoTasks.current.delete(task.id)
+      patchNode(node.id, { status: 'generating', error: undefined, taskId: task.id, model: choice.model })
+      setError(null)
+    } catch (caught) {
+      setError(errorMessage(caught))
+    }
+  }, [api, channelIsConnected, defaultChannelId, onOpenSettings, patchNode, videoGroups])
+
   const retryGeneration = useCallback(async (node: CanvasNode): Promise<void> => {
     const current = documentRef.current
     if (current === null) return
+    if (node.type === 'video') { await retryVideoGeneration(node); return }
     const metadata = nodeMetadata(node)
     const prompt = (metadata.prompt ?? '').trim()
     if (prompt === '') { setError(tt('canvas.needPrompt')); return }
@@ -2864,7 +3010,7 @@ export function CanvasWorkspace(props: CanvasWorkspaceProps): React.JSX.Element 
     } catch (caught) {
       setError(caught instanceof Error ? caught.message : String(caught))
     }
-  }, [annotatedReference, api, channelIsConnected, defaultChannelId, modelGroups, onOpenSettings, patchNode, upstreamNodes])
+  }, [annotatedReference, api, channelIsConnected, defaultChannelId, modelGroups, onOpenSettings, patchNode, retryVideoGeneration, upstreamNodes])
 
   // Orphan reconciliation: a generating placeholder whose task no longer exists
   // in the host feed (e.g. the host restarted) can never complete on its own.
@@ -2873,19 +3019,31 @@ export function CanvasWorkspace(props: CanvasWorkspaceProps): React.JSX.Element 
     const feedFresh = tasks.length > 0 || Date.now() - mountedAtRef.current > 8000
     if (!feedFresh) return
     const feedIds = new Set(tasks.map(task => task.id))
+    // Video placeholders are reconciled against the video feed, not the image
+    // one: they are separate queues, so the image feed never contains them.
+    const videoFeedFresh = (videoTasks?.length ?? 0) > 0 || Date.now() - mountedAtRef.current > 8000
+    const videoFeedIds = new Set((videoTasks ?? []).map(task => task.id))
     const orphans = document.nodes.filter(node => {
-      if (node.type !== 'image' || nodeMetadata(node).status !== 'generating') return false
+      if (nodeMetadata(node).status !== 'generating') return false
       const taskId = nodeMetadata(node).taskId
-      return taskId !== undefined && !feedIds.has(taskId) && !localTaskIds.current.has(taskId)
+      if (taskId === undefined) return false
+      if (node.type === 'video') return videoFeedFresh && !videoFeedIds.has(taskId) && !localVideoTaskIds.current.has(taskId)
+      if (node.type !== 'image') return false
+      return !feedIds.has(taskId) && !localTaskIds.current.has(taskId)
     })
     if (orphans.length === 0) return
     updateNodes(nodes => nodes.map(node => {
-      const taskId = node.type === 'image' ? nodeMetadata(node).taskId : undefined
-      if (node.type !== 'image' || nodeMetadata(node).status !== 'generating' || taskId === undefined
-        || feedIds.has(taskId) || localTaskIds.current.has(taskId)) return node
+      if (nodeMetadata(node).status !== 'generating') return node
+      const taskId = nodeMetadata(node).taskId
+      if (taskId === undefined) return node
+      if (node.type === 'video') {
+        if (!videoFeedFresh || videoFeedIds.has(taskId) || localVideoTaskIds.current.has(taskId)) return node
+        return { ...node, metadata: { ...nodeMetadata(node), status: 'error', error: tt('canvas.videoTaskLost') } }
+      }
+      if (node.type !== 'image' || feedIds.has(taskId) || localTaskIds.current.has(taskId)) return node
       return { ...node, metadata: { ...nodeMetadata(node), status: 'error', error: tt('canvas.taskLost') } }
     }))
-  }, [document, tasks, updateNodes])
+  }, [document, tasks, videoTasks, updateNodes])
 
   // Fill placeholder video nodes from the video queue.
   //
@@ -3954,6 +4112,11 @@ export function CanvasWorkspace(props: CanvasWorkspaceProps): React.JSX.Element 
               onMouseLeave={scheduleNodeAddMenuClose}
             />
           </>}      <div className={`${css.hoverToolbar} ${node.type === 'image' && hasImage ? css.hoverToolbarBottom : ''}`} data-toolbar={node.type === 'image' && hasImage ? 'bottom' : 'top'} onPointerDown={event => event.stopPropagation()}>
+        {isVideo && hasVideo ? <>
+          <IconButton name="download" label={tt('canvas.videoDownload')} onClick={() => downloadVideoNode(node)} />
+          <IconButton name="sparkle" label={tt('canvas.videoGrabFrame')} disabled={busyLabel !== undefined} onClick={() => { void grabVideoFrame(node) }} />
+          <IconButton name="favorite" label={tt('canvas.videoFavorite')} disabled={busyLabel !== undefined || video.entryId === undefined} onClick={() => { favoriteVideoNode(node) }} />
+        </> : null}
         {node.type === 'image' && hasImage ? <>
           <IconButton name="annotate" label={tt('canvas.annotate')} active={annotating} onClick={() => toggleAnnotate(node)} />
           <IconButton name="removeBg" label={tt('canvas.removeBackground')} disabled={busyLabel !== undefined} onClick={() => { void removeNodeBackground(node) }} />
