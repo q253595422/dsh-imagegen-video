@@ -55,6 +55,12 @@ const nodeConfig: UserConfig = {
   clean: true,
   outputOptions: {
     entryFileNames: '[name].js',
+    // Pin the shared-chunk name. Rolldown otherwise suffixes a content hash
+    // (locale-tables-<hash>.js) that changes on ANY edit to the dictionaries,
+    // which means every rebuild silently renames a file index.js imports —
+    // an install that copies only index.js then fails to load. A stable name
+    // makes reinstalling the built artifacts a plain overwrite.
+    chunkFileNames: '[name]-chunk.js',
   },
   deps: {
     neverBundle: [
