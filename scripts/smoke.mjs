@@ -3666,6 +3666,10 @@ await check('E1 client apply mounts the sidebar entry and studio (jsdom)', async
   /** Video tasks the panel sees when polling, and submissions it makes. */
   const videoTasks = []
   const videoSubmissions = []
+  /** Canvas video runs, recorded so the canvas test can assert the request. */
+  const canvasVideoSubmissions = []
+  /** Assets the canvas uploaded during a frame grab. */
+  const canvasGrabUploads = []
   const canvasImageAsset = {
     assetId: `${'a'.repeat(64)}.png`,
     url: `/api/dsh-imagegen/canvas/asset/${'a'.repeat(64)}.png`,
@@ -3738,14 +3742,29 @@ await check('E1 client apply mounts the sidebar entry and studio (jsdom)', async
       }
     }
     if (path.endsWith('/video/tasks/list')) {
-      return { ok: true, json: async () => ({ ok: true, tasks: videoTasks }) }
+      // Completed tasks expose the served clip (mirroring the host summary), so
+      // the canvas can fill its placeholder without a second round trip.
+      const tasks = videoTasks.map(task => task.status === 'completed'
+        ? {
+            ...task,
+            resultAvailable: true,
+            resultUrl: '/api/dsh-imagegen/video/file/vt-1-0.mp4',
+            resultVideo: { url: '/api/dsh-imagegen/video/file/vt-1-0.mp4', mime: 'video/mp4', duration: 5 },
+            resultEntryId: 'video-entry-1',
+          }
+        : { ...task, resultAvailable: false })
+      return { ok: true, json: async () => ({ ok: true, tasks }) }
     }
     if (path.endsWith('/video/history/list')) {
       return { ok: true, json: async () => ({ ok: true, entries: [] }) }
     }
     if (path.endsWith('/video/tasks/submit')) {
-      videoSubmissions.push(JSON.parse(init.body))
-      const task = { id: `vt-${videoSubmissions.length}`, request: JSON.parse(init.body), status: 'queued', createdAt: Date.now() }
+      const body = JSON.parse(init.body)
+      videoSubmissions.push(body)
+      // A canvas-originated run is recorded separately so the canvas test can
+      // assert its lineage without confusing it with a studio submission.
+      if (body.canvas !== undefined) canvasVideoSubmissions.push(body)
+      const task = { id: `vt-${videoSubmissions.length}`, request: body, status: 'queued', createdAt: Date.now() }
       videoTasks.push(task)
       return { ok: true, json: async () => ({ ok: true, task }) }
     }
@@ -4748,6 +4767,107 @@ await check('E1 client apply mounts the sidebar entry and studio (jsdom)', async
       await waitUntil(() => (canvasSaves.at(-1)?.nodes ?? []).some(node => node.metadata?.annotationEdit !== undefined)),
       'the generated placeholder records the annotated boxes for compositing',
     )
+
+    // --- canvas video: the composer switches kind and submits a video run ---
+    // The canvas shares one composer between images and clips; this proves the
+    // switch actually reroutes the submit and stamps canvas lineage so the
+    // placeholder node can be filled when the render settles.
+    await new Promise(resolve => setTimeout(resolve, 60))
+    const kindSwitch = [...view.querySelectorAll('[data-node-id="node-config"] ~ *, [class*="composerKind"] button')]
+    const videoKindButton = [...view.querySelectorAll('button')].find(button => button.textContent === '视频' && button.closest('[class*="composerKind"]') !== null)
+    assert.ok(videoKindButton !== undefined, 'the composer offers a video kind toggle')
+    videoKindButton.dispatchEvent(new jsdomWindow.MouseEvent('click', { bubbles: true, cancelable: true }))
+    await new Promise(resolve => setTimeout(resolve, 40))
+    const videoSend = await waitUntil(() => view.querySelector('[aria-label="生成视频"]'))
+    assert.ok(videoSend !== null && videoSend !== false, 'the composer send button switches to video')
+    assert.equal(view.querySelector('[aria-label="生成图片"]'), null, 'the image send button is replaced in video mode')
+
+    // The composer swaps in the video model picker: its trigger shows the model
+    // the run will use, and the image-only selects are gone.
+    // CSS Modules hash class names, so anchor on the composer root by the
+    // element that contains the prompt box rather than by a class substring.
+    const canvasPromptBox = view.querySelector('[data-canvas-no-zoom] textarea')
+    assert.ok(canvasPromptBox !== null, 'the composer prompt is mounted')
+    const composer = canvasPromptBox.closest('[data-canvas-no-zoom]')
+    const videoPicker = composer.querySelector('[aria-label^="视频模型"]')
+    assert.ok(videoPicker !== null, 'the canvas composer swaps in the video model picker')
+    assert.ok(
+      videoPicker.getAttribute('aria-label').includes('agnes-video-2.5-flash'),
+      `the video picker shows the configured video model: ${videoPicker.getAttribute('aria-label')}`,
+    )
+    assert.equal(composer.querySelector('[aria-label="清晰度"]'), null, 'image-only selects are absent in video mode')
+    assert.equal(composer.querySelector('[aria-label="画面比例"]'), null, 'the image ratio select is replaced by the video ratio select')
+
+    // Fill the prompt through the native setter (React 18 + jsdom), then submit.
+    const canvasPrompt = canvasPromptBox
+    const canvasTextAreaSetter = Object.getOwnPropertyDescriptor(jsdomWindow.HTMLTextAreaElement.prototype, 'value').set
+    canvasTextAreaSetter.call(canvasPrompt, 'a cat walking through rain')
+    canvasPrompt.dispatchEvent(new jsdomWindow.Event('input', { bubbles: true }))
+    await new Promise(resolve => setTimeout(resolve, 40))
+    const videoSendEnabled = view.querySelector('[aria-label="生成视频"]')
+    assert.equal(videoSendEnabled.disabled, false, 'video submit enables once a prompt exists')
+    videoSendEnabled.dispatchEvent(new jsdomWindow.MouseEvent('click', { bubbles: true, cancelable: true }))
+    assert.ok(
+      await waitUntil(() => canvasVideoSubmissions.length > 0),
+      'the canvas submits a video run',
+    )
+    const run = canvasVideoSubmissions[0]
+    assert.equal(run.model, 'agnes-video-2.5-flash', 'the canvas sends the configured video model')
+    assert.equal(run.prompt, 'a cat walking through rain')
+    assert.equal(run.canvas.canvasId, canvasDocument.id, 'the run carries its canvas id')
+    assert.equal(run.canvas.sourceNodeId, 'node-config', 'the run records the config node that started it')
+    assert.ok(typeof run.canvas.nodeId === 'string' && run.canvas.nodeId !== '', 'the run names its placeholder node')
+    // The image -> config edge means one image feeds the run, so the planner
+    // picks image-to-video rather than silently dropping the reference.
+    assert.equal(run.mode, 'image', 'a connected image makes this an image-to-video run')
+    assert.ok(String(run.image).startsWith('data:image/png;base64,'), 'the connected image travels as a data URL')
+    assert.equal(run.canvas.referenceNodeIds?.length, 1, 'the reference node is recorded for retries')
+
+    // A placeholder video node exists and shows the rendering state.
+    assert.ok(
+      await waitUntil(() => (canvasSaves.at(-1)?.nodes ?? []).some(node => node.type === 'video')),
+      'a placeholder video node is added to the canvas',
+    )
+    const placeholder = canvasSaves.at(-1).nodes.find(node => node.type === 'video')
+    assert.equal(placeholder.metadata.status, 'generating', 'the placeholder starts in the generating state')
+    assert.equal(placeholder.metadata.videoMode, 'image', 'the placeholder remembers the video mode')
+    assert.ok(typeof placeholder.metadata.seconds === 'number', 'the placeholder remembers the duration')
+    assert.ok(view.querySelector(`[data-node-id="${placeholder.id}"]`) !== null, 'the video node renders')
+
+    // Now let the render "finish" and confirm the node receives the served clip
+    // by reference (no asset copy) and becomes playable.
+    const placeholderId = placeholder.id
+    const taskId = placeholder.metadata.taskId
+    const finished = videoTasks.find(task => task.id === taskId)
+    assert.ok(finished !== undefined, 'the submitted task is in the queue stub')
+    finished.status = 'completed'
+    // The poller reads /video/tasks/list, which returns the mutated stub.
+    assert.ok(
+      await waitUntil(() => (canvasSaves.at(-1)?.nodes ?? []).some(node => node.id === placeholderId && node.metadata?.video !== undefined), 6000),
+      'the placeholder receives its clip once the render completes',
+    )
+    const filled = canvasSaves.at(-1).nodes.find(node => node.id === placeholderId)
+    assert.equal(filled.metadata.status, 'success', 'the video node reports success')
+    assert.match(filled.metadata.video.url, /\/api\/dsh-imagegen\/video\/file\//, 'the clip is referenced by its served URL')
+    assert.equal(filled.metadata.video.mime, 'video/mp4')
+    assert.equal(filled.metadata.video.entryId, 'video-entry-1', 'the node remembers its history entry for gallery writes')
+    // The clip must NOT be copied into the canvas asset store.
+    assert.equal(filled.metadata.asset, undefined, 'a video node carries no canvas asset (the clip is referenced)')
+    const player = view.querySelector(`[data-node-id="${placeholderId}"] video`)
+    assert.ok(player !== null, 'the finished node renders a video element')
+    assert.equal(player.getAttribute('src'), filled.metadata.video.url, 'the player points at the served clip')
+
+    // The video node toolbar exposes download / frame grab / gallery actions.
+    assert.ok(view.querySelector(`[data-node-id="${placeholderId}"] [title="下载视频"]`) !== null, 'the video node offers a download action')
+    assert.ok(view.querySelector(`[data-node-id="${placeholderId}"] [title="抽取当前帧"]`) !== null, 'the video node offers a frame-grab action')
+    assert.ok(view.querySelector(`[data-node-id="${placeholderId}"] [title="收藏到画廊"]`) !== null, 'the video node offers a gallery action')
+
+    // Switching back to the image kind restores the image controls.
+    const imageKindButton = [...view.querySelectorAll('[class*="composerKind"] button')].find(button => button.textContent === '图片')
+    assert.ok(imageKindButton !== undefined, 'the composer offers an image kind toggle')
+    imageKindButton.dispatchEvent(new jsdomWindow.MouseEvent('click', { bubbles: true, cancelable: true }))
+    await new Promise(resolve => setTimeout(resolve, 40))
+    assert.ok(await waitUntil(() => view.querySelector('[aria-label="生成图片"]') !== null), 'the image send button returns')
 
     // 移除背景: local matting uploads a transparent PNG and adds a result node.
     nodeTool('node-image', '移除背景').click()

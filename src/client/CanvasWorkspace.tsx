@@ -1363,7 +1363,7 @@ export function CanvasWorkspace(props: CanvasWorkspaceProps): React.JSX.Element 
   const [composerKind, setComposerKind] = useState<'image' | 'video'>('image')
   const [composerVideoModel, setComposerVideoModel] = useState('')
   const [composerVideoChannelId, setComposerVideoChannelId] = useState('')
-  const [composerVideoMode, setComposerVideoMode] = useState<VideoMode>('text')
+  const [composerVideoMode, setComposerVideoMode] = useState<'auto' | VideoMode>('auto')
   const [composerAspect, setComposerAspect] = useState('16:9')
   const [composerSeconds, setComposerSeconds] = useState(5)
   const [composerResolution, setComposerResolution] = useState<VideoResolution>('720P')
@@ -2724,17 +2724,22 @@ export function CanvasWorkspace(props: CanvasWorkspaceProps): React.JSX.Element 
       const choice = resolveModelChoice(groups, { channelId: composerVideoChannelId, model: composerVideoModel }, defaultChannelId)
       const model = choice.model
       if (model === '') { setError(tt('canvas.videoNeedModel')); return }
-      // The mode decides which references travel. Derive the frame inputs from
-      // what is actually connected so the graph, not a dropdown, is the source
-      // of truth.
-      const mode: VideoMode = referenceImages.length === 0
+      // The mode comes from the graph unless the user overrode it: 'auto' maps
+      // the connected references onto text / image / keyframe, which is the
+      // natural canvas behavior (wire an image in and you get image-to-video).
+      const derived: VideoMode = referenceImages.length === 0
         ? 'text'
         : referenceImages.length >= 2
           ? 'keyframe'
           : 'image'
-      if (composerVideoMode === 'image' && referenceImages.length === 0) { setError(tt('canvas.videoNeedReference')); return }
-      if (composerVideoMode === 'keyframe' && referenceImages.length === 0) { setError(tt('canvas.videoNeedKeyframes')); return }
-      const effective = referenceImages.length === 0 ? 'text' : composerVideoMode
+      const effective: VideoMode = composerVideoMode === 'auto' ? derived : composerVideoMode
+      // An explicit mode still has to be satisfiable by the graph.
+      if (effective === 'image' && referenceImages.length === 0) { setError(tt('canvas.videoNeedReference')); return }
+      if (effective === 'keyframe' && referenceImages.length === 0) { setError(tt('canvas.videoNeedKeyframes')); return }
+      if (effective === 'text' && referenceImages.length > 0) {
+        // Explicit text mode with references wired: that is a deliberate choice
+        // (the frames are ignored), so no error.
+      }
       const frames: { image?: string; firstFrame?: string; lastFrame?: string; refName?: string } = {}
       if (effective === 'keyframe') {
         const first = referenceImages[0] !== undefined ? usableAsset(referenceImages[0]!) : undefined
@@ -4344,8 +4349,8 @@ export function CanvasWorkspace(props: CanvasWorkspaceProps): React.JSX.Element 
           <ComposerSelect
             ariaLabel={tt('canvas.videoModeLabel')}
             value={composerVideoMode}
-            options={(['text', 'image', 'keyframe'] as const).map(item => ({ value: item, label: tt(`canvas.videoMode${item === 'text' ? 'Text' : item === 'image' ? 'Image' : 'Keyframe'}` as ImageGenKey) }))}
-            onChange={value => setComposerVideoMode(value as VideoMode)}
+            options={(['auto', 'text', 'image', 'keyframe'] as const).map(item => ({ value: item, label: tt(`canvas.videoMode${item === 'auto' ? 'Auto' : item === 'text' ? 'Text' : item === 'image' ? 'Image' : 'Keyframe'}` as ImageGenKey) }))}
+            onChange={value => setComposerVideoMode(value as 'auto' | VideoMode)}
           />
           <ComposerSelect
             ariaLabel={tt('canvas.videoAspect')}
