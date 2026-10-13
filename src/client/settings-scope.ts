@@ -40,6 +40,10 @@ export interface ImageGenConfig {
   defaultChannelId?: string
   /** Model alias selected by default in the GUI. Empty uses the first option. */
   defaultModel?: string
+  /** Video model alias selected by default in the video tab. */
+  defaultVideoModel?: string
+  /** Allow Agents to submit and retrieve video-generation tasks. */
+  allowAgentVideoGeneration?: boolean
   promptApiUrl?: string
   promptApiKey?: string
   promptModel?: string
@@ -347,6 +351,44 @@ export function imageModelOptions(config: ImageGenConfig | undefined): {
     models,
     groups,
     defaultChannelId: defaultId,
+    ...defaultModel === undefined ? {} : { defaultModel },
+  }
+}
+/**
+ * Project the configured channels into video-model choices.
+ *
+ * Mirrors {@link imageModelOptions} but reads each channel's `videoModels`
+ * catalog, which is configured separately because video speaks the async
+ * submit/poll contract rather than the synchronous image one. Pure projection.
+ */
+export function videoModelOptions(config: ImageGenConfig | undefined): {
+  models: string[]
+  groups: ImageModelGroup[]
+  defaultModel?: string
+  /** Channel ids that hold at least one video model (drives availability). */
+  channelIds: string[]
+} {
+  const channels = config?.channels ?? []
+  const groups: ImageModelGroup[] = channels.flatMap(channel => {
+    const models = (channel.videoModels ?? [])
+      .map(model => model.alias.trim())
+      .filter((alias, index, all) => alias !== '' && all.indexOf(alias) === index)
+    return models.length === 0 ? [] : [{ id: channel.id, name: channel.name.trim() || channel.id, models }]
+  })
+  const aliases: string[] = []
+  for (const group of groups) {
+    for (const alias of group.models) {
+      if (!aliases.includes(alias)) aliases.push(alias)
+    }
+  }
+  const defaultModel = typeof config?.defaultVideoModel === 'string' && aliases.includes(config.defaultVideoModel)
+    ? config.defaultVideoModel
+    : undefined
+  const models = defaultModel === undefined ? aliases : [defaultModel, ...aliases.filter(model => model !== defaultModel)]
+  return {
+    models,
+    groups,
+    channelIds: groups.map(group => group.id),
     ...defaultModel === undefined ? {} : { defaultModel },
   }
 }
