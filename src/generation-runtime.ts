@@ -11,11 +11,15 @@
 
 import { randomUUID } from 'node:crypto'
 import { generateImage, ImageGenError, type UpstreamConfig } from './engine.ts'
+import { generateVideo, VideoGenError } from './video-engine.ts'
+import { describeVideoModel } from './video-model-catalog.ts'
+import { appendVideoHistory } from './video-store.ts'
 import { detectImageMime } from './image-format.ts'
 import { vendorOf, type SubscriptionManager, type SubscriptionReferenceImage } from './subscription/manager.ts'
 import { appendHistory } from './history-store.ts'
 import { GenerationTaskQueue } from './task-queue.ts'
-import type { ChannelConfig, GeneratedImage, GenerateRequest, GenerateResult, HistoryEntry, HistoryEntryInput, SubscriptionProvider } from './protocol.ts'
+import { VideoTaskQueue, type VideoTask } from './video-task-queue.ts'
+import type { ChannelConfig, GeneratedImage, GenerateRequest, GenerateResult, HistoryEntry, HistoryEntryInput, SubscriptionProvider, VideoGenerateRequest, VideoGenerateResult, VideoHistoryEntry } from './protocol.ts'
 
 /** A channel with its resolved API key (the settings doc holds the key
  *  separately so redacted reads never expose it). */
@@ -35,6 +39,8 @@ export interface HistorySink {
 
 export class ImageGenerationRuntime {
   readonly queue: GenerationTaskQueue
+  /** Video runs through its own queue: a render takes minutes, not seconds. */
+  readonly videoQueue: VideoTaskQueue
 
   constructor(
     private readonly resolve: () => ChannelsView,
@@ -44,6 +50,79 @@ export class ImageGenerationRuntime {
     // Every task runs in parallel up to this small host-wide limit; a
     // four-model comparison fits within it in a single wave.
     this.queue = new GenerationTaskQueue((request, signal) => this.run(request, signal), 4)
+    // Video concurrency is 1: renders are minutes long and providers queue
+    // them anyway, so parallel submits only make the queue less predictable.
+    this.videoQueue = new VideoTaskQueue((request, signal) => this.runVideo(request, signal), 1)
+  }
+
+  /**
+   * Resolve the channel that owns one video model alias.
+   *
+   * A video request names a model alias, not a channel, and video aliases live
+   * in a channel's `videoModels` catalog rather than its image `models` one. So
+   * resolution is: the alias's own channel, then the explicitly requested
+   * channel, then the default channel.
+   */
+  private videoChannel(model: string, channelId: string | undefined, view: ChannelsView): RuntimeChannel | undefined {
+    const byAlias = view.channels.find(candidate =>
+      (candidate.videoModels ?? []).some(row => row.alias === model))
+    return byAlias
+      ?? view.channels.find(candidate => candidate.id === channelId)
+      ?? view.channels.find(candidate => candidate.id === view.defaultChannelId)
+      ?? view.channels[0]
+  }
+
+  /** Generate one video: submit, poll, download, then persist the clip. */
+  async runVideo(request: VideoGenerateRequest, signal?: AbortSignal): Promise<VideoGenerateResult> {
+    const view = this.resolve()
+    const channel = this.videoChannel(request.model, request.channelId, view)
+    if (channel === undefined) {
+      throw new VideoGenError('尚未配置任何渠道：请先打开「设置 → 生图配置」添加渠道并填写 API 地址与密钥', 'no-channels')
+    }
+    // Map the panel's alias onto the channel's upstream id, exactly like the
+    // image path does, so the engine always sends the real gateway model id.
+    const mapping = (channel.videoModels ?? []).find(row => row.alias === request.model)
+    const upstream = mapping?.id ?? request.model
+    const family = describeVideoModel(upstream).family
+    if (family === 'unknown') {
+      throw new VideoGenError(`渠道「${channel.name}」未为模型「${request.model}」配置视频协议族；请在渠道的视频模型中改用受支持的视频模型`, 'video-unknown-model')
+    }
+    const result = await generateVideo(
+      { apiUrl: channel.apiUrl, apiKey: channel.apiKey, apiUrlFull: channel.apiUrlFull, protocol: channel.protocol } satisfies UpstreamConfig,
+      { ...request, upstream },
+      { ...signal === undefined ? {} : { signal }, family },
+    )
+    const entryId = randomUUID()
+    try {
+      const history = await appendVideoHistory({
+        id: entryId,
+        createdAt: Date.now(),
+        mode: request.mode,
+        model: request.model,
+        prompt: request.prompt,
+        aspectRatio: request.aspectRatio,
+        resolution: request.resolution,
+        seconds: request.seconds,
+        files: result.videos.map(video => ({
+          bytes: video.bytes,
+          mime: video.mime,
+          ...video.duration === undefined ? {} : { duration: video.duration },
+          ...video.poster === undefined ? {} : { poster: video.poster },
+          ...video.revisedPrompt === undefined ? {} : { revisedPrompt: video.revisedPrompt },
+        })),
+        ...request.refName === undefined ? {} : { refName: request.refName },
+        ...channel.id === undefined ? {} : { channelId: channel.id },
+        channel: channel.name,
+      })
+      // The engine's bytes are not serializable; hand back the stored URLs.
+      const stored = history.find(entry => entry.id === entryId)
+      return { videos: stored?.videos ?? [], history }
+    } catch (error) {
+      return {
+        videos: result.videos.map(video => ({ url: '', mime: video.mime, ...video.duration === undefined ? {} : { duration: video.duration } })),
+        historyError: error instanceof Error ? error.message : String(error),
+      }
+    }
   }
 
   async run(request: GenerateRequest, signal?: AbortSignal): Promise<GenerateResult> {

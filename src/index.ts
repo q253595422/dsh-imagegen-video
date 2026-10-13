@@ -374,6 +374,10 @@ export interface Config {
   promptApiKey?: string
   /** Chat model used to expand short image prompts. */
   promptModel?: string
+  /** Model alias selected by default for video generation. Empty uses the first video model. */
+  defaultVideoModel?: string
+  /** Allow Agents to submit and retrieve video-generation tasks. */
+  allowAgentVideoGeneration?: boolean
   /** Local root for generated/history/gallery/canvas images. Empty keeps the default under DSH_HOME. */
   localStoragePath?: string
   /** Sync saved images to an S3-compatible object store (COS / OSS / Qiniu S3 …). */
@@ -440,10 +444,18 @@ const configSchema = z.object({
       alias: z.string(),
       id: z.string(),
     })).default([]),
+    /** Video model catalog (alias → upstream id). Appended after `models` so
+     *  existing channels keep parsing unchanged: an absent list is empty. */
+    videoModels: z.array(z.object({
+      alias: z.string(),
+      id: z.string(),
+    })).default([]),
   })).default([]).volatile(),
   channelSecrets: z.dict(z.string().role('secret')).default({}).volatile(),
   defaultChannelId: z.string().default('').volatile(),
   defaultModel: z.string().default('').volatile(),
+  defaultVideoModel: z.string().default('').volatile(),
+  allowAgentVideoGeneration: z.boolean().default(true).volatile(),
   promptApiUrl: z.string().default('').volatile(),
   promptApiKey: z.string().role('secret').default('').volatile(),
   promptModel: z.string().default('').volatile(),
@@ -503,10 +515,10 @@ const DEFAULT_ALLOW_AGENT_IMAGE_GENERATION = true
 const SECTION_ORDER = 150
 
 /** Model-facing announcement: plugin presence, capabilities, and limits. */
-export const IMAGEGEN_GUIDANCE = '本机已安装 dsh-imagegen 插件（DSH AI 生图）：「设置 → 生图配置」，以及侧边栏「新会话 / 生图」工作台。能力：通过「渠道」对接 OpenAI 兼容图像生成 API（每个渠道 = 一个 API 端点 + 各自的模型目录），支持文生图（/images/generations）与图生图（/images/edits，上传参考图，grok-imagine 模型按官方 JSON image_url 协议发送，nanobanana 系列按 aspect_ratio / image_size 参数协议发送；seedream 系列统一走 /images/generations，参考图以 JSON image 数组发送；智谱 `glm-image` 使用官方 `/api/paas/v4/images/generations`，当前仅支持文生图；qwen-image 系列使用阿里云 DashScope 原生接口（api_url 填 https://dashscope.aliyuncs.com/api/v1，不支持 OpenAI 兼容模式，该渠道不可复用于提示词增强，尺寸自动映射为宽*高）。MiniMax `image-01` 使用 MiniMax 原生 `/image_generation` 接口（api_url 填 https://api.minimax.io/v1 或国内站 https://api.minimaxi.com/v1，支持 1:1/16:9/4:3/3:2/2:3/3:4/9:16/21:9 宽高比，一次最多 9 张；图生图为单张 subject_reference 主体参考（保持人物/主体一致，非像素级局部编辑）；其 /models 只列聊天模型，图片模型需用预设目录）。API 地址与密钥在 GUI 设置中按渠道配置，密钥仅存于本机设置文档；生成请求由本地宿主代理转发，结果以 base64 返回面板，可预览与下载。模型只能使用用户在各渠道配置目录中的模型；检测模型时会过滤聊天、Embedding 等非图片模型，但模型出现在 /models 中仍不等于其网关原生支持生图协议，遇到 Qwen、MiniMax、Gemini 等非 OpenAI 生图协议时应如实说明上游兼容性。可一键把满意的图片加入「画廊」。内置「提示词模板库」（面板提示词框左下角「模板库」按钮）：多来源标签页（精选案例库 / 沧河案例库 / 手绘模板库 / Prompt-Signal / GPT Image 2 案例库），内置多个社区库的数千条提示词案例，可搜索、筛选、收藏（星标，宿主持久化）与复用；在线来源可独立刷新并每 12 小时后台同步，手绘、Prompt-Signal 与 GPT Image 2 案例库使用随插件版本更新的固定快照。Agent 可直接调用 `generate_image` 提交文生图，也可用 `edit_image` 图生图；默认保持工具调用等待直到任务完成，完成图片显示在工具调用对应的左侧结果区域，模型收到状态和附件引用，不会额外伪造用户消息。用户也可以使用 `/edit_image <修改描述>`，命令会直接读取当前对话最近图片并调用插件图片模型，不经过对话模型的图片能力检查。若明确需要后台执行，可传 `wait_for_completion: false`，之后再用 `get_image_generation_task` 查询；不要反复轮询。限制：生成消耗上游 API 额度；图片内容由上游模型生成，可能不符合预期或包含不适宜内容；api_key 以明文存储在设置文档中；参考图会发送至所配置的 API 服务；模板库参考图首次加载需要访问对应来源站点（vibeui.top / gpt-image2.canghe.ai / cdn.jsdelivr.net / raw.githubusercontent.com / pbs.twimg.com / mosaic.fxtwitter.com）。用户提到「生图 / 绘画 / 生成图片 / 文生图 / 图生图 / 画廊 / 提示词模板」时即指本插件，请据此协作。无限画布的图片节点还有四个纯界面能力（标注局部改图：画框后挂一张跟随图片移动的提示词卡片、本地抠图去背景、按视觉模型拆分图层、为节点指定模型），它们由用户在画布上操作，Agent 无需也无法触发。无限画布现在还支持「技能」：任意图片/文本/文件节点（生成配置节点除外）的悬浮工具条或右键菜单都有「技能」入口，内置动作包括文本润色（polish.text，可指定 formal/casual/shorter/expand 或自定义指令）、图片描述（describe.image）、内容抽取（extract.content：文本/代码/OOXML/PDF 抽取为文本节点），以及重任务「图片转可编辑 PPT」（ppt.fromImages）；同时会列出本机 ~/.dsh/skills 下所有可被模型调用的技能（id 形如 skill:<名称>）。轻量技能直接调用「提示词增强」所配置的聊天模型；重任务技能会启动一个无头 DSH Agent 在本机执行真实流水线（读写文件、跑 CLI），可能持续数分钟到数十分钟并消耗较多额度，因此界面会先弹确认框。`image-to-editable-ppt` 需要用户自行安装该技能，并按它的文档配置 OCR Token 与图片后端，未安装时运行会返回可操作的 skill-missing 提示；底部 Dock 的「技能库」面板可以在线安装（粘贴仓库/压缩包/SKILL.md 链接，支持 GitHub、裸 git、raw 与 zip）或上传本地技能压缩包，也可以卸载，装好后宿主会热加载、无需重启。技能可以在 SKILL.md 旁边放 skill.config.json 声明自己需要的配置（字段 + apply 步骤：command 调技能自带 CLI、或写一份配置文件），技能库面板据此渲染「配置」表单并支持保存 / 保存并应用，密钥走设置脱敏存储、不会进入运行目录或提示词；已知技能（image-to-editable-ppt 的 editppt config）插件内置了配方，所以用户不需要手敲配置命令。文件节点支持拖拽或菜单上传任意文件（单文件 ≤50MB，脚本/可执行文件被拒绝），并在节点内直接预览内容：文本/代码/CSV/TSV/JSON 原文、XLSX 表格、DOCX/PPTX/ODT/ODS 抽取文本、ZIP 目录清单都由宿主解码成有限的预览数据返回，图片、PDF、音频、视频由宿主以 inline 响应（支持 HTTP Range，可拖动播放进度）交给浏览器渲染；双击节点或点悬浮工具条的「放大预览」会在全屏阅读器里显示全文并支持复制与下载，无法内联的二进制类型仍以下载方式提供（宿主以 application/octet-stream + attachment 返回，HTML/SVG 一类的标记永远不会内联渲染）。技能运行只产出节点与连线草稿，由浏览器端写入画布文档。相关设置在「设置 → 生图配置」的「无限画布技能」（总开关、是否允许重任务、技能白名单、重任务工作目录、超时分钟数、Agent 预设，并可一键检测技能环境）。'
+export const IMAGEGEN_GUIDANCE = '本机已安装 dsh-imagegen 插件（DSH AI 生图）：「设置 → 生图配置」，以及侧边栏「新会话 / 生图」工作台。能力：通过「渠道」对接 OpenAI 兼容图像生成 API（每个渠道 = 一个 API 端点 + 各自的模型目录），支持文生图（/images/generations）与图生图（/images/edits，上传参考图，grok-imagine 模型按官方 JSON image_url 协议发送，nanobanana 系列按 aspect_ratio / image_size 参数协议发送；seedream 系列统一走 /images/generations，参考图以 JSON image 数组发送；智谱 `glm-image` 使用官方 `/api/paas/v4/images/generations`，当前仅支持文生图；qwen-image 系列使用阿里云 DashScope 原生接口（api_url 填 https://dashscope.aliyuncs.com/api/v1，不支持 OpenAI 兼容模式，该渠道不可复用于提示词增强，尺寸自动映射为宽*高）。MiniMax `image-01` 使用 MiniMax 原生 `/image_generation` 接口（api_url 填 https://api.minimax.io/v1 或国内站 https://api.minimaxi.com/v1，支持 1:1/16:9/4:3/3:2/2:3/3:4/9:16/21:9 宽高比，一次最多 9 张；图生图为单张 subject_reference 主体参考（保持人物/主体一致，非像素级局部编辑）；其 /models 只列聊天模型，图片模型需用预设目录）。API 地址与密钥在 GUI 设置中按渠道配置，密钥仅存于本机设置文档；生成请求由本地宿主代理转发，结果以 base64 返回面板，可预览与下载。模型只能使用用户在各渠道配置目录中的模型；检测模型时会过滤聊天、Embedding 等非图片模型，但模型出现在 /models 中仍不等于其网关原生支持生图协议，遇到 Qwen、MiniMax、Gemini 等非 OpenAI 生图协议时应如实说明上游兼容性。可一键把满意的图片加入「画廊」。内置「提示词模板库」（面板提示词框左下角「模板库」按钮）：多来源标签页（精选案例库 / 沧河案例库 / 手绘模板库 / Prompt-Signal / GPT Image 2 案例库），内置多个社区库的数千条提示词案例，可搜索、筛选、收藏（星标，宿主持久化）与复用；在线来源可独立刷新并每 12 小时后台同步，手绘、Prompt-Signal 与 GPT Image 2 案例库使用随插件版本更新的固定快照。Agent 可直接调用 `generate_image` 提交文生图，也可用 `edit_image` 图生图；默认保持工具调用等待直到任务完成，完成图片显示在工具调用对应的左侧结果区域，模型收到状态和附件引用，不会额外伪造用户消息。用户也可以使用 `/edit_image <修改描述>`，命令会直接读取当前对话最近图片并调用插件图片模型，不经过对话模型的图片能力检查。若明确需要后台执行，可传 `wait_for_completion: false`，之后再用 `get_image_generation_task` 查询；不要反复轮询。限制：生成消耗上游 API 额度；图片内容由上游模型生成，可能不符合预期或包含不适宜内容；api_key 以明文存储在设置文档中；参考图会发送至所配置的 API 服务；模板库参考图首次加载需要访问对应来源站点（vibeui.top / gpt-image2.canghe.ai / cdn.jsdelivr.net / raw.githubusercontent.com / pbs.twimg.com / mosaic.fxtwitter.com）。用户提到「生图 / 绘画 / 生成图片 / 文生图 / 图生图 / 画廊 / 提示词模板」时即指本插件，请据此协作。插件同时支持 AI 生视频：在「设置 → 生图配置」的渠道里为渠道单独配置「视频模型」目录（与图片模型分开，因为视频走异步提交+轮询协议），面板「生视频」标签页可文生视频、图生视频、首尾帧与多参考图生成。视频按协议族适配：Agnes 视频模型（`agnes-video-*`，提交 POST /v1/videos，轮询 GET /v1/videos/{id}，取 metadata.url，支持 mode=text/keyframe/reference、seconds、size、seed）；算力萌 comemoe 模型（`wan2.2-t2v` 仅文生视频、`zhimeng-h3-local` 支持图生视频；提交响应为扁平结构、状态含官方文档未写的 `processing`、结果在顶层 `url`，aspect_ratio 仅接受 16:9/9:16/1:1，5 秒片子实测约 9 分钟）；其余视频模型按通用 OpenAI 兼容视频端点尽力适配。Agent 可直接调用 `generate_video` 提交视频生成（默认等待完成，完成视频以文件落盘并通过同源 URL 播放），也可传 `wait_for_completion: false` 后用 `get_video_generation_task` 查询；视频渲染通常需要数分钟，不要反复轮询。视频文件保存在本机数据目录的 videos/ 下，不占用对话上下文。无限画布的图片节点还有四个纯界面能力（标注局部改图：画框后挂一张跟随图片移动的提示词卡片、本地抠图去背景、按视觉模型拆分图层、为节点指定模型），它们由用户在画布上操作，Agent 无需也无法触发。无限画布现在还支持「技能」：任意图片/文本/文件节点（生成配置节点除外）的悬浮工具条或右键菜单都有「技能」入口，内置动作包括文本润色（polish.text，可指定 formal/casual/shorter/expand 或自定义指令）、图片描述（describe.image）、内容抽取（extract.content：文本/代码/OOXML/PDF 抽取为文本节点），以及重任务「图片转可编辑 PPT」（ppt.fromImages）；同时会列出本机 ~/.dsh/skills 下所有可被模型调用的技能（id 形如 skill:<名称>）。轻量技能直接调用「提示词增强」所配置的聊天模型；重任务技能会启动一个无头 DSH Agent 在本机执行真实流水线（读写文件、跑 CLI），可能持续数分钟到数十分钟并消耗较多额度，因此界面会先弹确认框。`image-to-editable-ppt` 需要用户自行安装该技能，并按它的文档配置 OCR Token 与图片后端，未安装时运行会返回可操作的 skill-missing 提示；底部 Dock 的「技能库」面板可以在线安装（粘贴仓库/压缩包/SKILL.md 链接，支持 GitHub、裸 git、raw 与 zip）或上传本地技能压缩包，也可以卸载，装好后宿主会热加载、无需重启。技能可以在 SKILL.md 旁边放 skill.config.json 声明自己需要的配置（字段 + apply 步骤：command 调技能自带 CLI、或写一份配置文件），技能库面板据此渲染「配置」表单并支持保存 / 保存并应用，密钥走设置脱敏存储、不会进入运行目录或提示词；已知技能（image-to-editable-ppt 的 editppt config）插件内置了配方，所以用户不需要手敲配置命令。文件节点支持拖拽或菜单上传任意文件（单文件 ≤50MB，脚本/可执行文件被拒绝），并在节点内直接预览内容：文本/代码/CSV/TSV/JSON 原文、XLSX 表格、DOCX/PPTX/ODT/ODS 抽取文本、ZIP 目录清单都由宿主解码成有限的预览数据返回，图片、PDF、音频、视频由宿主以 inline 响应（支持 HTTP Range，可拖动播放进度）交给浏览器渲染；双击节点或点悬浮工具条的「放大预览」会在全屏阅读器里显示全文并支持复制与下载，无法内联的二进制类型仍以下载方式提供（宿主以 application/octet-stream + attachment 返回，HTML/SVG 一类的标记永远不会内联渲染）。技能运行只产出节点与连线草稿，由浏览器端写入画布文档。相关设置在「设置 → 生图配置」的「无限画布技能」（总开关、是否允许重任务、技能白名单、重任务工作目录、超时分钟数、Agent 预设，并可一键检测技能环境）。'
 
 /** Append the live channel × model table so an Agent can honor user choices. */
-function guidanceFor(channels: RuntimeChannel[], defaultChannelId: string, defaultModel: string): string {
+function guidanceFor(channels: RuntimeChannel[], defaultChannelId: string, defaultModel: string, defaultVideoModel = ''): string {
   if (channels.length === 0) {
     return `${IMAGEGEN_GUIDANCE} 尚未配置任何渠道：请先打开「设置 → 生图配置」添加渠道并填写 API 地址与密钥。`
   }
@@ -515,12 +527,17 @@ function guidanceFor(channels: RuntimeChannel[], defaultChannelId: string, defau
     const mark = channel.id === defaultChannelId ? '（默认渠道）' : ''
     const key = channel.apiKey === '' ? '（未填密钥）' : ''
     const models = channel.models.length === 0 ? '未配置模型' : `可用模型：${aliases}`
-    return `渠道「${channel.name}」${mark}[${channel.apiUrl}] ${models}${key}`
+    const videoAliases = (channel.videoModels ?? []).map(model => model.alias).join('、')
+    const videos = (channel.videoModels ?? []).length === 0 ? '' : `；视频模型：${videoAliases}`
+    return `渠道「${channel.name}」${mark}[${channel.apiUrl}] ${models}${videos}${key}`
   }).join('；')
   const fallback = defaultModel === ''
     ? '未指定模型时若仅一个可用模型可直接生成，若有多个应先询问用户选择「渠道 + 模型」。'
     : `未指定模型时默认使用「${defaultModel}」。`
-  return `${IMAGEGEN_GUIDANCE} 当前渠道与模型：${table}。用户指定模型名时取该模型所属渠道（多渠道同名用默认渠道）；${fallback}`
+  const videoFallback = defaultVideoModel === ''
+    ? '视频模型未设默认，未指定时应先与用户确认。'
+    : `视频未指定模型时默认使用「${defaultVideoModel}」。`
+  return `${IMAGEGEN_GUIDANCE} 当前渠道与模型：${table}。用户指定模型名时取该模型所属渠道（多渠道同名用默认渠道）；${fallback}${videoFallback}`
 }
 
 /** Normalize raw channel entries into the wire shape (schema-adjacent guard). */
@@ -543,6 +560,17 @@ function normalizeChannels(value: unknown): ChannelConfig[] {
         models.push({ alias, id: upstream === '' ? alias : upstream })
       }
     }
+    const videoModels: ModelMapping[] = []
+    if (Array.isArray(raw.videoModels)) {
+      for (const entry of raw.videoModels) {
+        if (entry === null || typeof entry !== 'object') continue
+        const record = entry as Record<string, unknown>
+        const alias = typeof record.alias === 'string' ? record.alias.trim() : ''
+        const upstream = typeof record.id === 'string' ? record.id.trim() : ''
+        if (alias === '') continue
+        videoModels.push({ alias, id: upstream === '' ? alias : upstream })
+      }
+    }
     out.push({
       id,
       preset: typeof raw.preset === 'string' ? raw.preset : '',
@@ -553,6 +581,7 @@ function normalizeChannels(value: unknown): ChannelConfig[] {
       ...raw.auth === 'subscription' ? { auth: 'subscription' as const } : {},
       ...isSubscriptionProvider(raw.subscription) ? { subscription: raw.subscription } : {},
       models,
+      videoModels,
     })
   }
   return out
@@ -566,6 +595,10 @@ export interface EffectiveConfig {
   channels: RuntimeChannel[]
   defaultChannelId: string
   defaultModel: string
+  /** Model alias used when a video request does not name one. */
+  defaultVideoModel: string
+  /** Allow Agents to submit and retrieve video-generation tasks. */
+  allowAgentVideoGeneration: boolean
   promptApiUrl: string
   promptApiKey: string
   promptModel: string
@@ -653,16 +686,24 @@ export function apply(ctx: Context, config?: Config): (() => void) | void {
     const defaultModel = typeof value.defaultModel === 'string' && aliases.includes(value.defaultModel.trim())
       ? value.defaultModel.trim()
       : ''
+    // Video aliases are namespaced separately: a stale defaultVideoModel must
+    // not silently leak into the image path, and vice versa.
+    const videoAliases = [...new Set(named.flatMap(channel => (channel.videoModels ?? []).map(model => model.alias)))]
+    const defaultVideoModel = typeof value.defaultVideoModel === 'string' && videoAliases.includes(value.defaultVideoModel.trim())
+      ? value.defaultVideoModel.trim()
+      : ''
     return {
       enabled: value.enabled ?? DEFAULT_ENABLED,
       announceToAgent: value.announceToAgent ?? DEFAULT_ANNOUNCE,
       allowAgentImageGeneration: value.allowAgentImageGeneration ?? DEFAULT_ALLOW_AGENT_IMAGE_GENERATION,
+      allowAgentVideoGeneration: value.allowAgentVideoGeneration ?? true,
       channels: named.map(channel => ({
         ...channel,
         apiKey: typeof secrets[channel.id] === 'string' ? secrets[channel.id] : '',
       })),
       defaultChannelId,
       defaultModel,
+      defaultVideoModel,
       promptApiUrl: typeof value.promptApiUrl === 'string' ? value.promptApiUrl.trim() : '',
       promptApiKey: typeof value.promptApiKey === 'string' ? value.promptApiKey.trim() : '',
       promptModel: typeof value.promptModel === 'string' ? value.promptModel.trim() : '',
@@ -1106,7 +1147,7 @@ export function apply(ctx: Context, config?: Config): (() => void) | void {
     disposeSection = ctx.systemPrompt.section({
       name: 'plugin:dsh-imagegen',
       order: SECTION_ORDER,
-      text: guidanceFor(value.channels, value.defaultChannelId, value.defaultModel),
+      text: guidanceFor(value.channels, value.defaultChannelId, value.defaultModel, value.defaultVideoModel),
     })
   }
 

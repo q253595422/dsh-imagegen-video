@@ -6,6 +6,7 @@
  */
 
 import type { IncomingMessage, ServerResponse } from 'node:http'
+import { createReadStream } from 'node:fs'
 import { spawn } from 'node:child_process'
 import { mkdir as fsMkdir } from 'node:fs/promises'
 import { randomUUID } from 'node:crypto'
@@ -21,6 +22,7 @@ import { analyzeLayers, MAX_LAYER_IMAGE_BYTES } from './layer-analyzer.ts'
 import { normalizeImageModels } from './image-models.ts'
 import { ImageGenerationRuntime, type ChannelsView } from './generation-runtime.ts'
 import { appendHistory, clearHistory, listHistory, readHistoryImage, removeHistory } from './history-store.ts'
+import { clearVideoHistory, listVideoHistory, readVideoFile, removeVideoHistory } from './video-store.ts'
 import { appendGallery, clearGallery, listGallery, readGalleryImage, removeGallery, updateGalleryTags } from './gallery-store.ts'
 import { baseMime, canvasStore, CanvasConflictError, MAX_CANVAS_FILE_BYTES, mimeFromFileName, safeFileName, type CanvasFileInput, type CanvasImageInput, type CanvasStore } from './canvas-store.ts'
 import { buildFilePreview } from './file-preview.ts'
@@ -29,7 +31,7 @@ import { addTemplateFavorite, listTemplateFavorites, removeTemplateFavorite } fr
 import { testStorage, type StorageSyncConfig } from './storage-sync.ts'
 import { checkForUpdate, CURRENT_VERSION, installUpdate } from './updater.ts'
 import { IMAGE_PRESETS } from './presets.ts'
-import { AGENT_IMAGE_API, CANVAS_API, CANVAS_SKILL_API, CONVERSATION_IMAGE_API, DATA_FOLDER_API, DEFAULT_TEMPLATE_SOURCE_ID, GALLERY_API, GENERATE_API, HISTORY_API, IMAGEGEN_SETTINGS_NAMESPACE, IMAGE_MODEL_API, PRESETS_API, PROMPT_ENHANCE_API, SETTINGS_API, STORAGE_API, SUBSCRIPTION_API, SUBSCRIPTION_PROVIDERS, TASK_API, TEMPLATE_FAVORITES_API, TEMPLATES_API, UPDATE_API, USAGE_API, isChannelProtocolPreference, isTemplateSourceId, type CanvasAssetRef, type CanvasDocument, type CanvasSkillCatalog, type CanvasSkillConfigApplyRequest, type CanvasSkillConfigApplyResult, type CanvasSkillConfigSaveRequest, type CanvasSkillConfigSaveResult, type CanvasSkillInstallRequest, type CanvasSkillInstallResult, type CanvasSkillLibrary, type CanvasSkillRemoveResult, type CanvasSkillRunRequest, type CanvasSkillTask, type GeneratedImage, type GenerateRequest, type HistoryEntry, type HistoryEntryInput, type ModelMapping, type PresetProviderView, type TemplateFavorite, type TemplateListResult, type TemplateRefreshResult, type TemplateSample } from './protocol.ts'
+import { AGENT_IMAGE_API, CANVAS_API, CANVAS_SKILL_API, CONVERSATION_IMAGE_API, DATA_FOLDER_API, DEFAULT_TEMPLATE_SOURCE_ID, GALLERY_API, GENERATE_API, HISTORY_API, IMAGEGEN_SETTINGS_NAMESPACE, IMAGE_MODEL_API, PRESETS_API, PROMPT_ENHANCE_API, SETTINGS_API, STORAGE_API, SUBSCRIPTION_API, SUBSCRIPTION_PROVIDERS, TASK_API, TEMPLATE_FAVORITES_API, TEMPLATES_API, UPDATE_API, USAGE_API, VIDEO_API, isChannelProtocolPreference, isTemplateSourceId, type CanvasAssetRef, type CanvasDocument, type CanvasSkillCatalog, type CanvasSkillConfigApplyRequest, type CanvasSkillConfigApplyResult, type CanvasSkillConfigSaveRequest, type CanvasSkillConfigSaveResult, type CanvasSkillInstallRequest, type CanvasSkillInstallResult, type CanvasSkillLibrary, type CanvasSkillRemoveResult, type CanvasSkillRunRequest, type CanvasSkillTask, type GeneratedImage, type GenerateRequest, type HistoryEntry, type HistoryEntryInput, type ModelMapping, type PresetProviderView, type TemplateFavorite, type TemplateListResult, type TemplateRefreshResult, type TemplateSample, type VideoGenerateRequest, type VideoHistoryEntry } from './protocol.ts'
 
 /** Cap on JSON request bodies (settings ops and generate payloads are small). */
 const MAX_JSON_BODY_BYTES = 24 * 1024 * 1024
@@ -140,6 +142,17 @@ export interface ImageGenRoutesDeps {
   resolveStorage?: () => StorageSyncConfig
   /** Shared host queue, used by Agent tools and browser task endpoints. */
   runtime?: ImageGenerationRuntime
+  /**
+   * Overrideable video backend, primarily for host integration tests. The
+   * route layer drives the same code path in production; only the store is
+   * injectable so a test can assert persisted shapes without touching disk.
+   */
+  video?: {
+    list: () => Promise<VideoHistoryEntry[]>
+    remove: (id: string) => Promise<VideoHistoryEntry[]>
+    clear: () => Promise<VideoHistoryEntry[]>
+    readFile: (file: string) => Promise<{ path: string; size: number; mime: string } | undefined>
+  }
   /** Subscription login/status manager; absent on hosts without Credentials. */
   subscriptions?: SubscriptionManager
   /**
@@ -363,6 +376,60 @@ function parseCanvasMeta(value: unknown): GenerateRequest['canvas'] {
   }
 }
 
+/** Stable wire code for a thrown video error. */
+function videoCodeOf(error: unknown): string {
+  if (error !== null && typeof error === 'object' && 'code' in error) {
+    const code = (error as { code?: unknown }).code
+    if (typeof code === 'string' && code !== '') return code
+  }
+  return 'video-failed'
+}
+
+/**
+ * Validate a submitted video request.
+ *
+ * The model alias is resolved against the configured video catalogs here, at
+ * the wire boundary, so the engine only ever sees a model it can classify.
+ * The channel id is filled in for the history snapshot the same way the image
+ * path does it.
+ */
+function parseVideoRequest(
+  body: Record<string, unknown>,
+  view: ChannelsView,
+  deps: ImageGenRoutesDeps,
+): VideoGenerateRequest | undefined {
+  const prompt = typeof body.prompt === 'string' ? body.prompt.trim() : ''
+  if (prompt === '') return undefined
+  const mode = body.mode === 'image' || body.mode === 'keyframe' || body.mode === 'reference' ? body.mode : 'text'
+  const model = typeof body.model === 'string' ? body.model.trim() : ''
+  const seconds = typeof body.seconds === 'number' ? body.seconds : Number(body.seconds ?? 5)
+  const resolution = typeof body.resolution === 'string' && body.resolution.trim() !== '' ? body.resolution.trim() : '720P'
+  const images = Array.isArray(body.images)
+    ? body.images.filter((item): item is string => typeof item === 'string' && item !== '').slice(0, 4)
+    : []
+  // Name the channel that owns the alias, so usage/status views can group it
+  // even when the user later deletes the channel.
+  const channel = deps.resolveChannels === undefined
+    ? undefined
+    : view.channels.find(candidate => (candidate.videoModels ?? []).some(row => row.alias === model))
+  return {
+    mode,
+    model,
+    prompt,
+    aspectRatio: typeof body.aspectRatio === 'string' && body.aspectRatio.trim() !== '' ? body.aspectRatio.trim() : '16:9',
+    resolution: (resolution === '480P' || resolution === '720P' || resolution === '1080P' ? resolution : '720P'),
+    seconds: Number.isFinite(seconds) ? seconds : 5,
+    ...typeof body.image === 'string' && body.image !== '' ? { image: body.image } : {},
+    ...images.length > 0 ? { images } : {},
+    ...typeof body.firstFrame === 'string' && body.firstFrame !== '' ? { firstFrame: body.firstFrame } : {},
+    ...typeof body.lastFrame === 'string' && body.lastFrame !== '' ? { lastFrame: body.lastFrame } : {},
+    ...typeof body.refName === 'string' && body.refName !== '' ? { refName: body.refName } : {},
+    ...typeof body.channelId === 'string' && body.channelId !== '' ? { channelId: body.channelId } : {},
+    ...channel === undefined ? {} : { channel: channel.name },
+    ...typeof body.seed === 'number' && Number.isFinite(body.seed) ? { seed: body.seed } : {},
+  }
+}
+
 /** Validate a submitted history entry (images carry base64). */
 function parseHistoryEntryInput(body: Record<string, unknown>): HistoryEntryInput | undefined {
   const raw = body.entry
@@ -530,6 +597,12 @@ export function makeRoutes(deps: ImageGenRoutesDeps): WebRoute[] {
     list: listTemplateFavorites,
     add: addTemplateFavorite,
     remove: removeTemplateFavorite,
+  }
+  const video: NonNullable<ImageGenRoutesDeps['video']> = deps.video ?? {
+    list: listVideoHistory,
+    remove: removeVideoHistory,
+    clear: clearVideoHistory,
+    readFile: readVideoFile,
   }
   const resolvePrompt = deps.resolvePrompt ?? (() => ({ apiUrl: '', apiKey: '', model: '' }))
   const resolveImageModels = deps.resolveImageModels ?? (() => normalizeImageModels(undefined))
@@ -1863,6 +1936,174 @@ export function makeRoutes(deps: ImageGenRoutesDeps): WebRoute[] {
         } catch (error) {
           writeJson(res, 200, { ok: false, code: 'data-folder-failed', message: messageOf(error) })
         }
+      },
+    },
+    // ============================================================ video family
+    //
+    // Video is asynchronous upstream (submit → poll → download), so it keeps
+    // its own endpoints instead of the synchronous image generate route. The
+    // finished clip is persisted host-side and served from `VIDEO_API.file`;
+    // no response in this family ever carries video bytes.
+    {
+      kind: 'exact',
+      path: VIDEO_API.generate,
+      handler: async (req, res) => {
+        if (!guard(req, res, 'POST')) return
+        const body = await readJsonBody(req)
+        const parsed = body === undefined ? undefined : parseVideoRequest(body, channelViewOf(), deps)
+        if (parsed === undefined) {
+          writeJson(res, 200, { ok: false, code: 'bad-request', message: 'prompt is required' })
+          return
+        }
+        const runtime = deps.runtime
+        if (runtime === undefined) {
+          writeJson(res, 200, { ok: false, code: 'video-unavailable', message: '当前宿主未挂载生成运行时' })
+          return
+        }
+        try {
+          writeJson(res, 200, { ok: true, ...await runtime.runVideo(parsed) })
+        } catch (error) {
+          writeJson(res, 200, { ok: false, code: videoCodeOf(error), message: messageOf(error) })
+        }
+      },
+    },
+    {
+      kind: 'exact', path: VIDEO_API.submit,
+      handler: async (req, res) => {
+        if (!guard(req, res, 'POST')) return
+        const body = await readJsonBody(req)
+        const parsed = body === undefined ? undefined : parseVideoRequest(body, channelViewOf(), deps)
+        if (parsed === undefined) { writeJson(res, 200, { ok: false, code: 'bad-request', message: 'prompt is required' }); return }
+        const runtime = deps.runtime
+        if (runtime === undefined) { writeJson(res, 200, { ok: false, code: 'video-unavailable', message: '当前宿主未挂载生成运行时' }); return }
+        // VideoTaskSummary omits `result`; submit returns the queued summary.
+        writeJson(res, 200, { ok: true, task: runtime.videoQueue.submit(parsed) })
+      },
+    },
+    {
+      kind: 'exact', path: VIDEO_API.list,
+      handler: async (req, res) => {
+        if (!guard(req, res, 'POST')) return
+        const runtime = deps.runtime
+        if (runtime === undefined) { writeJson(res, 200, { ok: true, tasks: [] }); return }
+        writeJson(res, 200, { ok: true, tasks: runtime.videoQueue.summaries() })
+      },
+    },
+    {
+      kind: 'exact', path: VIDEO_API.get,
+      handler: async (req, res) => {
+        if (!guard(req, res, 'POST')) return
+        const body = await readJsonBody(req)
+        const task = typeof body?.id === 'string' ? deps.runtime?.videoQueue.get(body.id) : undefined
+        if (task === undefined) { writeJson(res, 200, { ok: false, code: 'not-found', message: 'task not found' }); return }
+        writeJson(res, 200, { ok: true, task })
+      },
+    },
+    {
+      kind: 'exact', path: VIDEO_API.cancel,
+      handler: async (req, res) => {
+        if (!guard(req, res, 'POST')) return
+        const body = await readJsonBody(req)
+        const task = typeof body?.id === 'string' ? deps.runtime?.videoQueue.cancel(body.id) : undefined
+        if (task === undefined) { writeJson(res, 200, { ok: false, code: 'not-found', message: 'task not found' }); return }
+        writeJson(res, 200, { ok: true, task })
+      },
+    },
+    {
+      kind: 'exact', path: VIDEO_API.retry,
+      handler: async (req, res) => {
+        if (!guard(req, res, 'POST')) return
+        const body = await readJsonBody(req)
+        const task = typeof body?.id === 'string' ? deps.runtime?.videoQueue.retry(body.id) : undefined
+        if (task === undefined) { writeJson(res, 200, { ok: false, code: 'not-found', message: 'task not found' }); return }
+        writeJson(res, 200, { ok: true, task })
+      },
+    },
+    // ------------------------------------------------ video history (metadata)
+    {
+      kind: 'exact',
+      path: VIDEO_API.historyList,
+      handler: async (req, res) => {
+        if (!guard(req, res, 'POST')) return
+        try {
+          writeJson(res, 200, { ok: true, entries: await video.list() })
+        } catch (error) {
+          writeJson(res, 200, { ok: false, code: 'video-history-failed', message: messageOf(error) })
+        }
+      },
+    },
+    {
+      kind: 'exact',
+      path: VIDEO_API.historyRemove,
+      handler: async (req, res) => {
+        if (!guard(req, res, 'POST')) return
+        const body = await readJsonBody(req)
+        if (typeof body?.id !== 'string' || body.id === '') {
+          writeJson(res, 200, { ok: false, code: 'bad-request', message: 'id is required' })
+          return
+        }
+        try {
+          writeJson(res, 200, { ok: true, entries: await video.remove(body.id) })
+        } catch (error) {
+          writeJson(res, 200, { ok: false, code: 'video-history-failed', message: messageOf(error) })
+        }
+      },
+    },
+    {
+      kind: 'exact',
+      path: VIDEO_API.historyClear,
+      handler: async (req, res) => {
+        if (!guard(req, res, 'POST')) return
+        try {
+          writeJson(res, 200, { ok: true, entries: await video.clear() })
+        } catch (error) {
+          writeJson(res, 200, { ok: false, code: 'video-history-failed', message: messageOf(error) })
+        }
+      },
+    },
+    // --------------------------------------------------- video file (prefix)
+    //
+    // Serves one stored clip. Range responses are mandatory here rather than a
+    // nicety: without 206 the <video> element cannot seek, and a long clip
+    // would have to be downloaded twice to scrub.
+    {
+      kind: 'prefix',
+      path: VIDEO_API.file,
+      handler: async (req, res) => {
+        if (!isLoopbackRequest(req)) {
+          writeJson(res, 403, { error: 'forbidden: loopback-only' })
+          return
+        }
+        if (req.method !== 'GET' && req.method !== 'HEAD') {
+          writeJson(res, 405, { error: `method not allowed: ${req.method}` })
+          return
+        }
+        const file = imageFileFrom(req.url, VIDEO_API.file)
+        const found = file === undefined ? undefined : await video.readFile(file)
+        if (found === undefined) {
+          writeJson(res, 404, { error: 'not found' })
+          return
+        }
+        const headers: Record<string, string | number> = {
+          'content-type': found.mime,
+          'cache-control': 'private, max-age=3600',
+          'x-content-type-options': 'nosniff',
+          'accept-ranges': 'bytes',
+        }
+        const range = parseByteRange(req.headers.range, found.size)
+        if (range !== undefined) {
+          res.writeHead(206, {
+            ...headers,
+            'content-range': `bytes ${range.start}-${range.end}/${found.size}`,
+            'content-length': range.end - range.start + 1,
+          })
+          if (req.method === 'HEAD') { res.end(); return }
+          createReadStream(found.path, { start: range.start, end: range.end }).pipe(res)
+          return
+        }
+        res.writeHead(200, { ...headers, 'content-length': found.size })
+        if (req.method === 'HEAD') { res.end(); return }
+        createReadStream(found.path).pipe(res)
       },
     },
     // ------------------------------------------------- storage: probe upload

@@ -147,9 +147,13 @@ export const VIDEO_API = {
   get: '/api/dsh-imagegen/video/tasks/get',
   cancel: '/api/dsh-imagegen/video/tasks/cancel',
   retry: '/api/dsh-imagegen/video/tasks/retry',
-  /** Persisted video history (list / append / remove / clear). */
+  /**
+   * Persisted video history. There is deliberately no `append` endpoint: the
+   * host owns the clip bytes, so the runtime persists a finished video itself.
+   * A client can never submit video content, which keeps the store free of
+   * client-supplied binaries.
+   */
   historyList: '/api/dsh-imagegen/video/history/list',
-  historyAppend: '/api/dsh-imagegen/video/history/append',
   historyRemove: '/api/dsh-imagegen/video/history/remove',
   historyClear: '/api/dsh-imagegen/video/history/clear',
   /** Prefix route serving one stored clip: `${file}/<file>`. */
@@ -1201,6 +1205,13 @@ export interface ChannelConfig {
   subscription?: SubscriptionProvider
   /** The channel's model catalog (alias → upstream id). */
   models: ModelMapping[]
+  /**
+   * The channel's video model catalog (alias → upstream id). Kept separate from
+   * `models` because video models speak the async submit/poll contract rather
+   * than the synchronous image one, so the two lists route differently. Absent
+   * on channels configured before video support: an absent list is empty.
+   */
+  videoModels?: ModelMapping[]
 }
 
 /** One built-in provider as the settings card consumes it. */
