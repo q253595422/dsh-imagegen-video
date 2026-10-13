@@ -8,7 +8,7 @@
  * a platform module) so the studio matches the dsh shell look by construction.
  */
 
-import { useEffect, useRef, useState, type CSSProperties, type PointerEvent as ReactPointerEvent } from 'react'
+import { useEffect, useMemo, useRef, useState, type CSSProperties, type PointerEvent as ReactPointerEvent } from 'react'
 import { createPortal } from 'react-dom'
 import { Button, Pill } from '@deepseek-ai/dsh-client-ui-primitives'
 import type { SessionId } from '@deepseek-ai/dsh-api-remotes/client'
@@ -24,10 +24,10 @@ import { InspirationGallery } from './InspirationGallery.tsx'
 import { CanvasWorkspace } from './CanvasWorkspace.tsx'
 import { ModelPicker, resolveModelChoice, type ModelPickerValue } from './ModelPicker.tsx'
 import { useImageGenLanguageTick } from './use-language.ts'
-import type { EcommerceRefRole, GeneratedImage, GenerateMode, GenerateRequest, GenerationTask, GenerationTaskStatus, GenerationTaskSummary, HistoryEntry, HistoryImageRef, ProductSetDraft, ProductSetSlot, UpdateInfo } from '../protocol.ts'
+import type {  EcommerceRefRole, GenerateMode, GenerateRequest, GeneratedImage, GenerationTask, GenerationTaskStatus, GenerationTaskSummary, HistoryEntry, HistoryImageRef, ProductSetDraft, ProductSetSlot, UpdateInfo, VideoTaskSummary  } from '../protocol.ts'
 import { AGENT_IMAGE_API, SUBSCRIPTION_API, SUBSCRIPTION_PROVIDERS, type SubscriptionProvider } from '../protocol.ts'
 import type { ImageGenConfig, ImageGenScope, ImageModelGroup } from './settings-scope.ts'
-import { imageModelOptions } from './settings-scope.ts'
+import { imageModelOptions, videoModelOptions } from './settings-scope.ts'
 import { VideoPanel } from './VideoPanel.tsx'
 import { describeModel, promptCharLimit } from '../model-catalog.ts'
 import {
@@ -550,6 +550,9 @@ export function ImageGenPanel(props: {
   // Channel-aware model options: every selector keeps the owning channel so
   // repeated aliases can never route through the wrong endpoint.
   const modelOptions = imageModelOptions(config)
+  // Video choices for the canvas composer: derived from the channels' video
+  // catalogs, which are configured separately from the image model list.
+  const videoOptions = useMemo(() => videoModelOptions(config), [config])
   const imageModels = modelOptions.models
   const modelGroups: ImageModelGroup[] = modelOptions.groups
   const defaultChannelId = modelOptions.defaultChannelId
@@ -688,6 +691,9 @@ export function ImageGenPanel(props: {
   const updateAreaRef = useRef<HTMLSpanElement>(null)
   const [libraryOpen, setLibraryOpen] = useState(false)
   const [tasks, setTasks] = useState<GenerationTask[]>([])
+  // Video queue summaries, polled here so both the video tab and the canvas see
+  // one source of truth (the canvas matches its placeholder nodes by task id).
+  const [videoTasks, setVideoTasks] = useState<VideoTaskSummary[]>([])
   const tasksRef = useRef<GenerationTask[]>([])
   const initialDataRequestedRef = useRef(false)
   const taskPollStartedAtRef = useRef(Date.now())
@@ -975,6 +981,21 @@ export function ImageGenPanel(props: {
     const timer = window.setInterval(refresh, 1500)
     return () => { disposed = true; window.clearInterval(timer) }
   }, [api, comparison])
+
+  // Poll the video queue. Video renders take minutes, so this ticks slowly; the
+  // summaries carry the finished clip, which both the video tab and the canvas
+  // consume (the canvas matches its placeholder nodes by task id).
+  useEffect(() => {
+    let disposed = false
+    const refresh = (): void => {
+      void api.videoTaskList()
+        .then(next => { if (!disposed) setVideoTasks(next) })
+        .catch(() => { /* a transient host error must not stop the loop */ })
+    }
+    refresh()
+    const timer = window.setInterval(refresh, 5000)
+    return () => { disposed = true; window.clearInterval(timer) }
+  }, [api])
 
   // Release checks are host-mediated and intentionally best-effort: a GitHub
   // outage must never make the image-generation studio unavailable. The host
@@ -2737,6 +2758,8 @@ export function ImageGenPanel(props: {
               history={history}
               gallery={gallery}
               tasks={tasks}
+              videoGroups={videoOptions.groups}
+              videoTasks={videoTasks}
               importRequest={canvasImportRequest}
               onImportRequestHandled={() => { setCanvasImportRequest(undefined) }}
               onOpenSettings={(kind = 'generation') => { openSettingsGuide(kind) }}
@@ -2746,7 +2769,7 @@ export function ImageGenPanel(props: {
           {/* -------------------------------------------------- video studio */}
           {isVideo ? (
             <section className={css.canvas} data-video="true">
-              <VideoPanel api={api} scope={scope} config={config} active={active && tab === 'video'} />
+              <VideoPanel api={api} scope={scope} config={config} active={active && tab === 'video'} tasks={videoTasks} />
             </section>
           ) : null}
 

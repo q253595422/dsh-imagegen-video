@@ -483,7 +483,7 @@ export interface VideoGenerateRequest {
   /** Deterministic seed, when the provider accepts one. */
   seed?: number
   /** Optional canvas lineage metadata (which canvas started this video). */
-  canvas?: CanvasTaskMeta
+  canvas?: CanvasVideoTaskMeta
 }
 
 /**
@@ -585,6 +585,12 @@ export interface VideoTaskSummary extends Omit<VideoTask, 'result'> {
    * trip through the history list to learn the clip's shape.
    */
   resultVideo?: VideoHistoryFile
+  /**
+   * The video-history entry this task produced, when it persisted one. The
+   * canvas records it on the node so "add to gallery" can name the entry
+   * without searching the history list.
+   */
+  resultEntryId?: string
 }
 
 /** Origin information carried by a generation started from the canvas. */

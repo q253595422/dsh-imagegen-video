@@ -2815,3 +2815,52 @@
 
 .fileOverlayBody .fileTableWrap { padding: 10px; }
 
+
+/* --- video nodes and the composer's video kind ----------------------------- */
+
+/* The composer's image/video switch: a compact segmented control that sits
+   ahead of the per-kind selects. */
+.composerKind {
+  display: inline-flex;
+  gap: 2px;
+  padding: 2px;
+  border: 1px solid var(--dsw-alias-border-l1);
+  border-radius: 8px;
+  background: var(--dsw-alias-bg-layer-2);
+}
+
+.composerKind button {
+  height: 24px;
+  padding: 0 10px;
+  border: none;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--dsw-alias-label-secondary);
+  font-family: inherit;
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.composerKind button:hover {
+  color: var(--dsw-alias-label-primary);
+  background: var(--dsw-alias-interactive-bg-hover);
+}
+
+.composerKind button[data-active] {
+  background: var(--dsw-alias-bg-layer-1);
+  color: var(--dsw-alias-brand-primary);
+}
+
+/* The clip fills the node body; `object-fit` keeps the aspect ratio honest when
+   the node box has been resized by hand. */
+.fileBody[data-video-body] .fileVideo {
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+  background: #000;
+}
+
+.imageFooter[data-video-footer] .imageFooterSize {
+  color: var(--dsw-alias-label-tertiary);
+}

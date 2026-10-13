@@ -12,7 +12,8 @@ import {
   Layers, Map as MapIcon, Maximize, Maximize2, MousePointer2, Palette, Pencil, Plus, Redo2, Scissors, SendHorizonal, Sparkles, Star,
   SquareDashedMousePointer, Trash2, Type, Undo2, Upload, Wand2, Wallpaper, X,
 } from 'lucide-react'
-import type { CanvasAnnotation, CanvasAssetRef, CanvasConnection, CanvasDocument, CanvasFileKind, CanvasLayerInfo, CanvasLayerPlanItem, CanvasNode, CanvasRect, CanvasVideoRef, CanvasSkillConfigApplyResult, CanvasSkillConfigField, CanvasSkillConfigSaveResult, CanvasSkillConfigStep, CanvasSkillConfigView, CanvasSkillDescriptor, CanvasSkillLibrary, CanvasSkillOutput, CanvasSkillRunRequest, CanvasSkillTask, CanvasSketchStroke, GenerateRequest, GenerationTask, HistoryEntry } from '../protocol.ts'
+import type { CanvasAnnotation, CanvasAssetRef, CanvasConnection, CanvasDocument, CanvasFileKind, CanvasLayerInfo, CanvasLayerPlanItem, CanvasNode, CanvasRect, CanvasVideoRef, CanvasSkillConfigApplyResult, CanvasSkillConfigField, CanvasSkillConfigSaveResult, CanvasSkillConfigStep, CanvasSkillConfigView, CanvasSkillDescriptor, CanvasSkillLibrary, CanvasSkillOutput, CanvasSkillRunRequest, CanvasSkillTask, CanvasSketchStroke, GenerateRequest, GenerationTask, HistoryEntry, VideoGenerateRequest, VideoTaskSummary, VideoMode, VideoResolution } from '../protocol.ts'
+import { VIDEO_DURATIONS } from '../protocol.ts'
 import type { ImageGenApi } from './api.ts'
 import { errorMessage, tt } from './helpers.ts'
 import type { ImageGenKey } from './locales.ts'
@@ -78,6 +79,10 @@ interface CanvasWorkspaceProps {
   history: HistoryEntry[]
   gallery: HistoryEntry[]
   tasks: GenerationTask[]
+  /** Video model choices per channel (empty when no channel has video models). */
+  videoGroups?: ImageModelGroup[]
+  /** Video queue summaries, so video nodes can resolve their pending renders. */
+  videoTasks?: VideoTaskSummary[]
   importRequest?: { source: 'history' | 'gallery'; entryId: string; imageIndex: number }
   onImportRequestHandled?: () => void
   onOpenSettings?: (kind?: 'generation' | 'enhancement') => void
@@ -1157,7 +1162,7 @@ function ComposerSelect(props: {
 }
 
 export function CanvasWorkspace(props: CanvasWorkspaceProps): React.JSX.Element {
-  const { api, modelGroups, defaultChannelId, connected, connectedChannelIds, promptReady = connected, history, gallery, tasks, importRequest, onImportRequestHandled, onOpenSettings } = props
+  const { api, modelGroups, defaultChannelId, connected, connectedChannelIds, promptReady = connected, history, gallery, tasks, videoGroups, videoTasks, importRequest, onImportRequestHandled, onOpenSettings } = props
   const [projects, setProjects] = useState<ProjectSummary[]>([])
   const [document, setDocument] = useState<CanvasDocument | null>(null)
   const [selectedIds, setSelectedIds] = useState<Set<string>>(() => new Set())
@@ -1352,11 +1357,35 @@ export function CanvasWorkspace(props: CanvasWorkspaceProps): React.JSX.Element 
   const [composerQuality, setComposerQuality] = useState('auto')
   const [composerCount, setComposerCount] = useState(1)
   const [composerBusy, setComposerBusy] = useState(false)
+  // Video composer: the canvas shares one composer between images and clips, so
+  // these hold the clip-side choices while `composerKind` picks which path the
+  // send button takes.
+  const [composerKind, setComposerKind] = useState<'image' | 'video'>('image')
+  const [composerVideoModel, setComposerVideoModel] = useState('')
+  const [composerVideoChannelId, setComposerVideoChannelId] = useState('')
+  const [composerVideoMode, setComposerVideoMode] = useState<VideoMode>('text')
+  const [composerAspect, setComposerAspect] = useState('16:9')
+  const [composerSeconds, setComposerSeconds] = useState(5)
+  const [composerResolution, setComposerResolution] = useState<VideoResolution>('720P')
   const channelIsConnected = useCallback((channelId: string): boolean => {
     if (connectedChannelIds !== undefined && channelId !== '') return connectedChannelIds.has(channelId)
     return connected
   }, [connected, connectedChannelIds])
   const composerChannelConnected = channelIsConnected(composerChannelId)
+  const composerVideoConnected = composerVideoChannelId === '' || channelIsConnected(composerVideoChannelId)
+  const videoModelCount = (videoGroups ?? []).reduce((total, group) => total + group.models.length, 0)
+  // Keep the video model valid as channels change (a catalog can be emptied
+  // while the canvas stays open).
+  const videoGroupsKey = (videoGroups ?? []).map(group => `${group.id}:${group.models.join(',')}`).join('|')
+  useEffect(() => {
+    const groups = videoGroups ?? []
+    if (groups.length === 0) { if (composerVideoModel !== '') setComposerVideoModel(''); return }
+    const choice = resolveModelChoice(groups, { channelId: composerVideoChannelId, model: composerVideoModel }, defaultChannelId)
+    if (choice.model !== composerVideoModel || choice.channelId !== composerVideoChannelId) {
+      setComposerVideoChannelId(choice.channelId)
+      setComposerVideoModel(choice.model)
+    }
+  }, [videoGroupsKey, defaultChannelId])
 
   const rootRef = useRef<HTMLElement>(null)
   const viewportRef = useRef<HTMLDivElement>(null)
@@ -1372,6 +1401,10 @@ export function CanvasWorkspace(props: CanvasWorkspaceProps): React.JSX.Element 
   const processedTasks = useRef(new Set<string>())
   const processedImport = useRef('')
   const localTaskIds = useRef(new Set<string>())
+  /** Video tasks this canvas submitted (so a stale poll cannot claim them). */
+  const localVideoTaskIds = useRef(new Set<string>())
+  /** Video tasks this canvas already resolved into a node. */
+  const processedVideoTasks = useRef(new Set<string>())
   const mountedAtRef = useRef(Date.now())
   const internalClipboard = useRef<{ nodes: CanvasNode[]; connections: Array<{ fromNodeId: string; toNodeId: string }> } | null>(null)
   const pastRef = useRef<string[]>([])
@@ -2568,6 +2601,109 @@ export function CanvasWorkspace(props: CanvasWorkspaceProps): React.JSX.Element 
   }, [api, mutate, onOpenSettings, promptReady, withNodeBusy])
 
 
+  // ------------------------------------------------------------- video runs
+
+  /**
+   * Submit one video generation for the composer's target config node.
+   *
+   * The clip is produced by the host (async render) and referenced by URL, so
+   * this only creates a *placeholder* video node carrying the task id; the
+   * polling effect below fills it once the render settles.
+   */
+  const submitVideoComposer = useCallback(async (target: CanvasNode | null): Promise<void> => {
+    const current = documentRef.current
+    if (current === null || composerBusy) return
+    if (!composerChannelConnected) { setError(tt('canvas.needApi')); onOpenSettings?.(); return }
+    const groups = videoGroups ?? []
+    if (groups.length === 0) { setError(tt('canvas.videoNoModel')); onOpenSettings?.(); return }
+    const inputs = target === null ? [] : upstreamNodes(current, target.id)
+    const referenceImages = inputs.filter(node => node.type === 'image' && usableAsset(node) !== undefined)
+    const upstreamText = inputs
+      .filter(node => node.type === 'text' && nodeMetadata(node).annotation === undefined && (nodeMetadata(node).text ?? '').trim() !== '')
+      .map(node => nodeMetadata(node).text!.trim())
+    setComposerBusy(true)
+    try {
+      const prompt = composerPrompt.trim() !== '' ? composerPrompt.trim() : upstreamText.join('\n')
+      if (prompt === '') { setError(tt('canvas.videoNeedPrompt')); return }
+      // Resolve the video model against the video catalogs (not the image ones):
+      // a video alias only exists in `videoModels`.
+      const choice = resolveModelChoice(groups, { channelId: composerVideoChannelId, model: composerVideoModel }, defaultChannelId)
+      const model = choice.model
+      if (model === '') { setError(tt('canvas.videoNeedModel')); return }
+      // The mode decides which references travel. Derive the frame inputs from
+      // what is actually connected so the graph, not a dropdown, is the source
+      // of truth.
+      const mode: VideoMode = referenceImages.length === 0
+        ? 'text'
+        : referenceImages.length >= 2
+          ? 'keyframe'
+          : 'image'
+      if (composerVideoMode === 'image' && referenceImages.length === 0) { setError(tt('canvas.videoNeedReference')); return }
+      if (composerVideoMode === 'keyframe' && referenceImages.length === 0) { setError(tt('canvas.videoNeedKeyframes')); return }
+      const effective = referenceImages.length === 0 ? 'text' : composerVideoMode
+      const frames: { image?: string; firstFrame?: string; lastFrame?: string; refName?: string } = {}
+      if (effective === 'keyframe') {
+        const first = referenceImages[0] !== undefined ? usableAsset(referenceImages[0]!) : undefined
+        const last = referenceImages[1] !== undefined ? usableAsset(referenceImages[1]!) : undefined
+        if (first === undefined) { setError(tt('canvas.videoNeedKeyframes')); return }
+        frames.firstFrame = await assetToDataUrl(first)
+        if (last !== undefined) frames.lastFrame = await assetToDataUrl(last)
+      } else if (effective === 'image') {
+        const base = referenceImages[0] !== undefined ? usableAsset(referenceImages[0]!) : undefined
+        if (base === undefined) { setError(tt('canvas.videoNeedReference')); return }
+        frames.image = await assetToDataUrl(base)
+        frames.refName = 'canvas-reference.png'
+      }
+      const footprint = nodeSizeFromRatio(composerAspect === '9:16' ? '9:16' : composerAspect === '1:1' ? '1:1' : '16:9', IMAGE_NODE_SIZE)
+      const placeholderId = newId('node')
+      const request: VideoGenerateRequest = {
+        mode: effective,
+        model,
+        prompt,
+        aspectRatio: composerAspect,
+        resolution: composerResolution,
+        seconds: composerSeconds,
+        ...(choice.channelId === '' ? {} : { channelId: choice.channelId }),
+        ...frames,
+        canvas: {
+          canvasId: current.id,
+          ...(target === null ? {} : { sourceNodeId: target.id }),
+          nodeId: placeholderId,
+          ...(referenceImages.length === 0 ? {} : { referenceNodeIds: referenceImages.map(node => node.id) }),
+        },
+      }
+      const task = await api.videoTaskSubmit(request)
+      localVideoTaskIds.current.add(task.id)
+      mutate(previous => {
+        const nodes = [...previous.nodes]
+        const connections = [...previous.connections]
+        const anchor = target !== null ? previous.nodes.find(node => node.id === target.id) : undefined
+        const originX = anchor !== undefined ? anchor.x + anchor.width + 80 : Math.round(canvasCenter().x - footprint.width / 2)
+        const originY = anchor !== undefined ? anchor.y : Math.round(canvasCenter().y - footprint.height / 2)
+        nodes.push({
+          id: placeholderId, type: 'video', title: tt('canvas.videoNode'),
+          x: Math.round(originX), y: Math.round(originY),
+          width: footprint.width, height: footprint.height,
+          metadata: {
+            status: 'generating', taskId: task.id,
+            prompt, model, videoMode: effective,
+            aspectRatio: composerAspect, seconds: composerSeconds, resolution: composerResolution,
+            ...(choice.channelId === '' ? {} : { channelId: choice.channelId }),
+            ...(referenceImages.length === 0 ? {} : { sourceNodeId: referenceImages[0]!.id }),
+          },
+        })
+        if (anchor !== undefined) connections.push({ id: newId('edge'), fromNodeId: anchor.id, toNodeId: placeholderId })
+        return { ...previous, nodes, connections }
+      })
+      setComposerPrompt('')
+      setError(null)
+    } catch (caught) {
+      setError(errorMessage(caught))
+    } finally {
+      setComposerBusy(false)
+    }
+  }, [api, canvasCenter, composerAspect, composerBusy, composerChannelConnected, composerPrompt, composerResolution, composerSeconds, composerVideoChannelId, composerVideoMode, composerVideoModel, defaultChannelId, mutate, onOpenSettings, upstreamNodes, videoGroups])
+
   // ----------------------------------------------------------- generation
 
   const submitComposer = useCallback(async (target: CanvasNode | null): Promise<void> => {
@@ -2750,6 +2886,55 @@ export function CanvasWorkspace(props: CanvasWorkspaceProps): React.JSX.Element 
       return { ...node, metadata: { ...nodeMetadata(node), status: 'error', error: tt('canvas.taskLost') } }
     }))
   }, [document, tasks, updateNodes])
+
+  // Fill placeholder video nodes from the video queue.
+  //
+  // A clip is referenced, never copied: the host persisted it and the node just
+  // records the served URL, so there is no upload step here (the one thing that
+  // would make this expensive).
+  useEffect(() => {
+    if (document === null || videoTasks === undefined) return
+    const mine = videoTasks.filter(task => (task.request.canvas as { canvasId?: string } | undefined)?.canvasId === document.id)
+    if (mine.length === 0) return
+    for (const task of mine) {
+      if (task.status !== 'completed' && task.status !== 'failed' && task.status !== 'cancelled') continue
+      if (processedVideoTasks.current.has(task.id)) continue
+      const targets = document.nodes.filter(node =>
+        node.type === 'video' && nodeMetadata(node).taskId === task.id && nodeMetadata(node).status === 'generating')
+      if (targets.length === 0) continue
+      processedVideoTasks.current.add(task.id)
+      if (task.status === 'cancelled') {
+        updateNodes(nodes => nodes.map(node => node.type === 'video' && nodeMetadata(node).taskId === task.id && nodeMetadata(node).status === 'generating'
+          ? { ...node, metadata: { ...nodeMetadata(node), status: 'error', error: tt('canvas.videoRetry') } }
+          : node))
+        continue
+      }
+      const clip = task.resultVideo
+      if (task.status !== 'completed' || clip === undefined || clip.url === '') {
+        const message = task.error ?? tt('canvas.generateFailed')
+        updateNodes(nodes => nodes.map(node => node.type === 'video' && nodeMetadata(node).taskId === task.id && nodeMetadata(node).status === 'generating'
+          ? { ...node, metadata: { ...nodeMetadata(node), status: 'error', error: message } }
+          : node))
+        continue
+      }
+      updateNodes(nodes => nodes.map(node => node.type === 'video' && nodeMetadata(node).taskId === task.id && nodeMetadata(node).status === 'generating'
+        ? {
+            ...node,
+            metadata: {
+              ...nodeMetadata(node),
+              status: 'success' as const,
+              error: undefined,
+              video: {
+                url: clip.url,
+                mime: clip.mime,
+                ...clip.duration === undefined ? {} : { duration: clip.duration },
+                ...task.resultEntryId === undefined ? {} : { entryId: task.resultEntryId },
+              },
+            },
+          }
+        : node))
+    }
+  }, [document, videoTasks, updateNodes])
 
   useEffect(() => {
     if (document === null) return
@@ -3960,14 +4145,16 @@ export function CanvasWorkspace(props: CanvasWorkspaceProps): React.JSX.Element 
       <textarea
         className={css.composerPrompt}
         value={composerPrompt}
-        placeholder={tt('canvas.composerPlaceholder')}
+        placeholder={tt(composerKind === 'video' ? 'canvas.videoComposerPlaceholder' : 'canvas.composerPlaceholder')}
         rows={1}
         onPointerDown={event => event.stopPropagation()}
         onChange={event => setComposerPrompt(event.target.value)}
         onKeyDown={event => {
           if (event.key === 'Enter' && !event.shiftKey) {
             event.preventDefault()
-            void submitComposer(composerTarget)
+            // Enter submits whichever path the toggle is on.
+            if (composerKind === 'video') void submitVideoComposer(composerTarget)
+            else void submitComposer(composerTarget)
           }
         }}
       />
@@ -3975,7 +4162,47 @@ export function CanvasWorkspace(props: CanvasWorkspaceProps): React.JSX.Element 
         <span className={css.composerChip}>{tt('canvas.composerLinked', { count: linkedCount })}</span>
       </div> : null}
       <div className={css.composerControls}>
-        <ModelPicker
+        {videoModelCount > 0 ? <div className={css.composerKind} role="group" aria-label={tt('canvas.videoKind')}>
+          <button type="button" data-active={composerKind === 'image' ? '' : undefined} onClick={() => { setComposerKind('image') }}>{tt('canvas.kindImage')}</button>
+          <button type="button" data-active={composerKind === 'video' ? '' : undefined} onClick={() => { setComposerKind('video') }}>{tt('canvas.kindVideo')}</button>
+        </div> : null}
+        {composerKind === 'video' ? <>
+          <ModelPicker
+            groups={videoGroups ?? []}
+            value={{ channelId: composerVideoChannelId, model: composerVideoModel }}
+            variant="composer"
+            channelLabel={tt('model.channel')}
+            modelLabel={tt('video.model')}
+            channelPlaceholder={tt('model.channelPlaceholder')}
+            emptyLabel={tt('canvas.videoNoModel')}
+            ariaLabel={tt('video.model')}
+            onChange={choice => { setComposerVideoChannelId(choice.channelId); setComposerVideoModel(choice.model) }}
+          />
+          <ComposerSelect
+            ariaLabel={tt('canvas.videoModeLabel')}
+            value={composerVideoMode}
+            options={(['text', 'image', 'keyframe'] as const).map(item => ({ value: item, label: tt(`canvas.videoMode${item === 'text' ? 'Text' : item === 'image' ? 'Image' : 'Keyframe'}` as ImageGenKey) }))}
+            onChange={value => setComposerVideoMode(value as VideoMode)}
+          />
+          <ComposerSelect
+            ariaLabel={tt('canvas.videoAspect')}
+            value={composerAspect}
+            options={['16:9', '9:16', '1:1'].map(item => ({ value: item, label: item }))}
+            onChange={setComposerAspect}
+          />
+          <ComposerSelect
+            ariaLabel={tt('canvas.videoSeconds')}
+            value={String(composerSeconds)}
+            options={VIDEO_DURATIONS.map(item => ({ value: String(item), label: tt('canvas.videoDuration', { seconds: item }) }))}
+            onChange={value => setComposerSeconds(Number(value))}
+          />
+          <ComposerSelect
+            ariaLabel={tt('canvas.videoResolution')}
+            value={composerResolution}
+            options={(['480P', '720P', '1080P'] as const).map(item => ({ value: item, label: item }))}
+            onChange={value => setComposerResolution(value as VideoResolution)}
+          />
+        </> : <ModelPicker
           groups={modelGroups}
           value={{ channelId: composerChannelId, model: composerModel }}
           variant="composer"
@@ -3985,7 +4212,8 @@ export function CanvasWorkspace(props: CanvasWorkspaceProps): React.JSX.Element 
           emptyLabel={tt('canvas.modelPlaceholder')}
           ariaLabel={tt('canvas.model')}
           onChange={choice => { setComposerChannelId(choice.channelId); setComposerModel(choice.model) }}
-        />
+        />}
+        {composerKind === 'image' ? <>
         <ComposerSelect
           ariaLabel={tt('canvas.size')}
           value={composerSize}
@@ -4015,13 +4243,19 @@ export function CanvasWorkspace(props: CanvasWorkspaceProps): React.JSX.Element 
           options={[1, 2, 3, 4].map(item => ({ value: String(item), label: tt('canvas.countUnit', { count: item }) }))}
           onChange={value => setComposerCount(Number(value))}
         />
+        </> : null}
         <button
           type="button"
           className={css.composerSend}
-          aria-label={tt('canvas.generate')}
-          title={tt('canvas.generate')}
-          disabled={!composerChannelConnected || composerBusy || (composerPrompt.trim() === '' && composerTextCount === 0 && composerAnnotationTexts.length === 0)}
-          onClick={() => { void submitComposer(composerTarget) }}
+          aria-label={tt(composerKind === 'video' ? 'canvas.videoGenerate' : 'canvas.generate')}
+          title={tt(composerKind === 'video' ? 'canvas.videoGenerate' : 'canvas.generate')}
+          disabled={composerKind === 'video'
+            ? (!composerVideoConnected || composerBusy || composerVideoModel === '' || composerPrompt.trim() === '')
+            : (!composerChannelConnected || composerBusy || (composerPrompt.trim() === '' && composerTextCount === 0 && composerAnnotationTexts.length === 0))}
+          onClick={() => {
+            if (composerKind === 'video') void submitVideoComposer(composerTarget)
+            else void submitComposer(composerTarget)
+          }}
         >{composerBusy ? <span className={css.nodeSpinner} aria-hidden="true" /> : <ToolbarIcon name="send" />}</button>
       </div>
     </div>

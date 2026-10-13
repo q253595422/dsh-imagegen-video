@@ -70,6 +70,12 @@ export interface VideoPanelProps {
   config: ImageGenConfig | undefined
   /** The panel is visible; polling pauses while hidden. */
   active?: boolean
+  /**
+   * Video queue summaries from the parent's single polling loop. Passed in so
+   * the studio tab and the canvas never run two competing pollers and always
+   * agree on task state.
+   */
+  tasks?: VideoTaskSummary[]
 }
 
 export function VideoPanel(props: VideoPanelProps) {
@@ -85,7 +91,16 @@ export function VideoPanel(props: VideoPanelProps) {
   const [reference, setReference] = useState<FrameDraft | null>(null)
   const [firstFrame, setFirstFrame] = useState<FrameDraft | null>(null)
   const [lastFrame, setLastFrame] = useState<FrameDraft | null>(null)
-  const [tasks, setTasks] = useState<VideoTaskSummary[]>([])
+  // Task state is owned either by this tab (standalone) or by the parent (a
+  // single shared poller). `refreshTasks` is the one way mutations push a new
+  // list, so neither owner can end up with a stale fork of the other's state.
+  const [localTasks, setLocalTasks] = useState<VideoTaskSummary[]>([])
+  const controlled = props.tasks !== undefined
+  const tasks = props.tasks ?? localTasks
+  const refreshTasks = useCallback((): void => {
+    if (controlled) return
+    void api.videoTaskList().then(setLocalTasks).catch(() => { /* transient */ })
+  }, [api, controlled])
   const [history, setHistory] = useState<VideoHistoryEntry[]>([])
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
@@ -139,15 +154,16 @@ export function VideoPanel(props: VideoPanelProps) {
   // Poll the host queue. The task lives host-side, so this also picks up a
   // render started before the page was reloaded.
   useEffect(() => {
-    if (!active) return
+    // When the parent owns polling, this tab must not start a second loop.
+    if (!active || props.tasks !== undefined) return
     let disposed = false
     const tick = (): void => {
-      void api.videoTaskList().then(next => { if (!disposed) setTasks(next) }).catch(() => { /* transient */ })
+      void api.videoTaskList().then(next => { if (!disposed) setLocalTasks(next) }).catch(() => { /* transient */ })
     }
     tick()
     const timer = window.setInterval(tick, POLL_INTERVAL_MS)
     return () => { disposed = true; window.clearInterval(timer) }
-  }, [api, active])
+  }, [api, active, props.tasks])
 
   // Refresh the history whenever a render finishes.
   const completedIds = tasks.filter(task => task.status === 'completed').map(task => task.id).join(',')
@@ -190,8 +206,7 @@ export function VideoPanel(props: VideoPanelProps) {
     // Fire-and-poll: the host queue owns the render, so a slow upstream never
     // blocks the tab and the browser can close without losing the job.
     void api.videoTaskSubmit(buildRequest())
-      .then(() => api.videoTaskList())
-      .then(setTasks)
+      .then(() => { refreshTasks() })
       .catch(err => { setError(err instanceof ImageGenApiError ? err.message : String(err)) })
       .finally(() => { setBusy(false) })
   }
@@ -207,11 +222,11 @@ export function VideoPanel(props: VideoPanelProps) {
   }
 
   const cancel = (id: string): void => {
-    void api.videoTaskCancel(id).then(() => api.videoTaskList()).then(setTasks).catch(() => { /* ignore */ })
+    void api.videoTaskCancel(id).then(() => { refreshTasks() }).catch(() => { /* ignore */ })
   }
 
   const retry = (id: string): void => {
-    void api.videoTaskRetry(id).then(() => api.videoTaskList()).then(setTasks).catch(() => { /* ignore */ })
+    void api.videoTaskRetry(id).then(() => { refreshTasks() }).catch(() => { /* ignore */ })
   }
 
   const removeHistory = (id: string): void => {

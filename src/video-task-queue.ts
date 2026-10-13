@@ -139,6 +139,7 @@ export class VideoTaskQueue {
     // Surface the finished clip so a polling client can play the result without
     // a second round trip; a video task always produces exactly one clip.
     const clip = task.result?.videos?.[0]
+    const entryId = task.result?.history?.[0]?.id
     return {
       id: task.id,
       request,
@@ -150,6 +151,7 @@ export class VideoTaskQueue {
       resultAvailable: task.result !== undefined,
       ...clip === undefined || clip.url === '' ? {} : { resultUrl: clip.url },
       ...clip === undefined ? {} : { resultVideo: clip },
+      ...entryId === undefined ? {} : { resultEntryId: entryId },
     }
   }
 
