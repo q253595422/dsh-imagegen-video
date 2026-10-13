@@ -1310,7 +1310,11 @@ export function ImageGenPanel(props: {
     const entry = group.entries[0]
     if (entry === undefined || entry.projectId === undefined) return
     try {
-      const items: EcommerceResultItem[] = await Promise.all(group.entries.map(async item => ({
+      // Ecommerce sets are image-only: a product-set group can never contain a
+      // clip, but the store's mode type is a superset, so filter defensively
+      // rather than casting.
+      const imageEntries = group.entries.filter(item => item.mode !== 'video')
+      const items: EcommerceResultItem[] = await Promise.all(imageEntries.map(async item => ({
         id: item.id,
         label: item.slotLabel ?? '',
         slotKey: item.slotKey ?? '',
@@ -1319,7 +1323,7 @@ export function ImageGenPanel(props: {
         prompt: item.prompt,
         images: await historyImagesToGenerated(item.images),
         source: {
-          mode: item.mode === 'edit' ? 'text' as const : item.mode,
+          mode: item.mode === 'edit' ? 'text' as const : 'text' as const,
           model: item.model,
           prompt: item.prompt,
           size: item.size,

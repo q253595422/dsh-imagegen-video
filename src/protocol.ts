@@ -186,6 +186,10 @@ export const GALLERY_API = {
   clear: '/api/dsh-imagegen/gallery/clear',
   tags: '/api/dsh-imagegen/gallery/tags',
   image: '/api/dsh-imagegen/gallery/image',
+  /** Favorite a finished clip (the host copies it out of the video store). */
+  video: '/api/dsh-imagegen/gallery/video',
+  /** Prefix route serving one favorited clip: `${videoFile}/<file>`. */
+  videoFile: '/api/dsh-imagegen/gallery/video-file',
 } as const
 
 /** Host-persisted infinite canvas projects and their content-addressed assets. */
@@ -381,8 +385,17 @@ export interface TemplateFavorite {
   case: TemplateCase
 }
 
-/** Generation modes. */
+/** Generation modes for image requests. */
 export type GenerateMode = 'text' | 'edit'
+
+/**
+ * How one stored history/gallery entry was produced.
+ *
+ * A superset of {@link GenerateMode}: history and the gallery may also hold a
+ * clip. Kept separate so an image request can never claim `mode: 'video'` —
+ * the image engine has no such branch and would mis-shape the request.
+ */
+export type StoredEntryMode = GenerateMode | 'video'
 
 /**
  * Video generation modes. Mirrors the async submit/poll video contract
@@ -469,6 +482,24 @@ export interface VideoGenerateRequest {
   upstream?: string
   /** Deterministic seed, when the provider accepts one. */
   seed?: number
+  /** Optional canvas lineage metadata (which canvas started this video). */
+  canvas?: CanvasTaskMeta
+}
+
+/**
+ * Canvas lineage for one video generation.
+ *
+ * Mirrors {@link CanvasTaskMeta} but keys on the video-task id, because the
+ * canvas looks up its video placeholder nodes by the task that will fill them.
+ */
+export interface CanvasVideoTaskMeta {
+  canvasId: string
+  /** The config node whose composer submitted this run. */
+  sourceNodeId?: string
+  /** The placeholder video node awaiting this result. */
+  nodeId?: string
+  /** Upstream image nodes that fed the run (reference / first / last frame). */
+  referenceNodeIds?: string[]
 }
 
 /** One stored video reference as the browser consumes it. */
@@ -548,6 +579,12 @@ export interface VideoTask {
 export interface VideoTaskSummary extends Omit<VideoTask, 'result'> {
   resultAvailable: boolean
   resultUrl?: string
+  /**
+   * The finished clip in full (url + mime + duration). The canvas needs more
+   * than a bare URL to build its video node, and this avoids a second round
+   * trip through the history list to learn the clip's shape.
+   */
+  resultVideo?: VideoHistoryFile
 }
 
 /** Origin information carried by a generation started from the canvas. */
@@ -581,7 +618,7 @@ export interface CanvasAssetRef {
   textPreview?: string
 }
 
-export type CanvasNodeType = 'image' | 'text' | 'file' | 'config'
+export type CanvasNodeType = 'image' | 'text' | 'file' | 'config' | 'video'
 
 /** Coarse bucket driving the file node's icon and preview branch. */
 export type CanvasFileKind = 'text' | 'pdf' | 'image' | 'office' | 'archive' | 'audio' | 'video' | 'other'
@@ -993,9 +1030,39 @@ export interface CanvasViewport {
 }
 
 /** Free-form per-node state, mirroring the node-graph canvas model. */
+/**
+ * One finished clip on a canvas video node.
+ *
+ * Deliberately NOT a {@link CanvasAssetRef}: a clip lives in the video store
+ * and is served from there, so its `url` is the video route and it carries no
+ * `assetId`. Keeping the two shapes distinct stops the canvas asset upload path
+ * (which expects a content-addressed id and copies bytes) from ever being
+ * pointed at a clip.
+ */
+export interface CanvasVideoRef {
+  /** Same-origin video-store URL, e.g. `${VIDEO_API.file}/<file>`. */
+  url: string
+  mime: string
+  /** Clip length in seconds, when the provider reported it. */
+  duration?: number
+  /** Bytes on disk, when known (shown in the node footer). */
+  bytes?: number
+  /** The video-history entry this clip came from, for gallery round-trips. */
+  entryId?: string
+  /** Provider result URL, retained in case local persistence was unavailable. */
+  sourceUrl?: string
+}
+
 export interface CanvasNodeMetadata {
   /** Image nodes: the rendered asset. */
   asset?: CanvasAssetRef
+  /**
+   * Video nodes: the finished clip, described like any other asset so the node
+   * renderer and the toolbar treat it uniformly. Its `url` points at the video
+   * store route (not the canvas asset route), so the clip is referenced rather
+   * than copied into the canvas asset library.
+   */
+  video?: CanvasVideoRef
   status?: 'idle' | 'generating' | 'success' | 'error'
   error?: string
   /** Config/image nodes: generation settings. */
@@ -1007,8 +1074,14 @@ export interface CanvasNodeMetadata {
   quality?: string
   /** Config nodes: how many images to generate (1-4). */
   count?: number
-  /** Config nodes: generation mode (image) or plain writing (text). */
-  mode?: 'image' | 'text'
+  /** Config nodes: generation mode (image), video, or plain writing (text). */
+  mode?: 'image' | 'text' | 'video'
+  /** Config/video nodes: the video generation mode (which reference inputs the
+   *  run uses) and its parameters. Present only on video runs. */
+  videoMode?: VideoMode
+  aspectRatio?: string
+  seconds?: number
+  resolution?: string
   taskId?: string
   sourceNodeId?: string
   /** Text nodes. */
@@ -1305,7 +1378,7 @@ export interface HistoryImageRef {
 export interface HistoryEntry extends EcommerceTaskMeta {
   id: string
   createdAt: number
-  mode: GenerateMode
+  mode: StoredEntryMode
   model: string
   prompt: string
   size: string
@@ -1326,13 +1399,28 @@ export interface HistoryEntry extends EcommerceTaskMeta {
   /** Model aliases included in the comparison run. */
   comparisonModels?: string[]
   canvas?: CanvasTaskMeta
+  /**
+   * A favorited clip, recorded by reference to the video store rather than
+   * copied: a clip is orders of magnitude larger than an image, and the video
+   * route already serves it with Range support. An entry with `video` may have
+   * an empty `images` list.
+   */
+  video?: GalleryVideoRef
+}
+
+/** A clip referenced by a gallery entry. */
+export interface GalleryVideoRef {
+  /** Same-origin video-store URL. */
+  url: string
+  mime: string
+  duration?: number
 }
 
 /** A history entry the client submits for persistence (images still carry base64). */
 export interface HistoryEntryInput extends EcommerceTaskMeta {
   id: string
   createdAt: number
-  mode: GenerateMode
+  mode: StoredEntryMode
   model: string
   prompt: string
   size: string

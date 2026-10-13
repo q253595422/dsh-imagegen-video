@@ -23,7 +23,7 @@ import { normalizeImageModels } from './image-models.ts'
 import { ImageGenerationRuntime, type ChannelsView } from './generation-runtime.ts'
 import { appendHistory, clearHistory, listHistory, readHistoryImage, removeHistory } from './history-store.ts'
 import { clearVideoHistory, listVideoHistory, readVideoFile, removeVideoHistory } from './video-store.ts'
-import { appendGallery, clearGallery, listGallery, readGalleryImage, removeGallery, updateGalleryTags } from './gallery-store.ts'
+import { appendGallery, appendGalleryVideo, clearGallery, listGallery, readGalleryImage, readGalleryVideo, removeGallery, updateGalleryTags } from './gallery-store.ts'
 import { baseMime, canvasStore, CanvasConflictError, MAX_CANVAS_FILE_BYTES, mimeFromFileName, safeFileName, type CanvasFileInput, type CanvasImageInput, type CanvasStore } from './canvas-store.ts'
 import { buildFilePreview } from './file-preview.ts'
 import { listTemplates, readTemplateImage, refreshTemplates, sampleTemplates } from './templates-store.ts'
@@ -122,6 +122,10 @@ export interface ImageGenRoutesDeps {
     clear: () => Promise<HistoryEntry[]>
     updateTags?: (id: string, tags: string[]) => Promise<HistoryEntry[]>
     readImage: (file: string) => Promise<{ data: Buffer; mime: string } | undefined>
+    /** Favorite one finished clip by copying it out of the video store. */
+    appendVideo?: (input: Parameters<typeof appendGalleryVideo>[0]) => Promise<{ entries: HistoryEntry[]; added: boolean }>
+    /** Serve one favorited clip with Range support. */
+    readVideo?: (file: string) => Promise<{ path: string; size: number; mime: string } | undefined>
   }
   /** Overrideable canvas backend, primarily for host integration tests. */
   canvas?: CanvasBackend
@@ -585,6 +589,8 @@ export function makeRoutes(deps: ImageGenRoutesDeps): WebRoute[] {
     clear: clearGallery,
     updateTags: updateGalleryTags,
     readImage: readGalleryImage,
+    appendVideo: appendGalleryVideo,
+    readVideo: readGalleryVideo,
   }
   const canvas = deps.canvas ?? canvasStore
   const templates = deps.templates ?? {
@@ -605,6 +611,44 @@ export function makeRoutes(deps: ImageGenRoutesDeps): WebRoute[] {
     readFile: readVideoFile,
   }
   const resolvePrompt = deps.resolvePrompt ?? (() => ({ apiUrl: '', apiKey: '', model: '' }))
+  // Shared by the two clip-serving prefix routes (video store + gallery).
+  const serveClip = async (
+    req: IncomingMessage,
+    res: ServerResponse,
+    basePath: string,
+    read: (file: string) => Promise<{ path: string; size: number; mime: string } | undefined>,
+  ): Promise<void> => {
+    if (!isLoopbackRequest(req)) { writeJson(res, 403, { error: 'forbidden: loopback-only' }); return }
+    if (req.method !== 'GET' && req.method !== 'HEAD') {
+      writeJson(res, 405, { error: `method not allowed: ${req.method}` })
+      return
+    }
+    const file = imageFileFrom(req.url, basePath)
+    const found = file === undefined ? undefined : await read(file)
+    if (found === undefined) { writeJson(res, 404, { error: 'not found' }); return }
+    const headers: Record<string, string | number> = {
+      'content-type': found.mime,
+      'cache-control': 'private, max-age=3600',
+      'x-content-type-options': 'nosniff',
+      'accept-ranges': 'bytes',
+    }
+    // Media elements ask for byte ranges; answering 200 for every request would
+    // break seeking in the clip player.
+    const range = parseByteRange(req.headers.range, found.size)
+    if (range !== undefined) {
+      res.writeHead(206, {
+        ...headers,
+        'content-range': `bytes ${range.start}-${range.end}/${found.size}`,
+        'content-length': range.end - range.start + 1,
+      })
+      if (req.method === 'HEAD') { res.end(); return }
+      createReadStream(found.path, { start: range.start, end: range.end }).pipe(res)
+      return
+    }
+    res.writeHead(200, { ...headers, 'content-length': found.size })
+    if (req.method === 'HEAD') { res.end(); return }
+    createReadStream(found.path).pipe(res)
+  }
   const resolveImageModels = deps.resolveImageModels ?? (() => normalizeImageModels(undefined))
   const settingsNamespace = deps.settingsNamespace ?? IMAGEGEN_SETTINGS_NAMESPACE
 
@@ -1258,6 +1302,71 @@ export function makeRoutes(deps: ImageGenRoutesDeps): WebRoute[] {
         })
         res.end(found.data)
       },
+    },
+    // ------------------------------------------- gallery: favorite a clip
+    //
+    // The client names a clip by its video-history entry; the host resolves the
+    // file itself and COPIES it, so no video bytes travel over this route and a
+    // favorite survives the video history's size cap.
+    {
+      kind: 'exact',
+      path: GALLERY_API.video,
+      handler: async (req, res) => {
+        if (!guard(req, res, 'POST')) return
+        if (gallery.appendVideo === undefined) {
+          writeJson(res, 200, { ok: false, code: 'gallery-video-unsupported', message: '当前宿主不支持收藏视频' })
+          return
+        }
+        const body = await readJsonBody(req)
+        const entryId = typeof body?.entryId === 'string' ? body.entryId.trim() : ''
+        if (entryId === '') {
+          writeJson(res, 200, { ok: false, code: 'bad-request', message: 'entryId is required' })
+          return
+        }
+        try {
+          const entries = await video.list()
+          const entry = entries.find(candidate => candidate.id === entryId)
+          const clip = entry?.videos[0]
+          if (entry === undefined || clip === undefined) {
+            writeJson(res, 200, { ok: false, code: 'not-found', message: '视频不存在或已被清理' })
+            return
+          }
+          // Resolve the stored file from its served URL, then copy it.
+          const file = imageFileFrom(clip.url, VIDEO_API.file)
+          const found = file === undefined ? undefined : await video.readFile(file)
+          if (found === undefined) {
+            writeJson(res, 200, { ok: false, code: 'not-found', message: '视频文件已不存在' })
+            return
+          }
+          const result = await gallery.appendVideo({
+            id: randomUUID(),
+            createdAt: Date.now(),
+            model: entry.model,
+            prompt: entry.prompt,
+            aspectRatio: entry.aspectRatio,
+            seconds: entry.seconds,
+            sourcePath: found.path,
+            mime: found.mime,
+            ...clip.duration === undefined ? {} : { duration: clip.duration },
+            ...entry.channelId === undefined ? {} : { channelId: entry.channelId },
+            ...entry.channel === undefined ? {} : { channel: entry.channel },
+            ...Array.isArray(body?.tags)
+              ? { tags: body.tags.filter((tag): tag is string => typeof tag === 'string' && tag !== '').slice(0, 20) }
+              : {},
+          })
+          writeJson(res, 200, { ok: true, entries: result.entries, added: result.added })
+        } catch (error) {
+          writeJson(res, 200, { ok: false, code: 'gallery-failed', message: messageOf(error) })
+        }
+      },
+    },
+    // ---------------------------------------------- gallery clip (prefix)
+    {
+      kind: 'prefix',
+      path: GALLERY_API.videoFile,
+      handler: (req, res) => gallery.readVideo === undefined
+        ? Promise.resolve(writeJson(res, 404, { error: 'not found' }))
+        : serveClip(req, res, GALLERY_API.videoFile, gallery.readVideo),
     },
     // ------------------------------------------------------ canvas list
     {
@@ -2069,42 +2178,7 @@ export function makeRoutes(deps: ImageGenRoutesDeps): WebRoute[] {
     {
       kind: 'prefix',
       path: VIDEO_API.file,
-      handler: async (req, res) => {
-        if (!isLoopbackRequest(req)) {
-          writeJson(res, 403, { error: 'forbidden: loopback-only' })
-          return
-        }
-        if (req.method !== 'GET' && req.method !== 'HEAD') {
-          writeJson(res, 405, { error: `method not allowed: ${req.method}` })
-          return
-        }
-        const file = imageFileFrom(req.url, VIDEO_API.file)
-        const found = file === undefined ? undefined : await video.readFile(file)
-        if (found === undefined) {
-          writeJson(res, 404, { error: 'not found' })
-          return
-        }
-        const headers: Record<string, string | number> = {
-          'content-type': found.mime,
-          'cache-control': 'private, max-age=3600',
-          'x-content-type-options': 'nosniff',
-          'accept-ranges': 'bytes',
-        }
-        const range = parseByteRange(req.headers.range, found.size)
-        if (range !== undefined) {
-          res.writeHead(206, {
-            ...headers,
-            'content-range': `bytes ${range.start}-${range.end}/${found.size}`,
-            'content-length': range.end - range.start + 1,
-          })
-          if (req.method === 'HEAD') { res.end(); return }
-          createReadStream(found.path, { start: range.start, end: range.end }).pipe(res)
-          return
-        }
-        res.writeHead(200, { ...headers, 'content-length': found.size })
-        if (req.method === 'HEAD') { res.end(); return }
-        createReadStream(found.path).pipe(res)
-      },
+      handler: (req, res) => serveClip(req, res, VIDEO_API.file, video.readFile),
     },
     // ------------------------------------------------- storage: probe upload
     {

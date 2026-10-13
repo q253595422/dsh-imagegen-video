@@ -10,7 +10,7 @@
 
 import { promises as fs } from 'node:fs'
 import path from 'node:path'
-import { HISTORY_MAX, type GenerateMode, type HistoryEntry, type HistoryEntryInput } from './protocol.ts'
+import { HISTORY_MAX, type HistoryEntry, type HistoryEntryInput, type StoredEntryMode } from './protocol.ts'
 import { notifyImageSaved } from './storage-sync.ts'
 import { imageDataRoot } from './image-storage-path.ts'
 
@@ -39,7 +39,7 @@ interface StoredImage {
 interface StoredEntry {
   id: string
   createdAt: number
-  mode: GenerateMode
+  mode: StoredEntryMode
   model: string
   prompt: string
   size: string
