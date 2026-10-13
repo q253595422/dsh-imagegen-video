@@ -404,8 +404,13 @@ export type StoredEntryMode = GenerateMode | 'video'
  *  - image     → image-to-video (one reference frame)
  *  - keyframe  → first/last frame interpolation (providers accepting both)
  *  - reference → one or more style/subject references (providers accepting several)
+ *  - compose   → NOT a provider mode: labels a clip the host stitched together
+ *                from other clips with ffmpeg, so the history can record where
+ *                the bytes came from. It never reaches the generate route (whose
+ *                mode whitelist would silently downgrade it) and no model
+ *                catalog declares it, so it never becomes a studio tab.
  */
-export type VideoMode = 'text' | 'image' | 'keyframe' | 'reference'
+export type VideoMode = 'text' | 'image' | 'keyframe' | 'reference' | 'compose'
 
 /** Request-shaping family a video model id routes through. */
 export type VideoModelFamily = 'agnes' | 'comemoe' | 'openai-video' | 'unknown'
@@ -733,16 +738,79 @@ export interface CanvasSkillProvenance {
  * plugin (prompt actions, extraction, PPT conversion); `external` entries come
  * from the host skill registry (`ctx.skills`) and run through their own body.
  */
+/**
+ * Local clip stitching seam (ffmpeg).
+ *
+ * One interface, injected into the runner, covering every step the host must do
+ * on the runner's behalf: locate ffmpeg, find the bytes behind a served clip
+ * URL, run the pipeline, and persist the result. Keeping it as a single seam
+ * means the smoke suites can exercise the whole compose path — ordering, stage
+ * text, produced node, error surfacing — with a fake, offline and with no
+ * ffmpeg installed.
+ *
+ * Deliberately expressed with plain types (no `node:` imports) so it can live
+ * in the shared protocol file and still be inlined into the browser bundle.
+ * The client never stitches anything; it only asks the host to.
+ */
+export interface ClipComposer {
+  /** False when no usable ffmpeg/ffprobe pair was found; the run fails loudly. */
+  available: () => boolean
+  /** Human-readable resolution result, surfaced in errors and the run stage. */
+  describe: () => string
+  /**
+   * Resolve a served clip URL back to its local file, when the bytes are still
+   * on disk. Undefined means this clip can no longer be read (evicted history,
+   * foreign URL) and the caller must fail the run rather than skip the clip —
+   * silently dropping one would make the result shorter than the badges promise.
+   */
+  resolve: (url: string) => Promise<string | undefined>
+  /**
+   * Stitch clips in the given order into one MP4. `sources` are local file
+   * paths, in final play order.
+   */
+  stitch: (input: {
+    sources: readonly string[]
+    signal?: AbortSignal
+    /** Called as the pipeline advances, for the task's `stage` text. */
+    onStage?: (stage: 'probe' | 'encode') => void
+  }) => Promise<ClipStitchResult>
+  /** Persist the produced bytes as one history entry; returns its served ref. */
+  publish: (input: {
+    id: string
+    bytes: Uint8Array
+    mime: string
+    /** Measured length of the produced clip, in seconds. */
+    duration?: number
+    /** Human-readable provenance ("stitched from 3 clips"). */
+    prompt: string
+  }) => Promise<{ url: string; mime: string; duration?: number }>
+}
+
+/** Result of one ffmpeg stitch run. */
+export interface ClipStitchResult {
+  bytes: Uint8Array
+  mime: string
+  /** Measured from the produced file, not summed from the inputs. */
+  duration?: number
+  width?: number
+  height?: number
+}
+
 export interface CanvasSkillDescriptor {
   id: string
   name: string
   description: string
   whenToUse?: string
   origin: 'builtin' | 'external'
-  /** light = one chat completion; heavy = a headless DSH agent run. */
-  tier: 'light' | 'heavy'
+  /**
+   * light  = one chat completion.
+   * heavy  = a headless DSH agent run (needs the agent runtime installed).
+   * local  = a local subprocess on this machine — no model, no agent, no
+   *          network. `compose.videos` is the only entry today (ffmpeg).
+   */
+  tier: 'light' | 'heavy' | 'local'
   accepts: CanvasNodeType[]
-  output: 'text' | 'image' | 'file' | 'nodes'
+  output: 'text' | 'image' | 'file' | 'video' | 'nodes'
   /** Human-readable cost/time hint shown before a heavy run. */
   costHint?: string
   /** Extra preconditions the run reports as actionable errors. */
