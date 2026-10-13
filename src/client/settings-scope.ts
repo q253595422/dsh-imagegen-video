@@ -1,0 +1,352 @@
+/**
+ * Browser-side settings scope for the dsh-imagegen namespace, served by the
+ * plugin's own loopback bridge routes (/api/dsh-imagegen/settings). The
+ * official rc.6 settings scope answers "unavailable" for every third-party
+ * namespace (the host-apiproxy allowlist is hard-coded), so this package
+ * re-serves its namespace through the host settings seam over a same-origin,
+ * loopback-only HTTP pair — the same pattern the dsh-web-ui family bridge
+ * uses, self-contained per plugin.
+ */
+
+import {
+  createSnapshotStore,
+  type SnapshotStore,
+} from '@deepseek-ai/dsh-client-store'
+import type { SettingsPathOpView } from '@deepseek-ai/dsh-api-remotes/client'
+import type { SettingsScope, SettingsScopeSnapshot } from '@deepseek-ai/dsh-client-ui-settings/client'
+import { SETTINGS_API, type ChannelConfig } from '../protocol.ts'
+
+/** One cascading-picker group: a configured channel and its model aliases. */
+export interface ImageModelGroup {
+  /** Stable channel id; '' is the legacy single-channel fallback. */
+  id: string
+  /** Display name shown in the cascading model picker. */
+  name: string
+  /** Model aliases configured on this channel, in display order. */
+  models: string[]
+}
+
+/** The fields this plugin's settings card edits. */
+export interface ImageGenConfig {
+  enabled?: boolean
+  announceToAgent?: boolean
+  allowAgentImageGeneration?: boolean
+  /** Configured channels (each: name, endpoint, model catalog). */
+  channels?: ChannelConfig[]
+  /** Per-channel API keys, keyed by channel id. The redacted wire view returns
+   *  this as an empty object; key presence comes from the secrets sidecar. */
+  channelSecrets?: Record<string, string>
+  /** Channel used when a request does not name one. */
+  defaultChannelId?: string
+  /** Model alias selected by default in the GUI. Empty uses the first option. */
+  defaultModel?: string
+  promptApiUrl?: string
+  promptApiKey?: string
+  promptModel?: string
+  /* ----- deprecated legacy single-endpoint fields (migrated to channels) ----- */
+  apiUrl?: string
+  apiKey?: string
+  imageModels?: string[]
+}
+
+/** One settings path-op as the bridge consumes it. */
+export type SettingsOp = { op: 'set'; path: string[]; value: unknown } | { op: 'unset'; path: string[] }
+
+/** Wire shape of one namespace view from the bridge. */
+interface BridgeView {
+  ns: string
+  value: unknown
+  base?: unknown
+  user?: unknown
+  revision: number
+  secrets?: Array<{ path: string[]; set: boolean }>
+}
+
+/** The bridge response envelope ({ ok: true, value } | { ok: false, code, message }). */
+type BridgeEnvelope =
+  | { ok: true; value: { namespaces?: BridgeView[]; writable?: boolean } | BridgeView }
+  | { ok: false; code: string; message: string }
+
+/** Settings wire face over the bridge routes (fetch-backed). */
+function createBridgeApi(fetchFn: typeof fetch): {
+  settings: {
+    describe(payload: Record<string, never>): Promise<{ result: BridgeEnvelope }>
+    mutate(payload: { ns: string; ops: unknown[]; expectedRevision?: number }): Promise<{ result: BridgeEnvelope }>
+  }
+} {
+  const post = async (path: string, body: unknown): Promise<{ result: BridgeEnvelope }> => {
+    try {
+      const response = await fetchFn(path, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify(body),
+      })
+      if (!response.ok) {
+        return { result: { ok: false, code: 'internal', message: `bridge HTTP ${response.status}` } }
+      }
+      return { result: await response.json() as BridgeEnvelope }
+    } catch {
+      return { result: { ok: false, code: 'internal', message: 'settings bridge unreachable' } }
+    }
+  }
+  return {
+    settings: {
+      describe: async payload => post(SETTINGS_API.describe, payload),
+      mutate: async payload => post(SETTINGS_API.mutate, payload),
+    },
+  }
+}
+
+/**
+ * A SettingsScope over the bridge face: serialized queue, revision-fenced
+ * writes, recovery read after a refusal. Mirrors the official controller's
+ * ordering but trusts the Host-seam value without re-running the wire-schema
+ * validation — the seam already validated it.
+ */
+class BridgeScopeController<T> implements SettingsScope<T> {
+  private readonly store: SnapshotStore<SettingsScopeSnapshot<T>>
+  /** Whether the namespace currently holds a stored secret (e.g. apiKey). */
+  private readonly keySet: SnapshotStore<boolean>
+  /** Individual secret presence bits, keyed by the settings field name. */
+  private readonly secretSets: SnapshotStore<Record<string, boolean>>
+  private tail: Promise<void> = Promise.resolve()
+  private disposed = false
+
+  constructor(
+    private readonly api: ReturnType<typeof createBridgeApi>['settings'],
+    private readonly spec: { namespace: string },
+  ) {
+    this.store = createSnapshotStore<SettingsScopeSnapshot<T>>({
+      status: 'loading',
+      value: undefined,
+      base: undefined,
+      user: undefined,
+      revision: undefined,
+      writable: false,
+      mode: 'host',
+    })
+    this.keySet = createSnapshotStore(false)
+    this.secretSets = createSnapshotStore({})
+  }
+
+  getSnapshot(): SettingsScopeSnapshot<T> {
+    return this.store.getSnapshot()
+  }
+
+  /** Whether a stored secret exists (from the redacted view's secrets list). */
+  getKeySetSnapshot(): boolean {
+    return this.keySet.getSnapshot()
+  }
+
+  /** Observe the secret-set flag. */
+  subscribeKeySet(listener: () => void): () => void {
+    return this.keySet.subscribe(listener)
+  }
+
+  /** Whether a specific secret field currently has a stored value. */
+  getSecretSetSnapshot(field: string): boolean {
+    return this.secretSets.getSnapshot()[field] === true
+  }
+
+  /** Observe changes to individual secret-field presence bits. */
+  subscribeSecretSets(listener: () => void): () => void {
+    return this.secretSets.subscribe(listener)
+  }
+
+  subscribe(listener: () => void): () => void {
+    return this.store.subscribe(listener)
+  }
+
+  /** Queue a bridge refresh. */
+  load(): Promise<void> {
+    return this.enqueue(() => this.read())
+  }
+
+  set(field: string, value: unknown): Promise<void> {
+    return this.enqueue(() => this.writeOps([{ op: 'set', path: [field], value }]))
+  }
+
+  unset(field: string): Promise<void> {
+    return this.enqueue(() => this.writeOps([{ op: 'unset', path: [field] }]))
+  }
+
+  mutate(ops: readonly SettingsPathOpView[], expectedRevision?: number): Promise<void> {
+    return this.enqueue(() => this.writeOps([...ops] as SettingsOp[], expectedRevision))
+  }
+
+  /** Apply several path ops in one revision-fenced mutate call (atomic save).
+   *  Path ops may address plain-object fields (e.g. `channelSecrets.<id>`),
+   *  but never navigate *inside* arrays — write array fields wholesale. */
+  mutateOps(ops: SettingsOp[]): Promise<void> {
+    return this.enqueue(() => this.writeOps(ops, undefined, true))
+  }
+
+  async dispose(): Promise<void> {
+    this.disposed = true
+    await this.tail
+  }
+
+  private enqueue(operation: () => Promise<void>): Promise<void> {
+    if (this.disposed) return Promise.resolve()
+    const task = this.tail.then(async () => {
+      if (this.disposed) return
+      await operation()
+    })
+    this.tail = task.catch(() => {})
+    return task
+  }
+
+  private async read(): Promise<void> {
+    let response
+    try {
+      response = await this.api.describe({})
+    } catch {
+      if (!this.disposed) this.store.update(draft => { draft.status = 'unavailable' })
+      return
+    }
+    if (!response.result.ok || this.disposed) {
+      if (!this.disposed) this.store.update(draft => { draft.status = 'unavailable' })
+      return
+    }
+    const { namespaces, writable } = response.result.value as { namespaces?: BridgeView[]; writable?: boolean }
+    const view = namespaces?.find(candidate => candidate.ns === this.spec.namespace)
+    if (view === undefined) {
+      this.store.update(draft => {
+        draft.status = 'unavailable'
+        draft.writable = writable === true
+      })
+      this.keySet.set(false)
+      this.secretSets.set({})
+      return
+    }
+    this.accept(view, writable)
+  }
+
+  private async writeOps(ops: SettingsOp[], expectedRevision?: number, throwOnFailure = false): Promise<void> {
+    const revision = expectedRevision ?? this.getSnapshot().revision
+    let response
+    try {
+      response = await this.api.mutate({
+        ns: this.spec.namespace,
+        ops,
+        ...revision === undefined ? {} : { expectedRevision: revision },
+      })
+    } catch (error) {
+      await this.read()
+      if (throwOnFailure && !this.disposed) throw error
+      return
+    }
+    if (!response.result.ok) {
+      await this.read()
+      if (throwOnFailure && !this.disposed) {
+        throw new Error(`settings mutation rejected: ${response.result.message}`)
+      }
+      return
+    }
+    if (this.disposed) return
+    this.accept(response.result.value as BridgeView, undefined)
+  }
+
+  private accept(view: BridgeView, writable: boolean | undefined): void {
+    this.store.update(draft => {
+      draft.revision = view.revision
+      draft.base = view.base
+      draft.user = view.user
+      if (writable !== undefined) draft.writable = writable
+      draft.status = 'ready'
+      // Trust the Host-seam value: the seam already validated it, and the
+      // card binds without a narrowing decoder.
+      draft.value = view.value as T
+    })
+    const secretSets = Object.fromEntries((view.secrets ?? []).map(secret => [secret.path.join('.'), secret.set]))
+    this.keySet.set(Object.values(secretSets).some(Boolean))
+    this.secretSets.set(secretSets)
+  }
+}
+
+/** The bound scope plus the secret-set flag, as the card and panel consume it. */
+export interface ImageGenScope extends SettingsScope<ImageGenConfig> {
+  /** Queue a bridge refresh (the invalidation path re-reads the namespace). */
+  load(): Promise<void>
+  /** Apply several path ops in one revision-fenced mutate call. */
+  mutateOps(ops: SettingsOp[]): Promise<void>
+  getKeySetSnapshot(): boolean
+  subscribeKeySet(listener: () => void): () => void
+  getSecretSetSnapshot(field: string): boolean
+  subscribeSecretSets(listener: () => void): () => void
+}
+
+/**
+ * Bind the dsh-imagegen settings scope over the bridge routes and start its
+ * initial read (the caller mounts nothing until the scope settles).
+ * @param fetchFn - the fetch implementation (the global fetch on loopback).
+ * @returns the scope; unavailable when the bridge is unreachable.
+ */
+export function bindImageGenScope(fetchFn: typeof fetch = fetch): ImageGenScope {
+  const controller = new BridgeScopeController<ImageGenConfig>(createBridgeApi(fetchFn).settings, {
+    namespace: 'dsh-imagegen',
+  })
+  void controller.load()
+  return controller
+}
+
+/**
+ * Project the configured channels into cascading model-picker groups. The
+ * flat `models` list remains for history filters and compatibility, while
+ * `groups` preserves which channel owns each alias (aliases may repeat across
+ * channels). Falls back to the legacy flat allow-list while no channels exist.
+ * Pure projection — no host calls.
+ */
+export function imageModelOptions(config: ImageGenConfig | undefined): {
+  models: string[]
+  groups: ImageModelGroup[]
+  defaultChannelId?: string
+  defaultModel?: string
+} {
+  const channels = config?.channels ?? []
+  if (channels.length === 0) {
+    const legacy = Array.isArray(config?.imageModels)
+      ? config.imageModels.filter((model): model is string => typeof model === 'string' && model.trim() !== '')
+      : []
+    const defaultModel = typeof config?.defaultModel === 'string' && legacy.includes(config.defaultModel)
+      ? config.defaultModel
+      : undefined
+    const ordered = defaultModel === undefined ? legacy : [defaultModel, ...legacy.filter(model => model !== defaultModel)]
+    return {
+      models: ordered,
+      groups: ordered.length === 0 ? [] : [{ id: '', name: '', models: ordered }],
+      ...defaultModel === undefined ? {} : { defaultModel },
+    }
+  }
+
+  const defaultId = config?.defaultChannelId !== undefined && channels.some(channel => channel.id === config.defaultChannelId)
+    ? config.defaultChannelId
+    : channels[0]!.id
+  const orderedChannels = [
+    channels.find(channel => channel.id === defaultId)!,
+    ...channels.filter(channel => channel.id !== defaultId),
+  ]
+  const groups: ImageModelGroup[] = orderedChannels.flatMap(channel => {
+    const models = channel.models
+      .map(model => model.alias.trim())
+      .filter((alias, index, all) => alias !== '' && all.indexOf(alias) === index)
+    return models.length === 0 ? [] : [{ id: channel.id, name: channel.name.trim() || channel.id, models }]
+  })
+
+  const aliases: string[] = []
+  for (const group of groups) {
+    for (const alias of group.models) {
+      if (!aliases.includes(alias)) aliases.push(alias)
+    }
+  }
+  const defaultModel = typeof config?.defaultModel === 'string' && aliases.includes(config.defaultModel)
+    ? config.defaultModel
+    : undefined
+  const models = defaultModel === undefined ? aliases : [defaultModel, ...aliases.filter(model => model !== defaultModel)]
+  return {
+    models,
+    groups,
+    defaultChannelId: defaultId,
+    ...defaultModel === undefined ? {} : { defaultModel },
+  }
+}

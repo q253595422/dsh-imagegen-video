@@ -1,0 +1,86 @@
+{
+  "name": "@dickpy/dsh-imagegen",
+  "description": "AI image generation plugin for the dsh web GUI: text-to-image and image-to-image through configurable provider channels (gpt-image-2 / grok-imagine-image / nanobanana series / seedream-5.0-pro / dall-e-3, with native xAI Grok Imagine, Google Nano Banana and ByteDance Seedream request shaping), per-channel model catalogs, a three-column studio beside the native conversation, an infinite canvas with node-graph workflows (annotation boxes with attached prompt cards, local background removal, AI layer split, per-node model choice, file nodes with any-file upload, and a canvas skill system covering skill-driven next steps on every node: text polish, image description, content extraction, and long-running headless-agent pipelines such as image-to-editable-ppt, with a local skill library that installs and removes skills from URLs or uploaded archives), an ecommerce product-set mode and a prompt template library.",
+  "version": "1.6.8",
+  "type": "module",
+  "main": "lib/index.js",
+  "exports": {
+    ".": "./lib/index.js",
+    "./client": "./lib/client.js",
+    "./locale-tables": "./lib/locale-tables.js",
+    "./package.json": "./package.json"
+  },
+  "dsh": {
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    },
+    "client": {
+      "inject": [
+        "@deepseek-ai/dsh-client-store",
+        "@deepseek-ai/dsh-api-remotes",
+        "@deepseek-ai/dsh-api-session-controller",
+        "@deepseek-ai/dsh-client-connection",
+        "@deepseek-ai/dsh-client-ui-conversation",
+        "@deepseek-ai/dsh-client-ui-renderer",
+        "@deepseek-ai/dsh-client-ui-settings",
+        "@deepseek-ai/dsh-client-ui-tool"
+      ],
+      "platform": "web"
+    }
+  },
+  "dependencies": {
+    "@deepseek-ai/schemastery": "^3.18.4",
+    "lucide-react": "^1.41.0"
+  },
+  "devDependencies": {
+    "@deepseek-ai/cordis": "^4.0.2",
+    "@deepseek-ai/dsh-api-remotes": "0.1.2-alpha.2",
+    "@deepseek-ai/dsh-api-session-controller": "0.1.2-alpha.2",
+    "@deepseek-ai/dsh-attachment": "0.1.2-alpha.2",
+    "@deepseek-ai/dsh-client-connection": "0.1.2-alpha.2",
+    "@deepseek-ai/dsh-client-locale": "0.1.2-alpha.2",
+    "@deepseek-ai/dsh-client-store": "0.1.2-alpha.2",
+    "@deepseek-ai/dsh-client-ui-conversation": "0.1.2-alpha.2",
+    "@deepseek-ai/dsh-client-ui-primitives": "0.1.2-alpha.2",
+    "@deepseek-ai/dsh-client-ui-renderer": "0.1.2-alpha.2",
+    "@deepseek-ai/dsh-client-ui-settings": "0.1.2-alpha.2",
+    "@deepseek-ai/dsh-client-ui-slots": "0.1.2-alpha.2",
+    "@deepseek-ai/dsh-commands": "0.1.2-alpha.2",
+    "@deepseek-ai/dsh-credentials": "0.1.7-rc.2",
+    "@deepseek-ai/dsh-host-webserver": "0.1.2-alpha.2",
+    "@deepseek-ai/dsh-llm": "0.1.2-alpha.2",
+    "@deepseek-ai/dsh-settings": "0.1.2-alpha.2",
+    "@deepseek-ai/dsh-system-prompt": "0.1.2-alpha.2",
+    "@deepseek-ai/dsh-tools": "0.1.2-alpha.2",
+    "@deepseek-ai/schemastery": "^3.18.4",
+    "@types/node": "^22.20.0",
+    "@types/react": "~18.3.1",
+    "@types/react-dom": "^18.3.5",
+    "jsdom": "25.0.1",
+    "lightningcss": "1.32.0",
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1",
+    "tsdown": "0.22.2",
+    "typescript": "~5.7.2"
+  },
+  "files": [
+    "lib",
+    "src",
+    "cordis.patch.yml",
+    "docs",
+    "README.md",
+    "THIRD_PARTY_NOTICES.md"
+  ],
+  "license": "Apache-2.0",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/dickpy/dsh-imagegen.git"
+  },
+  "scripts": {
+    "prepare": "tsdown",
+    "build": "tsdown",
+    "watch": "tsdown --watch",
+    "typecheck": "tsc --noEmit",
+    "fetch-templates": "node scripts/fetch-templates.mjs"
+  }
+}
