@@ -77,6 +77,13 @@ export interface VideoPanelProps {
    * agree on task state.
    */
   tasks?: VideoTaskSummary[]
+  /**
+   * Attach one finished clip to the current chat draft. Supplied by the parent
+   * because it owns the conversation/session seams.
+   */
+  onAddToConversation?: (url: string, actionKey: string) => Promise<void>
+  /** Which clip is mid-attachment, so the button can show progress. */
+  conversationBusyKey?: string | null
 }
 
 export function VideoPanel(props: VideoPanelProps) {
@@ -408,9 +415,17 @@ export function VideoPanel(props: VideoPanelProps) {
                   </div>
                   <p className={css.videoTaskPrompt} title={task.request.prompt}>{task.request.prompt}</p>
                   {task.status === 'failed' && task.error !== undefined ? <p className={css.videoError}>{task.error}</p> : null}
-                  {clipOf(task) !== undefined ? (
+                  {clipOf(task) !== undefined ? <>
                     <video className={css.videoPlayer} controls preload="metadata" src={clipOf(task)} />
-                  ) : null}
+                    {props.onAddToConversation !== undefined ? <button
+                      type="button"
+                      data-video-add-conversation=""
+                      disabled={props.conversationBusyKey !== undefined && props.conversationBusyKey !== null}
+                      onClick={() => { void props.onAddToConversation!(clipOf(task)!, `video-task:${task.id}`) }}
+                    >
+                      {props.conversationBusyKey === `video-task:${task.id}` ? tt('conversation.adding') : tt('conversation.add')}
+                    </button> : null}
+                  </> : null}
                 </li>
               ))}
           </ul>

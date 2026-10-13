@@ -3795,6 +3795,16 @@ await check('E1 client apply mounts the sidebar entry and studio (jsdom)', async
     if (path.endsWith('/gallery/video')) {
       return { ok: true, json: async () => ({ ok: true, entries: [], added: true }) }
     }
+    // The clip bytes themselves, so "add to chat" can build a real File. Both
+    // clip routes are covered: the gallery's favorites and the video store's
+    // history clips (the sidebar row uses the latter).
+    if (path.includes('/gallery/video-file/') || path.includes('/video/file/')) {
+      return {
+        ok: true,
+        status: 200,
+        blob: async () => new Blob([new Uint8Array([0, 0, 0, 24, 102, 116, 121, 112])], { type: 'video/mp4' }),
+      }
+    }
     if (path.endsWith('/video/tasks/submit')) {
       const body = JSON.parse(init.body)
       videoSubmissions.push(body)
@@ -4088,11 +4098,42 @@ await check('E1 client apply mounts the sidebar entry and studio (jsdom)', async
   // Locale runtime stub: register/addLanguage/subscribe + a snapshot, mirroring
   // the dsh-client-locale face the plugin bridges into.
   const localeListeners = new Set()
+  // Records what the composer rail receives, so the clip-attachment path can be
+  // asserted without a real GUI.
+  const conversationDrafts = []
+  const conversationInputs = []
+  const conversationStub = {
+    createDrafts: (sessionId, files) => files.map((file, index) => {
+      conversationDrafts.push({ sessionId: String(sessionId), name: file.name, type: file.type, size: file.size })
+      return { id: `draft-${index + 1}`, kind: /^image\//.test(file.type) ? 'image' : 'file' }
+    }),
+    releaseDraftAttachments: () => {},
+    input: {
+      for: () => ({
+        addAttachments: (ids) => { conversationInputs.push(...ids); return true },
+        removeAttachment: () => {},
+        state: { getSnapshot: () => ({ draft: '' }) },
+        setDraft: () => {},
+      }),
+    },
+  }
+  /** Minimal session list feed: the panel only reads `current` and `scope`. */
+  const sessionsStub = {
+    list: { getSnapshot: () => ({ current: 'session-smoke' }), subscribe: () => () => {} },
+    scope: () => ({ sessionId: 'session-smoke' }),
+  }
   const ctx = {
     effect(fn) { return fn() },
     on() { return () => {} },
     get(name) {
       if (name === 'connection') return { isLoopback: true }
+      // The panel reads the conversation service from the context; without it
+      // the "add to chat" actions cannot be exercised at all.
+      if (name === 'conversation') return conversationStub
+      // The panel resolves the current session through `sessions`, and its
+      // chat-attachment actions no-op without one. Supplying a minimal list
+      // feed is what makes those actions reachable at all.
+      if (name === 'sessions') return sessionsStub
       return undefined
     },
     locale: {
@@ -4459,6 +4500,23 @@ await check('E1 client apply mounts the sidebar entry and studio (jsdom)', async
     // both cheaper and more precise.
     assert.equal([...view.querySelectorAll('article')].filter(card => card.getAttribute('data-clip') === null).length, 0, 'the video filter hides image cards')
 
+    // Re-query both the card and the button: the filter chips re-render the
+    // list, so anything captured before them is detached and its clicks are
+    // lost (a detached node still reports isConnected=false only after React
+    // swaps it; querying fresh is the reliable approach).
+    const liveCard = view.querySelector('article[data-clip]')
+    assert.ok(liveCard !== null, 'the clip card is present after filtering')
+    const clipToChat = liveCard.querySelector('[data-gallery-video-conversation]')
+    assert.ok(clipToChat !== null, 'the clip card offers add-to-chat')
+    clipToChat.dispatchEvent(new jsdomWindow.MouseEvent('click', { bubbles: true, cancelable: true }))
+    assert.ok(await waitFor(() => conversationDrafts.length > 0), 'clicking add-to-chat drafts the clip')
+    const drafted = conversationDrafts.at(-1)
+    assert.match(drafted.type, /^video\//, `the draft carries a video MIME type (got ${drafted.type})`)
+    assert.match(drafted.name, /\.(mp4|webm|mov|mkv)$/i, `the draft keeps a video file name (got ${drafted.name})`)
+    assert.ok(drafted.size > 0, 'the draft is not empty')
+    assert.ok(conversationInputs.length > 0, 'the draft reaches the composer attachment rail')
+    assert.ok(liveCard.textContent?.includes('视频'), 'the clip card still identifies as a video')
+
     // Opening the clip shows it in a player (the image lightbox cannot play it).
     view.querySelector('article[data-clip] button[class*="galleryImageButton"]').dispatchEvent(new jsdomWindow.MouseEvent('click', { bubbles: true, cancelable: true }))
     // The player is a portal rendered into document.body, so it lives OUTSIDE
@@ -4762,6 +4820,15 @@ await check('E1 client apply mounts the sidebar entry and studio (jsdom)', async
     // Clicking a clip row opens the video surface (an image board cannot play it).
     const midClip = [...histHost.querySelectorAll('[data-video-row]')][0]
     assert.ok(midClip !== undefined, 'the remaining clip row is present')
+    // The sidebar's clip row offers the same chat attachment, driven through the
+    // same draft bridge (the history row is a separate surface from the gallery).
+    const beforeSidebarDrafts = conversationDrafts.length
+    const sidebarClipChat = midClip.querySelector('[data-history-video-conversation]')
+    assert.ok(sidebarClipChat !== null, 'the sidebar clip row offers add-to-chat')
+    sidebarClipChat.dispatchEvent(new jsdomWindow.MouseEvent('click', { bubbles: true, cancelable: true }))
+    assert.ok(await waitFor(() => conversationDrafts.length > beforeSidebarDrafts), 'the sidebar clip row drafts the clip too')
+    assert.match(conversationDrafts.at(-1).type, /^video\//, 'the sidebar draft is also a video file')
+
     midClip.querySelector('[data-dsh-imagegen-history-main]').dispatchEvent(new jsdomWindow.MouseEvent('click', { bubbles: true, cancelable: true }))
     await new Promise(resolve => setTimeout(resolve, 60))
     assert.ok(await waitUntil(() => view.querySelector('[id="dsh-video-prompt"]') !== null), 'clicking a clip row switches to the video studio')

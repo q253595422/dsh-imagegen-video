@@ -250,7 +250,7 @@ function generatedImageToFile(image: GeneratedImage, index: number): File {
   const binary = atob(image.b64)
   const bytes = new Uint8Array(binary.length)
   for (let offset = 0; offset < binary.length; offset += 1) bytes[offset] = binary.charCodeAt(offset)
-  return new File([bytes], `dsh-image-${index + 1}.${extensionOf(image.mime)}`, { type: image.mime })
+  return makeFile([bytes], `dsh-image-${index + 1}.${extensionOf(image.mime)}`, { type: image.mime })
 }
 
 /** Decode a data URL into a browser File for the native composer. */
@@ -260,7 +260,54 @@ function dataUrlToFile(dataUrl: string, name: string): File {
   const binary = atob(match[2])
   const bytes = new Uint8Array(binary.length)
   for (let offset = 0; offset < binary.length; offset += 1) bytes[offset] = binary.charCodeAt(offset)
-  return new File([bytes], name, { type: match[1] })
+  return makeFile([bytes], name, { type: match[1] })
+}
+
+/**
+ * Fetch a served clip and wrap it as a File for the native composer.
+ *
+ * A clip is NOT resized or re-encoded: the composer's file path streams the
+ * browser File to the host as-is (a clip is far too large to convert to a data
+ * URL first, which is the image path). The name is taken from the URL so the
+ * attachment rail shows something recognizable.
+ */
+/**
+ * Build a File in whichever realm actually offers the constructor.
+ *
+ * The bare `File` global is not guaranteed: the plugin bundle runs in a realm
+ * that can differ from the document's (and in tests the constructor simply is
+ * not on the module global), which surfaces as "File is not defined". The
+ * browser window is checked first because that is the realm whose File the
+ * composer wants.
+ */
+function makeFile(parts: BlobPart[], name: string, options: { type: string }): File {
+  const ctor = (globalThis as { File?: typeof File }).File
+    ?? (globalThis as { window?: { File?: typeof File } }).window?.File
+  if (ctor === undefined) throw new Error('File is unavailable in this browser')
+  return new ctor(parts, name, options)
+}
+
+async function clipUrlToFile(url: string, name: string): Promise<File> {
+  const response = await fetch(url)
+  if (!response.ok) throw new Error(`video fetch failed: HTTP ${response.status}`)
+  const blob = await response.blob()
+  if (blob.size === 0) throw new Error('video is empty')
+  const type = blob.type !== '' ? blob.type : 'video/mp4'
+  // Read the bytes rather than handing the Blob to the File constructor: a Blob
+  // created by another realm (a test's jsdom, an iframe) is not a native Blob to
+  // this realm's File, which then silently wraps the OBJECT instead of its bytes
+  // (observed: a 3-byte blob produced a 13-byte File). Copying the bytes makes
+  // the File correct in every realm, and `arrayBuffer` is also what the host
+  // upload wants.
+  const bytes = new Uint8Array(await blob.arrayBuffer())
+  if (bytes.byteLength === 0) throw new Error('video is empty')
+  return makeFile([bytes], name, { type })
+}
+
+/** A file name for one clip, derived from its served URL. */
+function clipFileName(url: string, fallback: string): string {
+  const last = url.split('?')[0]?.split('/').pop() ?? ''
+  return last !== '' && /\.(mp4|webm|mov|mkv)$/i.test(last) ? last : `${fallback}.mp4`
 }
 
 /** Read intrinsic dimensions without changing the original preview. */
@@ -1852,6 +1899,49 @@ export function ImageGenPanel(props: {
     }
   }
 
+  /**
+   * Add one clip to the current chat draft.
+   *
+   * Reuses the SAME draft bridge as images: the platform's composer accepts any
+   * file (it drafts non-images as `kind: 'file'` and streams them itself), so a
+   * clip needs no new host route and no base64 conversion. The only image-only
+   * step skipped is the `/edit_image` pending-attachment call, which exists so
+   * `/edit_image` can find the picture again — there is no `/edit_video`.
+   */
+  const addClipToConversation = async (url: string, actionKey: number | string): Promise<void> => {
+        if (addingToConversation !== null) return
+    if (conversation === undefined || sessions === undefined || currentSessionId === undefined) {
+      setError(tt('conversation.noSession'))
+      return
+    }
+    const sessionScope = sessions.scope(currentSessionId)
+    if (sessionScope === undefined) {
+      setError(tt('conversation.unavailable'))
+      return
+    }
+    setAddingToConversation(actionKey)
+    let attachments: readonly ConversationDraftAttachment[] = []
+    let added = false
+    try {
+            const file = await clipUrlToFile(url, clipFileName(url, 'imagegen-video'))
+            const created = createConversationDrafts(conversation, currentSessionId, [file])
+      if (created === undefined) throw new Error(tt('conversation.unavailable'))
+      attachments = created
+      const input = conversationInput(conversation.input.for(sessionScope))
+      const accepted = addConversationAttachments(input, attachments.map(attachment => attachment.id))
+      if (accepted === undefined) throw new Error(tt('conversation.unavailable'))
+      if (!accepted) throw new Error(tt('conversation.busy'))
+      added = true
+      setConversationMessage(tt('conversation.addedVideo'))
+      window.setTimeout(() => { setConversationMessage(null) }, 2200)
+    } catch (caught) {
+      if (!added) releaseConversationDrafts(conversation, attachments)
+      setError(errorMessage(caught))
+    } finally {
+      setAddingToConversation(null)
+    }
+  }
+
   /** Add one history entry's first image to the gallery (fetches it from the
    *  history image route, then delegates to addToGallery). */
   const addHistoryEntryToGallery = async (entry: HistoryEntry): Promise<void> => {
@@ -2258,6 +2348,19 @@ export function ImageGenPanel(props: {
                   </span>
                 </button>
                 <span className={css.historyActions}>
+                  {isVideoRow ? (
+                    <button
+                      type="button"
+                      className={css.historyIconAction}
+                      disabled={addingToConversation !== null}
+                      title={`${tt('conversation.addVideo')}：${tt('conversation.addVideoHint')}`}
+                      aria-label={tt('conversation.addVideo')}
+                      data-history-video-conversation=""
+                      onClick={() => { void addClipToConversation(row.entry!.videos[0]!.url, `history-clip:${row.entry!.id}`) }}
+                    >
+                      <svg viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M4 2.5h8A1.5 1.5 0 0 1 13.5 4v5a1.5 1.5 0 0 1-1.5 1.5H8.5L5.5 13v-2.5H4A1.5 1.5 0 0 1 2.5 9V4A1.5 1.5 0 0 1 4 2.5z" /></svg>
+                    </button>
+                  ) : null}
                   {isVideoRow ? (
                     <button
                       type="button"
@@ -3016,7 +3119,15 @@ export function ImageGenPanel(props: {
           {/* -------------------------------------------------- video studio */}
           {isVideo ? (
             <section className={css.canvas} data-video="true">
-              <VideoPanel api={api} scope={scope} config={config} active={active && tab === 'video'} tasks={videoTasks} />
+              <VideoPanel
+                api={api}
+                scope={scope}
+                config={config}
+                active={active && tab === 'video'}
+                tasks={videoTasks}
+                onAddToConversation={addClipToConversation}
+                conversationBusyKey={addingToConversation === null ? null : String(addingToConversation)}
+              />
             </section>
           ) : null}
 
@@ -3100,7 +3211,17 @@ export function ImageGenPanel(props: {
                           </span> : null}
                         </button>
                         <div className={css.galleryCardActions}>
-                          {isClip ? (
+                          {isClip ? (<>
+                            <button
+                              type="button"
+                              className={css.galleryCardAction}
+                              data-gallery-video-conversation=""
+                              disabled={addingToConversation !== null}
+                              title={tt('conversation.addVideoHint')}
+                              onClick={(event) => { event.stopPropagation(); void addClipToConversation(clip.url, `gallery-clip:${entry.id}`) }}
+                            >
+                              {addingToConversation === `gallery-clip:${entry.id}` ? tt('conversation.adding') : tt('conversation.add')}
+                            </button>
                             <a
                               className={css.galleryCardAction}
                               data-gallery-video-download=""
@@ -3110,7 +3231,7 @@ export function ImageGenPanel(props: {
                             >
                               {tt('video.download')}
                             </a>
-                          ) : null}
+                          </>) : null}
                           {!isClip ? (<>
                           <button
                             type="button"
