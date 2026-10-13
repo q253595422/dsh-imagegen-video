@@ -3078,15 +3078,26 @@ html[data-dsh-imagegen-chat-collapsed] [data-dsh-imagegen-chat-resizer] {
 }
 
 .videoBody {
-  display: grid;
-  grid-template-columns: minmax(280px, 420px) minmax(0, 1fr);
+  /* Sections stack and each takes the FULL panel width. The studio lives in a
+     narrow centre column inside a wide window, so the previous two-track grid
+     (composer capped at 280-420px, results taking the remainder) left the
+     composer cramped while a large sibling column sat empty. A width media
+     query cannot detect that: media queries measure the window, not this panel,
+     so the narrow fallback never fired. Stacking removes the guess entirely. */
+  display: flex;
+  flex-direction: column;
   gap: 16px;
   min-height: 0;
   overflow: auto;
 }
 
-@media (max-width: 1080px) {
-  .videoBody { grid-template-columns: minmax(0, 1fr); }
+/* The clip lists DO use horizontal space when the panel is wide, wrapping into
+   as many columns as fit instead of one long single-file ladder. */
+.videoTaskList,
+.videoHistoryList {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(min(100%, 260px), 1fr));
+  gap: 12px;
 }
 
 .videoComposer {
@@ -3318,9 +3329,6 @@ html[data-dsh-imagegen-chat-collapsed] [data-dsh-imagegen-chat-resizer] {
 
 .videoTaskList,
 .videoHistoryList {
-  display: flex;
-  flex-direction: column;
-  gap: 10px;
   margin: 0;
   padding: 0;
   list-style: none;

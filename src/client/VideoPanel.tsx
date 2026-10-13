@@ -21,6 +21,7 @@ import type { VideoGenerateRequest, VideoHistoryEntry, VideoMode, VideoTask, Vid
 import { VIDEO_ASPECT_RATIOS, VIDEO_DURATIONS, type VideoResolution } from '../protocol.ts'
 import { describeVideoModel, isLikelyVideoModelId } from '../video-model-catalog.ts'
 import { Select } from './Select.tsx'
+import type { ImageGenKey } from './locales.ts'
 import css from './panel.module.css'
 
 /** How often the tab asks the host for task state while something runs. */
@@ -406,18 +407,18 @@ export function VideoPanel(props: VideoPanelProps) {
           </div>
         </section>
 
+        {tasks.length === 0 ? null : (
         <section className={css.videoResults}>
           <header className={css.videoResultsHead}>
-            <h3>{tt('video.running')}</h3>
+            <h3>{tt('video.tasksTitle')}</h3>
           </header>
-          {tasks.length === 0 ? null : (
-            <ul className={css.videoTaskList}>
+          <ul className={css.videoTaskList}>
               {tasks.map(task => (
                 <li key={task.id} className={css.videoTask} data-status={task.status}>
                   <div className={css.videoTaskHead}>
                     <span className={css.videoTaskModel}>{task.request.model}</span>
                     <span className={css.videoTaskStatus}>
-                      {tt(`video.${task.status === 'running' ? 'running' : task.status === 'queued' ? 'queued' : task.status === 'completed' ? 'completed' : task.status === 'cancelled' ? 'cancelled' : 'failed'}`)}
+                      {tt(`video.status.${task.status}` as ImageGenKey)}
                     </span>
                     {task.status === 'running' || task.status === 'queued' ? (
                       <>
@@ -436,9 +437,9 @@ export function VideoPanel(props: VideoPanelProps) {
                   ) : null}
                 </li>
               ))}
-            </ul>
-          )}
+          </ul>
         </section>
+        )}
 
         <section className={css.videoGallery}>
           <header className={css.videoResultsHead}>
