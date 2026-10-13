@@ -8,7 +8,7 @@
  * a platform module) so the studio matches the dsh shell look by construction.
  */
 
-import { useEffect, useMemo, useRef, useState, type CSSProperties, type PointerEvent as ReactPointerEvent } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties, type PointerEvent as ReactPointerEvent } from 'react'
 import { createPortal } from 'react-dom'
 import { Button, Pill } from '@deepseek-ai/dsh-client-ui-primitives'
 import type { SessionId } from '@deepseek-ai/dsh-api-remotes/client'
@@ -24,7 +24,7 @@ import { InspirationGallery } from './InspirationGallery.tsx'
 import { CanvasWorkspace } from './CanvasWorkspace.tsx'
 import { ModelPicker, resolveModelChoice, type ModelPickerValue } from './ModelPicker.tsx'
 import { useImageGenLanguageTick } from './use-language.ts'
-import type {  EcommerceRefRole, GenerateMode, GenerateRequest, GeneratedImage, GenerationTask, GenerationTaskStatus, GenerationTaskSummary, HistoryEntry, HistoryImageRef, ProductSetDraft, ProductSetSlot, UpdateInfo, VideoTaskSummary  } from '../protocol.ts'
+import type {  EcommerceRefRole, GenerateMode, GenerateRequest, GeneratedImage, GenerationTask, GenerationTaskStatus, GenerationTaskSummary, HistoryEntry, HistoryImageRef, ProductSetDraft, ProductSetSlot, UpdateInfo, VideoHistoryEntry, VideoTaskSummary  } from '../protocol.ts'
 import { AGENT_IMAGE_API, SUBSCRIPTION_API, SUBSCRIPTION_PROVIDERS, type SubscriptionProvider } from '../protocol.ts'
 import type { ImageGenConfig, ImageGenScope, ImageModelGroup } from './settings-scope.ts'
 import { imageModelOptions, videoModelOptions } from './settings-scope.ts'
@@ -452,6 +452,69 @@ type GalleryFilter = string
 type ComparisonSession = { taskIds: string[]; prompt: string; comparisonId: string }
 type HistoryGroup = { key: string; entries: HistoryEntry[]; models: string[] }
 
+/**
+ * One sidebar row in the unified history.
+ *
+ * Image and video history live in separate host stores with genuinely different
+ * shapes (an image entry indexes bytes in its own index; a clip entry names a
+ * file in the video store), so the two are unified HERE, at the view layer,
+ * rather than by merging the stores. That keeps each store's invariants intact
+ * and makes this a purely presentational composition.
+ */
+interface UnifiedHistoryRow {
+  key: string
+  kind: 'image' | 'video'
+  createdAt: number
+  prompt: string
+  /** Model names shown in the row's meta line. */
+  models: string[]
+  /** Thumbnail / preview URL, when one exists. */
+  thumbUrl?: string
+  /** Right-hand meta line parts beyond model + time (built by each branch). */
+  meta: string
+  /** The backing image group (image rows only). */
+  group?: HistoryGroup
+  /** The backing clip entry (video rows only). */
+  entry?: VideoHistoryEntry
+}
+
+/** Adapt one video-history entry into a sidebar row. */
+function videoRowOf(entry: VideoHistoryEntry): UnifiedHistoryRow {
+  return {
+    key: `video:${entry.id}`,
+    kind: 'video',
+    createdAt: entry.createdAt,
+    prompt: entry.prompt,
+    models: [entry.model],
+    // A clip has no poster frame of its own, so the row renders a film icon
+    // rather than paying for a video element in the list.
+    meta: `${entry.aspectRatio} · ${entry.resolution} · ${entry.seconds}s`,
+    entry,
+  }
+}
+
+/** Adapt one image history group into a sidebar row. */
+function imageRowOf(group: HistoryGroup): UnifiedHistoryRow {
+  const entry = group.entries[0]!
+  const isComparison = group.models.length > 1
+  const imageCount = group.entries.reduce((total, item) => total + item.images.length, 0)
+  const kindLabel = isComparison
+    ? tt('compare.title')
+    : entry.workflow === 'ecommerce'
+      ? `${tt('ecommerce.short')}${entry.projectName !== undefined && entry.projectName !== '' ? ` · ${entry.projectName}` : ''}`
+      : tt(`mode.${entry.mode === 'edit' ? 'edit' : 'text'}` as const)
+  return {
+    key: group.key,
+    kind: 'image',
+    createdAt: entry.createdAt,
+    prompt: entry.prompt,
+    models: group.models,
+    ...entry.images.length > 0 ? { thumbUrl: entry.images[0]!.url } : {},
+    meta: `${kindLabel} · ${imageCount} ${tt('history.images')}`,
+    group,
+  }
+}
+
 /** One image unit in the ecommerce results canvas: a live queue task or a
  *  restored history entry of the viewed product set. */
 interface EcommerceResultItem {
@@ -661,6 +724,8 @@ export function ImageGenPanel(props: {
   const [configGuide, setConfigGuide] = useState<'generation' | 'enhancement' | 'disabled' | null>(null)
   const [history, setHistory] = useState<HistoryEntry[]>([])
   const [viewingHistoryId, setViewingHistoryId] = useState<string | null>(null)
+  /** The clip currently open in the video tab (mirrors viewingHistoryId). */
+  const [viewingVideoId, setViewingVideoId] = useState<string | null>(null)
   const [gallery, setGallery] = useState<HistoryEntry[]>([])
   const [galleryViewingId, setGalleryViewingId] = useState<string | null>(null)
   const [galleryAdding, setGalleryAdding] = useState(false)
@@ -677,6 +742,9 @@ export function ImageGenPanel(props: {
   const [galleryTagEditInput, setGalleryTagEditInput] = useState('')
   const [selectedGalleryIds, setSelectedGalleryIds] = useState<Set<string>>(new Set())
   const [gallerySelecting, setGallerySelecting] = useState(false)
+  // Clips live in their own host store; the sidebar merges them with the image
+  // history at render time (see UnifiedHistoryRow).
+  const [videoHistory, setVideoHistory] = useState<VideoHistoryEntry[]>([])
   const [historyQuery, setHistoryQuery] = useState('')
   const [historyModelFilter, setHistoryModelFilter] = useState('all')
   const [historyRatioFilter, setHistoryRatioFilter] = useState('all')
@@ -848,13 +916,66 @@ export function ImageGenPanel(props: {
   const galleryTagOptions = [...new Set(gallery.flatMap(entry => entry.tags ?? []))].sort((a, b) => a.localeCompare(b))
   const galleryModels = [...new Set([...imageModels, ...gallery.map(entry => entry.model)])]
 
-  const filteredHistory = groupHistoryEntries(history).filter(group => group.entries.some(entry => {
+  /**
+   * The sidebar's single, time-ordered list of every generation.
+   *
+   * Clips and images share one row shape here, so the filters, the empty state
+   * and the "clear" action all work across both without either branch knowing
+   * about the other's store.
+   */
+  const unifiedHistory = useMemo<UnifiedHistoryRow[]>(() => {
     const query = historyQuery.trim().toLocaleLowerCase()
-    const models = modelsOfHistoryEntry(entry)
-    return (query === '' || `${entry.prompt} ${models.join(' ')}`.toLocaleLowerCase().includes(query))
-      && (historyModelFilter === 'all' || models.includes(historyModelFilter))
-      && (historyRatioFilter === 'all' || normalizeSize(entry.size) === historyRatioFilter)
-  }))
+    const imageRows = groupHistoryEntries(history).map(imageRowOf)
+    const videoRows = videoHistory.map(videoRowOf)
+    const matches = (row: UnifiedHistoryRow, extra: string): boolean => {
+      if (query !== '' && !`${row.prompt} ${row.models.join(' ')}`.toLocaleLowerCase().includes(query)) return false
+      if (historyModelFilter !== 'all' && !row.models.includes(historyModelFilter)) return false
+      if (historyRatioFilter !== 'all' && extra !== historyRatioFilter) return false
+      return true
+    }
+    // The ratio filter compares against each kind's own ratio vocabulary: an
+    // image size ('1:1', 'auto') and a clip aspect ratio ('16:9') are the same
+    // concept but stored differently.
+    const rows = [
+      ...imageRows.filter(row => matches(row, normalizeSize(row.group!.entries[0]!.size))),
+      ...videoRows.filter(row => matches(row, row.entry!.aspectRatio)),
+    ]
+    // Merge the two lists rather than re-sorting the combined set.
+    //
+    // Both stores are already newest-first: each prepends its new entry. A
+    // merge therefore yields true chronological order while preserving the
+    // RELATIVE order inside each list — whereas sorting everything by
+    // createdAt would also reorder image rows against each other, which can
+    // change which item a click opens (comparison groups and product sets do
+    // not necessarily follow createdAt).
+    const merged: UnifiedHistoryRow[] = []
+    let left = 0
+    let right = 0
+    while (left < imageRows.length && right < videoRows.length) {
+      merged.push(videoRows[right]!.createdAt > imageRows[left]!.createdAt
+        ? videoRows[right++]!
+        : imageRows[left++]!)
+    }
+    while (left < imageRows.length) merged.push(imageRows[left++]!)
+    while (right < videoRows.length) merged.push(videoRows[right++]!)
+    return merged
+  }, [history, videoHistory, historyModelFilter, historyQuery, historyRatioFilter])
+
+  /** Every model name appearing in either store, for the model filter. */
+  const historyModelOptions = useMemo(() => [
+    ...new Set([
+      ...history.flatMap(entry => modelsOfHistoryEntry(entry)),
+      ...videoHistory.map(entry => entry.model),
+    ]),
+  ], [history, videoHistory])
+
+  /** Every ratio appearing in either store, for the ratio filter. */
+  const historyRatioOptions = useMemo(() => [
+    ...new Set([
+      ...history.map(entry => normalizeSize(entry.size)),
+      ...videoHistory.map(entry => entry.aspectRatio),
+    ]),
+  ], [history, videoHistory])
 
   // Load the host-persisted history and gallery once, when the panel first
   // becomes visible. Keeping this out of boot prevents eager full-size image
@@ -868,6 +989,10 @@ export function ImageGenPanel(props: {
     api.galleryList()
       .then(entries => { setGallery(entries) })
       .catch(() => { /* gallery unavailable — leave the list empty */ })
+    // Clips are listed from the same place they are shown: the unified sidebar.
+    api.videoHistoryList()
+      .then(entries => { setVideoHistory(entries) })
+      .catch(() => { /* video history unavailable — leave it empty */ })
   }, [api, active])
 
   // Chat toolviews publish durable refs after they finish loading. Decode the
@@ -1485,6 +1610,40 @@ export function ImageGenPanel(props: {
   }
 
   /** Remove every persisted row belonging to one comparison group. */
+  /**
+   * Open one clip from the unified sidebar.
+   *
+   * A clip cannot render on the image result board, so this switches to the
+   * video tab (where the history list already shows it) and marks the row
+   * active. Selecting a history row has always been "show me that generation",
+   * and for a clip that means the video surface.
+   */
+  const openVideoFromHistory = useCallback((entry: VideoHistoryEntry): void => {
+    setWorkspace('normal')
+    setTab('video')
+    setViewingVideoId(entry.id)
+  }, [])
+
+  /** Favorite one clip into the gallery (the host copies it; see appendGalleryVideo). */
+  const favoriteVideoEntry = useCallback(async (entry: VideoHistoryEntry): Promise<void> => {
+    try {
+      await api.galleryAppendVideo({ entryId: entry.id })
+      setGallery(await api.galleryList())
+    } catch (caught) {
+      setError(errorMessage(caught))
+    }
+  }, [api])
+
+  const deleteVideoHistoryEntry = useCallback(async (id: string): Promise<void> => {
+    setVideoHistory(previous => previous.filter(entry => entry.id !== id))
+    if (viewingVideoId === id) setViewingVideoId(null)
+    try {
+      setVideoHistory(await api.videoHistoryRemove(id))
+    } catch {
+      // Keep the optimistic local removal.
+    }
+  }, [api, viewingVideoId])
+
   const deleteHistoryGroup = async (group: HistoryGroup): Promise<void> => {
     const ids = new Set(group.entries.map(entry => entry.id))
     setHistory(previous => previous.filter(entry => !ids.has(entry.id)))
@@ -1528,9 +1687,18 @@ export function ImageGenPanel(props: {
   const clearHistory = async (): Promise<void> => {
     if (!window.confirm(tt('history.clearConfirm'))) return
     setHistory([])
+    setVideoHistory([])
     setViewingHistoryId(null)
+    setViewingVideoId(null)
     try {
       setHistory(await api.historyClear())
+    } catch {
+      // Keep the cleared local state.
+    }
+    // The sidebar is one list, so clearing it must clear both backing stores;
+    // otherwise clips would silently reappear on the next load.
+    try {
+      setVideoHistory(await api.videoHistoryClear())
     } catch {
       // Keep the cleared local state.
     }
@@ -1987,7 +2155,7 @@ export function ImageGenPanel(props: {
           >
             <svg viewBox="0 0 16 16" width="15" height="15" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M1.5 4.2A1.2 1.2 0 0 1 2.7 3h2.9l1.6 1.9h6.1A1.2 1.2 0 0 1 14.5 6.1v6.2a1.2 1.2 0 0 1-1.2 1.2H2.7a1.2 1.2 0 0 1-1.2-1.2z" /></svg>
           </button>
-          {history.length > 0 ? (
+          {unifiedHistory.length > 0 ? (
             <button type="button" className={css.historyClear} data-history-clear="" onClick={() => { void clearHistory() }}>
               {tt('history.clear')}
             </button>
@@ -1999,56 +2167,91 @@ export function ImageGenPanel(props: {
         <input className={css.historySearch} value={historyQuery} onChange={event => { setHistoryQuery(event.target.value) }} placeholder={tt('history.search')} aria-label={tt('history.search')} />
         <Select value={historyModelFilter} onChange={value => { setHistoryModelFilter(value) }} aria-label={tt('history.model')}>
           <option value="all">{tt('history.allModels')}</option>
-          {[...new Set(history.flatMap(entry => modelsOfHistoryEntry(entry)))].map(option => <option key={option} value={option}>{option}</option>)}
+          {historyModelOptions.map(option => <option key={option} value={option}>{option}</option>)}
         </Select>
         <Select value={historyRatioFilter} onChange={value => { setHistoryRatioFilter(value) }} aria-label={tt('history.ratio')}>
           <option value="all">{tt('history.allRatios')}</option>
-          {[...new Set(history.map(entry => normalizeSize(entry.size)))].map(option => <option key={option} value={option}>{option}</option>)}
+          {historyRatioOptions.map(option => <option key={option} value={option}>{option}</option>)}
         </Select>
       </div>
 
-      {filteredHistory.length === 0 ? (
+      {unifiedHistory.length === 0 ? (
         <div className={css.historyEmpty}>{tt('history.empty')}</div>
       ) : (
         <div className={css.historyList}>
-          {filteredHistory.map(group => {
-            const entry = group.entries[0]!
-            const isComparison = group.models.length > 1
-            const imageCount = group.entries.reduce((total, item) => total + item.images.length, 0)
+          {unifiedHistory.map(row => {
+            const isVideoRow = row.kind === 'video'
+            const isActive = isVideoRow
+              ? viewingVideoId === row.entry!.id
+              : row.group!.entries.some(item => item.id === viewingHistoryId)
             return (
               <div
-                key={group.key}
+                key={row.key}
                 className={css.historyItem}
-                data-active={group.entries.some(item => item.id === viewingHistoryId) ? '' : undefined}
-                data-comparison={isComparison ? '' : undefined}
+                data-active={isActive ? '' : undefined}
+                data-kind={row.kind}
+                data-video-row={isVideoRow ? '' : undefined}
+                data-comparison={!isVideoRow && row.group!.models.length > 1 ? '' : undefined}
               >
                 <button
                   type="button"
                   className={css.historyMain}
                   data-dsh-imagegen-history-main=""
-                  onClick={() => { void viewHistoryGroup(group) }}
+                  onClick={() => {
+                    if (isVideoRow) {
+                      // A clip opens in the studio's video tab rather than the
+                      // image result board, which cannot render it.
+                      openVideoFromHistory(row.entry!)
+                    } else {
+                      void viewHistoryGroup(row.group!)
+                    }
+                  }}
                 >
-                  {entry.images.length > 0 ? (
-                    <img className={css.historyThumb} src={entry.images[0]!.url} alt="" loading="lazy" decoding="async" />
-                  ) : (
-                    <span className={css.historyThumbPlaceholder} />
-                  )}
+                  {isVideoRow
+                    ? <span className={css.historyThumbPlaceholder} data-video-thumb="" title={tt('history.video')} aria-label={tt('history.video')}>
+                        <svg viewBox="0 0 16 16" width="16" height="16" fill="none" stroke="currentColor" strokeWidth="1.4" strokeLinejoin="round" aria-hidden="true">
+                          <rect x="1.8" y="3.6" width="9.4" height="8.8" rx="1.4" />
+                          <path d="M11.2 8.2l3.2-2.1v3.8l-3.2-1.7z" fill="currentColor" stroke="none" />
+                        </svg>
+                      </span>
+                    : row.thumbUrl !== undefined
+                      ? <img className={css.historyThumb} src={row.thumbUrl} alt="" loading="lazy" decoding="async" />
+                      : <span className={css.historyThumbPlaceholder} />}
                   <span className={css.historyInfo}>
-                    <span className={css.historyPrompt}>{entry.prompt}</span>
+                    <span className={css.historyPrompt}>{row.prompt}</span>
                     <span className={css.historyMeta}>
-                      {isComparison
-                        ? tt('compare.title')
-                        : entry.workflow === 'ecommerce'
-                          ? `${tt('ecommerce.short')}${entry.projectName !== undefined && entry.projectName !== '' ? ` · ${entry.projectName}` : ''}`
-                          : tt(`mode.${entry.mode === 'edit' ? 'edit' : 'text'}` as const)}
-                      {' · '}{isComparison ? group.models.join(' · ') : entry.model}
-                      {' · '}{formatTime(entry.createdAt)}
-                      {' · '}{imageCount} {tt('history.images')}
+                      {row.meta}
+                      {' · '}{row.models.join(' · ')}
+                      {' · '}{formatTime(row.createdAt)}
                     </span>
                   </span>
                 </button>
                 <span className={css.historyActions}>
-                  {entry.images.length > 0 ? (
+                  {isVideoRow ? (
+                    <button
+                      type="button"
+                      className={css.historyIconAction}
+                      title={tt('canvas.videoFavorite')}
+                      aria-label={tt('canvas.videoFavorite')}
+                      data-history-video-gallery=""
+                      onClick={() => { void favoriteVideoEntry(row.entry!) }}
+                    >
+                      <svg viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><rect x="2.5" y="3" width="11" height="10" rx="1.5" /><circle cx="5.9" cy="6.1" r="1" /><path d="M13.5 10.2l-3.1-3.1L4.6 13" /></svg>
+                    </button>
+                  ) : null}
+                  {isVideoRow ? (
+                    <a
+                      className={css.historyIconAction}
+                      title={tt('video.download')}
+                      aria-label={tt('video.download')}
+                      data-history-video-download=""
+                      href={row.entry!.videos[0]?.url}
+                      download
+                    >
+                      <svg viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M8 2.5v8" /><path d="M4.8 7.4L8 10.6l3.2-3.2" /><path d="M2.8 13.2h10.4" /></svg>
+                    </a>
+                  ) : null}
+                  {!isVideoRow && row.group!.entries[0]!.images.length > 0 ? (
                     <button
                       type="button"
                       className={css.historyIconAction}
@@ -2056,12 +2259,12 @@ export function ImageGenPanel(props: {
                       title={`${tt('conversation.add')}：${tt('conversation.addHint')}`}
                       aria-label={tt('conversation.add')}
                       data-history-add-conversation=""
-                      onClick={() => { void addHistoryEntryToConversation(entry) }}
+                      onClick={() => { void addHistoryEntryToConversation(row.group!.entries[0]!) }}
                     >
                       <svg viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M4 2.5h8A1.5 1.5 0 0 1 13.5 4v5a1.5 1.5 0 0 1-1.5 1.5H8.5L5.5 13v-2.5H4A1.5 1.5 0 0 1 2.5 9V4A1.5 1.5 0 0 1 4 2.5z" /></svg>
                     </button>
                   ) : null}
-                  {entry.images.length > 0 ? (
+                  {!isVideoRow && row.group!.entries[0]!.images.length > 0 ? (
                     <button
                       type="button"
                       className={css.historyIconAction}
@@ -2069,19 +2272,19 @@ export function ImageGenPanel(props: {
                       title={tt('gallery.add')}
                       aria-label={tt('gallery.add')}
                       data-history-add-gallery=""
-                      onClick={() => { void addHistoryEntryToGallery(entry) }}
+                      onClick={() => { void addHistoryEntryToGallery(row.group!.entries[0]!) }}
                     >
                       <svg viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><rect x="2.5" y="3" width="11" height="10" rx="1.5" /><circle cx="5.9" cy="6.1" r="1" /><path d="M13.5 10.2l-3.1-3.1L4.6 13" /></svg>
                     </button>
                   ) : null}
-                  {entry.images.length > 0 ? (
+                  {!isVideoRow && row.group!.entries[0]!.images.length > 0 ? (
                     <button
                       type="button"
                       className={css.historyIconAction}
                       title={tt('canvas.addToCanvas')}
                       aria-label={tt('canvas.addToCanvas')}
                       data-history-add-canvas=""
-                      onClick={() => { addEntryToCanvas('history', entry.id, 0) }}
+                      onClick={() => { addEntryToCanvas('history', row.group!.entries[0]!.id, 0) }}
                     >
                       <svg viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><rect x="2.5" y="2.5" width="11" height="11" rx="1.5" /><path d="M5 8h6M8 5v6" /></svg>
                     </button>
@@ -2092,7 +2295,10 @@ export function ImageGenPanel(props: {
                     data-danger
                     title={tt('history.delete')}
                     aria-label={tt('history.delete')}
-                    onClick={() => { void deleteHistoryGroup(group) }}
+                    onClick={() => {
+                      if (isVideoRow) void deleteVideoHistoryEntry(row.entry!.id)
+                      else void deleteHistoryGroup(row.group!)
+                    }}
                   >
                     <svg viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M2.5 4.5h11" /><path d="M6 4.5V3.2a.7.7 0 0 1 .7-.7h2.6a.7.7 0 0 1 .7.7v1.3" /><path d="M4.3 4.5l.6 8.1a1 1 0 0 0 1 .9h4.2a1 1 0 0 0 1-.9l.6-8.1" /><path d="M6.7 7v4M9.3 7v4" /></svg>
                   </button>

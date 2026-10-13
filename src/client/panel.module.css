@@ -3443,3 +3443,27 @@ html[data-dsh-imagegen-chat-collapsed] [data-dsh-imagegen-chat-resizer] {
   margin: 0;
   font-size: 13px;
 }
+
+/* A clip has no poster frame, so its sidebar row shows a film glyph in the
+   thumbnail slot instead of paying for a <video> element per row. */
+.historyThumbPlaceholder[data-video-thumb] {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--dsw-alias-label-tertiary);
+  background: var(--dsw-alias-bg-layer-2);
+  border: 1px solid var(--dsw-alias-border-l1);
+}
+
+.historyItem[data-video-row] .historyThumbPlaceholder[data-video-thumb] {
+  color: var(--dsw-alias-brand-primary);
+}
+
+/* The unified list shows an anchor where image rows show a button; match them. */
+a.historyIconAction {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  text-decoration: none;
+  color: inherit;
+}

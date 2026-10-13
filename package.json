@@ -82,7 +82,7 @@
     "watch": "tsdown --watch",
     "typecheck": "tsc --noEmit",
     "fetch-templates": "node scripts/fetch-templates.mjs",
-    "test": "node scripts/smoke.mjs && node scripts/smoke-video.mjs && node scripts/smoke-canvas-video.mjs",
+    "test": "pnpm build && node scripts/smoke.mjs && node scripts/smoke-video.mjs && node scripts/smoke-canvas-video.mjs",
     "test:video": "node scripts/smoke-video.mjs",
     "test:canvas-video": "node scripts/smoke-canvas-video.mjs"
   }

@@ -102,7 +102,6 @@ export function VideoPanel(props: VideoPanelProps) {
     if (controlled) return
     void api.videoTaskList().then(setLocalTasks).catch(() => { /* transient */ })
   }, [api, controlled])
-  const [history, setHistory] = useState<VideoHistoryEntry[]>([])
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [now, setNow] = useState(() => Date.now())
@@ -146,12 +145,6 @@ export function VideoPanel(props: VideoPanelProps) {
     }
   }, [catalog.resolutions, resolution])
 
-  const refreshHistory = useCallback((): void => {
-    void api.videoHistoryList().then(setHistory).catch(() => { /* the list is optional */ })
-  }, [api])
-
-  useEffect(() => { refreshHistory() }, [refreshHistory])
-
   // Poll the host queue. The task lives host-side, so this also picks up a
   // render started before the page was reloaded.
   useEffect(() => {
@@ -165,15 +158,6 @@ export function VideoPanel(props: VideoPanelProps) {
     const timer = window.setInterval(tick, POLL_INTERVAL_MS)
     return () => { disposed = true; window.clearInterval(timer) }
   }, [api, active, props.tasks])
-
-  // Refresh the history whenever a render finishes.
-  const completedIds = tasks.filter(task => task.status === 'completed').map(task => task.id).join(',')
-  const seenCompleted = useRef('')
-  useEffect(() => {
-    if (completedIds === '' || completedIds === seenCompleted.current) return
-    seenCompleted.current = completedIds
-    refreshHistory()
-  }, [completedIds, refreshHistory])
 
   // A seconds counter for running renders only.
   const anyRunning = tasks.some(task => task.status === 'running' || task.status === 'queued')
@@ -228,14 +212,6 @@ export function VideoPanel(props: VideoPanelProps) {
 
   const retry = (id: string): void => {
     void api.videoTaskRetry(id).then(() => { refreshTasks() }).catch(() => { /* ignore */ })
-  }
-
-  const removeHistory = (id: string): void => {
-    void api.videoHistoryRemove(id).then(setHistory).catch(() => { /* ignore */ })
-  }
-
-  const clearHistory = (): void => {
-    void api.videoHistoryClear().then(setHistory).catch(() => { /* ignore */ })
   }
 
   /** The served clip URL for a finished task summary. */
@@ -441,34 +417,9 @@ export function VideoPanel(props: VideoPanelProps) {
         </section>
         )}
 
-        <section className={css.videoGallery}>
-          <header className={css.videoResultsHead}>
-            <h3>{tt('video.history')}</h3>
-            {history.length > 0 ? <button type="button" onClick={clearHistory}>{tt('video.historyClear')}</button> : null}
-          </header>
-          {history.length === 0
-            ? <p className={css.videoHint}>{tt('video.historyEmpty')}</p>
-            : (
-              <ul className={css.videoHistoryList}>
-                {history.map(entry => (
-                  <li key={entry.id} className={css.videoHistoryItem}>
-                    {entry.videos.map(video => (
-                      <div key={video.url} className={css.videoHistoryClip}>
-                        <video className={css.videoPlayer} controls preload="metadata" src={video.url} />
-                        <div className={css.videoHistoryMeta}>
-                          <span>{entry.model}</span>
-                          <span>{entry.aspectRatio} · {entry.resolution} · {entry.seconds}s</span>
-                          <a href={video.url} download>{tt('video.download')}</a>
-                          <button type="button" onClick={() => { removeHistory(entry.id) }}>{tt('video.historyRemove')}</button>
-                        </div>
-                      </div>
-                    ))}
-                    <p className={css.videoTaskPrompt} title={entry.prompt}>{entry.prompt}</p>
-                  </li>
-                ))}
-              </ul>
-            )}
-        </section>
+        {/* Clip history is NOT repeated here: the shell sidebar shows images and
+            clips in one list, so rendering it again would present two different
+            histories of the same store. */}
       </div>
     </div>
   )

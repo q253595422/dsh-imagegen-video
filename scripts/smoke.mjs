@@ -3666,6 +3666,20 @@ await check('E1 client apply mounts the sidebar entry and studio (jsdom)', async
   /** Video tasks the panel sees when polling, and submissions it makes. */
   const videoTasks = []
   const videoSubmissions = []
+  /** Clip history the sidebar must merge with the image history. */
+  const videoHistoryEntries = [
+    {
+      id: 'clip-new', createdAt: 6, mode: 'text', model: 'agnes-video-2.5-flash',
+      prompt: 'a clip newest', aspectRatio: '16:9', resolution: '720P', seconds: 5,
+      videos: [{ url: '/api/dsh-imagegen/video/file/clip-new-0.mp4', mime: 'video/mp4', duration: 5 }],
+    },
+    {
+      id: 'clip-mid', createdAt: 3, mode: 'text', model: 'agnes-video-2.5-flash',
+      prompt: 'a clip middle', aspectRatio: '9:16', resolution: '1080P', seconds: 10,
+      videos: [{ url: '/api/dsh-imagegen/video/file/clip-mid-0.mp4', mime: 'video/mp4', duration: 10 }],
+    },
+  ]
+  const videoHistoryRemovals = []
   /** Canvas video runs, recorded so the canvas test can assert the request. */
   const canvasVideoSubmissions = []
   /** Assets the canvas uploaded during a frame grab. */
@@ -3756,7 +3770,30 @@ await check('E1 client apply mounts the sidebar entry and studio (jsdom)', async
       return { ok: true, json: async () => ({ ok: true, tasks }) }
     }
     if (path.endsWith('/video/history/list')) {
+      // One clip, interleaved chronologically with the image fixture below:
+      // createdAt 6 (newer than every image entry) and createdAt 3 (between the
+      // comparison group at 2 and the ecommerce set at 4/5).
+      return {
+        ok: true,
+        json: async () => ({
+          ok: true,
+          entries: videoHistoryEntries,
+        }),
+      }
+    }
+    if (path.endsWith('/video/history/remove')) {
+      const body = JSON.parse(init.body)
+      videoHistoryRemovals.push(body.id)
+      const index = videoHistoryEntries.findIndex(entry => entry.id === body.id)
+      if (index >= 0) videoHistoryEntries.splice(index, 1)
+      return { ok: true, json: async () => ({ ok: true, entries: videoHistoryEntries }) }
+    }
+    if (path.endsWith('/video/history/clear')) {
+      videoHistoryEntries.length = 0
       return { ok: true, json: async () => ({ ok: true, entries: [] }) }
+    }
+    if (path.endsWith('/gallery/video')) {
+      return { ok: true, json: async () => ({ ok: true, entries: [], added: true }) }
     }
     if (path.endsWith('/video/tasks/submit')) {
       const body = JSON.parse(init.body)
@@ -3809,11 +3846,16 @@ await check('E1 client apply mounts the sidebar entry and studio (jsdom)', async
         ok: true,
         json: async () => ({
           ok: true,
+          // Newest-first, exactly like the host: history-store prepends each new
+          // entry ([entry, ...readIndex()]), so array order is insertion order,
+          // newest first. A fixture in ascending order would misrepresent the
+          // contract the sidebar's two-list merge relies on.
           entries: [
+            { id: 'history-plain', createdAt: 7, mode: 'text', model: 'gpt-image-2', prompt: 'plain image prompt', size: '1:1', quality: '2k', detail: '', n: 1, images: [{ url: '/history/plain.png', mime: 'image/png' }] },
+            { id: 'hist-ecom-2', createdAt: 5, mode: 'text', model: 'gpt-image-2', prompt: 'product selling point', size: '1:1', quality: '2k', detail: '', n: 1, images: [{ url: '/history/ecom2.png', mime: 'image/png' }], workflow: 'ecommerce', projectId: 'project-hist', projectName: '历史保温杯', slotKey: 'sp-1', slotLabel: '卖点图' },
+            { id: 'hist-ecom-1', createdAt: 4, mode: 'text', model: 'gpt-image-2', prompt: 'product main image', size: '1:1', quality: '2k', detail: '', n: 1, images: [{ url: '/history/ecom1.png', mime: 'image/png' }], workflow: 'ecommerce', projectId: 'project-hist', projectName: '历史保温杯', slotKey: 'main-1', slotLabel: '主图' },
             { id: 'history-grok', createdAt: 2, mode: 'text', model: 'grok-imagine-image', prompt: 'compare prompt', size: '1:1', quality: '4k', detail: '', n: 1, images: [{ url: '/history/grok.png', mime: 'image/png' }], ...comparisonHistory },
             { id: 'history-gpt', createdAt: 1, mode: 'text', model: 'gpt-image-2', prompt: 'compare prompt', size: '1:1', quality: '4k', detail: '', n: 1, images: [{ url: '/history/gpt.png', mime: 'image/png' }], ...comparisonHistory },
-            { id: 'hist-ecom-1', createdAt: 4, mode: 'text', model: 'gpt-image-2', prompt: 'product main image', size: '1:1', quality: '2k', detail: '', n: 1, images: [{ url: '/history/ecom1.png', mime: 'image/png' }], workflow: 'ecommerce', projectId: 'project-hist', projectName: '历史保温杯', slotKey: 'main-1', slotLabel: '主图' },
-            { id: 'hist-ecom-2', createdAt: 5, mode: 'text', model: 'gpt-image-2', prompt: 'product selling point', size: '1:1', quality: '2k', detail: '', n: 1, images: [{ url: '/history/ecom2.png', mime: 'image/png' }], workflow: 'ecommerce', projectId: 'project-hist', projectName: '历史保温杯', slotKey: 'sp-1', slotLabel: '卖点图' },
           ],
         }),
       }
@@ -4346,8 +4388,14 @@ await check('E1 client apply mounts the sidebar entry and studio (jsdom)', async
     assert.ok(jsdomDocument.querySelector('[data-dsh-imagegen-history-host] [data-dsh-imagegen-history]') !== null, 'history remains visible in gallery mode')
     assert.equal(view.querySelectorAll('[data-gallery="true"]').length, 2, 'gallery mode is active')
     assert.ok(view.querySelector('[data-gallery="true"] [data-gallery-add-conversation]') !== null, 'gallery entries expose add-to-conversation action')
-    const galleryHistoryMain = jsdomDocument.querySelector('[data-dsh-imagegen-history-host] [data-dsh-imagegen-history-main]')
-    assert.ok(galleryHistoryMain !== null, 'gallery mode exposes clickable history')
+    // Target a PLAIN image row. The sidebar now also lists clips (which open the
+    // video studio) and product sets (which rebuild the ecommerce canvas), so
+    // neither is what this assertion is about: it checks that selecting an
+    // ordinary image history entry restores the image board.
+    const galleryHistoryMain = [...jsdomDocument.querySelectorAll('[data-dsh-imagegen-history-host] [data-kind="image"]')]
+      .find(row => row.textContent?.includes('plain image prompt'))
+      ?.querySelector('[data-dsh-imagegen-history-main]')
+    assert.ok(galleryHistoryMain !== null && galleryHistoryMain !== undefined, 'gallery mode exposes clickable image history')
     galleryHistoryMain.click()
     await waitForSelector(view, '[data-count]')
     assert.equal(view.querySelectorAll('[data-gallery="true"]').length, 0, 'history click returns to text-to-image')
@@ -4601,6 +4649,64 @@ await check('E1 client apply mounts the sidebar entry and studio (jsdom)', async
       while (!predicate() && Date.now() < deadline) await new Promise(resolve => setTimeout(resolve, 25))
       return predicate()
     }
+
+    // ------------------------------------------- unified history (clips + images)
+    // Clips and images share ONE sidebar list. Both stores are newest-first, so
+    // the merge must interleave them by time while leaving each store's own
+    // relative order untouched (a blanket re-sort can change which row a click
+    // opens, because comparison groups and product sets do not follow createdAt).
+    const histHost = jsdomDocument.querySelector('[data-dsh-imagegen-history-host]')
+    assert.ok(histHost !== null, 'the history sidebar is mounted')
+    const rowKinds = () => [...histHost.querySelectorAll('[data-kind]')].map(el => el.getAttribute('data-kind'))
+    const rowPrompts = () => [...histHost.querySelectorAll('[data-dsh-imagegen-history-main]')].map(el => el.querySelector('[class*="historyPrompt"]')?.textContent ?? '')
+    assert.ok(rowKinds().includes('video'), 'clip rows appear in the same list as images')
+    assert.ok(rowKinds().includes('image'), 'image rows are still present')
+    // Chronological interleave: the newest clip (6) leads, then the ecommerce
+    // image group, then the mid clip (3), then the comparison group.
+    assert.deepEqual(
+      rowPrompts(),
+      // The product-set group is keyed by projectId, so its row shows the FIRST
+      // entry the host returned for that project (selling point @5, which
+      // precedes main image @4 in the newest-first fixture).
+      ['plain image prompt', 'a clip newest', 'product selling point', 'a clip middle', 'compare prompt'],
+      `rows are merged in chronological order: ${JSON.stringify(rowPrompts())}`,
+    )
+    // The clip row carries clip-specific actions, not image ones.
+    const clipRow = histHost.querySelector('[data-video-row]')
+    assert.ok(clipRow !== null, 'the clip row is marked as a video row')
+    assert.ok(clipRow.querySelector('[data-history-video-gallery]') !== null, 'the clip row offers add-to-gallery')
+    assert.ok(clipRow.querySelector('[data-history-video-download]') !== null, 'the clip row offers download')
+    assert.equal(clipRow.querySelector('[data-history-add-canvas]'), null, 'the clip row has no image-only add-to-canvas action')
+    assert.equal(clipRow.querySelector('[data-history-add-conversation]'), null, 'the clip row has no image-only add-to-conversation action')
+    // An image row keeps its own actions and gains no clip action.
+    const imageRow = [...histHost.querySelectorAll('[data-kind="image"]')][0]
+    assert.ok(imageRow.querySelector('[data-history-add-canvas]') !== null, 'image rows keep add-to-canvas')
+    assert.equal(imageRow.querySelector('[data-history-video-gallery]'), null, 'image rows have no clip gallery action')
+
+    // Deleting a clip removes only that row, from the clip store.
+    const clipDelete = clipRow.querySelector('.historyIconAction[data-danger], [data-danger]')
+    assert.ok(clipDelete !== null, 'the clip row offers a delete action')
+    clipDelete.dispatchEvent(new jsdomWindow.MouseEvent('click', { bubbles: true, cancelable: true }))
+    assert.ok(
+      await waitUntil(() => videoHistoryRemovals.includes('clip-new')),
+      'deleting a clip row calls the clip history remove endpoint',
+    )
+    assert.ok(await waitUntil(() => !rowPrompts().includes('a clip newest')), 'the deleted clip row disappears')
+    assert.ok(rowPrompts().includes('compare prompt'), 'the image rows are untouched by a clip deletion')
+
+    // Clicking a clip row opens the video surface (an image board cannot play it).
+    const midClip = [...histHost.querySelectorAll('[data-video-row]')][0]
+    assert.ok(midClip !== undefined, 'the remaining clip row is present')
+    midClip.querySelector('[data-dsh-imagegen-history-main]').dispatchEvent(new jsdomWindow.MouseEvent('click', { bubbles: true, cancelable: true }))
+    await new Promise(resolve => setTimeout(resolve, 60))
+    assert.ok(await waitUntil(() => view.querySelector('[id="dsh-video-prompt"]') !== null), 'clicking a clip row switches to the video studio')
+
+    // Leave the panel where the rest of this case expects it: the canvas
+    // workspace. The clip click above moves the studio to the video surface, and
+    // the canvas assertions that follow need the dock mounted.
+    canvasSwitch.click()
+    await waitForSelector(view, '[data-canvas-workspace]')
+    assert.ok(view.querySelector('[data-canvas-workspace]') !== null, 'the canvas returns after the clip jump')
 
     // Regression for the runaway Dock magnification (#27): a browser can give
     // requestAnimationFrame a timestamp older than performance.now(), which
@@ -5051,6 +5157,13 @@ await check('E1 client apply mounts the sidebar entry and studio (jsdom)', async
     view.querySelector('[role="dialog"] [title="关闭预览"]').dispatchEvent(new jsdomWindow.MouseEvent('click', { bubbles: true }))
     assert.ok(await waitUntil(() => view.querySelector('[role="dialog"]') === null), 'the close button dismisses the reader')
   } finally {
+    // Drain pending React work BEFORE restoring the globals. React DOM reads
+    // `window` during commit (getActiveElementDeep), so a flush that lands after
+    // the jsdom globals are gone throws "window is not defined" even though
+    // every assertion already passed. The plugin mounts itself through the
+    // client bundle, so there is no root handle to unmount here; letting a
+    // couple of macrotasks run while the window still exists is what drains it.
+    await new Promise(resolve => setTimeout(resolve, 25))
     if (previousWindow === undefined) delete globalThis.window
     else globalThis.window = previousWindow
     if (previousDocument === undefined) delete globalThis.document
