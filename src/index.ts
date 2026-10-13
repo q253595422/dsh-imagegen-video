@@ -307,6 +307,7 @@ import { SkillRunner, setSkillTranslate, canvasSkillCopy, type SkillAgentBackend
 import { installFromArchive, installFromUrl, knownSkillUrl, listLibrary, listLocalSkills, readLocalSkill, removeSkill, SkillStoreError, skillsRoot, type LocalSkill, type LocalSkillIssue } from './skill-store.ts'
 import { applySkillConfigSteps, asConfigDict, configNote, configView, missingFields, parseSkillConfigManifest, readSkillConfigFile, skillConfigKey, valuesFor, type SkillConfigDeclaration, type SkillConfigIssue, type SkillConfigStore } from './skill-config.ts'
 import { recipeFor } from './skill-config-recipes.ts'
+import { createClipComposer } from './clip-compose.ts'
 import { EDITABLE_PPT_SKILL, type ExternalSkillSummary } from './skills-catalog.ts'
 import { canvasStore } from './canvas-store.ts'
 import { imageGenLanguageOf, interpolate } from './locale-tables.ts'
@@ -343,6 +344,7 @@ export { buildFilePreview, MAX_PREVIEW_CHARS, type FilePreviewInput } from './fi
 export { classifySource, inspectSkillMarkdown, installableSkillName, installFromArchive, installFromUrl, isDshSkillName, isValidSkillName, KNOWN_SKILL_SOURCES, knownSkillUrl, listLibrary, listLocalSkills, parseSkillFrontmatter, readLocalSkill, removeSkill, SkillStoreError, skillsRoot, MAX_SKILL_ARCHIVE_BYTES, type LocalSkill, type LocalSkillIssue } from './skill-store.ts'
 export { applySkillConfigSteps, configNote, configView, missingFields, parseSkillConfigManifest, readSkillConfigFile, resolveConfigTarget, skillConfigKey, valuesFor, type SkillConfigDeclaration, type SkillConfigIssue, type SkillConfigStore } from './skill-config.ts'
 export { recipeFor, recipeNames } from './skill-config-recipes.ts'
+export { createClipComposer, localVideoToolDirs } from './clip-compose.ts'
 export { isZipDirectory, readZipDirectory, readZipEntry } from './zip.ts'
 export { canvasStore, isBlockedFileName, fileKindOf, MAX_CANVAS_FILE_BYTES, mimeFromFileName, safeFileName } from './canvas-store.ts'
 export { checkForUpdate, clearUpdateCache, compareVersions, CURRENT_VERSION, installUpdate, profileFromProcess } from './updater.ts'
@@ -797,6 +799,11 @@ export function apply(ctx: Context, config?: Config): (() => void) | void {
     heavyTimeoutMs: () => resolveSkills().heavyTimeoutMs,
     dataRoot: () => imageDataRoot(),
     pptInstallUrl: knownSkillUrl(EDITABLE_PPT_SKILL),
+    // The local (ffmpeg) tier: stitching clips happens entirely on this machine,
+    // so the runner gets a seam instead of importing the video store itself.
+    // `createClipComposer()` only resolves/memoizes the tool paths on first use,
+    // so a host without ffmpeg still runs everything else.
+    composer: createClipComposer(),
   })
 
   // ---------------------------------------------------------- skill config

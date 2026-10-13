@@ -33,9 +33,11 @@ import type {
   CanvasSkillOutput,
   CanvasSkillRunRequest,
   CanvasSkillTask,
+  ClipComposer,
 } from './protocol.ts'
 import { extractFileText, MAX_EXTRACTED_CHARS } from './file-text.ts'
 import {
+  BUILTIN_COMPOSE,
   BUILTIN_DESCRIBE,
   BUILTIN_EXTRACT,
   BUILTIN_POLISH,
@@ -46,6 +48,7 @@ import {
   type CatalogTranslate,
   type ExternalSkillSummary,
 } from './skills-catalog.ts'
+import { orderByPosition } from './clip-order.ts'
 import { fileKindOf } from './canvas-store.ts'
 
 // ---------------------------------------------------------------- contracts
@@ -151,6 +154,12 @@ export interface SkillRunnerOptions {
   dataRoot: () => string
   /** Upstream home of the deck pipeline, surfaced as a one-click install. */
   pptInstallUrl?: string
+  /**
+   * Local clip stitcher (ffmpeg) for the `local` tier. Optional so every other
+   * path — and the smoke suites — can run without ffmpeg installed; a compose
+   * run without one fails with an actionable message instead of guessing.
+   */
+  composer?: ClipComposer
 }
 
 // ---------------------------------------------------------------- constants
@@ -170,8 +179,13 @@ const MAX_TRACKED_TASKS = 200
 /** Output node footprints (world units), matching the client's node sizes. */
 const TEXT_NODE_SIZE = { width: 320, height: 260 }
 const FILE_NODE_SIZE = { width: 300, height: 170 }
+/** Video-node footprint, matching the client's 16:9 video nodes. */
+const VIDEO_NODE_SIZE = { width: 240, height: 160 }
 const NODE_GAP = 96
 const STACK_GAP = 48
+
+/** Minimum clips one compose run needs: stitching one clip is a no-op. */
+const MIN_COMPOSE_SOURCES = 2
 
 /** Chat-model instructions per built-in light action. */
 const POLISH_DIRECTIVES: Record<string, { zh: string; en: string }> = {
@@ -350,6 +364,44 @@ function outputOf(nodes: CanvasNode[], connections: CanvasConnection[], warnings
   return { nodes, connections, warnings }
 }
 
+/**
+ * A produced clip node: a 16:9 video node REFERENCING the stitched clip in the
+ * video store — never a canvas asset, so no bytes are copied and the node
+ * behaves exactly like a clip added from the history.
+ */
+function videoOutputNode(
+  source: CanvasNode,
+  clip: { url: string; mime: string; duration?: number; entryId?: string },
+  title: string,
+  skillId: string,
+  label: string,
+  sourceIds: string[],
+): CanvasNode {
+  return {
+    id: newId('node'),
+    type: 'video',
+    title,
+    x: source.x + source.width + NODE_GAP,
+    y: source.y,
+    width: VIDEO_NODE_SIZE.width,
+    height: VIDEO_NODE_SIZE.height,
+    metadata: {
+      video: {
+        url: clip.url,
+        mime: clip.mime,
+        // The canvas favorite button is gated on `video.entryId` ALONE
+        // (CanvasWorkspace.tsx:4183 disabled=, :2404 early return), so a clip
+        // that omits it renders a gray, unclickable 收藏 button while 加入对话 /
+        // 下载 / 抓帧 / 预览 all keep working — a defect that is easy to miss.
+        ...clip.entryId === undefined ? {} : { entryId: clip.entryId },
+        ...clip.duration === undefined ? {} : { duration: clip.duration },
+      },
+      status: 'success',
+      skill: { id: skillId, label, sourceNodeIds: sourceIds, createdAt: Date.now() },
+    },
+  }
+}
+
 /** Find the last assistant text in a session message list (structural). */
 export function lastAssistantText(messages: readonly unknown[]): string | undefined {
   for (let index = messages.length - 1; index >= 0; index -= 1) {
@@ -444,6 +496,10 @@ export class SkillRunner {
     const catalog = await this.list(request.language)
     const skill = catalog.skills.find(item => item.id === request.skillId)
     if (skill === undefined) throw new Error(t('canvas.skills.unknown'))
+    // Clip stitching reads nodes of its own shape (video refs, not assets), so
+    // it branches out before the shared input construction below — which only
+    // understands `metadata.asset` and feeds four other skills.
+    if (skill.id === BUILTIN_COMPOSE) return this.runCompose(skill, request)
     const document = await this.backend.canvas.read(request.canvasId)
     if (document === undefined) throw new Error(t('canvas.skills.canvasMissing'))
     const ids = resolveInputIds(document, request).slice(0, MAX_SKILL_INPUT_NODES)
@@ -512,16 +568,192 @@ export class SkillRunner {
     return true
   }
 
-  private enqueue(task: CanvasSkillTask, skill: CanvasSkillDescriptor, inputs: RunInput[], request: CanvasSkillRunRequest): Promise<void> {
+  // ------------------------------------------------------------- compose
+
+  /**
+   * Queue one clip-stitch run and return its task immediately.
+   *
+   * Separate from {@link run} for one reason: the shared input construction only
+   * understands `metadata.asset`, while a clip node carries a *reference*
+   * (`metadata.video.url`) whose bytes live in the video store. Building the
+   * inputs here keeps the four existing skills on their untouched path.
+   * @param skill - the compose catalog entry.
+   * @param request - the run request (its `nodeIds` are the user's selection).
+   */
+  private async runCompose(skill: CanvasSkillDescriptor, request: CanvasSkillRunRequest): Promise<CanvasSkillTask> {
+    const t = this.translate(request.language)
+    const composer = this.options.composer
+    if (composer === undefined) throw new Error(t('canvas.skills.composeNoFfmpeg', { detail: 'no local composer is wired into this host' }))
+    const document = await this.backend.canvas.read(request.canvasId)
+    if (document === undefined) throw new Error(t('canvas.skills.canvasMissing'))
+    const byId = new Map(document.nodes.map(node => [node.id, node]))
+    const clips: CanvasNode[] = []
+    const seen = new Set<string>()
+    for (const id of request.nodeIds) {
+      if (seen.has(id)) continue
+      const node = byId.get(id)
+      // Only real clips with bytes to stitch; a stray image/text in the
+      // selection is a multi-select artifact, not a source.
+      if (node === undefined || node.type !== 'video') continue
+      if ((node.metadata?.video?.url ?? '') === '') continue
+      seen.add(id)
+      clips.push(node)
+    }
+    // The host is the authority on order: the client sends its own list, but
+    // documents, undo and multi-window edits can drift it, and the user cannot
+    // see the difference. Re-sort by canvas position — the same function the
+    // browser labels its ①②③ badges with.
+    const ordered = orderByPosition(clips)
+    if (ordered.length < MIN_COMPOSE_SOURCES) throw new Error(t('canvas.skills.composeTooFew'))
+
+    const language = request.language
+    const task: CanvasSkillTask = {
+      id: newId('skillrun'),
+      canvasId: request.canvasId,
+      skillId: skill.id,
+      label: skill.name,
+      tier: skill.tier,
+      status: 'queued',
+      stage: this.translate(language)('canvas.skills.stageQueued'),
+      phase: 'queued',
+      nodeIds: ordered.map(node => node.id),
+      startedAt: Date.now(),
+      ...language === undefined || language === '' ? {} : { language },
+    }
+    this.tasks.set(task.id, task)
+    this.pruneTasks()
+    const job = this.enqueue(task, skill, [], request, () => this.stitchClips(task, skill, ordered, composer))
+    job.catch(error => {
+      task.status = 'failed'
+      task.error = messageOf(error)
+      task.finishedAt = Date.now()
+    })
+    return task
+  }
+
+  /**
+   * The `local` tier: one ffmpeg invocation on this machine through the
+   * injected {@link ClipComposer}. No model, no agent, no network.
+   */
+  private async stitchClips(
+    task: CanvasSkillTask,
+    skill: CanvasSkillDescriptor,
+    clips: readonly CanvasNode[],
+    composer: ClipComposer,
+  ): Promise<CanvasSkillOutput> {
+    const t = this.translate(task.language)
+    // Both probes are needed: ffmpeg alone cannot tell an input's length, and a
+    // silent track bounded by a guessed length is how the run would hang.
+    if (!composer.available()) throw new Error(t('canvas.skills.composeNoFfmpeg', { detail: composer.describe() }))
+    const sources: string[] = []
+    for (let index = 0; index < clips.length; index += 1) {
+      const node = clips[index]!
+      const url = node.metadata?.video?.url ?? ''
+      const local = await composer.resolve(url)
+      // Never skip a clip that cannot be read: the badges counted it, so a
+      // silent drop would hand the user a shorter video than promised.
+      if (local === undefined) {
+        throw new Error(t('canvas.skills.composeFailed', {
+          message: `${t('canvas.composeBadge', { index: index + 1 })}：${nodeTitle(node)}`,
+        }))
+      }
+      sources.push(local)
+    }
+
+    const controller = new AbortController()
+    this.cancellers.set(task.id, { dispose: async () => { controller.abort() } })
+    task.stage = t('canvas.skills.composeStageProbe')
+    task.phase = 'running'
+    let stitched: Awaited<ReturnType<ClipComposer['stitch']>>
+    try {
+      stitched = await composer.stitch({
+        sources,
+        signal: controller.signal,
+        onStage: stage => {
+          task.stage = stage === 'probe'
+            ? t('canvas.skills.composeStageProbe')
+            : t('canvas.skills.composeStageEncode')
+        },
+      })
+    } catch (error) {
+      throw new Error(t('canvas.skills.composeFailed', { message: messageOf(error) }))
+    }
+
+    task.stage = t('canvas.skills.composeStageEncode')
+    // The id is minted here rather than by the composer because it must survive
+    // into the produced NODE: `metadata.video.entryId` is what enables 收藏, and
+    // the history entry uses this same id (appendVideoHistory stores `id: input.id`).
+    const entryId = newId('compose')
+    const clip = await composer.publish({
+      id: entryId,
+      bytes: stitched.bytes,
+      mime: stitched.mime,
+      ...stitched.duration === undefined ? {} : { duration: stitched.duration },
+      prompt: this.composePrompt(clips),
+    })
+    task.stage = t('canvas.skills.composeDone', { count: clips.length })
+
+    const anchor = clips[clips.length - 1]!
+    const node = videoOutputNode(anchor, { ...clip, entryId }, t('canvas.skills.composeNode'), skill.id, skill.name, clips.map(item => item.id))
+    const connections: CanvasConnection[] = clips.map(source => ({ id: newId('edge'), fromNodeId: source.id, toNodeId: node.id }))
+    return outputOf([node], connections)
+  }
+
+  /**
+   * Provenance for the history entry ("stitched from N clips: …").
+   *
+   * Deliberately NOT localized: this string is persisted into the video index and
+   * re-read later, possibly after the user switches language, so a translated
+   * prefix would leave a Chinese entry labelled in Chinese inside an English UI.
+   * The per-clip parts are the user's own prompts/titles, which are their content.
+   */
+  private composePrompt(clips: readonly CanvasNode[]): string {
+    const list = clips.map((node, index) => {
+      const prompt = typeof node.metadata?.prompt === 'string' ? node.metadata.prompt.trim() : ''
+      return `${index + 1}. ${prompt === '' ? nodeTitle(node) : prompt}`
+    }).join(' · ')
+    return `stitched from ${clips.length} clips: ${list}`
+  }
+
+  /**
+   * The `local` tier: work that runs on this machine and never calls a model.
+   * The caller owns the shape of the inputs, so it hands in the job itself.
+   */
+  private async runLocal(
+    task: CanvasSkillTask,
+    local: (() => Promise<CanvasSkillOutput>) | undefined,
+  ): Promise<CanvasSkillOutput> {
+    // A local skill with no local job is a host wiring bug, not a user mistake.
+    if (local === undefined) throw new Error(`${this.translate(task.language)('canvas.skills.unknown')} (${task.skillId})`)
+    return local()
+  }
+
+  /**
+   * Serialize one job on the shared tail.
+   * @param local - the work of a `local`-tier skill, supplied by the caller that
+   *   knows the shape of its inputs (see {@link runCompose}).
+   */
+  private enqueue(
+    task: CanvasSkillTask,
+    skill: CanvasSkillDescriptor,
+    inputs: RunInput[],
+    request: CanvasSkillRunRequest,
+    local?: () => Promise<CanvasSkillOutput>,
+  ): Promise<void> {
     const cancelled = (): boolean => this.tasks.get(task.id)?.status === 'cancelled'
     const run = async (): Promise<void> => {
       if (cancelled()) return
       task.status = 'running'
       task.phase = 'running'
       try {
+        // Three tiers, not two. `local` is a subprocess on this machine and must
+        // never fall through to `runLight`, whose chat completion would answer a
+        // stitch request with a text node.
         task.output = skill.tier === 'heavy'
           ? await this.runHeavy(task, skill, inputs, request)
-          : await this.runLight(task, skill, inputs, request)
+          : skill.tier === 'local'
+            ? await this.runLocal(task, local)
+            : await this.runLight(task, skill, inputs, request)
         if (!cancelled()) {
           task.status = 'completed'
           task.stage = this.translate(task.language)('canvas.skills.stageDone')

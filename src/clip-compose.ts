@@ -1,0 +1,391 @@
+/**
+ * Local clip stitching (ffmpeg) — the host half of the canvas 「拼接视频」 action.
+ *
+ * One {@link ClipComposer} covers every step the runner must not know about:
+ * locate ffmpeg/ffprobe, turn a served clip URL back into a local file, run the
+ * pipeline, and persist the result into the video history. Keeping it as one
+ * injected seam is what lets the smoke suites drive the whole compose path with
+ * a fake — offline, with no ffmpeg installed and no network.
+ *
+ * Three measured facts shape this file (see `docs/compose-contract.md` §1/§5):
+ *
+ *  - the running host's PATH is `/usr/bin:/bin:/usr/sbin:/sbin`, which does NOT
+ *    contain `~/.local/bin`, so a bare `ffmpeg` is a guaranteed ENOENT. Every
+ *    executable is resolved through absolute-path candidates only.
+ *  - `-c copy` + the concat demuxer exits 0 on a silently corrupt file when the
+ *    inputs differ in size or frame rate, so the pipeline always re-encodes
+ *    through an explicit filtergraph.
+ *  - referencing an audio stream an input does not have fails the whole
+ *    filtergraph, while `anullsrc` without `d=` is an infinite source whose
+ *    concat never advances (OOM, exit 137). So every input is probed for audio
+ *    and for its real duration before the graph is built.
+ *
+ * Process handling copies `src/skill-store.ts` `run()`: no shell, args as an
+ * array, `stdio: ['ignore','pipe','pipe']`, bounded output, a timer that kills
+ * the child, and `error`/`close` settling behind a `settled` flag.
+ */
+
+import { spawn } from 'node:child_process'
+import { accessSync, constants as FS_CONSTANTS, promises as fs, statSync } from 'node:fs'
+import { homedir, tmpdir } from 'node:os'
+import path from 'node:path'
+import { VIDEO_API, type ClipComposer, type ClipStitchResult } from './protocol.ts'
+import { appendVideoHistory, readVideoFile } from './video-store.ts'
+
+// ---------------------------------------------------------------- constants
+
+/** Target canvas geometry: the format every input is normalized onto. */
+const TARGET_WIDTH = 1280
+const TARGET_HEIGHT = 720
+const TARGET_FPS = 30
+const TARGET_SAMPLE_RATE = 48_000
+
+/** Cap on captured process output, per stream (bad inputs can be very loud). */
+const MAX_PROCESS_OUTPUT = 8_000
+
+/** Cap on the diagnostic tail kept for one failure message. */
+const MAX_ERROR_TAIL = 600
+
+/** Wall-clock cap for one transcode. Cancellation is the AbortSignal's job. */
+const STITCH_TIMEOUT_MS = 30 * 60_000
+
+/** Wall-clock cap for one probe (audio presence, duration). */
+const PROBE_TIMEOUT_MS = 60_000
+
+/**
+ * Absolute directories searched for `ffmpeg`/`ffprobe`, in order.
+ *
+ * `~/.local/bin` first because that is where this machine actually keeps them;
+ * a bare command name is never tried, since the host's PATH cannot see it.
+ */
+export function localVideoToolDirs(): string[] {
+  const dirs = [
+    path.join(homedir(), '.local', 'bin'),
+    '/opt/homebrew/bin',
+    '/usr/local/bin',
+    '/usr/bin',
+  ]
+  return [...new Set(dirs)]
+}
+
+// ---------------------------------------------------------------- process
+
+interface ProcessResult {
+  code: number
+  stdout: string
+  stderr: string
+}
+
+/** Last printable characters of process output, for an error message. */
+function tail(text: string): string {
+  const trimmed = text.trim()
+  if (trimmed === '') return '(no output)'
+  return trimmed.length <= MAX_ERROR_TAIL ? trimmed : `…${trimmed.slice(-MAX_ERROR_TAIL)}`
+}
+
+/**
+ * Run one child process without a shell and collect its bounded output.
+ *
+ * Rejects on spawn failure, on the timeout, and on abort; a non-zero exit is
+ * reported through `code` so callers can distinguish "ran and refused" from
+ * "never ran". Modeled on `src/skill-store.ts` `run()`.
+ * @param command - absolute executable path.
+ * @param args - argument vector, never a shell string.
+ * @param options - timeout and cancellation.
+ */
+function runProcess(command: string, args: readonly string[], options: { timeoutMs: number; signal?: AbortSignal }): Promise<ProcessResult> {
+  const label = path.basename(command)
+  return new Promise((resolve, reject) => {
+    let settled = false
+    let timer: ReturnType<typeof setTimeout> | undefined
+    let stdout = ''
+    let stderr = ''
+    const child = spawn(command, [...args], {
+      windowsHide: true,
+      stdio: ['ignore', 'pipe', 'pipe'],
+    })
+    child.stdout.on('data', (chunk: Buffer) => {
+      if (stdout.length < MAX_PROCESS_OUTPUT) stdout += chunk.toString('utf8')
+    })
+    child.stderr.on('data', (chunk: Buffer) => {
+      if (stderr.length < MAX_PROCESS_OUTPUT) stderr += chunk.toString('utf8')
+    })
+    const finish = (settle: () => void): void => {
+      if (settled) return
+      settled = true
+      if (timer !== undefined) clearTimeout(timer)
+      options.signal?.removeEventListener('abort', onAbort)
+      settle()
+    }
+    function onAbort(): void {
+      child.kill()
+      finish(() => reject(new Error(`${label} was cancelled`)))
+    }
+    timer = setTimeout(() => {
+      child.kill()
+      finish(() => reject(new Error(`${label} timed out after ${options.timeoutMs}ms`)))
+    }, options.timeoutMs)
+    timer.unref?.()
+    if (options.signal !== undefined) {
+      if (options.signal.aborted) {
+        onAbort()
+        return
+      }
+      options.signal.addEventListener('abort', onAbort, { once: true })
+    }
+    child.on('error', error => finish(() => reject(new Error(`${label} could not start: ${error.message}`))))
+    child.on('close', code => finish(() => resolve({ code: code ?? -1, stdout, stderr })))
+  })
+}
+
+// ---------------------------------------------------------------- locating
+
+/** First executable candidate for one tool name, or undefined. */
+function findTool(name: 'ffmpeg' | 'ffprobe'): string | undefined {
+  for (const dir of localVideoToolDirs()) {
+    const candidate = path.join(dir, name)
+    try {
+      if (!statSync(candidate).isFile()) continue
+      accessSync(candidate, FS_CONSTANTS.X_OK)
+      return candidate
+    } catch { /* not here — keep looking */ }
+  }
+  return undefined
+}
+
+/** The resolved pair, looked up once per composer and cached. */
+interface ToolPair {
+  ffmpeg?: string
+  ffprobe?: string
+}
+
+function describeTools(found: ToolPair): string {
+  const ffmpeg = found.ffmpeg ?? 'not found'
+  const ffprobe = found.ffprobe ?? 'not found'
+  return `ffmpeg: ${ffmpeg}; ffprobe: ${ffprobe} (searched ${localVideoToolDirs().join(', ')})`
+}
+
+// ---------------------------------------------------------------- probing
+
+/** What one input contributes to the filtergraph. */
+interface ClipProbe {
+  file: string
+  /** False means a silent track has to be synthesized for this input. */
+  hasAudio: boolean
+  /** Real length in seconds, when ffprobe reported one. */
+  duration?: number
+}
+
+async function probeAudio(ffprobe: string, file: string, signal?: AbortSignal): Promise<boolean> {
+  const result = await runProcess(ffprobe, [
+    '-v', 'error',
+    '-select_streams', 'a',
+    '-show_entries', 'stream=codec_name',
+    '-of', 'csv=p=0',
+    file,
+  ], { timeoutMs: PROBE_TIMEOUT_MS, signal })
+  if (result.code !== 0) throw new Error(`ffprobe could not read ${file}: ${tail(result.stderr)}`)
+  // Empty output is "no audio stream" — ffprobe exits 0 either way.
+  return result.stdout.trim() !== ''
+}
+
+async function probeDuration(ffprobe: string, file: string, signal?: AbortSignal): Promise<number | undefined> {
+  const result = await runProcess(ffprobe, [
+    '-v', 'error',
+    '-show_entries', 'format=duration',
+    '-of', 'csv=p=0',
+    file,
+  ], { timeoutMs: PROBE_TIMEOUT_MS, signal })
+  if (result.code !== 0) throw new Error(`ffprobe could not measure ${file}: ${tail(result.stderr)}`)
+  const seconds = Number.parseFloat(result.stdout.trim())
+  return Number.isFinite(seconds) && seconds > 0 ? seconds : undefined
+}
+
+async function probeClip(ffprobe: string, file: string, signal?: AbortSignal): Promise<ClipProbe> {
+  const hasAudio = await probeAudio(ffprobe, file, signal)
+  const duration = await probeDuration(ffprobe, file, signal)
+  return { file, hasAudio, ...duration === undefined ? {} : { duration } }
+}
+
+// ---------------------------------------------------------------- filtergraph
+
+/**
+ * Build the ffmpeg argument vector (contract §5).
+ *
+ * Each input is normalized to 1280x720/30fps/yuv420p; each input's audio is
+ * either reformatted or synthesized at that input's REAL length, so no branch
+ * of the graph can ever stall the concat.
+ * @param sources - local file paths in final play order.
+ * @param probes - one probe per source, same order.
+ * @param target - output file path.
+ */
+function buildStitchArgs(sources: readonly string[], probes: readonly ClipProbe[], target: string): string[] {
+  const filters: string[] = []
+  const concatInputs: string[] = []
+  probes.forEach((probe, index) => {
+    filters.push(`[${index}:v]scale=${TARGET_WIDTH}:${TARGET_HEIGHT}:force_original_aspect_ratio=decrease,pad=${TARGET_WIDTH}:${TARGET_HEIGHT}:(ow-iw)/2:(oh-ih)/2,fps=${TARGET_FPS},setsar=1,format=yuv420p[v${index}]`)
+    if (probe.hasAudio) {
+      filters.push(`[${index}:a]aformat=sample_rates=${TARGET_SAMPLE_RATE}:channel_layouts=stereo[a${index}]`)
+      return
+    }
+    if (probe.duration === undefined) {
+      throw new Error(`cannot determine the length of ${probe.file}, so its silent audio track cannot be bounded`)
+    }
+    // `d=` is mandatory: an unbounded anullsrc never lets the concat advance.
+    filters.push(`anullsrc=r=${TARGET_SAMPLE_RATE}:cl=stereo:d=${probe.duration.toFixed(3)}[a${index}]`)
+  })
+  for (let index = 0; index < probes.length; index += 1) concatInputs.push(`[v${index}][a${index}]`)
+  filters.push(`${concatInputs.join('')}concat=n=${probes.length}:v=1:a=1[v][a]`)
+  return [
+    '-y',
+    '-hide_banner',
+    '-loglevel', 'error',
+    ...sources.flatMap(source => ['-i', source]),
+    '-filter_complex', filters.join(';'),
+    '-map', '[v]',
+    '-map', '[a]',
+    '-c:v', 'libx264',
+    '-preset', 'veryfast',
+    '-crf', '20',
+    '-c:a', 'aac',
+    '-movflags', '+faststart',
+    target,
+  ]
+}
+
+// ---------------------------------------------------------------- urls
+
+/** Decode a served clip URL into the video-store file name, when it is one. */
+function videoFileFrom(rawUrl: string): string | undefined {
+  if (rawUrl.trim() === '') return undefined
+  let pathname: string
+  try {
+    pathname = new URL(rawUrl, 'http://localhost').pathname
+  } catch {
+    return undefined
+  }
+  if (!pathname.startsWith(`${VIDEO_API.file}/`)) return undefined
+  const file = decodeURIComponent(pathname.slice(VIDEO_API.file.length + 1))
+  return file === '' ? undefined : file
+}
+
+// ---------------------------------------------------------------- composer
+
+/** Defensive entry id, only used when a caller passes none. */
+function localEntryId(): string {
+  return `compose-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`
+}
+
+/**
+ * The host's local clip stitcher.
+ *
+ * Every dependency is derived here from the module's own imports
+ * (`imageDataRoot()` through the video store, `VIDEO_API.file` through the
+ * protocol), so the plugin can construct it with no arguments and the runner
+ * never has to import the video store itself.
+ */
+export function createClipComposer(): ClipComposer {
+  let cached: ToolPair | undefined
+  const locate = (): ToolPair => {
+    if (cached === undefined) cached = { ffmpeg: findTool('ffmpeg'), ffprobe: findTool('ffprobe') }
+    return cached
+  }
+
+  const requireTools = (): Required<ToolPair> => {
+    const found = locate()
+    if (found.ffmpeg === undefined || found.ffprobe === undefined) {
+      throw new Error(`ffmpeg and ffprobe are both required; ${describeTools(found)}`)
+    }
+    return { ffmpeg: found.ffmpeg, ffprobe: found.ffprobe }
+  }
+
+  return {
+    available: () => {
+      const found = locate()
+      return found.ffmpeg !== undefined && found.ffprobe !== undefined
+    },
+
+    describe: () => describeTools(locate()),
+
+    /**
+     * Turn a served clip URL back into its local file. A clip that is no longer
+     * on disk (evicted history entry, foreign URL) resolves to undefined, and
+     * the caller must fail the run rather than drop the segment.
+     */
+    resolve: async (url: string): Promise<string | undefined> => {
+      const file = videoFileFrom(url)
+      if (file === undefined) return undefined
+      const stored = await readVideoFile(file)
+      return stored?.path
+    },
+
+    stitch: async (input): Promise<ClipStitchResult> => {
+      const { ffmpeg, ffprobe } = requireTools()
+      const sources = [...input.sources]
+      if (sources.length < 2) throw new Error(`stitching needs at least two clips, got ${sources.length}`)
+      input.onStage?.('probe')
+      const probes: ClipProbe[] = []
+      for (const source of sources) {
+        if (input.signal?.aborted === true) throw new Error('stitch was cancelled')
+        probes.push(await probeClip(ffprobe, source, input.signal))
+      }
+      input.onStage?.('encode')
+      const dir = await fs.mkdtemp(path.join(tmpdir(), 'dsh-compose-'))
+      const target = path.join(dir, 'stitched.mp4')
+      try {
+        const result = await runProcess(ffmpeg, buildStitchArgs(sources, probes, target), {
+          timeoutMs: STITCH_TIMEOUT_MS,
+          ...input.signal === undefined ? {} : { signal: input.signal },
+        })
+        if (result.code !== 0) throw new Error(`ffmpeg exited ${result.code}: ${tail(result.stderr)}`)
+        const bytes = await fs.readFile(target)
+        if (bytes.length === 0) throw new Error('ffmpeg produced an empty file')
+        // Measured from the produced file, never summed from the inputs.
+        const duration = await probeDuration(ffprobe, target, input.signal).catch(() => undefined)
+        return {
+          bytes,
+          mime: 'video/mp4',
+          ...duration === undefined ? {} : { duration },
+          width: TARGET_WIDTH,
+          height: TARGET_HEIGHT,
+        }
+      } finally {
+        await fs.rm(dir, { recursive: true, force: true }).catch(() => { /* best effort */ })
+      }
+    },
+
+    /**
+     * Persist the stitched bytes as one video-history entry and hand back the
+     * SERVED ref. The URL is read back off the stored entry rather than
+     * assembled here, so exactly one place knows the served URL shape.
+     */
+    publish: async (input): Promise<{ url: string; mime: string; duration?: number }> => {
+      const id = input.id.trim() === '' ? localEntryId() : input.id
+      const entries = await appendVideoHistory({
+        id,
+        createdAt: Date.now(),
+        mode: 'compose',
+        model: 'ffmpeg',
+        prompt: input.prompt,
+        aspectRatio: '16:9',
+        resolution: `${TARGET_WIDTH}x${TARGET_HEIGHT}`,
+        seconds: input.duration ?? 0,
+        files: [{
+          bytes: Buffer.from(input.bytes),
+          mime: input.mime,
+          ...input.duration === undefined ? {} : { duration: input.duration },
+        }],
+      })
+      const entry = entries.find(item => item.id === id)
+      const file = entry?.videos[0]
+      if (file === undefined) {
+        throw new Error('the stitched clip did not come back from the video history')
+      }
+      return {
+        url: file.url,
+        mime: file.mime,
+        ...file.duration === undefined ? {} : { duration: file.duration },
+      }
+    },
+  }
+}

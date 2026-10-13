@@ -53,6 +53,7 @@ const POLISH_STYLE_KEYS = {
 export const BUILTIN_POLISH = 'polish.text'
 export const BUILTIN_DESCRIBE = 'describe.image'
 export const BUILTIN_EXTRACT = 'extract.content'
+export const BUILTIN_COMPOSE = 'compose.videos'
 export const BUILTIN_PPT = 'ppt.fromImages'
 
 /**
@@ -96,6 +97,19 @@ export function builtinCanvasSkills(
       tier: 'light',
       accepts: ['file', 'image'],
       output: 'text',
+    },
+    {
+      id: BUILTIN_COMPOSE,
+      name: t('canvas.skills.compose'),
+      description: t('canvas.skills.composeDesc'),
+      origin: BUILTIN_ORIGIN,
+      // The only action that runs no model at all: ffmpeg on this machine.
+      tier: 'local',
+      accepts: ['video'],
+      output: 'video',
+      costHint: t('canvas.skills.composeCost'),
+      // Deliberately no `requires`: stitching never needs the agent runtime, so
+      // gating it on `agentAvailable` would hide a free local action.
     },
     {
       id: BUILTIN_PPT,

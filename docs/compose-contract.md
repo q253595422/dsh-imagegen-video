@@ -223,6 +223,30 @@ await appendVideoHistory({
 之后节点 URL 指向 `${VIDEO_API.file}/<file>`，与既有 clip 完全一致 ⇒ 侧栏可见、
 可收藏进素材库、可用 Range seek，**无需任何新的服务路由**。
 
+#### 8.1 产物节点必须带上 `entryId`（否则画布上的「收藏」是灰的）
+
+`publish()` **必须**把调用方传入的 `id` 用作历史条目 id（`appendVideoHistory` 内部即
+`id: input.id`，已如此实现；`clip-compose.ts` 也正是按该 id 回查条目）。
+
+因此 runner 必须把**同一个 id** 写进产物节点的 `metadata.video.entryId`：
+
+```ts
+const entryId = newId('compose')
+const clip = await composer.publish({ id: entryId, bytes, mime, duration, prompt })
+// …节点…
+video: { url: clip.url, mime: clip.mime, entryId, ...duration }
+```
+
+**为什么不能省**：画布视频节点的「收藏」按钮的可用性完全由 `CanvasVideoRef.entryId`
+决定——`src/client/CanvasWorkspace.tsx:4183` 的 `disabled={… || video.entryId === undefined}`
+与 `:2404` 的 `if (clip === undefined || clip.entryId === undefined) return` 都会让缺
+`entryId` 的节点变成**点不动的灰按钮**（而「加入对话 / 下载 / 抓帧 / 预览」照常可用，
+所以这个缺陷在肉眼检查时很容易被漏掉）。生成路径的节点正是靠 `task.resultEntryId`
+拿到该字段（`:3106`）。
+
+据此，本功能对用户承诺的「也能收藏进素材库」有**两条**都必须成立：侧栏视频行可收藏
+（走 `entry.id`），以及画布产物节点可收藏（走 `metadata.video.entryId`）。
+
 ### 已知代价（已向用户明示，不要偷偷扩大）
 `VIDEO_HISTORY_MAX = 30`，合成产物进视频库后会占用槽位并可能**淘汰旧的生成记录**。
 不要为此改 `VIDEO_HISTORY_MAX`（会改变既有行为）。
