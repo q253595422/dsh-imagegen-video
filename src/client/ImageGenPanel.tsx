@@ -749,6 +749,8 @@ export function ImageGenPanel(props: {
   const [historyModelFilter, setHistoryModelFilter] = useState('all')
   const [historyRatioFilter, setHistoryRatioFilter] = useState('all')
   const [preview, setPreview] = useState<{ images: GeneratedImage[]; index: number } | null>(null)
+  /** The gallery clip open in the full-screen player (images use `preview`). */
+  const [galleryClip, setGalleryClip] = useState<HistoryEntry | null>(null)
   const [previewScale, setPreviewScale] = useState(1)
   const [promptCopied, setPromptCopied] = useState(false)
   const [update, setUpdate] = useState<UpdateInfo | null>(null)
@@ -904,10 +906,18 @@ export function ImageGenPanel(props: {
   const filteredGallery = gallery
     .filter(entry => {
       if (galleryFilter === 'all') return true
-      if (galleryFilter === 'text' || galleryFilter === 'edit') return entry.mode === galleryFilter
+      // Clips are their own category: without this they would land in the
+      // 'text' bucket (their mode is 'video', which matches neither text nor
+      // edit), so the text filter would appear to lose them.
+      if (galleryFilter === 'video') return entry.video !== undefined
+      if (galleryFilter === 'text') return entry.video === undefined && entry.mode === 'text'
+      if (galleryFilter === 'edit') return entry.video === undefined && entry.mode === 'edit'
       return entry.model === galleryFilter
     })
-    .filter(entry => galleryRatio === 'all' || normalizeSize(entry.size) === galleryRatio)
+    // A clip stores its aspect ratio in `size`; normalizeSize would fold '16:9'
+    // through the legacy-image map and could mis-bucket it, so compare the raw
+    // value first and fall back to the normalized image vocabulary.
+    .filter(entry => galleryRatio === 'all' || entry.size === galleryRatio || normalizeSize(entry.size) === galleryRatio)
     .filter(entry => galleryTagFilter === null || (entry.tags ?? []).includes(galleryTagFilter))
     .filter(entry => galleryQuery.trim() === '' || `${entry.prompt} ${entry.model} ${(entry.tags ?? []).join(' ')}`.toLocaleLowerCase().includes(galleryQuery.trim().toLocaleLowerCase()))
     .slice()
@@ -1535,6 +1545,17 @@ export function ImageGenPanel(props: {
     setPromptCopied(false)
   }
 
+  /**
+   * Open one favorited clip full-screen.
+   *
+   * The image preview cannot render a clip (it distributes `GeneratedImage`
+   * base64 to an <img>), so a clip gets its own player rather than being forced
+   * through the image path.
+   */
+  const openGalleryClip = useCallback((entry: HistoryEntry): void => {
+    setGalleryClip(entry)
+  }, [])
+
   const closePreview = (): void => {
     setPreview(null)
     setPreviewScale(1)
@@ -1966,6 +1987,16 @@ export function ImageGenPanel(props: {
 
   const downloadGalleryImages = (): void => {
     gallery.filter(entry => selectedGalleryIds.has(entry.id)).forEach((entry, index) => {
+      // A favorited clip has no image; downloading only images would silently
+      // drop every clip the user selected.
+      const clip = entry.video
+      if (clip !== undefined) {
+        const anchor = document.createElement('a')
+        anchor.href = clip.url
+        anchor.download = clip.url.split('/').pop() ?? `dsh-gallery-${index + 1}.mp4`
+        anchor.click()
+        return
+      }
       const image = entry.images[0]
       if (image === undefined) return
       const anchor = document.createElement('a')
@@ -2444,7 +2475,9 @@ export function ImageGenPanel(props: {
                 ['all', tt('gallery.all')],
                 ['text', tt('mode.text')],
                 ['edit', tt('mode.edit')],
-                ...galleryModels.map(value => [value, value]),
+                // Clips are a category of their own, not an image mode.
+                ...gallery.some(entry => entry.video !== undefined) ? [['video', tt('history.video')] as const] : [],
+                ...galleryModels.map(value => [value, value] as const),
               ].map(([value, label]) => (
                 <button
                   key={value}
@@ -2454,7 +2487,15 @@ export function ImageGenPanel(props: {
                   onClick={() => { setGalleryFilter(value) }}
                 >
                   <span>{label}</span>
-                  <span className={css.galleryFilterCount}>{gallery.filter(entry => value === 'all' || value === 'text' || value === 'edit' ? (value === 'all' ? true : entry.mode === value) : entry.model === value).length}</span>
+                  <span className={css.galleryFilterCount}>{gallery.filter(entry => {
+                    // Must mirror the filteredGallery rule, or a chip's badge
+                    // would disagree with the list it produces.
+                    if (value === 'all') return true
+                    if (value === 'video') return entry.video !== undefined
+                    if (value === 'text') return entry.video === undefined && entry.mode === 'text'
+                    if (value === 'edit') return entry.video === undefined && entry.mode === 'edit'
+                    return entry.model === value
+                  }).length}</span>
                 </button>
               ))}
               <div className={css.galleryFilterDivider} />
@@ -3038,17 +3079,39 @@ export function ImageGenPanel(props: {
                 <div className={css.galleryMasonry} data-view={galleryView}>
                   {filteredGallery.map(entry => {
                     const image = entry.images[0]
-                    if (image === undefined) return null
+                    const clip = entry.video
+                    // A clip entry carries no image and no asset: it names a file
+                    // in the gallery's video store. Rendering it is therefore a
+                    // video element, not an <img>.
+                    if (image === undefined && clip === undefined) return null
+                    const isClip = clip !== undefined
                     return (
-                      <article key={entry.id} className={css.galleryCard} data-selected={selectedGalleryIds.has(entry.id) ? '' : undefined}>
+                      <article key={entry.id} className={css.galleryCard} data-clip={isClip ? '' : undefined} data-selected={selectedGalleryIds.has(entry.id) ? '' : undefined}>
                         <label className={css.gallerySelect} title={tt('gallery.select')}>
                           <input type="checkbox" checked={selectedGalleryIds.has(entry.id)} onChange={() => { setGallerySelecting(true); toggleGallerySelection(entry.id) }} />
                         </label>
-                        <button type="button" className={css.galleryImageButton} data-selecting={gallerySelecting ? '' : undefined} onClick={() => { if (gallerySelecting) toggleGallerySelection(entry.id); else void viewGalleryEntry(entry) }} title={gallerySelecting ? tt('gallery.select') : tt('preview.open')}>
-                          <img className={css.galleryImage} src={image.url} alt={entry.prompt} loading="lazy" decoding="async" />
-                          <span className={css.galleryBadge}>{entry.mode === 'edit' ? tt('mode.edit') : tt('mode.text')}</span>
+                        <button type="button" className={css.galleryImageButton} data-selecting={gallerySelecting ? '' : undefined} onClick={() => { if (gallerySelecting) toggleGallerySelection(entry.id); else if (isClip) openGalleryClip(entry); else void viewGalleryEntry(entry) }} title={gallerySelecting ? tt('gallery.select') : tt('preview.open')}>
+                          {isClip
+                            ? <video className={css.galleryImage} src={clip.url} muted playsInline preload="metadata" />
+                            : <img className={css.galleryImage} src={image!.url} alt={entry.prompt} loading="lazy" decoding="async" />}
+                          <span className={css.galleryBadge}>{isClip ? tt('history.video') : entry.mode === 'edit' ? tt('mode.edit') : tt('mode.text')}</span>
+                          {isClip ? <span className={css.galleryClipPlay} aria-hidden="true">
+                            <svg viewBox="0 0 24 24" width="30" height="30" fill="currentColor" aria-hidden="true"><path d="M8 5.5v13l11-6.5z" /></svg>
+                          </span> : null}
                         </button>
                         <div className={css.galleryCardActions}>
+                          {isClip ? (
+                            <a
+                              className={css.galleryCardAction}
+                              data-gallery-video-download=""
+                              href={clip.url}
+                              download
+                              onClick={event => event.stopPropagation()}
+                            >
+                              {tt('video.download')}
+                            </a>
+                          ) : null}
+                          {!isClip ? (<>
                           <button
                             type="button"
                             className={css.galleryCardAction}
@@ -3070,6 +3133,7 @@ export function ImageGenPanel(props: {
                             <svg viewBox="0 0 16 16" width="13" height="13" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><rect x="2.5" y="2.5" width="11" height="11" rx="1.5" /><path d="M5 8h6M8 5v6" /></svg>
                             {tt('canvas.addToCanvas')}
                           </button>
+                          </>) : null}
                         </div>
                         <div className={css.galleryCardFooter}>
                           <span className={css.galleryAvatar}>{entry.model.toLowerCase().startsWith('nanobanana') ? 'N' : entry.model.toLowerCase().startsWith('seedream') ? 'S' : entry.model.startsWith('grok') ? 'G' : 'D'}</span>
@@ -3385,6 +3449,34 @@ export function ImageGenPanel(props: {
         </div>, document.body) : null}
 
       {/* -------------------------------------------------- preview overlay */}
+      {galleryClip !== null && galleryClip.video !== undefined
+        ? createPortal(
+          <div
+            className={css.lightbox}
+            role="dialog"
+            aria-modal="true"
+            data-gallery-clip-viewer=""
+            aria-label={tt('history.video')}
+            onClick={() => { setGalleryClip(null) }}
+          >
+            <video
+              className={css.galleryClipPlayer}
+              src={galleryClip.video.url}
+              controls
+              autoPlay
+              onClick={event => event.stopPropagation()}
+            />
+            <button
+              type="button"
+              className={css.lightboxClose}
+              aria-label={tt('canvas.videoPreviewClose')}
+              title={tt('canvas.videoPreviewClose')}
+              onClick={() => { setGalleryClip(null) }}
+            >×</button>
+          </div>,
+          document.body,
+        )
+        : null}
       {preview !== null && previewImage !== null
         ? createPortal(
           <div

@@ -3865,7 +3865,15 @@ await check('E1 client apply mounts the sidebar entry and studio (jsdom)', async
         ok: true,
         json: async () => ({
           ok: true,
-          entries: [{ id: 'gallery-one', createdAt: 3, mode: 'text', model: 'gpt-image-2', prompt: 'gallery prompt', size: '1:1', quality: '2k', detail: '', n: 1, images: [{ url: '/api/dsh-imagegen/gallery/image/gallery.png', mime: 'image/png' }] }],
+          entries: [
+            { id: 'gallery-one', createdAt: 3, mode: 'text', model: 'gpt-image-2', prompt: 'gallery prompt', size: '1:1', quality: '2k', detail: '', n: 1, images: [{ url: '/api/dsh-imagegen/gallery/image/gallery.png', mime: 'image/png' }] },
+            // A favorited clip: the host stores it by reference, with NO images.
+            {
+              id: 'gallery-clip', createdAt: 8, mode: 'video', model: 'agnes-video-2.5-flash',
+              prompt: 'favorited clip', size: '16:9', quality: '', detail: '', n: 1, images: [],
+              video: { url: '/api/dsh-imagegen/gallery/video-file/gallery-clip-0.mp4', mime: 'video/mp4', duration: 5 },
+            },
+          ],
         }),
       }
     }
@@ -4411,6 +4419,62 @@ await check('E1 client apply mounts the sidebar entry and studio (jsdom)', async
     assert.ok(galleryTab !== undefined, '素材库入口仍存在')
     galleryTab.click()
     await new Promise(resolve => setTimeout(resolve, 50))
+    // ------------------------------------------------- gallery clips (素材库)
+    // This runs while the gallery is still open and populated (it precedes the
+    // gallery-clear step below), which is BEFORE the shared `waitUntil` helper is
+    // declared -- so it brings its own.
+    const waitFor = async (predicate, timeout = 2500) => {
+      const deadline = Date.now() + timeout
+      while (!predicate() && Date.now() < deadline) await new Promise(resolve => setTimeout(resolve, 25))
+      return predicate()
+    }
+    // A favorited clip has NO images (the host stores it by reference), so the
+    // card must render a <video> rather than being skipped as "no image".
+    assert.ok(view.querySelector('[data-gallery-clip-card], article[data-clip]') !== null, 'a clip card renders in the gallery')
+    const clipCard = view.querySelector('article[data-clip]')
+    assert.ok(clipCard !== null, 'the clip card is marked as a clip')
+    assert.ok(clipCard.querySelector('video') !== null, 'the clip card renders a video element')
+    assert.match(clipCard.querySelector('video').getAttribute('src'), /gallery\/video-file\//, 'the clip card plays the served gallery clip URL')
+    assert.equal(clipCard.querySelector('img'), null, 'a clip card does not fake an image')
+    assert.ok(clipCard.textContent?.includes('视频'), 'the clip card is badged as a video')
+    // The clip card offers a download and NOT the image-only conversation action.
+    assert.ok(clipCard.querySelector('[data-gallery-video-download]') !== null, 'the clip card offers download')
+    assert.equal(clipCard.querySelector('[data-gallery-add-conversation]'), null, 'the clip card has no image-only add-to-conversation')
+
+    // The image card is unaffected and keeps its own actions.
+    const imageCard = [...view.querySelectorAll('article')].find(card => card.getAttribute('data-clip') === null && card.querySelector('img') !== null)
+    assert.ok(imageCard !== undefined, 'the image card still renders')
+    assert.ok(imageCard.querySelector('[data-gallery-add-conversation]') !== null, 'the image card keeps add-to-conversation')
+
+    // The 视频 filter bucket selects exactly the clips and its badge agrees.
+    // Match BUTTONS: the `galleryFilters` CONTAINER also carries a matching class
+    // and swallowing the click there would silently apply no filter at all.
+    const videoChip = [...view.querySelectorAll('button[class*="galleryFilter"]')].find(chip => chip.textContent?.includes('视频'))
+    assert.ok(videoChip !== undefined, 'the gallery offers a video filter bucket')
+    videoChip.dispatchEvent(new jsdomWindow.MouseEvent('click', { bubbles: true, cancelable: true }))
+    await new Promise(resolve => setTimeout(resolve, 40))
+    assert.ok(view.querySelector('article[data-clip]') !== null, 'the video filter keeps the clip')
+    // Avoid `:not()` here: jsdom evaluates it across the whole subtree, which is
+    // slow and memory-hungry on this fixture. Counting the cards directly is
+    // both cheaper and more precise.
+    assert.equal([...view.querySelectorAll('article')].filter(card => card.getAttribute('data-clip') === null).length, 0, 'the video filter hides image cards')
+
+    // Opening the clip shows it in a player (the image lightbox cannot play it).
+    view.querySelector('article[data-clip] button[class*="galleryImageButton"]').dispatchEvent(new jsdomWindow.MouseEvent('click', { bubbles: true, cancelable: true }))
+    // The player is a portal rendered into document.body, so it lives OUTSIDE
+    // the plugin's view subtree.
+    assert.ok(await waitFor(() => jsdomDocument.querySelector('[data-gallery-clip-viewer]') !== null), 'clicking a clip card opens the clip player')
+    const clipViewer = jsdomDocument.querySelector('[data-gallery-clip-viewer]')
+    assert.ok(clipViewer.querySelector('video') !== null, 'the clip player renders a video element')
+    clipViewer.querySelector('button').dispatchEvent(new jsdomWindow.MouseEvent('click', { bubbles: true, cancelable: true }))
+    assert.ok(await waitFor(() => jsdomDocument.querySelector('[data-gallery-clip-viewer]') === null), 'the clip player dismisses')
+
+    // Back to the full gallery for the assertions that follow.
+    const allChip = [...view.querySelectorAll('button[class*="galleryFilter"]')].find(chip => chip.textContent?.includes('全部'))
+    assert.ok(allChip !== undefined, 'the all filter exists')
+    allChip.dispatchEvent(new jsdomWindow.MouseEvent('click', { bubbles: true, cancelable: true }))
+    await new Promise(resolve => setTimeout(resolve, 40))
+
     assert.ok(view.querySelector('[data-gallery-clear]') !== null, 'gallery clear button rendered')
     view.querySelector('[data-gallery-clear]')?.dispatchEvent(new jsdomWindow.MouseEvent('click', { bubbles: true }))
     await new Promise(resolve => setTimeout(resolve, 20))
@@ -4649,6 +4713,7 @@ await check('E1 client apply mounts the sidebar entry and studio (jsdom)', async
       while (!predicate() && Date.now() < deadline) await new Promise(resolve => setTimeout(resolve, 25))
       return predicate()
     }
+
 
     // ------------------------------------------- unified history (clips + images)
     // Clips and images share ONE sidebar list. Both stores are newest-first, so

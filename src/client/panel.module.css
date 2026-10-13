@@ -3467,3 +3467,44 @@ a.historyIconAction {
   text-decoration: none;
   color: inherit;
 }
+
+/* ------------------------------------------------------------ gallery clips
+   A favorited clip renders in the same card as an image, but with a <video>
+   instead of an <img>. The play glyph makes it obvious the card animates, since
+   a paused first frame looks like a still. */
+
+.galleryImageButton[data-clip] {
+  position: relative;
+}
+
+.galleryClipPlay {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: #fff;
+  background: #00000033;
+  pointer-events: none;
+}
+
+.galleryCard[data-clip] .galleryImage {
+  /* A clip preview is a video element; keep it from stretching the card. */
+  object-fit: cover;
+  display: block;
+}
+
+a.galleryCardAction {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  text-decoration: none;
+  color: inherit;
+}
+
+.galleryClipPlayer {
+  max-width: 92vw;
+  max-height: 88vh;
+  border-radius: 10px;
+  background: #000;
+}
