@@ -132,6 +132,31 @@ export const UPDATE_API = {
 } as const
 
 /**
+ * Video generation route family. Video is asynchronous upstream (submit →
+ * poll → download), so it keeps its own endpoints rather than reusing the
+ * synchronous image generate route. Finished clips are persisted as files
+ * under ~/.dsh/dsh-imagegen/videos/ and served through the `file` prefix
+ * route, so neither list nor submit responses ever carry video bytes.
+ */
+export const VIDEO_API = {
+  /** Submit one video generation and wait for the finished file. */
+  generate: '/api/dsh-imagegen/video/generate',
+  /** Host-resident video task queue (submit / list / get / cancel / retry). */
+  submit: '/api/dsh-imagegen/video/tasks/submit',
+  list: '/api/dsh-imagegen/video/tasks/list',
+  get: '/api/dsh-imagegen/video/tasks/get',
+  cancel: '/api/dsh-imagegen/video/tasks/cancel',
+  retry: '/api/dsh-imagegen/video/tasks/retry',
+  /** Persisted video history (list / append / remove / clear). */
+  historyList: '/api/dsh-imagegen/video/history/list',
+  historyAppend: '/api/dsh-imagegen/video/history/append',
+  historyRemove: '/api/dsh-imagegen/video/history/remove',
+  historyClear: '/api/dsh-imagegen/video/history/clear',
+  /** Prefix route serving one stored clip: `${file}/<file>`. */
+  file: '/api/dsh-imagegen/video/file',
+} as const
+
+/**
  * Same-origin route family for the host-persisted generation history. Images
  * live as files under ~/.dsh/dsh-imagegen/images/ and are served back through
  * the `image` prefix route, so list responses carry metadata only (never
@@ -354,6 +379,139 @@ export interface TemplateFavorite {
 
 /** Generation modes. */
 export type GenerateMode = 'text' | 'edit'
+
+/**
+ * Video generation modes. Mirrors the async submit/poll video contract
+ * instead of the synchronous image one:
+ *  - text      → text-to-video
+ *  - image     → image-to-video (one reference frame)
+ *  - keyframe  → first/last frame interpolation (providers accepting both)
+ *  - reference → one or more style/subject references (providers accepting several)
+ */
+export type VideoMode = 'text' | 'image' | 'keyframe' | 'reference'
+
+/** Request-shaping family a video model id routes through. */
+export type VideoModelFamily = 'agnes' | 'comemoe' | 'openai-video' | 'unknown'
+
+/** Video output resolution tier, mapped per family by the engine. */
+export type VideoResolution = '480P' | '720P' | '1080P'
+
+/** Aspect ratios the video panel offers; families narrow this themselves. */
+export const VIDEO_ASPECT_RATIOS = ['16:9', '9:16', '1:1', '4:3', '3:4'] as const
+export type VideoAspectRatio = typeof VIDEO_ASPECT_RATIOS[number]
+
+/** Durations (seconds) the video panel offers; families narrow this themselves. */
+export const VIDEO_DURATIONS = [5, 10] as const
+
+/**
+ * One generated video as the browser consumes it. Video bytes never travel
+ * inline (a clip is far larger than an image): the host persists the finished
+ * file and returns a servable URL instead.
+ */
+export interface GeneratedVideo {
+  /** Same-origin URL: `${VIDEO_API.file}/<file>`. */
+  url: string
+  /** MIME type, e.g. video/mp4. */
+  mime: string
+  /** Duration in seconds, when the provider reports it. */
+  duration?: number
+  /** Poster/thumbnail URL, when the provider supplies one. */
+  poster?: string
+  /** Upstream revised prompt, when provided. */
+  revisedPrompt?: string
+}
+
+/** Successful video generation outcome. */
+export interface VideoGenerateResult {
+  videos: GeneratedVideo[]
+  /** Updated host-persisted video history, when returned by the route. */
+  history?: VideoHistoryEntry[]
+  /** Persistence failure after the video was successfully generated. */
+  historyError?: string
+}
+
+/** A client → host video generation request (what the panel collects). */
+export interface VideoGenerateRequest {
+  /** Video mode; drives which reference fields the engine reads. */
+  mode: VideoMode
+  /**
+   * User-facing model alias from the channel's video catalog. The host maps it
+   * onto the configured channel and fills `upstream` with the real id.
+   */
+  model: string
+  /** The prompt. Upstream providers may impose their own length limits. */
+  prompt: string
+  /** Aspect ratio as '16:9' / '9:16' / '1:1' / '4:3' / '3:4'. */
+  aspectRatio: string
+  /** Output resolution tier. */
+  resolution: VideoResolution
+  /** Clip length in seconds. */
+  seconds: number
+  /** Reference image as a data URL (image / keyframe / reference modes). */
+  image?: string
+  /** Additional reference images as data URLs (reference mode). */
+  images?: string[]
+  /** First frame as a data URL (keyframe mode). */
+  firstFrame?: string
+  /** Last frame as a data URL (keyframe mode). */
+  lastFrame?: string
+  /** Original reference-image name, retained in the history entry. */
+  refName?: string
+  /** Channel this request targets (host falls back to the default). */
+  channelId?: string
+  /** Channel display name snapshot, kept on the history entry (host-filled). */
+  channel?: string
+  /** Upstream model id actually sent to the gateway (host-filled from alias). */
+  upstream?: string
+  /** Deterministic seed, when the provider accepts one. */
+  seed?: number
+}
+
+/** One stored video reference as the browser consumes it. */
+export interface VideoHistoryFile {
+  /** Same-origin URL: `${VIDEO_API.file}/<file>`. */
+  url: string
+  mime: string
+  duration?: number
+  poster?: string
+  revisedPrompt?: string
+}
+
+/** A saved video generation (metadata + served file). */
+export interface VideoHistoryEntry {
+  id: string
+  createdAt: number
+  mode: VideoMode
+  model: string
+  prompt: string
+  aspectRatio: string
+  resolution: string
+  seconds: number
+  videos: VideoHistoryFile[]
+  /** Reference-image filename, kept for display only. */
+  refName?: string
+  /** Channel id snapshot. */
+  channelId?: string
+  /** Channel display name snapshot (survives channel deletion). */
+  channel?: string
+}
+
+/** A video history entry the client submits for persistence. */
+export interface VideoHistoryEntryInput {
+  id: string
+  createdAt: number
+  mode: VideoMode
+  model: string
+  prompt: string
+  aspectRatio: string
+  resolution: string
+  seconds: number
+  /** Host-filled after the file lands on disk; ignored on input. */
+  videos?: GeneratedVideo[]
+  refName?: string
+  channelId?: string
+  channel?: string
+}
 
 /** Origin information carried by a generation started from the canvas. */
 export interface CanvasTaskMeta {
