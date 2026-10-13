@@ -454,6 +454,76 @@ await check('V3b the clip route serves bytes and honors Range for seeking', asyn
 })
 
 
+await check('V6 a freshly configured generic video model works through the runtime', async () => {
+  // Proves the "generic channel" claim: an operator adds an arbitrary video
+  // model to a channel and it routes without a code change, deriving its
+  // family from the model id rather than from a hard-coded list.
+  const upstream = await startUpstream()
+  upstream.state.script = {
+    submit: { id: 'vid_generic', status: 'queued' },
+    polls: [{ status: 'completed', url: `http://127.0.0.1:${upstream.port}/generic.mp4` }],
+  }
+  try {
+    const runtime = new host.ImageGenerationRuntime(() => ({
+      channels: [{
+        id: 'fresh',
+        preset: '',
+        name: 'FreshChannel',
+        apiUrl: upstream.base,
+        apiKey: 'sk-generic',
+        apiUrlFull: false,
+        models: [],
+        // A model id the plugin has never seen wired before.
+        videoModels: [{ alias: 'my-kling', id: 'kling-v2-master' }],
+      }],
+      defaultChannelId: 'fresh',
+    }))
+    const result = await runtime.runVideo({
+      mode: 'text',
+      model: 'my-kling',
+      prompt: 'generic path',
+      aspectRatio: '16:9',
+      resolution: '720P',
+      seconds: 5,
+    })
+    assert.equal(result.videos.length, 1, 'the generic family produced a clip')
+    assert.equal(upstream.state.submits.length, 1, 'one submit reached the upstream')
+    assert.equal(upstream.state.submits[0].body.model, 'kling-v2-master', 'the alias maps to the configured upstream id')
+    assert.match(result.videos[0].url, /\/api\/dsh-imagegen\/video\/file\//, 'the clip was persisted and served')
+    // A video-named id classifies as the generic family (not unknown), which is
+    // what lets an operator wire an unwired provider without a code change.
+    assert.equal(host.describeVideoModel('kling-v2-master').family, 'openai-video')
+  } finally {
+    await upstream.close()
+  }
+})
+
+await check('V7 an unknown-family model configured in a channel fails with guidance', async () => {
+  const runtime = new host.ImageGenerationRuntime(() => ({
+    channels: [{
+      id: 'fresh',
+      preset: '',
+      name: 'Fresh',
+      apiUrl: 'http://127.0.0.1:1/v1',
+      apiKey: 'k',
+      apiUrlFull: false,
+      models: [],
+      // No video-ish token at all: a chat model mistakenly pasted into the
+      // video catalog must not be guessed at.
+      videoModels: [{ alias: 'mystery', id: 'mystery-thing-9000' }],
+    }],
+    defaultChannelId: 'fresh',
+  }))
+  // Assert the stable wire code rather than the wording: the message is
+  // localized, but the code is part of the contract.
+  await assert.rejects(
+    () => runtime.runVideo({ mode: 'text', model: 'mystery', prompt: 'p', aspectRatio: '16:9', resolution: '720P', seconds: 5 }),
+    error => error?.code === 'video-unknown-model',
+    'an unclassifiable model is refused with guidance rather than sent upstream',
+  )
+})
+
+
 // ---------------------------------------------------------------------- V4
 await check('V4 the Agent video tools submit, poll, cancel and enforce the allow switch', async () => {
   const upstream = await startUpstream()
