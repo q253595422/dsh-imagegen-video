@@ -16,7 +16,7 @@
  */
 import { createServer } from 'node:http'
 import assert from 'node:assert/strict'
-import { existsSync, mkdtempSync, readFileSync, rmSync } from 'node:fs'
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
@@ -385,6 +385,8 @@ await check('V3 the video routes answer over real HTTP', async () => {
     // The file route: a traversal name and an unknown name both 404.
     const traversal = await fetch(`${origin}/api/dsh-imagegen/video/file/..%2Findex.json`)
     assert.equal(traversal.status, 404, 'a traversal name does not resolve')
+    const unknown = await fetch(`${origin}/api/dsh-imagegen/video/file/absent-0.mp4`)
+    assert.equal(unknown.status, 404, 'an unknown clip name does not resolve')
     // A GET method on a POST-only route is refused.
     const wrongMethod = await fetch(`${origin}/api/dsh-imagegen/video/tasks/list`)
     assert.equal(wrongMethod.status, 405, 'a POST-only route refuses GET')
@@ -392,6 +394,65 @@ await check('V3 the video routes answer over real HTTP', async () => {
     await new Promise(resolve => server.close(resolve))
   }
 })
+
+await check('V3b the clip route serves bytes and honors Range for seeking', async () => {
+  // A real fixture on disk: the route streams from the file system, so a
+  // fabricated buffer would not exercise the path that matters.
+  const clipDir = join(dataRoot, 'dsh-imagegen', 'videos', 'files')
+  mkdirSync(clipDir, { recursive: true })
+  const clipPath = join(clipDir, 'seek-0.mp4')
+  const body = Buffer.concat([MP4, Buffer.alloc(2048, 7)])
+  writeFileSync(clipPath, body)
+
+  const routes = host.makeRoutes({
+    settings: { describe: () => [], mutate: async () => ({}) },
+    resolve: () => ({ apiUrl: '', apiKey: '' }),
+    resolveChannels: () => ({ channels: [], defaultChannelId: '' }),
+    video: {
+      list: async () => [],
+      remove: async () => [],
+      clear: async () => [],
+      readFile: name => host.readVideoFile(name),
+    },
+  })
+  const exact = new Map(routes.filter(r => r.kind !== 'prefix').map(r => [r.path, r.handler]))
+  const prefixes = routes.filter(r => r.kind === 'prefix')
+  const server = createServer((req, res) => {
+    const pathname = new URL(req.url ?? '/', 'http://127.0.0.1').pathname
+    const handler = exact.get(pathname) ?? prefixes.find(r => pathname.startsWith(`${r.path}/`))?.handler
+    if (handler === undefined) { res.writeHead(404); res.end('no route'); return }
+    void handler(req, res)
+  })
+  await new Promise(resolve => server.listen(0, '127.0.0.1', resolve))
+  const origin = `http://127.0.0.1:${server.address().port}`
+  try {
+    const full = await fetch(`${origin}/api/dsh-imagegen/video/file/seek-0.mp4`)
+    assert.equal(full.status, 200, 'the whole clip is served')
+    assert.equal(full.headers.get('accept-ranges'), 'bytes', 'the route advertises range support')
+    assert.equal(full.headers.get('content-type'), 'video/mp4')
+    assert.equal(full.headers.get('x-content-type-options'), 'nosniff')
+    const fullBody = Buffer.from(await full.arrayBuffer())
+    assert.equal(fullBody.length, body.length, 'the whole clip arrives')
+
+    // A Range request must answer 206 with just the asked-for slice; without
+    // this the <video> element cannot seek.
+    const ranged = await fetch(`${origin}/api/dsh-imagegen/video/file/seek-0.mp4`, { headers: { range: 'bytes=100-199' } })
+    assert.equal(ranged.status, 206, 'a range request answers 206')
+    assert.equal(ranged.headers.get('content-range'), `bytes 100-199/${body.length}`)
+    assert.equal(ranged.headers.get('content-length'), '100')
+    const slice = Buffer.from(await ranged.arrayBuffer())
+    assert.equal(slice.length, 100, 'exactly the requested slice is returned')
+    assert.deepEqual(slice, body.subarray(100, 200), 'the slice matches the file bytes')
+
+    // An unsatisfiable range falls back to the whole body rather than failing.
+    const open = await fetch(`${origin}/api/dsh-imagegen/video/file/seek-0.mp4`, { headers: { range: 'bytes=999999-' } })
+    assert.ok(open.status === 200 || open.status === 416, 'an unsatisfiable range does not crash the route')
+  } finally {
+    await new Promise(resolve => server.close(resolve))
+    rmSync(clipPath, { force: true })
+  }
+})
+
 
 // ---------------------------------------------------------------------- V4
 await check('V4 the Agent video tools submit, poll, cancel and enforce the allow switch', async () => {
