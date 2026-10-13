@@ -118,8 +118,16 @@ export class ImageGenerationRuntime {
       const stored = history.find(entry => entry.id === entryId)
       return { videos: stored?.videos ?? [], history }
     } catch (error) {
+      // The render already happened and was paid for, so never discard it just
+      // because the local write failed: fall back to the provider's own URL so
+      // the user can still watch and save the clip, and report the failure.
       return {
-        videos: result.videos.map(video => ({ url: '', mime: video.mime, ...video.duration === undefined ? {} : { duration: video.duration } })),
+        videos: result.videos.map(video => ({
+          url: video.sourceUrl,
+          mime: video.mime,
+          ...video.duration === undefined ? {} : { duration: video.duration },
+          ...video.poster === undefined ? {} : { poster: video.poster },
+        })),
         historyError: error instanceof Error ? error.message : String(error),
       }
     }

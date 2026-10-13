@@ -538,9 +538,16 @@ export interface VideoTask {
   error?: string
 }
 
-/** Poll payload: keeps the result URL but never the raw reference frames. */
+/**
+ * Poll payload: keeps the result URL but never the raw reference frames.
+ *
+ * `resultUrl` is the servable clip of a completed task. The full `result` is
+ * omitted because it carries no more than this for the browser's purposes,
+ * while the request's base64 frames are large and already held client-side.
+ */
 export interface VideoTaskSummary extends Omit<VideoTask, 'result'> {
   resultAvailable: boolean
+  resultUrl?: string
 }
 
 /** Origin information carried by a generation started from the canvas. */

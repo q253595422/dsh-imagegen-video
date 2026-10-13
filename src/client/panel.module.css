@@ -3009,3 +3009,429 @@ html[data-dsh-imagegen-chat-collapsed] [data-dsh-imagegen-chat-resizer] {
   .galleryToolbarActions { width: 100%; flex-wrap: wrap; }
   .galleryMasonry { grid-template-columns: 1fr; }
 }
+
+/* The video tab renders its own composer, so the image config sidebar (and the
+   model/params footer) is hidden for it; otherwise two composers would show. */
+.generation:not([data-workspace='canvas']) > .config[data-video='true'] {
+  display: none !important;
+}
+
+/* The footer holds the image model picker + generate button; the video tab has
+   its own composer, so an empty footer bar would be the only thing left. */
+.generation > .footer[data-video='true'] {
+  display: none !important;
+}
+
+/* ------------------------------------------------------------------ video tab
+   The video studio reuses the panel's token vocabulary so it follows the
+   active theme by construction. Layout: a composer column beside a results /
+   history column, collapsing to one column on narrow shells. */
+
+.videoWorkspace {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  height: 100%;
+  min-height: 0;
+  padding: 14px 16px 18px;
+  overflow: hidden;
+  font-family: var(--dsw-font-family);
+}
+
+.videoToolbar {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex: none;
+}
+
+.videoModes {
+  display: inline-flex;
+  gap: 6px;
+  padding: 3px;
+  background: var(--dsw-alias-bg-layer-2);
+  border: 1px solid var(--dsw-alias-border-l1);
+  border-radius: 10px;
+}
+
+.videoModeButton {
+  height: 28px;
+  padding: 0 12px;
+  border: none;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--dsw-alias-label-secondary);
+  font-family: inherit;
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.videoModeButton:hover {
+  color: var(--dsw-alias-label-primary);
+  background: var(--dsw-alias-interactive-bg-hover);
+}
+
+.videoModeButton[data-active] {
+  background: var(--dsw-alias-bg-layer-1);
+  color: var(--dsw-alias-brand-primary);
+}
+
+.videoBody {
+  display: grid;
+  grid-template-columns: minmax(280px, 420px) minmax(0, 1fr);
+  gap: 16px;
+  min-height: 0;
+  overflow: auto;
+}
+
+@media (max-width: 1080px) {
+  .videoBody { grid-template-columns: minmax(0, 1fr); }
+}
+
+.videoComposer {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 14px;
+  border: 1px solid var(--dsw-alias-border-l1);
+  border-radius: 12px;
+  background: var(--dsw-alias-bg-layer-1);
+}
+
+.videoLabel {
+  color: var(--dsw-alias-label-secondary);
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.videoPrompt {
+  width: 100%;
+  resize: vertical;
+  padding: 10px 12px;
+  border: 1px solid var(--dsw-alias-border-l1);
+  border-radius: 10px;
+  background: var(--dsw-alias-bg-base);
+  color: var(--dsw-alias-label-primary);
+  font-family: inherit;
+  font-size: 13px;
+  line-height: 1.6;
+}
+
+.videoPrompt:focus {
+  outline: none;
+  border-color: var(--dsw-alias-brand-primary);
+}
+
+.videoFrames {
+  display: flex;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.videoFrameSlot {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  min-width: 120px;
+}
+
+.videoPick {
+  height: 32px;
+  padding: 0 12px;
+  border: 1px dashed var(--dsw-alias-border-l2);
+  border-radius: 9px;
+  background: transparent;
+  color: var(--dsw-alias-label-secondary);
+  font-family: inherit;
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.videoPick:hover {
+  color: var(--dsw-alias-label-primary);
+  border-color: var(--dsw-alias-brand-primary);
+}
+
+.videoFramePreview {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.videoFramePreview img {
+  width: 100%;
+  max-height: 180px;
+  object-fit: contain;
+  border: 1px solid var(--dsw-alias-border-l1);
+  border-radius: 9px;
+  background: var(--dsw-alias-bg-layer-2);
+}
+
+.videoFramePreview button,
+.videoTask button,
+.videoHistoryMeta button {
+  align-self: flex-start;
+  height: 26px;
+  padding: 0 10px;
+  border: 1px solid var(--dsw-alias-border-l1);
+  border-radius: 8px;
+  background: transparent;
+  color: var(--dsw-alias-label-secondary);
+  font-family: inherit;
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.videoFramePreview button:hover,
+.videoTask button:hover,
+.videoHistoryMeta button:hover {
+  color: var(--dsw-alias-label-primary);
+  background: var(--dsw-alias-interactive-bg-hover);
+}
+
+.videoParams {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+  gap: 10px;
+}
+
+.videoParam {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  min-width: 0;
+}
+
+.videoSelect {
+  width: 100%;
+}
+
+.videoPills {
+  display: inline-flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.videoPills button {
+  height: 28px;
+  min-width: 44px;
+  padding: 0 10px;
+  border: 1px solid var(--dsw-alias-border-l1);
+  border-radius: 8px;
+  background: transparent;
+  color: var(--dsw-alias-label-secondary);
+  font-family: inherit;
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.videoPills button:hover {
+  color: var(--dsw-alias-label-primary);
+  background: var(--dsw-alias-interactive-bg-hover);
+}
+
+.videoPills button[data-active] {
+  border-color: var(--dsw-alias-brand-primary);
+  color: var(--dsw-alias-brand-primary);
+  background: var(--dsw-alias-bg-layer-2);
+}
+
+.videoHint {
+  margin: 0;
+  color: var(--dsw-alias-label-tertiary);
+  font-size: 12px;
+  line-height: 1.6;
+}
+
+.videoWarn {
+  color: var(--dsw-alias-state-warn-primary);
+  font-size: 12px;
+}
+
+.videoError {
+  margin: 0;
+  color: var(--dsw-alias-label-error);
+  font-size: 12px;
+  line-height: 1.6;
+  word-break: break-word;
+}
+
+.videoActions {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-top: 2px;
+}
+
+.videoGenerate {
+  height: 38px;
+  border: none;
+  border-radius: 10px;
+  background: var(--dsw-alias-brand-primary);
+  color: #fff;
+  font-family: inherit;
+  font-size: 14px;
+  font-weight: 650;
+  cursor: pointer;
+}
+
+.videoGenerate:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.videoResults,
+.videoGallery {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  min-width: 0;
+}
+
+.videoResultsHead {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.videoResultsHead h3 {
+  margin: 0;
+  font-size: 14px;
+  font-weight: 650;
+  color: var(--dsw-alias-label-primary);
+}
+
+.videoResultsHead button {
+  height: 26px;
+  padding: 0 10px;
+  border: 1px solid var(--dsw-alias-border-l1);
+  border-radius: 8px;
+  background: transparent;
+  color: var(--dsw-alias-label-secondary);
+  font-family: inherit;
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.videoTaskList,
+.videoHistoryList {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.videoTask,
+.videoHistoryItem {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 12px;
+  border: 1px solid var(--dsw-alias-border-l1);
+  border-radius: 10px;
+  background: var(--dsw-alias-bg-layer-1);
+}
+
+.videoTask[data-status='failed'] {
+  border-color: var(--dsw-alias-state-error);
+}
+
+.videoTaskHead {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.videoTaskModel {
+  font-size: 13px;
+  font-weight: 650;
+  color: var(--dsw-alias-label-primary);
+}
+
+.videoTaskStatus {
+  padding: 1px 8px;
+  border-radius: 999px;
+  background: var(--dsw-alias-bg-layer-2);
+  color: var(--dsw-alias-label-secondary);
+  font-size: 11px;
+  font-weight: 600;
+}
+
+.videoTask[data-status='completed'] .videoTaskStatus {
+  color: var(--dsw-alias-state-success-primary);
+}
+
+.videoTask[data-status='failed'] .videoTaskStatus {
+  color: var(--dsw-alias-label-error);
+}
+
+.videoTaskElapsed {
+  color: var(--dsw-alias-label-tertiary);
+  font-size: 11px;
+}
+
+.videoTaskPrompt {
+  margin: 0;
+  color: var(--dsw-alias-label-secondary);
+  font-size: 12px;
+  line-height: 1.6;
+  overflow: hidden;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+}
+
+.videoPlayer {
+  width: 100%;
+  max-height: 360px;
+  border-radius: 9px;
+  background: #000;
+}
+
+.videoHistoryClip {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.videoHistoryMeta {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+  color: var(--dsw-alias-label-tertiary);
+  font-size: 11px;
+}
+
+.videoHistoryMeta a {
+  color: var(--dsw-alias-brand-primary);
+  text-decoration: none;
+}
+
+.videoEmpty {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  height: 100%;
+  color: var(--dsw-alias-label-tertiary);
+  text-align: center;
+}
+
+.videoEmpty h3 {
+  margin: 0;
+  font-size: 15px;
+  color: var(--dsw-alias-label-secondary);
+}
+
+.videoEmpty p {
+  margin: 0;
+  font-size: 13px;
+}

@@ -28,6 +28,7 @@ import type { EcommerceRefRole, GeneratedImage, GenerateMode, GenerateRequest, G
 import { AGENT_IMAGE_API, SUBSCRIPTION_API, SUBSCRIPTION_PROVIDERS, type SubscriptionProvider } from '../protocol.ts'
 import type { ImageGenConfig, ImageGenScope, ImageModelGroup } from './settings-scope.ts'
 import { imageModelOptions } from './settings-scope.ts'
+import { VideoPanel } from './VideoPanel.tsx'
 import { describeModel, promptCharLimit } from '../model-catalog.ts'
 import {
   addConversationAttachments, conversationInput, createConversationDrafts, releaseConversationDrafts,
@@ -440,8 +441,8 @@ function withAnchorNote(prompt: string): string {
   return '商品套图一致性约束：附件是本套商品的主图，图中商品（外形、颜色、材质、Logo、包装文字）必须与附件完全一致，不得重新发明商品。' + prompt
 }
 
-/** Studio tabs: the two generation modes plus the gallery view. */
-type PanelTab = GenerateMode | 'gallery'
+/** Studio tabs: the generation modes plus the gallery view and video. */
+type PanelTab = GenerateMode | 'video' | 'gallery'
 
 /** Top-level workspaces inside the panel. 'normal' is the classic studio;
  *  more task-oriented modes (prototype, …) can join alongside 'ecommerce'. */
@@ -2080,7 +2081,10 @@ export function ImageGenPanel(props: {
   )
 
   const isGallery = workspace === 'normal' && tab === 'gallery'
-  const isGeneration = workspace === 'normal' && tab !== 'gallery'
+  // Image generation only: the video tab shares the canvas section but not the
+  // image composer, model picker, compare controls or results board.
+  const isGeneration = workspace === 'normal' && tab !== 'gallery' && tab !== 'video'
+  const isVideo = workspace === 'normal' && tab === 'video'
 
   return (
     <div className={css.panel}>
@@ -2185,6 +2189,7 @@ export function ImageGenPanel(props: {
             style={{ '--dsh-imagegen-config-width': `${configWidth}px` } as CSSProperties}
             data-collapsed={configCollapsed ? 'true' : 'false'}
             data-gallery={workspace === 'normal' && tab === 'gallery' ? 'true' : undefined}
+            data-video={isVideo ? 'true' : undefined}
           >
             <div className={css.configResizer} title={tt('config.resizeHint')} onPointerDown={onConfigResizeStart} />
           <div className={css.configHeader}>
@@ -2254,6 +2259,7 @@ export function ImageGenPanel(props: {
                 <div className={css.modeRow} role="tablist" aria-label={tt('panel.title')}>
                   <Pill active={tab === 'text'} onClick={() => { setTab('text') }} className={css.modePill}>{tt('mode.text')}</Pill>
                   <Pill active={tab === 'edit'} onClick={() => { setTab('edit') }} className={css.modePill}>{tt('mode.edit')}</Pill>
+                  <Pill active={tab === 'video'} onClick={() => { setTab('video') }} className={css.modePill}>{tt('mode.video')}</Pill>
                 </div>
               </section>
             ) : null}
@@ -2641,7 +2647,7 @@ export function ImageGenPanel(props: {
 
           {/* footer: model + generate — a fixed sibling of the scroll area, so
               it never overlaps the cards scrolling above it. */}
-            <section className={css.footer}>
+            <section className={css.footer} data-video={isVideo ? 'true' : undefined}>
             {workspace === 'ecommerce' ? (
               <div className={css.ecommerceFooterBody}>
                 {ecommercePreview ? (
@@ -2733,8 +2739,15 @@ export function ImageGenPanel(props: {
             />
           ) : null}
 
+          {/* -------------------------------------------------- video studio */}
+          {isVideo ? (
+            <section className={css.canvas} data-video="true">
+              <VideoPanel api={api} scope={scope} config={config} active={active && tab === 'video'} />
+            </section>
+          ) : null}
+
           {/* ------------------------------------------------------- canvas */}
-          <section className={css.canvas} data-gallery={isGallery ? 'true' : undefined}>
+          <section className={css.canvas} data-gallery={isGallery ? 'true' : undefined} data-video={isVideo ? 'true' : undefined}>
           {isGallery ? (
             <div className={css.galleryWorkspace}>
               <header className={css.galleryToolbar}>

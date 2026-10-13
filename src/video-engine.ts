@@ -47,6 +47,11 @@ export type VideoUpstreamConfig = UpstreamConfig
 export interface VideoBytes {
   bytes: Buffer
   mime: string
+  /**
+   * The provider's own result URL. Retained so a local persistence failure
+   * still leaves the user a playable link for a render they already paid for.
+   */
+  sourceUrl: string
   duration?: number
   poster?: string
   revisedPrompt?: string
@@ -374,7 +379,7 @@ async function downloadVideo(upstream: VideoUpstreamConfig, url: string, signal?
       throw new VideoGenError('生成的视频超出了单文件体积上限', 'video-too-large')
     }
     const contentType = response.headers.get('content-type')?.split(';')[0]?.trim()
-    return { bytes: buffer, mime: videoMimeOf(contentType, url) }
+    return { bytes: buffer, mime: videoMimeOf(contentType, url), sourceUrl: url }
   } finally {
     budget.dispose()
   }

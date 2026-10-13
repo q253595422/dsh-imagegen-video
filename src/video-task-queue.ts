@@ -136,6 +136,9 @@ export class VideoTaskQueue {
     delete request.images
     delete request.firstFrame
     delete request.lastFrame
+    // Surface the first clip URL so a polling client can play the result
+    // without a second round trip; video tasks always produce exactly one.
+    const firstClip = task.result?.videos?.[0]?.url
     return {
       id: task.id,
       request,
@@ -145,6 +148,7 @@ export class VideoTaskQueue {
       ...task.finishedAt === undefined ? {} : { finishedAt: task.finishedAt },
       ...task.error === undefined ? {} : { error: task.error },
       resultAvailable: task.result !== undefined,
+      ...firstClip === undefined || firstClip === '' ? {} : { resultUrl: firstClip },
     }
   }
 
