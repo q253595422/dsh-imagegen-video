@@ -2864,3 +2864,43 @@
 .imageFooter[data-video-footer] .imageFooterSize {
   color: var(--dsw-alias-label-tertiary);
 }
+
+/* Full-screen clip player. Kept separate from the file overlay because a clip
+   has no canvas asset to resolve; it plays straight from the video store. */
+.videoPreview {
+  position: fixed;
+  inset: 0;
+  z-index: 400;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 40px;
+  background: var(--dsw-alias-bg-mask-1);
+}
+
+.videoPreviewPlayer {
+  max-width: 100%;
+  max-height: 100%;
+  border-radius: 10px;
+  background: #000;
+  box-shadow: 0 18px 60px #00000066;
+}
+
+.videoPreviewClose {
+  position: absolute;
+  top: 18px;
+  right: 22px;
+  width: 34px;
+  height: 34px;
+  border: none;
+  border-radius: 9px;
+  background: var(--dsw-alias-bg-layer-2);
+  color: var(--dsw-alias-label-primary);
+  font-size: 20px;
+  line-height: 1;
+  cursor: pointer;
+}
+
+.videoPreviewClose:hover {
+  background: var(--dsw-alias-interactive-bg-hover);
+}

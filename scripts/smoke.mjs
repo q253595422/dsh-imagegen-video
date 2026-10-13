@@ -4862,6 +4862,20 @@ await check('E1 client apply mounts the sidebar entry and studio (jsdom)', async
     assert.ok(view.querySelector(`[data-node-id="${placeholderId}"] [title="抽取当前帧"]`) !== null, 'the video node offers a frame-grab action')
     assert.ok(view.querySelector(`[data-node-id="${placeholderId}"] [title="收藏到画廊"]`) !== null, 'the video node offers a gallery action')
 
+    // The clip opens in a full-screen player (double-click, or the expand
+    // action), and Escape/close dismisses it.
+    assert.ok(view.querySelector(`[data-node-id="${placeholderId}"] [title="放大预览"]`) !== null, 'the video node offers an expand action')
+    const videoNodeEl = view.querySelector(`[data-node-id="${placeholderId}"]`)
+    videoNodeEl.dispatchEvent(new jsdomWindow.MouseEvent('dblclick', { bubbles: true, cancelable: true }))
+    assert.ok(await waitUntil(() => view.querySelector('[data-video-preview]') !== null), 'double-clicking a video node opens the full-screen player')
+    const clipOverlay = view.querySelector('[data-video-preview]')
+    const overlayPlayer = clipOverlay.querySelector('video')
+    assert.ok(overlayPlayer !== null, 'the full-screen player renders a video element')
+    assert.equal(overlayPlayer.getAttribute('src'), filled.metadata.video.url, 'the full-screen player uses the served clip URL')
+    clipOverlay.querySelector('button').dispatchEvent(new jsdomWindow.MouseEvent('click', { bubbles: true, cancelable: true }))
+    await new Promise(resolve => setTimeout(resolve, 40))
+    assert.equal(view.querySelector('[data-video-preview]'), null, 'the full-screen player dismisses')
+
     // Switching back to the image kind restores the image controls.
     const imageKindButton = [...view.querySelectorAll('[class*="composerKind"] button')].find(button => button.textContent === '图片')
     assert.ok(imageKindButton !== undefined, 'the composer offers an image kind toggle')

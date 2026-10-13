@@ -1205,6 +1205,10 @@ export function CanvasWorkspace(props: CanvasWorkspaceProps): React.JSX.Element 
   const [fileTargetNodeId, setFileTargetNodeId] = useState<string | null>(null)
   /** File node whose full-screen preview reader is open (null = closed). */
   const [filePreviewNodeId, setFilePreviewNodeId] = useState<string | null>(null)
+  /** The video node whose full-screen player is open. Clips get their own
+   *  overlay rather than reusing the file one: the file overlay resolves an
+   *  asset through the canvas store, which a clip deliberately does not have. */
+  const [videoPreviewNodeId, setVideoPreviewNodeId] = useState<string | null>(null)
   const [skillMenu, setSkillMenu] = useState<{ screen: Point; nodeId: string } | null>(null)
   const [skillCatalog, setSkillCatalog] = useState<{ skills: CanvasSkillDescriptor[]; installed: string[]; reason?: string } | null>(null)
   const [skillCatalogLoading, setSkillCatalogLoading] = useState(false)
@@ -3806,6 +3810,13 @@ export function CanvasWorkspace(props: CanvasWorkspaceProps): React.JSX.Element 
     const asset = node === undefined ? undefined : assetOf(node)
     return node === undefined || asset === undefined || asset.assetId === '' ? undefined : { node, asset }
   }, [filePreviewNodeId, nodeById])
+  const videoPreviewNode = useMemo(() => {
+    if (videoPreviewNodeId === null) return undefined
+    const node = nodeById.get(videoPreviewNodeId)
+    if (node === undefined) return undefined
+    const clip = videoOf(node)
+    return clip === undefined || clip.url === '' ? undefined : { node, clip }
+  }, [videoPreviewNodeId, nodeById])
   const relatedIds = useMemo(() => {
     const related = new Set<string>()
     if (document === null) return related
@@ -3912,8 +3923,14 @@ export function CanvasWorkspace(props: CanvasWorkspaceProps): React.JSX.Element 
       style={{ left: node.x, top: node.y, width: node.width, height: node.height }}
       onPointerDown={event => handleNodePointerDown(event, node.id)}
       onDoubleClick={event => {
-        if (!hasImage || node.type !== 'image') return
         if ((event.target as Element).closest('button, input, select, textarea, [data-toolbar]')) return
+        if (isVideo && hasVideo) {
+          event.preventDefault()
+          event.stopPropagation()
+          setVideoPreviewNodeId(node.id)
+          return
+        }
+        if (!hasImage || node.type !== 'image') return
         event.preventDefault()
         event.stopPropagation()
         openImageNode(node)
@@ -4121,6 +4138,7 @@ export function CanvasWorkspace(props: CanvasWorkspaceProps): React.JSX.Element 
           <IconButton name="download" label={tt('canvas.videoDownload')} onClick={() => downloadVideoNode(node)} />
           <IconButton name="sparkle" label={tt('canvas.videoGrabFrame')} disabled={busyLabel !== undefined} onClick={() => { void grabVideoFrame(node) }} />
           <IconButton name="favorite" label={tt('canvas.videoFavorite')} disabled={busyLabel !== undefined || video.entryId === undefined} onClick={() => { favoriteVideoNode(node) }} />
+          <IconButton name="expand" label={tt('canvas.videoPreview')} onClick={() => { setVideoPreviewNodeId(node.id) }} />
         </> : null}
         {node.type === 'image' && hasImage ? <>
           <IconButton name="annotate" label={tt('canvas.annotate')} active={annotating} onClick={() => toggleAnnotate(node)} />
@@ -4874,6 +4892,29 @@ export function CanvasWorkspace(props: CanvasWorkspaceProps): React.JSX.Element 
       title={filePreviewNode.node.title}
       onClose={() => setFilePreviewNodeId(null)}
     /> : null}
+    {videoPreviewNode !== undefined ? <div
+      className={css.videoPreview}
+      data-canvas-no-zoom=""
+      data-video-preview=""
+      role="dialog"
+      aria-label={tt('canvas.videoPreview')}
+      onClick={() => { setVideoPreviewNodeId(null) }}
+    >
+      <video
+        className={css.videoPreviewPlayer}
+        controls
+        autoPlay
+        preload="metadata"
+        src={videoPreviewNode.clip.url}
+        onClick={event => event.stopPropagation()}
+      />
+      <button
+        type="button"
+        className={css.videoPreviewClose}
+        aria-label={tt('canvas.videoPreviewClose')}
+        onClick={() => { setVideoPreviewNodeId(null) }}
+      >×</button>
+    </div> : null}
     {libraryOpen ? <TemplateLibrary api={api} onClose={() => setLibraryOpen(false)} onUse={prompt => { applyTemplate(prompt); setLibraryOpen(false) }} /> : null}
     {skillLibraryOpen ? <SkillLibraryDialog
       library={skillLibrary}
