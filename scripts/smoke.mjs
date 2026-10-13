@@ -4480,6 +4480,7 @@ await check('E1 client apply mounts the sidebar entry and studio (jsdom)', async
     assert.ok(clipCard.textContent?.includes('视频'), 'the clip card is badged as a video')
     // The clip card offers a download and NOT the image-only conversation action.
     assert.ok(clipCard.querySelector('[data-gallery-video-download]') !== null, 'the clip card offers download')
+    assert.ok(clipCard.querySelector('[data-gallery-video-canvas]') !== null, 'the clip card offers add-to-canvas')
     assert.equal(clipCard.querySelector('[data-gallery-add-conversation]'), null, 'the clip card has no image-only add-to-conversation')
 
     // The image card is unaffected and keeps its own actions.
@@ -4798,6 +4799,7 @@ await check('E1 client apply mounts the sidebar entry and studio (jsdom)', async
     const clipRow = histHost.querySelector('[data-video-row]')
     assert.ok(clipRow !== null, 'the clip row is marked as a video row')
     assert.ok(clipRow.querySelector('[data-history-video-gallery]') !== null, 'the clip row offers add-to-gallery')
+    assert.ok(clipRow.querySelector('[data-history-video-canvas]') !== null, 'the clip row offers add-to-canvas')
     assert.ok(clipRow.querySelector('[data-history-video-download]') !== null, 'the clip row offers download')
     assert.equal(clipRow.querySelector('[data-history-add-canvas]'), null, 'the clip row has no image-only add-to-canvas action')
     assert.equal(clipRow.querySelector('[data-history-add-conversation]'), null, 'the clip row has no image-only add-to-conversation action')
@@ -4839,6 +4841,21 @@ await check('E1 client apply mounts the sidebar entry and studio (jsdom)', async
     assert.match(board.querySelector('video').getAttribute('src'), /video\/file\//, 'the board uses the served clip URL')
     assert.ok(board.querySelector('[data-video-board-canvas]') !== null, 'the board offers add-to-canvas')
     assert.ok(board.querySelector('[data-video-board-conversation]') !== null, 'the board offers add-to-chat')
+
+    // Adding a clip to the canvas must land a REFERENCED video node: the node
+    // records the served URL and NO copied asset, because a clip is far too big
+    // to duplicate into the canvas asset store (the image import path does copy,
+    // and a clip must not take that path).
+    const savesBeforeClip = canvasSaves.length
+    const boardCanvas = view.querySelector('[data-video-board-canvas]')
+    boardCanvas.dispatchEvent(new jsdomWindow.MouseEvent('click', { bubbles: true, cancelable: true }))
+    assert.ok(await waitFor(() => canvasSaves.length > savesBeforeClip), 'add-to-canvas persists the canvas')
+    const clipNode = (canvasSaves.at(-1).nodes ?? []).find(node => node.type === 'video')
+    assert.ok(clipNode !== undefined, 'the canvas gained a video node')
+    assert.match(clipNode.metadata?.video?.url ?? '', /video\/file\//, 'the node references the served clip URL')
+    if (clipNode.metadata?.asset !== undefined) {
+      throw new Error(`CLIPNODE asset=${JSON.stringify(clipNode.metadata.asset)} | video=${JSON.stringify(clipNode.metadata.video)}`)
+    }
 
     // Leave the panel where the rest of this case expects it: the canvas
     // workspace. The clip click above moves the studio to the video surface, and
@@ -5069,11 +5086,17 @@ await check('E1 client apply mounts the sidebar entry and studio (jsdom)', async
     assert.equal(run.canvas.referenceNodeIds?.length, 1, 'the reference node is recorded for retries')
 
     // A placeholder video node exists and shows the rendering state.
+    //
+    // Match it by the id the run named (`run.canvas.nodeId`) rather than by
+    // "the first video node": a canvas may legitimately hold several video nodes
+    // (an imported clip is one too), and a positional lookup would quietly
+    // assert against whichever happened to be appended first.
+    const placeholderNodeId = run.canvas.nodeId
     assert.ok(
-      await waitUntil(() => (canvasSaves.at(-1)?.nodes ?? []).some(node => node.type === 'video')),
+      await waitUntil(() => (canvasSaves.at(-1)?.nodes ?? []).some(node => node.id === placeholderNodeId)),
       'a placeholder video node is added to the canvas',
     )
-    const placeholder = canvasSaves.at(-1).nodes.find(node => node.type === 'video')
+    const placeholder = canvasSaves.at(-1).nodes.find(node => node.id === placeholderNodeId)
     assert.equal(placeholder.metadata.status, 'generating', 'the placeholder starts in the generating state')
     assert.equal(placeholder.metadata.videoMode, 'image', 'the placeholder remembers the video mode')
     assert.ok(typeof placeholder.metadata.seconds === 'number', 'the placeholder remembers the duration')

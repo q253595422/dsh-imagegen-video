@@ -2353,8 +2353,10 @@ export function ImageGenPanel(props: {
                   data-dsh-imagegen-history-main=""
                   onClick={() => {
                     if (isVideoRow) {
-                      // A clip opens in the studio's video tab rather than the
-                      // image result board, which cannot render it.
+                      // A clip opens on the RESULT BOARD (see openVideoFromHistory),
+                      // the same area an image row fills: the click means "show me
+                      // that generation", and a clip has to play somewhere the user
+                      // is already looking. The video tab stays for starting runs.
                       openVideoFromHistory(row.entry!)
                     } else {
                       void viewHistoryGroup(row.group!)
@@ -2392,6 +2394,18 @@ export function ImageGenPanel(props: {
                       onClick={() => { void addClipToConversation(row.entry!.videos[0]!.url, `history-clip:${row.entry!.id}`) }}
                     >
                       <svg viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M4 2.5h8A1.5 1.5 0 0 1 13.5 4v5a1.5 1.5 0 0 1-1.5 1.5H8.5L5.5 13v-2.5H4A1.5 1.5 0 0 1 2.5 9V4A1.5 1.5 0 0 1 4 2.5z" /></svg>
+                    </button>
+                  ) : null}
+                  {isVideoRow ? (
+                    <button
+                      type="button"
+                      className={css.historyIconAction}
+                      title={tt('canvas.addToCanvas')}
+                      aria-label={tt('canvas.addToCanvas')}
+                      data-history-video-canvas=""
+                      onClick={() => { addClipToCanvas(row.entry!.videos[0]!.url, row.entry!.videos[0]!.mime, row.entry!.videos[0]!.duration, row.entry!.prompt) }}
+                    >
+                      <svg viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><rect x="2.5" y="2.5" width="11" height="11" rx="1.5" /><path d="M5 8h6M8 5v6" /></svg>
                     </button>
                   ) : null}
                   {isVideoRow ? (
@@ -3159,6 +3173,7 @@ export function ImageGenPanel(props: {
                 active={active && tab === 'video'}
                 tasks={videoTasks}
                 onAddToConversation={addClipToConversation}
+                onAddToCanvas={addClipToCanvas}
                 conversationBusyKey={addingToConversation === null ? null : String(addingToConversation)}
               />
             </section>
@@ -3254,6 +3269,15 @@ export function ImageGenPanel(props: {
                               onClick={(event) => { event.stopPropagation(); void addClipToConversation(clip.url, `gallery-clip:${entry.id}`) }}
                             >
                               {addingToConversation === `gallery-clip:${entry.id}` ? tt('conversation.adding') : tt('conversation.add')}
+                            </button>
+                            <button
+                              type="button"
+                              className={css.galleryCardAction}
+                              data-gallery-video-canvas=""
+                              title={tt('canvas.addToCanvas')}
+                              onClick={(event) => { event.stopPropagation(); addClipToCanvas(clip.url, clip.mime, clip.duration, entry.prompt) }}
+                            >
+                              {tt('canvas.addToCanvas')}
                             </button>
                             <a
                               className={css.galleryCardAction}

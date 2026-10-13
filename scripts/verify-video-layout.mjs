@@ -14,11 +14,50 @@
  * Run: node scripts/verify-video-layout.mjs [path-to-chrome-headless-shell]
  */
 
-import { readFileSync } from 'node:fs'
+import { readFileSync, existsSync, globSync } from 'node:fs'
 import { spawn } from 'node:child_process'
+import { tmpdir } from 'node:os'
 
-const CHROME = process.argv[2] ?? process.env.CHROME_HEADLESS_SHELL ?? '/tmp/chromium/chrome-headless-shell/mac_arm-155.0.8059.39/chrome-headless-shell-mac-arm64/chrome-headless-shell'
-const css = readFileSync('./src/client/panel.module.css', 'utf8')
+/**
+ * Find a headless Chromium to drive.
+ *
+ * WHY this is not a hardcoded path: this script is part of `pnpm test`, and the
+ * binary it originally pointed at lives under /tmp, which macOS clears on
+ * reboot. A hard gate on a path that can legitimately disappear turns a missing
+ * tool into a FAILING TEST, which is worse than no gate -- it trains people to
+ * ignore the suite. So: try real candidates, and if none exists, SKIP loudly
+ * (exit 0 with an unmissable banner) instead of reporting a layout regression
+ * that was never measured.
+ *
+ * Override with CHROME_HEADLESS_SHELL=<path> or `node script.mjs <path>`.
+ */
+function findChrome () {
+  const explicit = process.argv[2] ?? process.env.CHROME_HEADLESS_SHELL
+  if (explicit !== undefined && explicit !== '') return existsSync(explicit) ? explicit : null
+  const candidates = [
+    // Bundled shells, newest revision first (the agent tooling's usual location).
+    ...globSync('/tmp/chromium/chrome-headless-shell/*/*/chrome-headless-shell').sort().reverse(),
+    '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome',
+    '/Applications/Chromium.app/Contents/MacOS/Chromium',
+    ...globSync(`${process.env.HOME ?? ''}/.cache/puppeteer/**/chrome-headless-shell`).sort().reverse(),
+  ]
+  return candidates.find(candidate => existsSync(candidate)) ?? null
+}
+
+const CHROME = findChrome()
+if (CHROME === null) {
+  console.error('\n' + '='.repeat(72))
+  console.error('SKIP: no headless Chromium found -- the width guard did NOT run.')
+  console.error('This is a MISSING TOOL, not a layout regression: the composer width')
+  console.error('is unverified in this run. Install chrome-headless-shell, or point')
+  console.error('CHROME_HEADLESS_SHELL at a Chromium binary, to actually gate on it.')
+  console.error('='.repeat(72) + '\n')
+  process.exit(0)
+}
+// Resolved relative to this script, not an absolute checkout path: the guard is
+// part of `pnpm test` now, so a hardcoded /Users/... path would make it a gate
+// that only works on the machine it was written on.
+const css = readFileSync(new URL('../src/client/panel.module.css', import.meta.url), 'utf8')
 
 // Reproduce the structure VideoPanel renders: the studio body inside a narrow
 // centre column inside a wide window (the user's real situation).
@@ -45,8 +84,11 @@ const page = `<!doctype html><html><head><style>
       </section>
       <section class="videoResults" id="results"><header class="videoResultsHead"><h3>本次生成</h3></header>
         <ul class="videoTaskList" id="tasks">
-          <li class="videoTask"><div class="videoTaskHead"><span class="videoTaskModel">agnes-video-2.5-flash</span></div><video class="videoPlayer" src="x.mp4"></video></li>
-          <li class="videoTask"><div class="videoTaskHead"><span class="videoTaskModel">agnes-video-2.5-flash</span></div><video class="videoPlayer" src="y.mp4"></video></li>
+          <!-- A finished clip now carries three actions (expand / add-to-canvas /
+               add-to-chat), so the fixture must include them: the widest row is
+               what decides whether the results column still fits the panel. -->
+          <li class="videoTask"><div class="videoTaskHead"><span class="videoTaskModel">agnes-video-2.5-flash</span></div><video class="videoPlayer" src="x.mp4"></video><button>放大预览</button><button>加入画布</button><button>加入对话</button></li>
+          <li class="videoTask"><div class="videoTaskHead"><span class="videoTaskModel">agnes-video-2.5-flash</span></div><video class="videoPlayer" src="y.mp4"></video><button>放大预览</button><button>加入画布</button><button>加入对话</button></li>
         </ul>
       </section>
       <section class="videoGallery" id="gallery"><header class="videoResultsHead"><h3>视频历史</h3></header><ul class="videoHistoryList" id="hist"><li class="videoHistoryItem">a</li></ul></section>
@@ -62,17 +104,20 @@ const server = (await import('node:http')).createServer((_req, res) => {
 await new Promise(r => server.listen(0, '127.0.0.1', r))
 const port = server.address().port
 
-const browser = spawn(CHROME, ['--headless', '--disable-gpu', '--no-sandbox', '--remote-debugging-port=9444',
-  '--user-data-dir=/tmp/framegrab/layout-profile', 'about:blank'], { stdio: 'ignore' })
+// A random DevTools port: a fixed one collides with any other headless browser
+// (this repo's other scripts included), and the symptom is an opaque "CDP down".
+const CDP_PORT = 9500 + Math.floor(Math.random() * 400)
+const browser = spawn(CHROME, ['--headless', '--disable-gpu', '--no-sandbox', `--remote-debugging-port=${CDP_PORT}`,
+  `--user-data-dir=${tmpdir()}/dsh-imagegen-layout-${process.pid}`, 'about:blank'], { stdio: 'ignore' })
 const waitCdp = async () => {
   for (let i = 0; i < 60; i++) {
-    try { const r = await fetch('http://127.0.0.1:9444/json/version'); if (r.ok) return } catch {}
+    try { const r = await fetch(`http://127.0.0.1:${CDP_PORT}/json/version`); if (r.ok) return } catch {}
     await new Promise(r => setTimeout(r, 250))
   }
   throw new Error('CDP down')
 }
 await waitCdp()
-const target = await (await fetch(`http://127.0.0.1:9444/json/new?${encodeURIComponent(`http://127.0.0.1:${port}/`)}`, { method: 'PUT' })).json()
+const target = await (await fetch(`http://127.0.0.1:${CDP_PORT}/json/new?${encodeURIComponent(`http://127.0.0.1:${port}/`)}`, { method: 'PUT' })).json()
 const ws = new WebSocket(target.webSocketDebuggerUrl)
 await new Promise(r => { ws.onopen = r })
 let id = 0

@@ -84,6 +84,15 @@ export interface VideoPanelProps {
   onAddToConversation?: (url: string, actionKey: string) => Promise<void>
   /** Which clip is mid-attachment, so the button can show progress. */
   conversationBusyKey?: string | null
+  /**
+   * Drop one finished clip onto the infinite canvas. Supplied by the parent
+   * because it owns the workspace switch and the canvas import request.
+   *
+   * The clip is taken BY REFERENCE (the host already persists and serves it),
+   * never copied into the canvas asset store -- the same contract the result
+   * board and the history sidebar use.
+   */
+  onAddToCanvas?: (url: string, mime?: string, duration?: number, title?: string) => void
 }
 
 export function VideoPanel(props: VideoPanelProps) {
@@ -112,6 +121,8 @@ export function VideoPanel(props: VideoPanelProps) {
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [now, setNow] = useState(() => Date.now())
+  /** The clip (and the run that made it) shown in the full-screen player. */
+  const [previewClip, setPreviewClip] = useState<{ url: string; mime: string; duration?: number; title: string } | null>(null)
 
   const referenceInput = useRef<HTMLInputElement | null>(null)
   const firstInput = useRef<HTMLInputElement | null>(null)
@@ -221,8 +232,22 @@ export function VideoPanel(props: VideoPanelProps) {
     void api.videoTaskRetry(id).then(() => { refreshTasks() }).catch(() => { /* ignore */ })
   }
 
-  /** The served clip URL for a finished task summary. */
-  const clipOf = (task: VideoTaskSummary): string | undefined => task.resultUrl
+  /**
+   * The finished clip's shape, taken from the queue summary. `resultVideo` is
+   * what the host sends for a completed render (url + mime + duration); a bare
+   * `resultUrl` is the fallback for a task the host has already evicted from
+   * its richer list, so the actions still work with sensible defaults.
+   *
+   * Returns undefined for an empty url as well as a missing one: a task the
+   * host has finished but not yet given a served url must not render a player
+   * with an empty src, nor actions that would push an empty url downstream.
+   */
+  const clipMetaOf = (task: VideoTaskSummary): { url: string; mime: string; duration?: number } | undefined => {
+    const url = task.resultVideo?.url ?? task.resultUrl
+    if (url === undefined || url === '') return undefined
+    const duration = task.resultVideo?.duration
+    return { url, mime: task.resultVideo?.mime ?? 'video/mp4', ...duration === undefined ? {} : { duration } }
+  }
 
   const frameHint = mode === 'image' || mode === 'reference' ? tt('video.requiredImage')
     : mode === 'keyframe' ? tt('video.requiredFirstFrame') : ''
@@ -415,17 +440,49 @@ export function VideoPanel(props: VideoPanelProps) {
                   </div>
                   <p className={css.videoTaskPrompt} title={task.request.prompt}>{task.request.prompt}</p>
                   {task.status === 'failed' && task.error !== undefined ? <p className={css.videoError}>{task.error}</p> : null}
-                  {clipOf(task) !== undefined ? <>
-                    <video className={css.videoPlayer} controls preload="metadata" src={clipOf(task)} />
-                    {props.onAddToConversation !== undefined ? <button
-                      type="button"
-                      data-video-add-conversation=""
-                      disabled={props.conversationBusyKey !== undefined && props.conversationBusyKey !== null}
-                      onClick={() => { void props.onAddToConversation!(clipOf(task)!, `video-task:${task.id}`) }}
-                    >
-                      {props.conversationBusyKey === `video-task:${task.id}` ? tt('conversation.adding') : tt('conversation.add')}
-                    </button> : null}
-                  </> : null}
+                  {(() => {
+                    // One clip shape drives the player and every action, so an
+                    // empty url can never show a player without working actions
+                    // (or the reverse).
+                    const clip = clipMetaOf(task)
+                    if (clip === undefined) return null
+                    const title = task.request.prompt
+                    return <>
+                      <video
+                        className={css.videoPlayer}
+                        controls
+                        preload="metadata"
+                        src={clip.url}
+                        // Double-click opens the clip large, the same gesture the
+                        // canvas uses on a video node.
+                        onDoubleClick={() => { setPreviewClip({ ...clip, title }) }}
+                      />
+                      <button
+                        type="button"
+                        data-video-expand=""
+                        title={tt('canvas.videoPreview')}
+                        onClick={() => { setPreviewClip({ ...clip, title }) }}
+                      >
+                        {tt('canvas.videoPreview')}
+                      </button>
+                      {props.onAddToCanvas !== undefined ? <button
+                        type="button"
+                        data-video-add-canvas=""
+                        title={tt('canvas.addToCanvas')}
+                        onClick={() => { props.onAddToCanvas!(clip.url, clip.mime, clip.duration, title) }}
+                      >
+                        {tt('canvas.addToCanvas')}
+                      </button> : null}
+                      {props.onAddToConversation !== undefined ? <button
+                        type="button"
+                        data-video-add-conversation=""
+                        disabled={props.conversationBusyKey !== undefined && props.conversationBusyKey !== null}
+                        onClick={() => { void props.onAddToConversation!(clip.url, `video-task:${task.id}`) }}
+                      >
+                        {props.conversationBusyKey === `video-task:${task.id}` ? tt('conversation.adding') : tt('conversation.add')}
+                      </button> : null}
+                    </>
+                  })()}
                 </li>
               ))}
           </ul>
@@ -436,6 +493,61 @@ export function VideoPanel(props: VideoPanelProps) {
             clips in one list, so rendering it again would present two different
             histories of the same store. */}
       </div>
+
+      {/* Full-screen player for one finished clip. The studio is a narrower
+          column than the result board, so a clip worth watching deserves the
+          same large view the canvas node's expand action gives. It reuses the
+          panel's existing lightbox classes (no new stylesheet rules) and keeps
+          the same "add to canvas / add to chat" actions reachable while the
+          clip is being watched. */}
+      {previewClip !== null ? (
+        <div
+          className={css.lightbox}
+          role="dialog"
+          aria-modal="true"
+          aria-label={tt('canvas.videoPreview')}
+          data-video-clip-preview=""
+          onClick={() => { setPreviewClip(null) }}
+        >
+          <figure className={css.lightboxFigure} onClick={event => { event.stopPropagation() }}>
+            <video
+              className={css.galleryClipPlayer}
+              src={previewClip.url}
+              controls
+              autoPlay
+              preload="metadata"
+            />
+            <figcaption className={css.lightboxActions}>
+              {props.onAddToCanvas !== undefined ? <button
+                type="button"
+                className={css.lightboxDownload}
+                data-video-preview-canvas=""
+                title={tt('canvas.addToCanvas')}
+                onClick={() => { props.onAddToCanvas!(previewClip.url, previewClip.mime, previewClip.duration, previewClip.title) }}
+              >
+                {tt('canvas.addToCanvas')}
+              </button> : null}
+              {props.onAddToConversation !== undefined ? <button
+                type="button"
+                className={css.lightboxDownload}
+                data-video-preview-conversation=""
+                disabled={props.conversationBusyKey !== undefined && props.conversationBusyKey !== null}
+                onClick={() => { void props.onAddToConversation!(previewClip.url, `video-preview:${previewClip.url}`) }}
+              >
+                {props.conversationBusyKey === `video-preview:${previewClip.url}` ? tt('conversation.adding') : tt('conversation.add')}
+              </button> : null}
+              <a className={css.lightboxDownload} href={previewClip.url} download onClick={event => event.stopPropagation()}>{tt('download')}</a>
+            </figcaption>
+          </figure>
+          <button
+            type="button"
+            className={css.lightboxClose}
+            aria-label={tt('canvas.videoPreviewClose')}
+            title={tt('canvas.videoPreviewClose')}
+            onClick={() => { setPreviewClip(null) }}
+          >×</button>
+        </div>
+      ) : null}
     </div>
   )
 }

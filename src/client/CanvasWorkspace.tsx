@@ -3925,8 +3925,12 @@ export function CanvasWorkspace(props: CanvasWorkspaceProps): React.JSX.Element 
     const isSelected = selectedIds.has(node.id)
     const isRelated = relatedIds.has(node.id)
     const asset = assetOf(node)
-    const isGenerating = node.type === 'image' && metadata.status === 'generating'
-    const isError = node.type === 'image' && metadata.status === 'error'
+    // Image and video nodes both run asynchronously, so both have a generating
+    // and an error state. Keeping these image-only was a real bug, not a
+    // style slip: a video placeholder fell through to the "no clip yet" branch
+    // and painted 生成失败 on its first frame while it was still rendering.
+    const isGenerating = (node.type === 'image' || node.type === 'video') && metadata.status === 'generating'
+    const isError = (node.type === 'image' || node.type === 'video') && metadata.status === 'error'
     const isConnectTarget = connecting?.targetId === node.id
     const hasImage = asset !== undefined && asset.url !== ''
     const isConfig = node.type === 'config'
@@ -4071,8 +4075,10 @@ export function CanvasWorkspace(props: CanvasWorkspaceProps): React.JSX.Element 
                   onPointerDown={event => event.stopPropagation()}
                 />
               : isGenerating || metadata.status === 'idle'
-                ? <div className={css.nodeState}><span className={css.nodeSpinner} aria-hidden="true" /><span>{tt('canvas.videoGeneratingNode')}</span></div>
-                : <div className={css.nodeStateError}>{metadata.error ?? tt('canvas.generateFailed')}</div>}
+                ? <div className={css.nodeState} data-video-generating=""><span className={css.nodeSpinner} aria-hidden="true" /><span>{tt('canvas.videoGeneratingNode')}</span></div>
+                : isError
+                  ? <div className={css.nodeStateError} data-video-error="">{metadata.error ?? tt('canvas.generateFailed')}<button type="button" onClick={() => { void retryVideoGeneration(node) }}>{tt('canvas.retry')}</button></div>
+                  : <div className={css.nodeState} data-video-empty=""><span>{tt('canvas.videoEmptyNode')}</span></div>}
           </div>
         : isFile
         ? hasFile
