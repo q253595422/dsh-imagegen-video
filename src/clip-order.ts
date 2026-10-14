@@ -202,11 +202,17 @@ function entirelyAbove(source: PositionedItem, other: PositionedItem): boolean {
  * clip sits wholly above one that precedes it, then every edge points forward in
  * the row order, that order is itself a topological order, and at each step the
  * earliest unplaced node is available — so the pass returns exactly what it was
- * given. Measured: it moved a clip in 339 of 200,000 random layouts, and in
- * every one of those the row order contained a provable inversion.
+ * given. Measured: it moved nothing at all in 200,000 random layouts whose node
+ * sizes were limited to the three the canvas can produce on its own
+ * (240x160 / 200x240 / 240x240); it moved a clip in 3,605 of 200,000 layouts
+ * once the size pool also allowed ordinary drags (adding 96x64, 240x64, 240x600,
+ * 240x1000, 400x900), and in every one of those the row order contained a
+ * provable inversion.
  *
- * The graph is quadratic, which is free here: the host caps a stitch at twelve
- * clips.
+ * The graph is quadratic, which is free here: a stitch is a handful of clips.
+ * Note that the host does NOT cap the count — `runCompose` never consults
+ * `MAX_SKILL_INPUT_NODES`, and the client's compose branch returns before its
+ * own batch cap — so this comment must not be read as a guarantee.
  */
 function liftAbove<T extends PositionedItem>(base: readonly T[]): T[] {
   const count = base.length
