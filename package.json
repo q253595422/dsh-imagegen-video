@@ -82,10 +82,11 @@
     "watch": "tsdown --watch",
     "typecheck": "tsc --noEmit",
     "fetch-templates": "node scripts/fetch-templates.mjs",
-    "test": "pnpm build && node scripts/smoke.mjs && node scripts/smoke-video.mjs && node scripts/smoke-canvas-video.mjs && node scripts/smoke-video-picker.mjs && node scripts/smoke-compose.mjs && node scripts/verify-video-layout.mjs",
+    "test": "pnpm build && node scripts/smoke.mjs && node scripts/smoke-video.mjs && node scripts/smoke-canvas-video.mjs && node scripts/smoke-video-picker.mjs && node scripts/smoke-compose.mjs && node scripts/verify-b-defect.mjs && node scripts/verify-video-layout.mjs",
     "test:video": "node scripts/smoke-video.mjs",
     "test:canvas-video": "node scripts/smoke-canvas-video.mjs",
     "test:compose": "node scripts/smoke-compose.mjs",
-    "test:picker": "node scripts/smoke-video-picker.mjs"
+    "test:picker": "node scripts/smoke-video-picker.mjs",
+    "test:defect-b": "node scripts/verify-b-defect.mjs"
   }
 }

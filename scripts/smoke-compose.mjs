@@ -1087,6 +1087,29 @@ await check('V22 the real composer resolves clips from BOTH stores and still ref
   assert.equal(await composer.resolve(`${VIDEO_FILE_API}/${galleryFile}`), undefined,
     'a gallery file name does not resolve through the video-store prefix')
 
+  // 6. A DIRECTORY whose name matches the store pattern must not resolve. The
+  //    name pattern alone would accept it, so this is the only case that pins
+  //    `stat.isFile()` in readVideoFile/readGalleryVideo: deleting that check
+  //    leaves every other assertion in this file green.
+  const dirNamedLikeAClip = join(galleryVideosDir, '00000000-0000-4000-8000-0000000000dd-0.mp4')
+  mkdirSync(dirNamedLikeAClip, { recursive: true })
+  assert.equal(await composer.resolve(`${GALLERY_VIDEO_FILE_API}/00000000-0000-4000-8000-0000000000dd-0.mp4`), undefined,
+    'a DIRECTORY named like a clip does not resolve (stat.isFile() guard)')
+  assert.equal(await composer.resolve(`${GALLERY_VIDEO_FILE_API}/`), undefined,
+    'the bare prefix with an empty name resolves to undefined')
+  assert.equal(await composer.resolve(GALLERY_VIDEO_FILE_API), undefined,
+    'the bare prefix with no slash resolves to undefined')
+  assert.equal(await composer.resolve(''), undefined, 'the empty URL resolves to undefined')
+
+  // 7. No negative cache: the answer must track the disk, not the first lookup.
+  const laterFile = '00000000-0000-4000-8000-0000000000ee-0.mp4'
+  assert.equal(await composer.resolve(`${GALLERY_VIDEO_FILE_API}/${laterFile}`), undefined,
+    'a not-yet-written gallery clip does not resolve')
+  writeFileSync(join(galleryVideosDir, laterFile), Buffer.from([0x00, 0x00, 0x00, 0x18, 0x66, 0x74, 0x79, 0x70]))
+  assert.equal(await composer.resolve(`${GALLERY_VIDEO_FILE_API}/${laterFile}`), join(galleryVideosDir, laterFile),
+    'the same URL resolves once the file exists (no negative cache)')
+  rmSync(join(galleryVideosDir, laterFile), { force: true })
+
   rmSync(historyPath, { force: true })
   rmSync(galleryPath, { force: true })
 })
