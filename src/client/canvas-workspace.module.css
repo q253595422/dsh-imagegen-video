@@ -2904,3 +2904,64 @@
 .videoPreviewClose:hover {
   background: var(--dsw-alias-interactive-bg-hover);
 }
+
+/* ----------------------------------------------------------- clip stitching */
+
+/* Order badge on a selected clip. Sits above the node's own chrome and must
+   never take a pointer event: the node underneath is still being dragged and
+   marquee-selected while the badge is on. */
+.composeBadge {
+  position: absolute;
+  top: -10px;
+  left: -10px;
+  z-index: 4;
+  padding: 1px 7px;
+  border-radius: 999px;
+  border: 1px solid var(--dsw-alias-bg-layer-1);
+  background: var(--dsw-alias-brand-primary);
+  color: var(--dsw-alias-label-inverse, #fff);
+  font-size: 11px;
+  font-weight: 600;
+  line-height: 16px;
+  white-space: nowrap;
+  pointer-events: none;
+}
+
+/* Multi-select strip above the dock: says what a stitch would cover and in
+   which order, matching the badges. */
+.composeBar {
+  position: absolute;
+  left: 50%;
+  bottom: 66px;
+  transform: translateX(-50%);
+  z-index: 31;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 5px 12px;
+  border-radius: 999px;
+  border: 1px solid var(--dsw-alias-border-l1);
+  background: color-mix(in srgb, var(--dsw-alias-bg-layer-1) 92%, transparent);
+  backdrop-filter: blur(10px);
+  box-shadow: 0 10px 26px rgb(15 23 42 / 14%);
+  font-size: 11.5px;
+  color: var(--dsw-alias-label-secondary);
+  pointer-events: none;
+}
+
+.composeBarIcon {
+  font-size: 12px;
+  color: var(--dsw-alias-brand-primary);
+}
+
+.composeBarOrder {
+  letter-spacing: 1px;
+  color: var(--dsw-alias-label-primary);
+}
+
+/* `local` shares the accent of `heavy` (both leave the plain chat call) but
+   reads as its own tier, because it spends the user's machine, not a model. */
+.skillTier[data-tier='local'] {
+  color: var(--dsw-alias-state-warn-primary);
+  background: color-mix(in srgb, var(--dsw-alias-state-warn-primary) 14%, transparent);
+}

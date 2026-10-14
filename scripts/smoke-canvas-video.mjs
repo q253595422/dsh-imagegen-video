@@ -191,6 +191,12 @@ await check('L1-L2 a canvas run keeps its lineage and exposes its clip ref', asy
 const CLIP_URL = '/api/dsh-imagegen/video/file/vt-1-0.mp4'
 const CLIP_MIME = 'video/mp4'
 const CLIP_PROMPT = 'a cat on a windowsill'
+/** Two more served clips, for the stitch (compose) half: distinct URLs make a
+ *  requested order identifiable from the request body alone. */
+const CLIP_LEFT_URL = '/api/dsh-imagegen/video/file/clip-left.mp4'
+const CLIP_RIGHT_URL = '/api/dsh-imagegen/video/file/clip-right.mp4'
+/** The clip a stitch run produces (served by the video store, like any clip). */
+const COMPOSED_URL = '/api/dsh-imagegen/video/file/composed.mp4'
 
 await check('W1-W3 a finished studio clip lands a referenced node and states are honest', async () => {
   const { JSDOM } = await import('jsdom')
@@ -286,6 +292,29 @@ await check('W1-W3 a finished studio clip lands a referenced node and states are
         id: 'node-failed', type: 'video', title: '视频节点', x: 40, y: 340, width: 240, height: 240,
         metadata: { status: 'error', error: '上游拒绝了这个请求', taskId: 'vt-998', prompt: 'this one failed', model: 'agnes-video-2.5-flash', videoMode: 'text' },
       },
+      // Three clips a stitch run can cover. The two that share a row are listed
+      // here RIGHT before LEFT, i.e. in the reverse of their canvas order: an
+      // implementation that numbered the badges by array position instead of by
+      // canvas position would flip them, which is exactly the divergence between
+      // the numbers the user sees and the order of the file these badges exist
+      // to expose. Their x/y are chosen so the shared ordering rule puts the
+      // left one first (same row, x ascending).
+      {
+        id: 'node-clip-right', type: 'video', title: '右段', x: 1000, y: 40, width: 240, height: 240,
+        metadata: { status: 'success', video: { url: CLIP_RIGHT_URL, mime: CLIP_MIME, duration: 4, entryId: 'clip-entry-right' }, videoMode: 'text' },
+      },
+      {
+        id: 'node-clip-left', type: 'video', title: '左段', x: 600, y: 40, width: 240, height: 240,
+        metadata: { status: 'success', video: { url: CLIP_LEFT_URL, mime: CLIP_MIME, duration: 3, entryId: 'clip-entry-left' }, videoMode: 'text' },
+      },
+      // A clip with a servable URL but NO history entry: playable, downloadable,
+      // previewable, and yet it has nothing to favorite. Nothing about its look
+      // says so -- only the favorite control's disabled state does, which is why
+      // the assertion below pins both halves.
+      {
+        id: 'node-clip-noentry', type: 'video', title: '无记录片段', x: 600, y: 340, width: 240, height: 240,
+        metadata: { status: 'success', video: { url: CLIP_LEFT_URL, mime: CLIP_MIME, duration: 3 }, videoMode: 'text' },
+      },
     ],
     connections: [], createdAt: 1, updatedAt: 1,
   }
@@ -299,6 +328,12 @@ await check('W1-W3 a finished studio clip lands a referenced node and states are
   const videoSubmissions = []
   /** Every path the client fetched, for failure diagnostics. */
   const requestPaths = []
+  /** Bodies the canvas sent to the skill-run route (the stitch request). */
+  const skillRunRequests = []
+  /** Clip entryIds the gallery favorite route was asked to copy. */
+  const galleryVideoFavorites = []
+  /** Polls of the stitched run so far: the first says "still working". */
+  let composeTaskPolls = 0
 
   const configState = {
     enabled: true,
@@ -345,6 +380,85 @@ await check('W1-W3 a finished studio clip lands a referenced node and states are
       // state instead of orphaning it.
       videoTasks.push(task)
       return json({ ok: true, task })
+    }
+    if (path.endsWith('/canvas/skills/list')) {
+      // The catalog the compose flow needs. `compose.videos` is the `local` tier:
+      // no model, no agent, ffmpeg on this machine, and `accepts: ['video']` is
+      // what the picker uses to grey it out on any other node type.
+      return json({
+        ok: true,
+        skills: [
+          {
+            id: 'compose.videos', name: '拼接视频', description: '把选中的多段视频按画布位置拼成一条视频',
+            origin: 'builtin', tier: 'local', accepts: ['video'], output: 'video',
+            costHint: '在本机用 ffmpeg 拼接，不使用模型',
+          },
+          {
+            id: 'polish.text', name: '润色文本', description: '改写选中的文本节点',
+            origin: 'builtin', tier: 'light', accepts: ['text'], output: 'text',
+          },
+        ],
+        agentAvailable: true, registryAvailable: true, installed: [],
+      })
+    }
+    if (path.endsWith('/canvas/skills/run')) {
+      const payload = JSON.parse(init.body)
+      skillRunRequests.push(payload)
+      return json({
+        ok: true,
+        task: {
+          id: 'task-compose-1', canvasId: payload.canvasId, skillId: payload.skillId,
+          label: '拼接视频', tier: 'local', status: 'queued',
+          stage: '排队中', phase: 'queued', nodeIds: payload.nodeIds,
+          startedAt: Date.now(),
+        },
+      })
+    }
+    if (path.endsWith('/canvas/skills/task')) {
+      const payload = JSON.parse(init.body)
+      // One route answers both readers: `canvasId` lists the runs a canvas owns
+      // (empty here), `taskId` asks for one snapshot.
+      if (payload.taskId === undefined) return json({ ok: true, tasks: [] })
+      composeTaskPolls += 1
+      if (composeTaskPolls < 2) {
+        return json({
+          ok: true,
+          task: {
+            id: payload.taskId, canvasId: canvasDocument.id, skillId: 'compose.videos',
+            label: '拼接视频', tier: 'local', status: 'running',
+            stage: '用 ffmpeg 合成中', phase: 'running', startedAt: Date.now(),
+          },
+        })
+      }
+      // The host's product, reproduced faithfully: a video node REFERENCING the
+      // stitched clip in the video store (`metadata.video.url` + `entryId`),
+      // NOT a canvas asset, and it carries the provenance the host writes.
+      return json({
+        ok: true,
+        task: {
+          id: payload.taskId, canvasId: canvasDocument.id, skillId: 'compose.videos',
+          label: '拼接视频', tier: 'local', status: 'completed',
+          stage: '已把 2 段视频拼成一条', phase: 'collecting', startedAt: Date.now(),
+          output: {
+            nodes: [{
+              id: 'node-composed', type: 'video', title: '合成视频',
+              x: 1000, y: 340, width: 240, height: 135,
+              metadata: {
+                video: { url: COMPOSED_URL, mime: CLIP_MIME, duration: 7, entryId: 'compose-entry-1' },
+                status: 'success',
+                skill: { id: 'compose.videos', label: '拼接视频', sourceNodeIds: ['node-clip-left', 'node-clip-right'], createdAt: Date.now() },
+              },
+            }],
+            connections: [{ id: 'edge-1', fromNodeId: 'node-clip-left', toNodeId: 'node-composed' }],
+            warnings: [],
+          },
+        },
+      })
+    }
+    if (path.endsWith('/gallery/video')) {
+      const payload = JSON.parse(init.body)
+      galleryVideoFavorites.push(payload.entryId)
+      return json({ ok: true, entries: [], added: true })
     }
     if (path.endsWith('/video/history/list')) return json({ ok: true, entries: [] })
     if (path.endsWith('/history/list')) return json({ ok: true, entries: [] })
@@ -574,6 +688,209 @@ await check('W1-W3 a finished studio clip lands a referenced node and states are
       await waitUntil(() => (canvasSaves.at(-1)?.nodes ?? []).some(node => node.id === 'node-failed' && node.metadata?.status === 'generating')),
       'W3: the retried node returns to the rendering state',
     )
+
+    // ================================================ C1-C6 stitching clips
+    // The compose flow: multi-select clips, see the order the host will use,
+    // confirm it, and get a composed video node back.
+    //
+    // jsdom has no PointerEvent constructor in this setup, so pointer events are
+    // dispatched as MouseEvents of the same type; React keys its listeners by
+    // event type, so the handlers fire (this is the idiom the other suites use).
+    const pointerDown = (element, ctrlKey = false) => {
+      element.dispatchEvent(new jsdomWindow.MouseEvent('pointerdown', {
+        bubbles: true, cancelable: true, button: 0, clientX: 5, clientY: 5, ctrlKey,
+      }))
+    }
+    const nodeById = id => {
+      const element = view.querySelector(`[data-node-id="${id}"]`)
+      assert.ok(element !== null, `the node ${id} renders on the canvas`)
+      return element
+    }
+    const badgesNow = () => [...view.querySelectorAll('[data-compose-badge]')]
+    /** The open skill menu, found through its own row rather than a class name
+     *  (CSS Modules hashes those). */
+    const pickerMenu = () => {
+      const row = [...jsdomDocument.body.querySelectorAll('button[role="menuitem"]')]
+        .find(button => (button.textContent ?? '').includes('拼接视频'))
+      return row === undefined ? null : row.closest('[role="menu"]')
+    }
+    const openComposeMenu = async id => {
+      const skillButton = nodeById(id).querySelector('[data-toolbar] button[aria-label="技能"]')
+      assert.ok(skillButton !== null, `the node ${id} offers the skill menu`)
+      skillButton.dispatchEvent(new jsdomWindow.MouseEvent('click', { bubbles: true, cancelable: true }))
+      assert.ok(await waitUntil(() => pickerMenu() !== null), 'the skill menu opens with the catalog loaded')
+    }
+    const closeSkillMenu = async () => {
+      const menu = pickerMenu()
+      if (menu === null) return
+      // The scrim is the menu's own sibling; clicking it is how a user dismisses.
+      const scrim = menu.previousElementSibling
+      assert.ok(scrim !== null, 'the skill menu renders a dismiss scrim')
+      scrim.dispatchEvent(new jsdomWindow.MouseEvent('pointerdown', { bubbles: true, cancelable: true, button: 0 }))
+      assert.ok(await waitUntil(() => pickerMenu() === null), 'the skill menu closes')
+    }
+
+    // -------------------------------------------------- C1 the menu entry
+    pointerDown(nodeById('node-clip-left'))
+    // Selection is read off the resize handles, which only a selected node
+    // renders -- a class check would depend on the hashed module class name.
+    assert.ok(
+      await waitUntil(() => nodeById('node-clip-left').querySelector('[data-corner]') !== null),
+      'C1: a plain pointerdown selects the clip',
+    )
+    assert.equal(
+      nodeById('node-clip-right').querySelector('[data-corner]'), null,
+      'C1: the other clip is NOT selected -- the pointerdown was not additive',
+    )
+    await openComposeMenu('node-clip-left')
+    const composeRow = [...jsdomDocument.body.querySelectorAll('button[role="menuitem"]')]
+      .find(button => (button.textContent ?? '').includes('拼接视频'))
+    const composeRowWrap = composeRow.closest('div')
+    // A single clip cannot be stitched: the entry must be present but greyed.
+    assert.equal(
+      composeRow.disabled, true,
+      'C1: with ONE clip selected the stitch entry is disabled, not silently wrong',
+    )
+    assert.equal(
+      composeRowWrap.getAttribute('data-disabled'), '',
+      'C1: the disabled row is marked for styling',
+    )
+    // A third tier is not "heavy or light": it has to say what it is.
+    const localBadge = composeRowWrap.querySelector('[data-tier="local"]')
+    assert.ok(localBadge !== null, 'C1: the stitch entry carries the `local` tier')
+    assert.equal(localBadge.textContent, '本机执行', 'C1: the local tier reads 本机执行, not 轻量/重任务')
+
+    // ------------------------------------------- C2 the order badges (the ask)
+    // Additive selection keeps the menu's node in the set, so the run covers both.
+    pointerDown(nodeById('node-clip-right'), true)
+    assert.ok(await waitUntil(() => badgesNow().length === 2), 'C2: two selected clips get two order badges')
+    assert.equal(
+      nodeById('node-clip-left').querySelector('[data-compose-badge]').getAttribute('data-compose-badge'), '1',
+      'C2: the LEFT clip is segment 1 -- the badges follow canvas order, and the document lists it second',
+    )
+    assert.equal(
+      nodeById('node-clip-right').querySelector('[data-compose-badge]').getAttribute('data-compose-badge'), '2',
+      'C2: the RIGHT clip is segment 2',
+    )
+    assert.equal(
+      nodeById('node-clip-left').querySelector('[data-compose-badge]').textContent, '第 1 段',
+      'C2: the badge uses the compose badge copy',
+    )
+    // The badge must not swallow the gesture that drags the node underneath it.
+    assert.equal(
+      jsdomWindow.getComputedStyle(nodeById('node-clip-left').querySelector('[data-compose-badge]')).pointerEvents, 'none',
+      'C2: the badge does not take pointer events',
+    )
+    // A node the host would NOT stitch must not be numbered: no number is a
+    // promise that it is not in the file.
+    assert.equal(
+      nodeById('node-clip-noentry').querySelector('[data-compose-badge]'), null,
+      'C2: an unselected clip gets no badge',
+    )
+
+    // Dropping back to one clip must clear the numbering: a lone "1" claims a
+    // sequence that has no second segment.
+    pointerDown(nodeById('node-clip-right'), true)
+    assert.ok(await waitUntil(() => badgesNow().length === 0), 'C2: the badges disappear below two selected clips')
+    assert.equal(
+      view.querySelector('[data-compose-bar]'), null,
+      'C2: the multi-select strip disappears with them',
+    )
+    pointerDown(nodeById('node-clip-right'), true)
+    assert.ok(await waitUntil(() => badgesNow().length === 2), 'C2: the badges come back with the second clip')
+
+    // ------------------------------------------------- C3 the multi-select bar
+    const composeBar = view.querySelector('[data-compose-bar]')
+    assert.ok(composeBar !== null, 'C3: selecting two clips shows the stitch strip')
+    assert.ok(composeBar.textContent.includes('按画布位置拼接 · 2 段'), 'C3: the strip states the count and the rule')
+
+    // ------------------------------------------- C4/C5 the confirm card + run
+    await openComposeMenu('node-clip-left')
+    const enabledRow = [...jsdomDocument.body.querySelectorAll('button[role="menuitem"]')]
+      .find(button => (button.textContent ?? '').includes('拼接视频'))
+    assert.equal(enabledRow.disabled, false, 'C4: with two clips selected the stitch entry is enabled')
+    enabledRow.dispatchEvent(new jsdomWindow.MouseEvent('click', { bubbles: true, cancelable: true }))
+    await waitForSelector(jsdomDocument, '[data-compose-card]')
+    const card = jsdomDocument.querySelector('[data-compose-card]')
+    assert.ok(
+      card.textContent.includes('把选中的 2 段视频拼成一条？'),
+      'C4: the confirm card states what will happen',
+    )
+    assert.ok(
+      card.textContent.includes('顺序按画布位置：①②'),
+      'C4: the card spells out the ①② order the badges show',
+    )
+    const runButton = card.querySelector('[data-compose-run]')
+    assert.ok(runButton !== null, 'C4: the card offers the confirm action')
+    assert.equal(runButton.textContent, '开始拼接', 'C4: the confirm action is labelled 开始拼接')
+
+    runButton.dispatchEvent(new jsdomWindow.MouseEvent('click', { bubbles: true, cancelable: true }))
+    assert.ok(await waitUntil(() => skillRunRequests.length > 0), 'C5: confirming starts the stitch run')
+    assert.equal(skillRunRequests[0].skillId, 'compose.videos', 'C5: the run asks for the stitcher')
+    assert.equal(skillRunRequests[0].canvasId, canvasDocument.id, 'C5: the run carries its canvas')
+    assert.deepEqual(
+      skillRunRequests[0].nodeIds, ['node-clip-left', 'node-clip-right'],
+      'C5: the run sends the clips in CANVAS order -- the same order the badges numbered',
+    )
+
+    // ---------------------------------------------------- C6 the local run card
+    await waitForSelector(view, '[data-skill-run]')
+    const runCard = view.querySelector('[data-skill-run]')
+    assert.equal(
+      runCard.querySelector('[data-tier="local"]').textContent, '本机执行',
+      'C6: the run card labels a `local` run as 本机执行',
+    )
+
+    // ------------------------------------ C6b the composed node lands and plays
+    assert.ok(
+      await waitUntil(() => view.querySelector('[data-node-id="node-composed"]') !== null, 12_000),
+      'C6: the stitched clip lands on the canvas as a node',
+    )
+    const composedEl = nodeById('node-composed')
+    // The canvas autosaves on a debounce, so the node is on screen before it is
+    // in the saved document; read it the way the other checks do.
+    assert.ok(
+      await waitUntil(() => (canvasSaves.at(-1)?.nodes ?? []).some(node => node.id === 'node-composed')),
+      'C6: the composed node is persisted on the canvas',
+    )
+    const composed = (canvasSaves.at(-1)?.nodes ?? []).find(node => node.id === 'node-composed')
+    assert.equal(composed.type, 'video', 'C6: the composed node is an ordinary video node')
+    assert.equal(composed.title, '合成视频', 'C6: the composed node is titled 合成视频')
+    assert.equal(composed.metadata.video.url, COMPOSED_URL, 'C6: it references the stitched clip')
+    assert.equal(composed.metadata.video.entryId, 'compose-entry-1', 'C6: it carries its history entry id')
+    assert.equal(composed.metadata.asset, undefined, 'C6: the composed node copies no bytes into the asset store')
+    assert.equal(canvasAssetUploads.length, 0, 'C6: stitching uploaded no canvas asset')
+    // The whole point of the node shape: it renders through the EXISTING video
+    // body, with no compose-specific branch anywhere in the client.
+    const composedPlayer = composedEl.querySelector('[data-video-body] video')
+    assert.ok(composedPlayer !== null, 'C6: the composed node renders through the existing video body')
+    assert.equal(composedPlayer.getAttribute('src'), COMPOSED_URL, 'C6: it plays the stitched clip')
+    // The product is selected, so only one clip is selected now: no numbering.
+    assert.equal(badgesNow().length, 0, 'C6: the badges clear once the selection moves to the product')
+
+    // ------------------------------ C7 收藏 is gated on `video.entryId` alone
+    // This is the defect that hides from an eyeball: without an entry id the
+    // favorite button still RENDERS -- 加入对话 / 下载 / 抓帧 / 预览 all still
+    // work -- and only its disabled state differs. So both halves are pinned.
+    const composedFavorite = composedEl.querySelector('[data-toolbar] button[aria-label="收藏到画廊"]')
+    assert.ok(composedFavorite !== null, 'C7: the composed node offers 收藏到画廊')
+    assert.equal(
+      composedFavorite.disabled, false,
+      'C7: a composed clip CAN be favorited -- its video ref carries an entry id',
+    )
+    const noEntryFavorite = nodeById('node-clip-noentry').querySelector('[data-toolbar] button[aria-label="收藏到画廊"]')
+    assert.ok(noEntryFavorite !== null, 'C7: a clip without a history entry still renders its favorite control')
+    assert.equal(
+      noEntryFavorite.disabled, true,
+      'C7: the same control IS disabled when the clip ref has no entry id',
+    )
+    // ...and the enabled one really reaches the favorite path.
+    composedFavorite.dispatchEvent(new jsdomWindow.MouseEvent('click', { bubbles: true, cancelable: true }))
+    assert.ok(
+      await waitUntil(() => galleryVideoFavorites.length > 0),
+      'C7: clicking 收藏 on a composed clip favorites its history entry',
+    )
+    assert.equal(galleryVideoFavorites[0], 'compose-entry-1', 'C7: it favorites the composed entry, not another one')
   } finally {
     // Drain pending React work BEFORE restoring the globals. React DOM reads
     // `window` during commit, so a flush that lands after the jsdom globals are

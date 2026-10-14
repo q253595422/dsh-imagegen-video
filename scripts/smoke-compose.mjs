@@ -21,6 +21,14 @@
  *      copied into the canvas asset library), one connection per source clip
  *  V5  the task's stage text advances through the probe stage into the encode
  *      stage while the run is in flight
+ *  V8  FAILURE HONESTY: one clip whose URL no longer resolves (an evicted
+ *      history entry) fails the whole run BEFORE ffmpeg — the offending clip is
+ *      named, nothing is stitched and nothing is published, so the user can
+ *      never receive a quietly shorter video than the badges promised
+ *  V9  a host with no local composer reports the composeNoFfmpeg copy instead of
+ *      silently answering a stitch request with a chat completion — both when
+ *      the option is omitted (refused up front) and when a wired composer
+ *      reports the tools missing (a failed task)
  *  E1  (real ffmpeg only) two synthetic clips — one with audio, one silent —
  *      stitch through the REAL ClipComposer and the result is ~2x as long
  *
@@ -328,6 +336,122 @@ await check('V3-V5 three clips stitch in canvas order and land as a referenced v
   const zhPrompt = hostLocale.interpolate('canvas.skills.composeNode', undefined, 'zh')
   assert.equal(publish.prompt.includes(zhPrompt), false,
     'the persisted history prompt does not bake in a localized label')
+})
+
+// ------------------------------------------------- V8 failure honesty
+
+await check('V8 one unresolvable clip fails the whole run instead of stitching the rest', async () => {
+  const composer = fakeComposer()
+  liveRunner = makeRunner(composer)
+  // Three clips in canvas order first·second·third, but the MIDDLE one points at
+  // a history entry the video store no longer serves. A run that skipped it
+  // would happily produce a 2-clip video while the canvas showed three badges.
+  const gone = {
+    ...clipNode('clip-gone', 900, 0, 'second prompt'),
+    title: 'second clip',
+    metadata: {
+      video: { url: `${VIDEO_FILE_API}/compose-gone-0.mp4`, mime: 'video/mp4', duration: 2 },
+      status: 'success',
+      prompt: 'second prompt',
+    },
+  }
+  const document = { id: 'canvas-gone', title: 'gone', nodes: [CLIPS[1], gone, CLIPS[0]] }
+  canvasDocuments.set(document.id, document)
+
+  const before = chatCalls
+  const task = await liveRunner.run({
+    canvasId: document.id,
+    skillId: 'compose.videos',
+    // Scrambled again: resolving in canvas order is what makes "the middle one"
+    // the clip the USER sees in the middle.
+    nodeIds: ['clip-c', 'clip-gone', 'clip-a'],
+  })
+  const snapshot = await settleTask(task.id)
+  assert.equal(snapshot.status, 'failed', `a clip that cannot be read must fail the run: ${JSON.stringify(snapshot)}`)
+  // The message names the clip by its canvas badge AND its title, so the user
+  // knows which of the three to fix. The badge copy is locale-dependent, so it
+  // is asserted through the same dictionary the runner renders with.
+  assert.equal(snapshot.error,
+    copy('canvas.skills.composeFailed', { message: `${copy('canvas.composeBadge', { index: 2 })}：${gone.title}` }))
+  assert.match(snapshot.error, /second clip/i, 'the error names the offending clip')
+  assert.equal(snapshot.error.includes(copy('canvas.skills.stageDone')), false,
+    'a failed run never reports the success stage')
+  assert.equal(snapshot.output, undefined, 'a failed run produces no output')
+
+  // The sharpest form of the guarantee: resolution stopped AT the bad clip, so
+  // ffmpeg was never reached and nothing can have been published.
+  assert.deepEqual(composer.record.resolveCalls, [
+    `${VIDEO_FILE_API}/clip-a-0.mp4`,
+    `${VIDEO_FILE_API}/compose-gone-0.mp4`,
+  ], 'resolution stopped at the offending clip instead of skipping ahead to the next one')
+  assert.deepEqual(composer.record.stitchCalls, [], 'never reaches ffmpeg when a source cannot be resolved')
+  assert.deepEqual(composer.record.publishes, [], 'nothing lands in the video history')
+  assert.equal(chatCalls, before, 'the failure is reported, not answered by a model')
+
+  // Boundary sanity (the full cases stay above; nothing here replaces them):
+  // dropping the unreadable clip from the selection makes the SAME fixture run.
+  const okComposer = fakeComposer()
+  liveRunner = makeRunner(okComposer)
+  const okTask = await liveRunner.run({
+    canvasId: document.id, skillId: 'compose.videos', nodeIds: ['clip-a', 'clip-c'],
+  })
+  const okSnapshot = await settleTask(okTask.id)
+  assert.equal(okSnapshot.status, 'completed', JSON.stringify(okSnapshot))
+  assert.equal(okComposer.record.stitchCalls.length, 1, 'two readable clips still stitch')
+  assert.deepEqual(okComposer.record.stitchCalls[0], ['/fake/clip-a-0.mp4', '/fake/clip-c-0.mp4'])
+})
+
+// ----------------------------------------- V9 no usable local tool on this host
+
+await check('V9 a host without a usable local composer refuses instead of calling a model', async () => {
+  const before = chatCalls
+
+  // (a) No composer wired at all: refused before a task is even created — the
+  // same up-front shape as a too-few selection, so the client shows the reason
+  // rather than a run card that queues forever.
+  liveRunner = makeRunner(undefined)
+  const document = { id: 'canvas-nocomposer', title: 'nocomposer', nodes: [CLIPS[0], CLIPS[1]] }
+  canvasDocuments.set(document.id, document)
+  // composeNoFfmpeg carries a host-specific {detail}; assert the copy up to that
+  // slot so the check survives a rewording of the detail.
+  const head = copy('canvas.skills.composeNoFfmpeg', { detail: '\u0000' }).split('\u0000')[0]
+  assert.notEqual(head, 'canvas.skills.composeNoFfmpeg', 'the locale key resolved to real copy')
+  await assert.rejects(
+    () => liveRunner.run({ canvasId: document.id, skillId: 'compose.videos', nodeIds: ['clip-a', 'clip-c'] }),
+    error => {
+      assert.equal(typeof error.message, 'string')
+      assert.equal(error.message.startsWith(head), true,
+        `expected the composeNoFfmpeg copy, got: ${error.message}`)
+      assert.equal(error.message.length > head.length, true, 'the message explains WHICH tool is missing')
+      // The heavy/agent branch would have complained about the agent runtime.
+      assert.equal(error.message.includes(copy('canvas.skills.needAgent')), false,
+        'a local skill must not be reported as an agent-runtime problem')
+      return true
+    },
+  )
+
+  // (b) A composer that IS wired but finds no ffmpeg/ffprobe — the real
+  // "machine without ffmpeg" host. That becomes a FAILED task carrying the same
+  // localized copy plus the searched-directory detail.
+  const bare = fakeComposer()
+  const missing = {
+    ...bare,
+    available: () => false,
+    describe: () => 'ffmpeg: not found; ffprobe: not found (searched /nonexistent/bin)',
+  }
+  liveRunner = makeRunner(missing)
+  const task = await liveRunner.run({ canvasId: document.id, skillId: 'compose.videos', nodeIds: ['clip-a', 'clip-c'] })
+  const snapshot = await settleTask(task.id)
+  assert.equal(snapshot.status, 'failed', JSON.stringify(snapshot))
+  assert.equal(snapshot.error,
+    copy('canvas.skills.composeNoFfmpeg', { detail: missing.describe() }),
+    'a missing local tool is reported as such, never as a generic failure')
+  assert.deepEqual(bare.record.stitchCalls, [], 'no tool, no ffmpeg invocation')
+  assert.deepEqual(bare.record.publishes, [], 'no tool, nothing published')
+  assert.equal(snapshot.output, undefined)
+
+  // The whole point: neither refusal was answered by a model.
+  assert.equal(chatCalls, before, 'a local-tier skill must never be answered by a chat completion')
 })
 
 // ------------------------------------------------------------ E1 real ffmpeg

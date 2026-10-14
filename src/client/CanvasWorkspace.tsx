@@ -14,6 +14,9 @@ import {
 } from 'lucide-react'
 import type { CanvasAnnotation, CanvasAssetRef, CanvasConnection, CanvasDocument, CanvasFileKind, CanvasLayerInfo, CanvasLayerPlanItem, CanvasNode, CanvasRect, CanvasVideoRef, CanvasSkillConfigApplyResult, CanvasSkillConfigField, CanvasSkillConfigSaveResult, CanvasSkillConfigStep, CanvasSkillConfigView, CanvasSkillDescriptor, CanvasSkillLibrary, CanvasSkillOutput, CanvasSkillRunRequest, CanvasSkillTask, CanvasSketchStroke, GenerateRequest, GenerationTask, HistoryEntry, VideoGenerateRequest, VideoTaskSummary, VideoMode, VideoResolution } from '../protocol.ts'
 import { VIDEO_DURATIONS } from '../protocol.ts'
+// The stitch order is a SHARED rule: the host builds its ffmpeg concat list with
+// the same function, so the numbers on the badges are the order of the file.
+import { orderIdsByPosition } from '../clip-order.ts'
 import type { ImageGenApi } from './api.ts'
 import { errorMessage, tt } from './helpers.ts'
 import type { ImageGenKey } from './locales.ts'
@@ -66,6 +69,39 @@ const MIN_NODE_WIDTH = 96
 const MIN_NODE_HEIGHT = 64
 /** Upper bound on the nodes one menu action may cover (mirrors the host cap). */
 const MAX_BATCH_SKILL_NODES = 12
+/** The clip stitcher: the `local` skill the host runs with ffmpeg. */
+const COMPOSE_SKILL_ID = 'compose.videos'
+/** Circled numerals standing in for the clip order in the confirm card. */
+const COMPOSE_GLYPHS = ['①', '②', '③', '④', '⑤', '⑥', '⑦', '⑧', '⑨', '⑩', '⑪', '⑫', '⑬', '⑭', '⑮', '⑯', '⑰', '⑱', '⑲', '⑳']
+
+/**
+ * The clips one stitch run can cover: selected video nodes that carry a
+ * servable URL, in canvas order.
+ *
+ * Deliberately a subset, not "every selected video node": the host drops any
+ * node without a URL from its concat list, so badging such a node would promise
+ * a segment the file will not contain — the one divergence this order rule and
+ * these badges exist to make visible. The same list feeds the badges, the
+ * multi-select bar, the confirm card and `request.nodeIds`.
+ */
+function composeClipIds(nodes: readonly CanvasNode[], selected: ReadonlySet<string>): string[] {
+  return orderIdsByPosition(nodes.filter(node => selected.has(node.id)
+    && node.type === 'video'
+    && (nodeMetadata(node).video?.url ?? '') !== ''))
+}
+
+/** The ①②③ sequence shown in the confirm card, in badge order. */
+function composeGlyphs(count: number): string {
+  const shown = COMPOSE_GLYPHS.slice(0, count).join('')
+  return count > COMPOSE_GLYPHS.length ? `${shown}…` : shown
+}
+
+/** Tier label for the picker row and the run card. Three tiers, not two. */
+function tierLabel(tier: CanvasSkillDescriptor['tier']): string {
+  if (tier === 'heavy') return tt('canvas.skills.tierHeavy')
+  if (tier === 'local') return tt('canvas.skills.tierLocal')
+  return tt('canvas.skills.tierLight')
+}
 
 interface CanvasWorkspaceProps {
   api: ImageGenApi
@@ -540,6 +576,8 @@ function SkillPicker(props: {
   loading: boolean
   /** Number of nodes the run will cover (1 = the acting node). */
   batchCount: number
+  /** Clips a stitch run would cover right now (0 when the action cannot run). */
+  composeCount: number
   /** Host-skill names the registry exposes; undefined = registry unavailable. */
   installed?: ReadonlySet<string>
   onPick: (skill: CanvasSkillDescriptor) => void
@@ -554,9 +592,14 @@ function SkillPicker(props: {
   const skills = (props.catalog?.skills ?? []).filter(skill => term === ''
     || skill.name.toLowerCase().includes(term)
     || skill.description.toLowerCase().includes(term))
+  // A node whose type the skill accepts is not always enough: stitching needs
+  // at least two clips, and a single selected clip is greyed out rather than
+  // offered and then refused by the host.
   const compatible = (skill: CanvasSkillDescriptor): boolean => props.nodeType === 'config'
     ? false
-    : skill.accepts.includes(props.nodeType)
+    : !skill.accepts.includes(props.nodeType) ? false
+      : skill.id === COMPOSE_SKILL_ID ? props.composeCount >= 2
+        : true
   // The skills this node can actually run come first inside every group, so a
   // mis-click never lands on a greyed-out row sitting on top of the menu.
   const byFit = (a: CanvasSkillDescriptor, b: CanvasSkillDescriptor): number =>
@@ -573,7 +616,10 @@ function SkillPicker(props: {
       ? tt('canvas.skills.missingHint', { name: skill.skillName ?? skill.name })
       : compatible(skill) ? skill.description : tt('canvas.skills.incompatible')
     return <div key={skill.id} className={css.skillRow} data-disabled={compatible(skill) ? undefined : ''}>
-      <span className={css.skillRowIcon}><ToolbarIcon name={skill.tier === 'heavy' ? 'sparkle' : 'skill'} size={15} /></span>
+      {/* `light` is one chat call; `heavy` and `local` both run something
+          longer than a completion, so they share the wand-that-does-work icon.
+          No new ToolbarIconName: the union is closed on purpose. */}
+      <span className={css.skillRowIcon}><ToolbarIcon name={skill.tier === 'light' ? 'skill' : 'sparkle'} size={15} /></span>
       <button
         type="button"
         role="menuitem"
@@ -596,7 +642,7 @@ function SkillPicker(props: {
         : needsConfig
           ? <button type="button" className={css.skillInstall} onClick={() => props.onConfigure(skill)}>{tt('canvas.skills.configGo')}</button>
           : <span className={css.skillTier} data-tier={skill.tier}>
-              {skill.tier === 'heavy' ? tt('canvas.skills.tierHeavy') : tt('canvas.skills.tierLight')}
+              {tierLabel(skill.tier)}
             </span>}
     </div>
   }
@@ -994,30 +1040,65 @@ function PolishMenu(props: {
   </>, globalThis.document.body)
 }
 
-/** Confirmation shown before a heavy (headless-agent) skill run. */function SkillConfirmDialog(props: {
+/**
+ * Confirmation shown before a skill run that commits real resources: a heavy
+ * (headless-agent) run, or a `local` run such as stitching clips.
+ *
+ * The two differ in what they must say. A heavy run's body explains the agent
+ * and its cost; a local run must instead show the ORDER it will use, because
+ * that is the user's only chance to check the sequence before ffmpeg commits
+ * to it. Reusing the agent copy for a local run would describe a run that does
+ * not happen.
+ */
+function SkillConfirmDialog(props: {
   skill: CanvasSkillDescriptor
+  /** Clips a compose run would stitch, already in canvas order. */
+  composeIds?: readonly string[]
   onConfirm: (instruction: string) => void
   onClose: () => void
 }): React.JSX.Element {
   const [instruction, setInstruction] = useState('')
   const requires = props.skill.requires ?? []
+  const composeIds = props.composeIds
+  const composing = composeIds !== undefined && composeIds.length > 0
   return createPortal(<>
     <div className={css.skillScrim} onPointerDown={props.onClose} />
-    <div className={css.skillDialog} role="dialog" aria-modal="true" aria-label={tt('canvas.skills.confirmTitle')}>
-      <h3>{tt('canvas.skills.confirmTitle')}</h3>
-      <p className={css.skillDialogBody}>{tt('canvas.skills.confirmBody', { name: props.skill.name })}</p>
-      {props.skill.costHint !== undefined ? <p className={css.skillDialogNote}>{tt('canvas.skills.confirmCost', { hint: props.skill.costHint })}</p> : null}
-      {requires.length > 0 ? <p className={css.skillDialogNote}>{tt('canvas.skills.confirmRequires', { list: requires.join('；') })}</p> : null}
-      <textarea
-        className={css.skillDialogInput}
-        value={instruction}
-        placeholder={tt('canvas.skills.extraInstruction')}
-        onChange={event => setInstruction(event.target.value)}
-      />
-      <div className={css.skillDialogActions}>
-        <button type="button" className={css.skillGhost} onClick={props.onClose}>{tt('canvas.skills.confirmCancel')}</button>
-        <button type="button" className={css.skillPrimary} onClick={() => props.onConfirm(instruction)}>{tt('canvas.skills.confirmRun')}</button>
-      </div>
+    <div
+      className={css.skillDialog}
+      role="dialog"
+      aria-modal="true"
+      aria-label={composing ? tt('canvas.skills.compose') : tt('canvas.skills.confirmTitle')}
+      {...composing ? { 'data-compose-card': '' } : {}}
+    >
+      {composing
+        ? <>
+            <h3>{tt('canvas.skills.compose')}</h3>
+            <p className={css.skillDialogBody}>{tt('canvas.composeAsk', { count: composeIds.length })}</p>
+            {/* The sequence here MUST match the badges on the nodes: this is
+                the only moment the user can check the order before it runs. */}
+            <p className={css.skillDialogNote} data-compose-order="">{tt('canvas.composeAskHint', { list: composeGlyphs(composeIds.length) })}</p>
+            <p className={css.skillDialogNote}>{tt('canvas.skills.composeCost')}</p>
+            <div className={css.skillDialogActions}>
+              <button type="button" className={css.skillGhost} onClick={props.onClose}>{tt('canvas.skills.confirmCancel')}</button>
+              <button type="button" className={css.skillPrimary} data-compose-run="" onClick={() => props.onConfirm(instruction)}>{tt('canvas.composeConfirm')}</button>
+            </div>
+          </>
+        : <>
+            <h3>{tt('canvas.skills.confirmTitle')}</h3>
+            <p className={css.skillDialogBody}>{tt('canvas.skills.confirmBody', { name: props.skill.name })}</p>
+            {props.skill.costHint !== undefined ? <p className={css.skillDialogNote}>{tt('canvas.skills.confirmCost', { hint: props.skill.costHint })}</p> : null}
+            {requires.length > 0 ? <p className={css.skillDialogNote}>{tt('canvas.skills.confirmRequires', { list: requires.join('；') })}</p> : null}
+            <textarea
+              className={css.skillDialogInput}
+              value={instruction}
+              placeholder={tt('canvas.skills.extraInstruction')}
+              onChange={event => setInstruction(event.target.value)}
+            />
+            <div className={css.skillDialogActions}>
+              <button type="button" className={css.skillGhost} onClick={props.onClose}>{tt('canvas.skills.confirmCancel')}</button>
+              <button type="button" className={css.skillPrimary} onClick={() => props.onConfirm(instruction)}>{tt('canvas.skills.confirmRun')}</button>
+            </div>
+          </>}
     </div>
   </>, globalThis.document.body)
 }
@@ -1078,6 +1159,9 @@ function SkillRunCard(props: {
   }, [live])
   const elapsed = Math.max(0, Math.floor((Date.now() - trace.startedAt) / 1000))
   const clock = `${Math.floor(elapsed / 60)}:${String(elapsed % 60).padStart(2, '0')}`
+  // `local` reuses the light step list (queued -> running): stitching has no
+  // agent phases, and inventing preparing/collecting dots would promise stages
+  // the host never enters. Its own progress lives in the stage text below.
   const steps = trace.tier === 'heavy' ? RUN_STEPS_HEAVY : RUN_STEPS_LIGHT
   const phaseIndex = trace.status === 'failed'
     ? -1
@@ -1094,7 +1178,7 @@ function SkillRunCard(props: {
     <header className={css.skillRunHeader}>
       {live ? <span className={css.skillRunSpinner} aria-hidden="true" /> : null}
       <span className={css.skillRunTitle} title={trace.label}>{trace.label}</span>
-      <span className={css.skillTier} data-tier={trace.tier}>{trace.tier === 'heavy' ? tt('canvas.skills.tierHeavy') : tt('canvas.skills.tierLight')}</span>
+      <span className={css.skillTier} data-tier={trace.tier}>{tierLabel(trace.tier)}</span>
     </header>
     {trace.status === 'failed'
       ? <p className={css.skillRunError} title={trace.error}>{trace.error}</p>
@@ -2046,11 +2130,25 @@ export function CanvasWorkspace(props: CanvasWorkspaceProps): React.JSX.Element 
     return Math.max(1, Math.min(selected.length, MAX_BATCH_SKILL_NODES, current.nodes.length))
   }, [])
 
-  /** Menu pick: light skills run at once, heavy ones ask first. */
+  /** Menu pick: a light skill runs at once; heavy and local ones ask first. */
   const pickSkill = useCallback((skill: CanvasSkillDescriptor, node: CanvasNode): void => {
     setSkillMenu(null)
+    // Stitching branches before the batch helper on purpose: that helper is
+    // ordered by document insertion, and a run whose membership was decided by
+    // array position would stitch a different set of clips than the badges
+    // number. One list — canvas order — feeds badges, bar, confirm and request.
+    if (skill.id === COMPOSE_SKILL_ID) {
+      const current = documentRef.current
+      const composeIds = current === null ? [] : composeClipIds(current.nodes, selectedIdsRef.current)
+      if (composeIds.length < 2) {
+        setError(tt('canvas.skills.composeTooFew'))
+        return
+      }
+      setPendingSkill({ skill, nodeIds: composeIds, instruction: '' })
+      return
+    }
     const nodeIds = skillTargets(skill, node)
-    if (skill.tier === 'heavy') {
+    if (skill.tier === 'heavy' || skill.tier === 'local') {
       setPendingSkill({ skill, nodeIds, instruction: '' })
       return
     }
@@ -3303,6 +3401,19 @@ export function CanvasWorkspace(props: CanvasWorkspaceProps): React.JSX.Element 
     return () => window.clearTimeout(timer)
   }, [api, document, saveState])
 
+  // ------------------------------------------------------- compose (stitch)
+
+  /**
+   * The clips a stitch run would cover, in canvas order — the single list the
+   * badges, the multi-select bar, the confirm card and `request.nodeIds` all
+   * read. Derived from the document rather than from a click handler so it can
+   * never disagree with what the canvas is currently showing.
+   */
+  const composeIds = useMemo(
+    () => document === null ? [] : composeClipIds(document.nodes, selectedIds),
+    [document, selectedIds],
+  )
+
   // ---------------------------------------------------------- composer sync
 
   const singleSelectedId = selectedIds.size === 1 ? [...selectedIds][0]! : null
@@ -3944,6 +4055,14 @@ export function CanvasWorkspace(props: CanvasWorkspaceProps): React.JSX.Element 
     /** Only config nodes are excluded: every content node can feed a skill. */
     const skillable = !isConfig
     const skillRun = Object.entries(skillRuns).find(([, entry]) => entry.nodeId === node.id)
+    /**
+     * Compose order badge. Only while this canvas really offers a stitch (two
+     * or more selected clips): a lone number on one clip would claim an order
+     * that has no second segment to be relative to. The digit is the index in
+     * `composeIds` — the very same canvas-ordered list that becomes
+     * `request.nodeIds` — so a numbered node is a node the file will carry.
+     */
+    const composeIndex = composeIds.length >= 2 ? composeIds.indexOf(node.id) : -1
     const isTextual = node.type === 'text' || isConfig
     const isTextNode = node.type === 'text'
     const annotating = annotateNodeId === node.id && hasImage && !isSketch
@@ -3984,6 +4103,11 @@ export function CanvasWorkspace(props: CanvasWorkspaceProps): React.JSX.Element 
       }}
     >
       <div className={css.nodeGlow} aria-hidden="true" />
+      {composeIndex >= 0
+        ? <span className={css.composeBadge} data-compose-badge={String(composeIndex + 1)} aria-hidden="true">
+            {tt('canvas.composeBadge', { index: composeIndex + 1 })}
+          </span>
+        : null}
       {isVideo ? <header className={css.nodeHeader}>
         <span className={css.nodeTitle}>{node.title}</span>
         {metadata.videoMode !== undefined ? <span className={css.nodeTag}>{tt(`video.mode.${metadata.videoMode}` as ImageGenKey)}</span> : null}
@@ -4694,6 +4818,12 @@ export function CanvasWorkspace(props: CanvasWorkspaceProps): React.JSX.Element 
       {emptyState}
     </div>
 
+    {composeIds.length >= 2 ? <div className={css.composeBar} data-compose-bar="" data-canvas-no-zoom="" aria-live="polite">
+      <span className={css.composeBarIcon} aria-hidden="true">⛓</span>
+      <span>{tt('canvas.composeBar', { count: composeIds.length })}</span>
+      <span className={css.composeBarOrder}>{composeGlyphs(composeIds.length)}</span>
+    </div> : null}
+
     <div className={css.dockOuter} data-canvas-no-zoom="" ref={dockOuterRef}>
       <div className={`${css.dock} ${cursorClass}`} ref={dockRef} data-canvas-no-zoom="" role="toolbar">
         <div className={css.dockItem} data-dock-item="" data-label={tt('canvas.toolSelect')}>
@@ -4827,6 +4957,7 @@ export function CanvasWorkspace(props: CanvasWorkspaceProps): React.JSX.Element 
         catalog={skillCatalog}
         loading={skillCatalogLoading}
         batchCount={skillBatchCount(target.id)}
+        composeCount={composeIds.length}
         installed={skillCatalog === null ? undefined : new Set(skillCatalog.installed)}
         onPick={skill => pickSkill(skill, target)}
         onInstall={skill => {
@@ -4842,6 +4973,10 @@ export function CanvasWorkspace(props: CanvasWorkspaceProps): React.JSX.Element 
     })() : null}
     {pendingSkill !== null ? <SkillConfirmDialog
       skill={pendingSkill.skill}
+      // Only a stitch shows the order: it is the one run whose result depends
+      // on the sequence of its inputs, and this card is the user's last chance
+      // to see that sequence before ffmpeg commits to it.
+      {...pendingSkill.skill.id === COMPOSE_SKILL_ID ? { composeIds: pendingSkill.nodeIds } : {}}
       onConfirm={instruction => {
         const pending = pendingSkill
         setPendingSkill(null)
