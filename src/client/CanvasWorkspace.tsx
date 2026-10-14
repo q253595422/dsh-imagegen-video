@@ -129,6 +129,13 @@ interface CanvasWorkspaceProps {
     | { source: 'video'; url: string; mime: string; duration?: number; title?: string }
   )
   onImportRequestHandled?: () => void
+  /**
+   * A skill run just persisted a clip into the video history. The panel reads
+   * that list once per app session, so without this the sidebar keeps showing a
+   * stitched clip only after a full reload. Fired for clip-producing output
+   * only — a polish/describe run must not trigger a history refetch.
+   */
+  onClipStored?: () => void
   onOpenSettings?: (kind?: 'generation' | 'enhancement') => void
 }
 
@@ -1254,7 +1261,7 @@ function ComposerSelect(props: {
 }
 
 export function CanvasWorkspace(props: CanvasWorkspaceProps): React.JSX.Element {
-  const { api, modelGroups, defaultChannelId, connected, connectedChannelIds, promptReady = connected, history, gallery, tasks, videoGroups, videoTasks, importRequest, onImportRequestHandled, onOpenSettings } = props
+  const { api, modelGroups, defaultChannelId, connected, connectedChannelIds, promptReady = connected, history, gallery, tasks, videoGroups, videoTasks, importRequest, onImportRequestHandled, onClipStored, onOpenSettings } = props
   const [projects, setProjects] = useState<ProjectSummary[]>([])
   const [document, setDocument] = useState<CanvasDocument | null>(null)
   const [selectedIds, setSelectedIds] = useState<Set<string>>(() => new Set())
@@ -2297,8 +2304,13 @@ export function CanvasWorkspace(props: CanvasWorkspaceProps): React.JSX.Element 
       ],
     }))
     setSelectedIds(new Set(nodes.map(node => node.id)))
+    // A clip-producing run has just persisted its clip into the video history,
+    // which the panel reads only once: tell it to refresh that list. Kept out of
+    // the mutate updater above, which has to stay pure, and fired for video
+    // output only so a polish/describe run cannot trigger a history refetch.
+    if (nodes.some(node => node.type === 'video')) onClipStored?.()
     return nodes.length
-  }, [mutate])
+  }, [mutate, onClipStored])
 
   /** Poll the host while runs are alive; runs are serialized host-side, so a
    *  single interval keeps every run card honest without a request storm. The

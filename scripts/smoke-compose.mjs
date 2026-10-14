@@ -21,6 +21,40 @@
  *      copied into the canvas asset library), one connection per source clip
  *  V5  the task's stage text advances through the probe stage into the encode
  *      stage while the run is in flight
+ *  V10 READ-ORDER REGRESSION: one tall clip beside two short ones (unequal
+ *      heights, all overlapping vertically) stays ONE row — the old
+ *      centre-in-band rule split it into three and produced a wrong concat
+ *      order that looked plausible, so nothing else in this suite caught it
+ *  V11 ROW-JOIN REGRESSION: two ordinary rows that OVERLAP vertically (a grid)
+ *      stay two rows — a "any vertical overlap means one row" rule merges them
+ *      and the whole layout reads column-major (a,c,b,d). V10 cannot catch that
+ *      rule, so without this fixture it could ship with a green suite
+ *  V12 ORDER INVERSION: a tall clip beside two clips that are strictly one
+ *      above the other must not play the LOWER one first — the centre-inside
+ *      rule (v3) did exactly that, and no earlier fixture noticed
+ *  V13 COLUMN COLLAPSE: a portrait clip (3:4, one click away in the UI) beside
+ *      a 2x2 grid must not make the grid read column-major (a,c,b,d) — the rule
+ *      that decides a row by SOME member rather than EVERY member did that
+ *  V14 TWO SHORT ROWS BESIDE A TALL CLIP: the same over-merge, one row shorter
+ *  V15 O7 INVERSION: two 700px clips with a short clip strictly above the lower
+ *      one and no horizontal overlap — the shipped 18698e1b rule played the
+ *      lower clip second (its row window scaled with the tall clip's own height
+ *      and had no ceiling). Reachable by dragging a clip taller, and only a
+ *      three-node layout can show it
+ *  V16/V17 NESTED SMALL CLIP: a 64px (and a 96x64 minimum-size) clip dropped
+ *      inside a 240px host's vertical span. Without the nested clause the pair
+ *      reads as a column, the small clip opens its own row and lands AFTER a
+ *      clip to its right — old rule A,C,B against A,B,C
+ *  V18 PROXIMITY FLOOR: a 240x64 clip butting exactly against the 200x240 clip
+ *      beside it (zero horizontal overlap, so neither nested nor stacked
+ *      applies) with a 32px top-edge offset. With the window at exactly 32px the
+ *      offset is not < 32, so the shrunk clip is exiled to its own row and read
+ *      last — old rule B,C,A against A,B,C
+ *  V19/V20 FULL-NESTING REGRESSION: a clip sunk LOW inside a tall host (320px,
+ *      then 480px) beside a clip that sits entirely ABOVE it on the right. A
+ *      rule that treats ANY nested pair as one row welds the low clip to its
+ *      host and reads it BEFORE the clip above it — V16/V17 cannot see this
+ *      because they nest near the TOP of the host, where both rules agree
  *  V8  FAILURE HONESTY: one clip whose URL no longer resolves (an evicted
  *      history entry) fails the whole run BEFORE ffmpeg — the offending clip is
  *      named, nothing is stitched and nothing is published, so the user can
@@ -116,6 +150,15 @@ function imageNode(id, x, y) {
   }
 }
 
+/**
+ * One clip node with explicit geometry. The default 240x160 box cannot express a
+ * layout that tells the two row rules apart, so the regression fixture below
+ * needs its own sizes.
+ */
+function sizedClipNode(id, x, y, width, height, prompt) {
+  return { ...clipNode(id, x, y, prompt), width, height }
+}
+
 /** The three clips, deliberately laid out so ARRAY order ≠ canvas order. */
 const CLIPS = [
   clipNode('clip-c', 0, 600, 'third prompt'),   // bottom row → last
@@ -125,6 +168,351 @@ const CLIPS = [
 /** The client sends them scrambled; the host must re-sort by position. */
 const AS_SENT = ['clip-c', 'clip-b', 'clip-a']
 const EXPECTED_ORDER = ['clip-a', 'clip-b', 'clip-c']
+
+/**
+ * The read-order regression layout: one TALL clip on the left beside two SHORT
+ * clips on the right — a plausible hand arrangement, and the case where the old
+ * centre-based rule and the current overlap rule disagree.
+ *
+ *   wide : x=0,   y=0,   w=400, h=400   (spans the whole height)
+ *   r1   : x=500, y=0,   w=200, h=100
+ *   r2   : x=500, y=300, w=200, h=100
+ *
+ * Vertical centres are 200 / 50 / 350, so the OLD rule (sort by centre, join a
+ * row when the centre lands strictly inside the row's band) sorted them r1·wide·r2
+ * and then let r2 join wide's row: ['r1', 'wide', 'r2'] — wrong, and wrong in a
+ * way that still looks like a sensible order.
+ *
+ * The current rule sorts by TOP edge (0 / 0 / 300) and joins the first row whose
+ * vertical extent the node overlaps, so all three overlap and form ONE row:
+ * left to right, then top to bottom => ['wide', 'r1', 'r2'].
+ */
+const UNEQUAL_CLIPS = [
+  sizedClipNode('wide', 0, 0, 400, 400, 'tall left clip'),
+  sizedClipNode('r1', 500, 0, 200, 100, 'short top-right clip'),
+  sizedClipNode('r2', 500, 300, 200, 100, 'short bottom-right clip'),
+]
+/** Sent in the exact reverse of the expected order: the host must re-sort. */
+const UNEQUAL_AS_SENT = ['r2', 'r1', 'wide']
+const UNEQUAL_EXPECTED = ['wide', 'r1', 'r2']
+
+/**
+ * The row-join regression layout: an ordinary 2x2 grid whose second row OVERLAPS
+ * the first, i.e. every clip's box shares vertical space with both clips of the
+ * other row. Clips are placed on a 336px pitch with a 150px row gap, so the rows
+ * overlap by 10px — nothing exotic, just a hand-arranged grid.
+ *
+ *   a : x=0,   y=0,   w=240, h=160   (row 1 left)    extent y 0..160
+ *   b : x=336, y=0,   w=240, h=160   (row 1 right)   extent y 0..160
+ *   c : x=0,   y=150, w=240, h=160   (row 2 left)    extent y 150..310
+ *   d : x=336, y=150, w=240, h=160   (row 2 right)   extent y 150..310
+ *
+ * Reading order is plainly row-major: ['a', 'b', 'c', 'd']. Three measured
+ * rules give:
+ *   centre-in-band (HEAD of this repo at the time) -> a,b,c,d  (happens to pass)
+ *   ANY-VERTICAL-OVERLAP (the withdrawn rule)      -> a,c,b,d  (column-major —
+ *       every clip here overlaps its neighbours vertically, so all four merge
+ *       into one row and it is then sorted purely by x)
+ *   centre-in-taller (current)                     -> a,b,c,d
+ * So this fixture is the one that keeps the withdrawn over-merging rule out,
+ * which the V10 layout above does not: V10 passes under that rule.
+ */
+const GRID_CLIPS = [
+  sizedClipNode('g-a', 0, 0, 240, 160, 'grid top-left clip'),
+  sizedClipNode('g-b', 336, 0, 240, 160, 'grid top-right clip'),
+  sizedClipNode('g-c', 0, 150, 240, 160, 'grid bottom-left clip'),
+  sizedClipNode('g-d', 336, 150, 240, 160, 'grid bottom-right clip'),
+]
+/** Sent in the EXACT REVERSE of the expected order: only geometry can fix it. */
+const GRID_AS_SENT = ['g-d', 'g-c', 'g-b', 'g-a']
+const GRID_EXPECTED = ['g-a', 'g-b', 'g-c', 'g-d']
+
+/**
+ * Order-inversion fixture: a TALL clip on the left with two short clips on the
+ * right that do not overlap each other at all — `upper` ends at y=160 and
+ * `lower` starts at y=300, a 140px gap. Reading order is plainly top to bottom:
+ * the spine, then `upper`, then `lower`.
+ *
+ *   spine : x=0,   y=0,   w=240, h=600   (extent y 0..600)
+ *   upper : x=700, y=0,   w=240, h=160   (extent y 0..160)
+ *   lower : x=400, y=300, w=240, h=160   (extent y 300..460)
+ *
+ * The centre-inside rule (revision 3) put `lower` SECOND, because it joined the
+ * spine's row on the strength of any single member — an order that plays a clip
+ * sitting strictly BELOW another one before it. Measured: v1 upper,spine,lower ·
+ * v3 spine,lower,upper (inverted) · v4 spine,upper,lower.
+ */
+const SPINE_CLIPS = [
+  sizedClipNode('spine', 0, 0, 240, 600, 'tall left spine'),
+  sizedClipNode('upper', 700, 0, 240, 160, 'upper right clip'),
+  sizedClipNode('lower', 400, 300, 240, 160, 'lower right clip'),
+]
+const SPINE_AS_SENT = ['lower', 'upper', 'spine']
+const SPINE_EXPECTED = ['spine', 'upper', 'lower']
+
+/**
+ * Column-collapse fixture: a PORTRAIT clip on the left beside an ordinary 2x2
+ * grid. The 240x320 portrait is NOT an automatic size: `nodeSizeFromRatio` uses
+ * the spec's height for a portrait ratio, so a 3:4 clip comes out 200x160 at the
+ * video node spec (240x160) and 200x240 at the image spec (240x240) — both
+ * shorter than 240 wide. Reaching 240x320 therefore takes a manual resize.
+ *
+ * That distinction is not academic: this fixture still separates the rules at
+ * 240x320, 200x240 and 240x240, but NOT at 200x160 — a 3:4 clip left at its
+ * automatic size would not expose the column-collapse defect at all.
+ *
+ *   portrait : x=0,   y=0,   w=240, h=320   (extent y 0..320)
+ *   a        : x=400, y=0,   w=240, h=160
+ *   b        : x=736, y=0,   w=240, h=160
+ *   c        : x=400, y=150, w=240, h=160
+ *   d        : x=736, y=150, w=240, h=160
+ *
+ * Reading order: portrait, then the grid row-major => portrait,a,b,c,d.
+ * A rule that admits an item into a row when it shares that row with SOME
+ * member (v3) merged each grid column instead and read the grid column-major.
+ * Measured: v1 a,b,portrait,c,d · v3 portrait,a,c,b,d (column-major) ·
+ * v4 portrait,a,b,c,d.
+ */
+const PORTRAIT_CLIPS = [
+  sizedClipNode('portrait', 0, 0, 240, 320, 'portrait left clip'),
+  sizedClipNode('a', 400, 0, 240, 160, 'grid top-left clip'),
+  sizedClipNode('b', 736, 0, 240, 160, 'grid top-right clip'),
+  sizedClipNode('c', 400, 150, 240, 160, 'grid bottom-left clip'),
+  sizedClipNode('d', 736, 150, 240, 160, 'grid bottom-right clip'),
+]
+const PORTRAIT_AS_SENT = ['d', 'c', 'b', 'a', 'portrait']
+const PORTRAIT_EXPECTED = ['portrait', 'a', 'b', 'c', 'd']
+
+/**
+ * The same over-merge one row shorter: a tall clip beside a 2x2 grid that is
+ * missing its bottom-right cell. The second row must still come after the first.
+ *
+ *   tall : x=0,   y=0,   w=240, h=600
+ *   r1a  : x=400, y=0,   w=240, h=160
+ *   r1b  : x=736, y=0,   w=240, h=160
+ *   r2a  : x=400, y=300, w=240, h=160
+ *
+ * Measured: v1 r1a,r1b,tall,r2a · v3 tall,r1a,r2a,r1b · v4 tall,r1a,r1b,r2a.
+ */
+const TALLROWS_CLIPS = [
+  sizedClipNode('tall', 0, 0, 240, 600, 'tall left clip'),
+  sizedClipNode('r1a', 400, 0, 240, 160, 'first row left clip'),
+  sizedClipNode('r1b', 736, 0, 240, 160, 'first row right clip'),
+  sizedClipNode('r2a', 400, 300, 240, 160, 'second row left clip'),
+]
+const TALLROWS_AS_SENT = ['r2a', 'r1b', 'r1a', 'tall']
+const TALLROWS_EXPECTED = ['tall', 'r1a', 'r1b', 'r2a']
+
+/**
+ * The O7 inverted-row layout: TWO tall 700px clips with a short one between them
+ * horizontally, and — this is the point — ZERO horizontal overlap anywhere.
+ *
+ *   left : x=0,    y=0,   w=240, h=700   (extent y 0..700;  x 0..240)
+ *   mid  : x=1000, y=80,  w=240, h=160   (extent y 80..240; x 1000..1240)
+ *   low  : x=600,  y=320, w=240, h=700   (extent y 320..1020; x 600..840)
+ *
+ * `mid` ends at y=240 and `low` starts at y=320, so `mid` is ENTIRELY above
+ * `low`, and they do not overlap horizontally at all (mid starts at x=1000, low
+ * ends at x=840). Reading order is unambiguous: left, mid, low.
+ *
+ * The previous shipped rule (18698e1b) nevertheless played `low` SECOND. Its
+ * row window was `0.5 * min(height)` with no ceiling, and the 700px clips made
+ * that 350px — wide enough for `left` to swallow `low` into its own row, after
+ * which the two were ordered by x and the plainly-lower clip came first. Only a
+ * THREE-node layout exposes it: with two nodes the walk order already matches.
+ * A 700px-tall node is reachable by dragging the resize handle (heights are
+ * unbounded above; only MIN_NODE_HEIGHT=64 exists).
+ *
+ * Measured on this fixture: v1 centre-band mid,left,low · v2 any-overlap
+ * left,low,mid · v3 centre-inside left,low,mid · 18698e1b left,low,mid (all
+ * three inverted) · current rule left,mid,low.
+ */
+const O7_CLIPS = [
+  sizedClipNode('left', 0, 0, 240, 700, 'tall left clip'),
+  sizedClipNode('mid', 1000, 80, 240, 160, 'short middle clip'),
+  sizedClipNode('low', 600, 320, 240, 700, 'tall lower clip'),
+]
+/** Sent in the EXACT REVERSE of the expected order: only geometry can fix it. */
+const O7_AS_SENT = ['low', 'mid', 'left']
+const O7_EXPECTED = ['left', 'mid', 'low']
+
+/**
+ * Nested-small-clip fixture: a 64px-tall clip sitting INSIDE the vertical span
+ * of a 240px-tall clip, overlapping it horizontally from x=0 to x=240.
+ *
+ *   A : x=0,   y=0,  w=240, h=240   (extent y 0..240)
+ *   B : x=0,   y=32, w=240, h=64    (extent y 32..96 — entirely inside A)
+ *   C : x=400, y=96, w=240, h=240   (extent y 96..336, clear of A horizontally)
+ *
+ * B was dropped onto A, so A and B are one visual cluster and B is read second;
+ * C is its own column to the right. Reading order: A, B, C.
+ *
+ * The previous rule had no nested clause, so B fell through to the stacked-pair
+ * guard: B overlaps A's full width and its top edge is 32px lower, which is
+ * both >= 0.5*narrower and >= 0.25*shorter(64)=16, so the pair counted as a
+ * COLUMN. B then opened a row of its own and — because rows come out in
+ * top-edge order — was read after C. Measured on this fixture: old rule A,C,B ·
+ * current rule A,B,C.
+ *
+ * The window clause alone does not fix this fixture: removing ROW_PROXIMITY_FLOOR
+ * still yields A,B,C here, because the nested clause answers first. V18 below is
+ * the fixture that needs the floor.
+ */
+const NESTED_CLIPS = [
+  sizedClipNode('clip-a', 0, 0, 240, 240, 'host clip'),
+  sizedClipNode('clip-b', 0, 32, 240, 64, 'nested clip'),
+  sizedClipNode('clip-c', 400, 96, 240, 240, 'right column clip'),
+]
+/** Sent in the EXACT REVERSE of the expected order: only geometry can fix it. */
+const NESTED_AS_SENT = ['clip-c', 'clip-b', 'clip-a']
+const NESTED_EXPECTED = ['clip-a', 'clip-b', 'clip-c']
+
+/**
+ * The same nesting at the MINIMUM node footprint: B is 96x64 (MIN_NODE_WIDTH /
+ * MIN_NODE_HEIGHT), the smallest a clip can be dragged to.
+ *
+ *   A : x=0,   y=0,  w=240, h=240
+ *   B : x=0,   y=32, w=96,  h=64    (inside A vertically, overlaps A from x=0..96)
+ *   C : x=400, y=96, w=240, h=240
+ *
+ * Reading order: A, B, C. This pins the nested clause at the size where the
+ * proximity window is at its absolute tightest (0.5*64 = 32px, exactly B's
+ * offset), so a rule that leans on the window instead of nesting is caught.
+ * Measured: old rule A,C,B · current rule A,B,C.
+ */
+const NESTED_MIN_CLIPS = [
+  sizedClipNode('clip-a', 0, 0, 240, 240, 'host clip'),
+  sizedClipNode('clip-b', 0, 32, 96, 64, 'minimum nested clip'),
+  sizedClipNode('clip-c', 400, 96, 240, 240, 'right column clip'),
+]
+/** Sent in the EXACT REVERSE of the expected order: only geometry can fix it. */
+const NESTED_MIN_AS_SENT = ['clip-c', 'clip-b', 'clip-a']
+const NESTED_MIN_EXPECTED = ['clip-a', 'clip-b', 'clip-c']
+
+/**
+ * Column fixture with NO nesting and ZERO horizontal overlap, where the two
+ * left-hand clips are SEPARATED VERTICALLY only by a 32px top-edge offset —
+ * wider than 0.5*min(64,240)=32 would allow, so the OLD window rejected it.
+ *
+ *   A : x=0,   y=32, w=240, h=64    (extent y 32..96;   x 0..240)
+ *   B : x=240, y=0,  w=200, h=240   (extent y 0..240;    x 240..440)
+ *   C : x=480, y=96, w=200, h=240   (extent y 96..336;   x 480..680)
+ *
+ * A butts exactly against B horizontally (A ends at 240, B starts at 240) so
+ * their overlap is 0 — neither nested nor stacked applies. A is a short clip
+ * sitting on B's top-left shoulder, so it is read first, then B, then C across
+ * the top. Reading order: A, B, C.
+ *
+ * This is the fixture ROW_PROXIMITY_FLOOR exists for: with the window at
+ * min(0.5*64, 240) = 32px, the offset 32 is NOT < 32, so A is thrown onto a row
+ * of its own and read last. Measured: old rule B,C,A · current rule A,B,C, and
+ * removing only the floor from the current rule reproduces B,C,A.
+ */
+const FLOOR_CLIPS = [
+  sizedClipNode('clip-a', 0, 32, 240, 64, 'shrunk shoulder clip'),
+  sizedClipNode('clip-b', 240, 0, 200, 240, 'shoulder host clip'),
+  sizedClipNode('clip-c', 480, 96, 200, 240, 'right clip'),
+]
+/** Sent in the EXACT REVERSE of the expected order: only geometry can fix it. */
+const FLOOR_AS_SENT = ['clip-c', 'clip-b', 'clip-a']
+const FLOOR_EXPECTED = ['clip-a', 'clip-b', 'clip-c']
+
+/**
+ * FULL-NESTING regression: a clip sunk LOW inside a tall host, beside a clip
+ * that sits entirely ABOVE it on the right.
+ *
+ *   h : x=0,   y=0,   w=240, h=320   (extent y 0..320)
+ *   b : x=89,  y=249, w=240, h=64    (extent y 249..313 — nested LOW inside h)
+ *   c : x=409, y=84,  w=240, h=160   (extent y 84..244;  x 409..649, no overlap with h)
+ *
+ * `c` ends at y=244, entirely above `b` which starts at 249. Reading order is
+ * plainly h, c, b: the host first, then the clip that sits higher and to the
+ * right, then the low nested one.
+ *
+ * This is the ONE shape the nested fixtures above cannot see. V16/V17 nest a
+ * small clip near the TOP of its host, which is the geometry where full nesting
+ * and level-nesting agree. Here they disagree: a rule that treats ANY nested
+ * pair as one row welds `b` into `h`'s row, so rows come out h,b and then c —
+ * `h,b,c` — and a clip that is entirely above another is stitched after it.
+ * That is a strict inversion of the reading order the ①②③ badges show.
+ *
+ * The clip that ends up out of order is `c`, which is NOT nested in anything —
+ * the damage lands on a node the user arranged perfectly normally.
+ */
+const DEEP_NESTED_CLIPS = [
+  sizedClipNode('h', 0, 0, 240, 320, 'tall host clip'),
+  sizedClipNode('b', 89, 249, 240, 64, 'deeply nested low clip'),
+  sizedClipNode('c', 409, 84, 240, 160, 'clip above the nested one'),
+]
+/** Sent in the EXACT REVERSE of the expected order: only geometry can fix it. */
+const DEEP_NESTED_AS_SENT = ['b', 'c', 'h']
+const DEEP_NESTED_EXPECTED = ['h', 'c', 'b']
+
+/**
+ * The same inversion at a taller host, where the geometry is unambiguous. The
+ * window a full-nesting rule swallows scales with host height, so a 480px host
+ * leaves `b` no plausible claim on `h`'s row at all.
+ *
+ *   h : x=0,   y=0,   w=240, h=480   (extent y 0..480)
+ *   b : x=89,  y=409, w=240, h=64    (extent y 409..473 — nested LOW inside h)
+ *   c : x=409, y=120, w=240, h=160   (extent y 120..280, ends 129px above b)
+ */
+const DEEP_NESTED_TALL_CLIPS = [
+  sizedClipNode('h', 0, 0, 240, 480, 'taller host clip'),
+  sizedClipNode('b', 89, 409, 240, 64, 'deeply nested low clip'),
+  sizedClipNode('c', 409, 120, 240, 160, 'clip above the nested one'),
+]
+/** Sent in the EXACT REVERSE of the expected order: only geometry can fix it. */
+const DEEP_NESTED_TALL_AS_SENT = ['b', 'c', 'h']
+const DEEP_NESTED_TALL_EXPECTED = ['h', 'c', 'b']
+
+/**
+ * Run one order fixture end to end and assert the whole chain. The three order
+ * cases share it so they cannot drift apart, and so each of them proves the
+ * same four things: the SENT array is not canvas order, the task records the
+ * resolved order, the produced node and its edges follow it — and, the one that
+ * decides the shipped file, that ffmpeg is handed exactly that order.
+ */
+async function checkOrderFixture(label, documentId, clips, sentOrder, expectedOrder) {
+  const composer = fakeComposer()
+  liveRunner = makeRunner(composer)
+  const document = { id: documentId, title: documentId, nodes: [...clips] }
+  canvasDocuments.set(document.id, document)
+
+  const before = chatCalls
+  const task = await liveRunner.run({
+    canvasId: document.id,
+    skillId: 'compose.videos',
+    // Deliberately NOT the canvas order: the host re-sorts by geometry alone.
+    nodeIds: [...sentOrder],
+  })
+  composer.observe(task)
+  assert.notDeepEqual([...sentOrder], [...expectedOrder],
+    `${label}: the fixture only proves anything if the client order differs from the canvas order`)
+  assert.deepEqual([...sentOrder].reverse(), [...expectedOrder],
+    `${label}: the client order is the exact reverse, so only geometry can produce the result`)
+  assert.deepEqual(task.nodeIds, [...expectedOrder],
+    `${label}: the task records the resolved reading order`)
+
+  const snapshot = await settleTask(task.id)
+  assert.equal(snapshot.status, 'completed', `${label}: ${JSON.stringify(snapshot)}`)
+
+  // The load-bearing assertion: this is the argument list ffmpeg would receive.
+  assert.equal(composer.record.stitchCalls.length, 1, `${label}: exactly one ffmpeg invocation`)
+  assert.deepEqual(composer.record.stitchCalls[0],
+    expectedOrder.map(id => `/fake/${id}-0.mp4`),
+    `${label}: the sources handed to ffmpeg are in canvas reading order`)
+  assert.deepEqual(composer.record.resolveCalls,
+    expectedOrder.map(id => `${VIDEO_FILE_API}/${id}-0.mp4`),
+    `${label}: the sources were resolved in the same order`)
+
+  const produced = snapshot.output.nodes[0]
+  assert.deepEqual(produced.metadata.skill.sourceNodeIds, [...expectedOrder],
+    `${label}: the produced node names its sources in reading order`)
+  assert.deepEqual(snapshot.output.connections.map(edge => edge.fromNodeId), [...expectedOrder],
+    `${label}: the connections follow the same order`)
+  assert.equal(chatCalls, before, `${label}: a local run spends no chat calls`)
+}
 
 /** A fake composer: records every call, emits the two stages, never touches disk. */
 function fakeComposer() {
@@ -337,6 +725,172 @@ await check('V3-V5 three clips stitch in canvas order and land as a referenced v
   assert.equal(publish.prompt.includes(zhPrompt), false,
     'the persisted history prompt does not bake in a localized label')
 })
+
+// ------------------------------- V10 read-order regression (unequal heights)
+
+await check('V10 a tall clip beside two short ones stays one row and keeps canvas order', async () => {
+  const composer = fakeComposer()
+  liveRunner = makeRunner(composer)
+  const document = { id: 'canvas-uneven', title: 'uneven', nodes: [...UNEQUAL_CLIPS] }
+  canvasDocuments.set(document.id, document)
+
+  const before = chatCalls
+  const task = await liveRunner.run({
+    canvasId: document.id,
+    skillId: 'compose.videos',
+    // NOT the canvas order: the host re-sorts, it never trusts this list.
+    nodeIds: [...UNEQUAL_AS_SENT],
+  })
+  composer.observe(task)
+  assert.notDeepEqual([...UNEQUAL_AS_SENT], UNEQUAL_EXPECTED,
+    'the fixture only proves anything if the client order differs from the canvas order')
+  assert.deepEqual(task.nodeIds, UNEQUAL_EXPECTED,
+    'the task records the resolved reading order: the tall clip reads first, then the two short ones top to bottom')
+
+  const snapshot = await settleTask(task.id)
+  assert.equal(snapshot.status, 'completed', JSON.stringify(snapshot))
+
+  // The assertion that catches the regression: this is what ffmpeg would get.
+  assert.equal(composer.record.stitchCalls.length, 1, 'exactly one ffmpeg invocation')
+  assert.deepEqual(composer.record.stitchCalls[0],
+    UNEQUAL_EXPECTED.map(id => `/fake/${id}-0.mp4`),
+    'all three overlap vertically, so they form ONE row read left to right — the old centre-in-band rule '
+    + 'split them into three rows and handed ffmpeg [r1, wide, r2]')
+  assert.deepEqual(composer.record.resolveCalls,
+    UNEQUAL_EXPECTED.map(id => `${VIDEO_FILE_API}/${id}-0.mp4`))
+
+  const produced = snapshot.output.nodes[0]
+  assert.deepEqual(produced.metadata.skill.sourceNodeIds, UNEQUAL_EXPECTED)
+  assert.deepEqual(snapshot.output.connections.map(edge => edge.fromNodeId), UNEQUAL_EXPECTED)
+  assert.equal(chatCalls, before)
+})
+
+// ------------------------------- V11 row-join regression (overlapping rows)
+
+await check('V11 two overlapping rows stay two rows and keep row-major order', async () => {
+  const composer = fakeComposer()
+  liveRunner = makeRunner(composer)
+  const document = { id: 'canvas-grid', title: 'grid', nodes: [...GRID_CLIPS] }
+  canvasDocuments.set(document.id, document)
+
+  const before = chatCalls
+  const task = await liveRunner.run({
+    canvasId: document.id,
+    skillId: 'compose.videos',
+    // The exact reverse of the canvas order: the host must re-sort by geometry.
+    nodeIds: [...GRID_AS_SENT],
+  })
+  composer.observe(task)
+  assert.notDeepEqual([...GRID_AS_SENT], GRID_EXPECTED,
+    'the fixture only proves anything if the client order differs from the canvas order')
+  assert.deepEqual([...GRID_AS_SENT].reverse(), [...GRID_EXPECTED],
+    'the client order is exactly the expected order reversed, so only geometry can produce the result')
+  assert.deepEqual(task.nodeIds, GRID_EXPECTED,
+    'the task records row-major reading order: two overlapping rows must not merge into one')
+
+  const snapshot = await settleTask(task.id)
+  assert.equal(snapshot.status, 'completed', JSON.stringify(snapshot))
+
+  // The assertion that matters: this is the argument list ffmpeg would receive.
+  assert.equal(composer.record.stitchCalls.length, 1, 'exactly one ffmpeg invocation')
+  assert.deepEqual(composer.record.stitchCalls[0],
+    GRID_EXPECTED.map(id => `/fake/${id}-0.mp4`),
+    'the two rows overlap vertically, so a rule that merges on ANY overlap reads this grid column-major '
+    + 'and hands ffmpeg [g-a, g-c, g-b, g-d] — two rows must stay two rows')
+  assert.deepEqual(composer.record.resolveCalls,
+    GRID_EXPECTED.map(id => `${VIDEO_FILE_API}/${id}-0.mp4`))
+
+  const produced = snapshot.output.nodes[0]
+  assert.deepEqual(produced.metadata.skill.sourceNodeIds, GRID_EXPECTED)
+  assert.deepEqual(snapshot.output.connections.map(edge => edge.fromNodeId), GRID_EXPECTED)
+  assert.equal(chatCalls, before)
+})
+
+// ------------------------------- V12 what is strictly above plays first
+
+await check('V12 a tall clip does not invert two clips that are strictly one above the other', () => checkOrderFixture(
+  'V12',
+  'canvas-spine',
+  SPINE_CLIPS,
+  SPINE_AS_SENT,
+  SPINE_EXPECTED,
+))
+
+// ------------------------------- V13 a portrait clip must not collapse the grid
+
+await check('V13 a portrait clip beside a 2x2 grid keeps the grid row-major', () => checkOrderFixture(
+  'V13',
+  'canvas-portrait',
+  PORTRAIT_CLIPS,
+  PORTRAIT_AS_SENT,
+  PORTRAIT_EXPECTED,
+))
+
+// ------------------------------- V14 two short rows beside a tall clip
+
+await check('V14 two short rows beside a tall clip stay in row order', () => checkOrderFixture(
+  'V14',
+  'canvas-tallrows',
+  TALLROWS_CLIPS,
+  TALLROWS_AS_SENT,
+  TALLROWS_EXPECTED,
+))
+
+// ------------------- V15 O7: a clip strictly above another must not play after it
+
+await check('V15 a clip strictly above another is never stitched after it', () => checkOrderFixture(
+  'V15',
+  'canvas-o7',
+  O7_CLIPS,
+  O7_AS_SENT,
+  O7_EXPECTED,
+))
+
+// -------------------- V16/V17 nested small clips must stay with their host
+
+await check('V16 a clip nested inside a tall clip is read with it, not after its neighbour', () => checkOrderFixture(
+  'V16',
+  'canvas-nested',
+  NESTED_CLIPS,
+  NESTED_AS_SENT,
+  NESTED_EXPECTED,
+))
+
+await check('V17 the same nesting holds at the minimum node footprint', () => checkOrderFixture(
+  'V17',
+  'canvas-nested-min',
+  NESTED_MIN_CLIPS,
+  NESTED_MIN_AS_SENT,
+  NESTED_MIN_EXPECTED,
+))
+
+// ---------------- V18 a shrunk clip at the proximity floor keeps its row
+
+await check('V18 a shrunk clip 32px lower than its neighbour is still read in that row', () => checkOrderFixture(
+  'V18',
+  'canvas-floor',
+  FLOOR_CLIPS,
+  FLOOR_AS_SENT,
+  FLOOR_EXPECTED,
+))
+
+// ------- V19/V20 a clip nested LOW in a tall host must not jump the queue
+
+await check('V19 a deeply nested clip does not play before the clip above it', () => checkOrderFixture(
+  'V19',
+  'canvas-deep-nested',
+  DEEP_NESTED_CLIPS,
+  DEEP_NESTED_AS_SENT,
+  DEEP_NESTED_EXPECTED,
+))
+
+await check('V20 the same holds when the host is tall enough to leave no ambiguity', () => checkOrderFixture(
+  'V20',
+  'canvas-deep-nested-tall',
+  DEEP_NESTED_TALL_CLIPS,
+  DEEP_NESTED_TALL_AS_SENT,
+  DEEP_NESTED_TALL_EXPECTED,
+))
 
 // ------------------------------------------------- V8 failure honesty
 

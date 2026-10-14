@@ -3680,6 +3680,11 @@ await check('E1 client apply mounts the sidebar entry and studio (jsdom)', async
     },
   ]
   const videoHistoryRemovals = []
+  /** How many times the client asked for the clip list. The sidebar loads it
+   *  once behind initialDataRequestedRef, so any second read proves the
+   *  completion-triggered refetch ran (a finished clip used to stay invisible
+   *  until the whole app was reloaded). */
+  let videoHistoryListCalls = 0
   /** Canvas video runs, recorded so the canvas test can assert the request. */
   const canvasVideoSubmissions = []
   /** Assets the canvas uploaded during a frame grab. */
@@ -3770,6 +3775,7 @@ await check('E1 client apply mounts the sidebar entry and studio (jsdom)', async
       return { ok: true, json: async () => ({ ok: true, tasks }) }
     }
     if (path.endsWith('/video/history/list')) {
+      videoHistoryListCalls += 1
       // One clip, interleaved chronologically with the image fixture below:
       // createdAt 6 (newer than every image entry) and createdAt 3 (between the
       // comparison group at 2 and the ecommerce set at 4/5).
@@ -5108,11 +5114,23 @@ await check('E1 client apply mounts the sidebar entry and studio (jsdom)', async
     const taskId = placeholder.metadata.taskId
     const finished = videoTasks.find(task => task.id === taskId)
     assert.ok(finished !== undefined, 'the submitted task is in the queue stub')
+    // The clip list is read once per app session (initialDataRequestedRef), so
+    // count the reads to prove the completion-triggered refetch below fires.
+    const clipListCallsBefore = videoHistoryListCalls
     finished.status = 'completed'
     // The poller reads /video/tasks/list, which returns the mutated stub.
     assert.ok(
       await waitUntil(() => (canvasSaves.at(-1)?.nodes ?? []).some(node => node.id === placeholderId && node.metadata?.video !== undefined), 6000),
       'the placeholder receives its clip once the render completes',
+    )
+    // A finished render appends to the host's clip history, but the sidebar
+    // reads that list only once: without a refetch keyed off the newly
+    // completed task, the clip never appeared until the whole app was
+    // reloaded. The image path has always refreshed after a completion; the
+    // clip path lost it when its list moved into the unified sidebar.
+    assert.ok(
+      await waitUntil(() => videoHistoryListCalls > clipListCallsBefore, 6000),
+      `a finished clip render refetches the clip list (reads: ${clipListCallsBefore} -> ${videoHistoryListCalls})`,
     )
     const filled = canvasSaves.at(-1).nodes.find(node => node.id === placeholderId)
     assert.equal(filled.metadata.status, 'success', 'the video node reports success')

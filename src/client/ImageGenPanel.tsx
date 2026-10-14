@@ -1175,14 +1175,46 @@ export function ImageGenPanel(props: {
     return () => { disposed = true; window.clearInterval(timer) }
   }, [api, comparison])
 
+  // Ids of completed video renders whose history entry has already been
+  // fetched into the sidebar. A task's summary keeps pointing at its entry
+  // after a user deletes that entry (or after it ages out of the host's
+  // 30-entry cap), so keying the refetch off "the list is missing this id"
+  // would refetch on every tick forever; keying it off "this completion is
+  // new" fetches once per finished render.
+  const listedVideoEntriesRef = useRef<Set<string>>(new Set())
+
   // Poll the video queue. Video renders take minutes, so this ticks slowly; the
   // summaries carry the finished clip, which both the video tab and the canvas
   // consume (the canvas matches its placeholder nodes by task id).
+  //
+  // A finished render also appends to the host's video history, and the sidebar
+  // reads that list once (see the initialDataRequestedRef load above): without
+  // the refetch below, a clip that finished while the panel was open never
+  // reached the sidebar until a full reload. The image side has refreshed after
+  // every completion all along; the video side lost that refresh when its own
+  // list moved into the unified sidebar.
   useEffect(() => {
     let disposed = false
     const refresh = (): void => {
+      const refetchFor = (tasks: VideoTaskSummary[]): boolean => {
+        let pending = false
+        for (const task of tasks) {
+          if (task.status !== 'completed' || task.resultEntryId === undefined) continue
+          if (listedVideoEntriesRef.current.has(task.resultEntryId)) continue
+          listedVideoEntriesRef.current.add(task.resultEntryId)
+          pending = true
+        }
+        return pending
+      }
       void api.videoTaskList()
-        .then(next => { if (!disposed) setVideoTasks(next) })
+        .then(next => {
+          if (disposed) return
+          setVideoTasks(next)
+          if (!refetchFor(next)) return
+          void api.videoHistoryList()
+            .then(entries => { if (!disposed) setVideoHistory(entries) })
+            .catch(() => { /* the next completed render tries again */ })
+        })
         .catch(() => { /* a transient host error must not stop the loop */ })
     }
     refresh()
@@ -3159,6 +3191,15 @@ export function ImageGenPanel(props: {
               videoTasks={videoTasks}
               importRequest={canvasImportRequest}
               onImportRequestHandled={() => { setCanvasImportRequest(undefined) }}
+              onClipStored={() => {
+                // A stitch run lands its clip through the skill-run path, not a
+                // video task, so the task poller above never sees it. Refetch
+                // directly, or the new row stays invisible until the whole page
+                // is reloaded -- videoHistory is otherwise loaded exactly once.
+                void api.videoHistoryList()
+                  .then(entries => setVideoHistory(entries))
+                  .catch(() => { /* the next stitch tries again */ })
+              }}
               onOpenSettings={(kind = 'generation') => { openSettingsGuide(kind) }}
             />
           ) : null}
