@@ -25,7 +25,7 @@ import { useState } from 'react'
 import type { CanvasAssetRef, HistoryEntry } from '../protocol.ts'
 import type { ImageGenApi } from './api.ts'
 import { tt } from './helpers.ts'
-import css from './canvas-workspace.module.css'
+import css from './canvas-video-picker.module.css'
 
 export interface CanvasVideoPickerProps {
   api: ImageGenApi
@@ -57,13 +57,13 @@ export function CanvasVideoPicker(props: CanvasVideoPickerProps): React.JSX.Elem
   void props.api
   void props.gallery
   void props.onAddClip
-  return <div className={css.modalBackdrop} role="dialog" aria-modal="true" data-canvas-no-zoom="" data-video-picker="">
-    <section className={css.picker}>
-      <header className={css.pickerHeader}>
+  return <div className={css.backdrop} role="dialog" aria-modal="true" data-canvas-no-zoom="" data-video-picker="">
+    <section className={css.dialog}>
+      <header className={css.header}>
         <strong>{tt('canvas.videoPicker')}</strong>
         <button type="button" data-video-picker-close="" aria-label={tt('canvas.close')} title={tt('canvas.close')} onClick={props.onClose}>×</button>
       </header>
-      <nav className={css.pickerTabs} role="tablist">
+      <nav className={css.tabs} role="tablist">
         {(['upload', 'history', 'gallery'] as const).map(item => <button
           key={item}
           type="button"
@@ -74,8 +74,8 @@ export function CanvasVideoPicker(props: CanvasVideoPickerProps): React.JSX.Elem
           onClick={() => { setTab(item) }}
         >{item === 'upload' ? tt('canvas.videoPickerUpload') : item === 'history' ? tt('canvas.videoPickerHistory') : tt('canvas.videoPickerGallery')}</button>)}
       </nav>
-      <div className={css.pickerBody}>
-        <p className={css.pickerCardPrompt}>{tt('canvas.videoPickerEmpty')}</p>
+      <div className={css.body}>
+        <p className={css.empty}>{tt('canvas.videoPickerEmpty')}</p>
       </div>
     </section>
   </div>
