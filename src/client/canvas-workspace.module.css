@@ -2959,6 +2959,35 @@
   color: var(--dsw-alias-label-primary);
 }
 
+/* The strip is a read-out first, so it stays click-through; only the stitch
+   button opts back in. Without this it would inherit the container's
+   `pointer-events: none` and the one control in the bar would be unclickable. */
+.composeBarRun {
+  pointer-events: auto;
+  display: inline-flex;
+  align-items: center;
+  height: 20px;
+  margin-left: 2px;
+  padding: 0 10px;
+  border: none;
+  border-radius: 999px;
+  background: var(--dsw-alias-brand-primary);
+  color: var(--dsw-alias-bg-base, #fff);
+  font-size: 11.5px;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.composeBarRun:hover {
+  background: var(--dsw-alias-interactive-bg-hover);
+  color: var(--dsw-alias-label-primary);
+}
+
+.composeBarRun:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
 /* `local` shares the accent of `heavy` (both leave the plain chat call) but
    reads as its own tier, because it spends the user's machine, not a model. */
 .skillTier[data-tier='local'] {

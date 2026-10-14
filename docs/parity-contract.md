@@ -168,6 +168,21 @@ REJECT           /api/dsh-imagegen/video/file/../../etc/passwd
 
 用显式数组过滤：`[...view.querySelectorAll('article')].filter(...)`。
 
+**同族的第二个 OOM 陷阱（picker-ui 在 t8 实测）**：`assert.equal(domNode, null)` **失败**时，Node 会去 inspect 那个 jsdom 元素，遍历环形 DOM ⇒ OOM，表现为 **exit 137 且 stdout 全空**，看着像「组件崩了」，实际是断言写得不可读。改用布尔比较（`assert.equal(node === null, true)`）+ **逐条即时输出**，不要攒到最后一次打印。
+
+### 1.13 读取失败 ≠ 空列表（t8 的真缺陷，已修）
+
+`CanvasVideoPicker` 的 `loadHistory` 在 catch 里 `setHistory([])`，所以 `empty === clips.length === 0` **无法区分**「确实没有片段」和「读取失败，不知道有没有」。原实现把空态文案无条件渲染在错误行之上，用户同时看到：
+
+```
+这里还没有可用的视频          ← 假话
+读取视频列表失败：network down
+```
+
+修法（`src/client/CanvasVideoPicker.tsx:213`）：`showEmptyCopy = empty && !(tab === 'history' && historyError !== null)`，错误行 + retry 从 `empty` 分支**提出去独立渲染**。
+
+> 🚨 门控里的 `tab === 'history'` **不是废话**：`gallery` 的数据来自 props，不可能读取失败，写成朴素的 `!(historyError !== null)` 会把 **gallery 的空态文案一起吞掉**。t8 专门写了区分性用例钉住这一点（`gallery: []` 且 history 失败 ⇒ gallery 仍显示空态、不显示 history 错误行）。
+
 ---
 
 ## 2. 共享文件（队长所有，已完成）
@@ -394,6 +409,18 @@ const CLIP_SOURCES = [
 ---
 
 ## 7. 验证要求
+
+### 7.0 t5（`scripts/smoke-video-picker.mjs`）必须覆盖的断言清单
+
+**从 t8 转达（这两条仓内还没有，必须落地）**：
+
+1. **失败态**：让假 `api.videoHistoryList()` **抛错** ⇒ `[data-video-picker-empty]` **不存在**、`[data-video-load-error]` **存在**且含 `canvas.videoLoadFailed` 文案、`[data-video-reload]` 存在。
+2. **成功空数组**：假 api 返回 `[]`（成功）⇒ `[data-video-picker-empty]` **存在**、`[data-video-load-error]` **不存在**。
+3. **区分性用例（必须有，否则朴素门控也能蒙过套件）**：`gallery: []` 且 history 读取失败 ⇒ **gallery 页签仍显示空态**、**不显示** history 的错误行。少了这条，「把门控写坏成无条件吞掉所有空态」的版本会全绿通过。
+
+> 选择器**必须**用 `[data-video-picker-empty]`：旧名 `[data-video-empty]` 会**静默**断言到 `CanvasWorkspace.tsx:4217` 的画布视频节点占位（画布先挂载），套件测错对象却不报错（§5.1）。
+
+**逐条即时输出**，不要攒到最后一次打印；断言失败时不要 `assert.equal(domNode, null)`（§1.12 的 OOM）。
 
 ### 7.1 每个成员自查（交付前）
 

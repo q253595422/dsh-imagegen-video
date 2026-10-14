@@ -27,6 +27,7 @@ import type { ImageModelGroup } from './settings-scope.ts'
 import { CanvasFileBody, CanvasFileOverlay, fileKindLabel, fileKindOfAsset, fileSizeLabel } from './CanvasFilePreview.tsx'
 import { DotFieldBackground, DotGridBackground, FaultyTerminalBackground, FloatingLinesBackground, FlowBackground, GalaxyBackground, LiquidEtherBackground, ShapeGridBackground, SilkBackground, WavesBackground } from './CanvasBackgrounds.tsx'
 import { Select } from './Select.tsx'
+import { CanvasVideoPicker } from './CanvasVideoPicker.tsx'
 import css from './canvas-workspace.module.css'
 
 type CanvasTool = 'select' | 'pan'
@@ -1277,6 +1278,7 @@ export function CanvasWorkspace(props: CanvasWorkspaceProps): React.JSX.Element 
   const [nodeAddMenu, setNodeAddMenu] = useState<{ nodeId: string; nodeType: CanvasNode['type']; screen: Point } | null>(null)
   const [minimapOpen, setMinimapOpen] = useState(true)
   const [pickerOpen, setPickerOpen] = useState(false)
+  const [videoPickerOpen, setVideoPickerOpen] = useState(false)
   const [backgroundMenu, setBackgroundMenu] = useState<Point | null>(null)
   const [imageMenu, setImageMenu] = useState<Point | null>(null)
   const menuCloseTimer = useRef<number | null>(null)
@@ -3308,6 +3310,35 @@ export function CanvasWorkspace(props: CanvasWorkspaceProps): React.JSX.Element 
     setSelectedIds(new Set())
   }, [canvasCenter, createImageNode, mutate])
 
+  /**
+   * Lands a reference clip on the canvas: a video node pointing at the served
+   * URL, with no bytes copied, so adding the same clip twice stays cheap.
+   * Shared by the sidebar hand-off effect and the in-canvas video picker, so
+   * the two entry points cannot drift apart.
+   */
+  const addClipNode = useCallback((clip: { url: string; mime: string; duration?: number; title?: string }): void => {
+    const footprint = nodeSizeFromRatio('16:9', IMAGE_NODE_SIZE)
+    const center = canvasCenter()
+    const id = newId('node')
+    mutate(previous => ({
+      ...previous,
+      nodes: [...previous.nodes, {
+        id, type: 'video', title: clip.title !== undefined && clip.title !== '' ? clip.title : tt('canvas.videoNode'),
+        x: Math.round(center.x - footprint.width / 2), y: Math.round(center.y - footprint.height / 2),
+        width: footprint.width, height: footprint.height,
+        metadata: {
+          status: 'success',
+          video: {
+            url: clip.url,
+            mime: clip.mime,
+            ...clip.duration === undefined ? {} : { duration: clip.duration },
+          },
+        },
+      }],
+    }))
+    setNotice(tt('canvas.videoAdded'))
+  }, [canvasCenter, mutate])
+
   useEffect(() => {
     if (importRequest === undefined) {
       processedImport.current = ''
@@ -3320,26 +3351,12 @@ export function CanvasWorkspace(props: CanvasWorkspaceProps): React.JSX.Element 
       processedImport.current = key
       // Reference the clip: build a video node pointing at the served URL. No
       // bytes are copied, so adding the same clip twice is cheap.
-      const footprint = nodeSizeFromRatio('16:9', IMAGE_NODE_SIZE)
-      const center = canvasCenter()
-      const id = newId('node')
-      mutate(previous => ({
-        ...previous,
-        nodes: [...previous.nodes, {
-          id, type: 'video', title: importRequest.title !== undefined && importRequest.title !== '' ? importRequest.title : tt('canvas.videoNode'),
-          x: Math.round(center.x - footprint.width / 2), y: Math.round(center.y - footprint.height / 2),
-          width: footprint.width, height: footprint.height,
-          metadata: {
-            status: 'success',
-            video: {
-              url: importRequest.url,
-              mime: importRequest.mime,
-              ...importRequest.duration === undefined ? {} : { duration: importRequest.duration },
-            },
-          },
-        }],
-      }))
-      setNotice(tt('canvas.videoAdded'))
+      addClipNode({
+        url: importRequest.url,
+        mime: importRequest.mime,
+        ...importRequest.duration === undefined ? {} : { duration: importRequest.duration },
+        ...importRequest.title === undefined || importRequest.title === '' ? {} : { title: importRequest.title },
+      })
       onImportRequestHandled?.()
       return
     }
@@ -3363,7 +3380,7 @@ export function CanvasWorkspace(props: CanvasWorkspaceProps): React.JSX.Element 
       setError(caught instanceof Error ? caught.message : String(caught))
       onImportRequestHandled?.()
     })
-  }, [addAssets, api, document, gallery, history, importRequest, onImportRequestHandled])
+  }, [addAssets, addClipNode, api, document, gallery, history, importRequest, onImportRequestHandled])
 
   // -------------------------------------------------------------- loading
 
@@ -3425,6 +3442,45 @@ export function CanvasWorkspace(props: CanvasWorkspaceProps): React.JSX.Element 
     () => document === null ? [] : composeClipIds(document.nodes, selectedIds),
     [document, selectedIds],
   )
+
+  /**
+   * The descriptor behind the multi-select bar's stitch button — the same
+   * skill the node menu offers, found by id so the bar and the menu cannot
+   * disagree about what a stitch is.
+   */
+  const composeSkill = useMemo(
+    () => skillCatalog?.skills.find(skill => skill.id === COMPOSE_SKILL_ID) ?? null,
+    [skillCatalog],
+  )
+
+  /** Why the bar's stitch button cannot run — said out loud, never silently inert. */
+  const composeUnavailableReason = skillCatalog === null
+    ? tt('canvas.skills.loading')
+    : skillCatalog.reason ?? tt('canvas.skills.unknown')
+
+  useEffect(() => {
+    // The catalog is otherwise fetched only when a skill menu opens, which
+    // would leave this button without a descriptor to run on a fresh canvas.
+    // Load it as soon as a stitch has actually become possible -- not on mount,
+    // because a canvas that never selects two clips should not pay for it.
+    if (composeIds.length < 2 || skillCatalog !== null) return
+    void loadSkillCatalog()
+  }, [composeIds.length, loadSkillCatalog, skillCatalog])
+
+  /**
+   * Bar click: opens the SAME confirm card the node menu opens, and never
+   * starts the run itself. That card is the user's only chance to check the
+   * ①②③ order before ffmpeg commits to it.
+   */
+  const startComposeFromBar = useCallback((): void => {
+    if (composeSkill === null) return
+    if (composeIds.length < 2) {
+      setError(tt('canvas.skills.composeTooFew'))
+      return
+    }
+    setSkillMenu(null)
+    setPendingSkill({ skill: composeSkill, nodeIds: composeIds, instruction: '' })
+  }, [composeIds, composeSkill])
 
   // ---------------------------------------------------------- composer sync
 
@@ -4314,6 +4370,28 @@ export function CanvasWorkspace(props: CanvasWorkspaceProps): React.JSX.Element 
             />
           </>}      <div className={`${css.hoverToolbar} ${node.type === 'image' && hasImage ? css.hoverToolbarBottom : ''}`} data-toolbar={node.type === 'image' && hasImage ? 'bottom' : 'top'} onPointerDown={event => event.stopPropagation()}>
         {isVideo && hasVideo ? <>
+          <ModelPicker
+            groups={videoGroups ?? []}
+            value={resolveModelChoice(videoGroups ?? [], { channelId: metadata.channelId, model: metadata.model }, defaultChannelId)}
+            variant="toolbar"
+            channelLabel={tt('model.channel')}
+            modelLabel={tt('video.model')}
+            channelPlaceholder={tt('model.channelPlaceholder')}
+            emptyLabel={tt('canvas.videoNoModel')}
+            ariaLabel={tt('canvas.videoNodeModel')}
+            disabled={busyLabel !== undefined}
+            onChange={choice => patchNode(node.id, {
+              model: choice.model === '' ? undefined : choice.model,
+              channelId: choice.channelId === '' ? undefined : choice.channelId,
+            })}
+          />
+          <IconButton
+            name="redo"
+            label={tt('canvas.videoRegenerate')}
+            disabled={busyLabel !== undefined || (metadata.prompt ?? '') === ''}
+            onClick={() => { void retryVideoGeneration(node) }}
+          />
+          <span className={css.toolbarDivider} aria-hidden="true" />
           <IconButton name="download" label={tt('canvas.videoDownload')} onClick={() => downloadVideoNode(node)} />
           <IconButton name="sparkle" label={tt('canvas.videoGrabFrame')} disabled={busyLabel !== undefined} onClick={() => { void grabVideoFrame(node) }} />
           <IconButton name="favorite" label={tt('canvas.videoFavorite')} disabled={busyLabel !== undefined || video.entryId === undefined} onClick={() => { favoriteVideoNode(node) }} />
@@ -4681,6 +4759,10 @@ export function CanvasWorkspace(props: CanvasWorkspaceProps): React.JSX.Element 
           items.push({ label: tt('canvas.skills.fileDownload'), icon: 'download', action: () => downloadFileNode(node) })
           items.push({ label: tt('canvas.preview.expand'), icon: 'expand', action: () => openFileNode(node) })
         }
+        if (node !== undefined && node.type === 'video' && (videoOf(node)?.url ?? '') !== '') {
+          items.push({ label: tt('canvas.videoPreview'), icon: 'expand', action: () => { setVideoPreviewNodeId(node.id) } })
+          items.push({ label: tt('canvas.videoDownload'), icon: 'download', action: () => { downloadVideoNode(node) } })
+        }
         if (node !== undefined && node.type !== 'config') {
           items.push({ label: tt('canvas.skills.button'), icon: 'skill', action: () => openSkillMenu(node, { x: contextMenu.screen.x, y: contextMenu.screen.y }) })
         }
@@ -4834,6 +4916,16 @@ export function CanvasWorkspace(props: CanvasWorkspaceProps): React.JSX.Element 
       <span className={css.composeBarIcon} aria-hidden="true">⛓</span>
       <span>{tt('canvas.composeBar', { count: composeIds.length })}</span>
       <span className={css.composeBarOrder}>{composeGlyphs(composeIds.length)}</span>
+      <button
+        type="button"
+        className={css.composeBarRun}
+        data-compose-bar-run=""
+        disabled={composeSkill === null}
+        title={composeSkill === null
+          ? tt('canvas.composeUnavailable', { reason: composeUnavailableReason })
+          : tt('canvas.composeStart', { count: composeIds.length })}
+        onClick={startComposeFromBar}
+      >{tt('canvas.composeStart', { count: composeIds.length })}</button>
     </div> : null}
 
     <div className={css.dockOuter} data-canvas-no-zoom="" ref={dockOuterRef}>
@@ -4922,6 +5014,7 @@ export function CanvasWorkspace(props: CanvasWorkspaceProps): React.JSX.Element 
       <button type="button" role="menuitem" onClick={() => { setPickerTab('gallery'); setPickerOpen(true); setImageMenu(null) }}>{tt('canvas.imageMenuAssets')}</button>
       <button type="button" role="menuitem" onClick={() => { setPickerTab('history'); setPickerOpen(true); setImageMenu(null) }}>{tt('canvas.imageMenuHistory')}</button>
       <button type="button" role="menuitem" onClick={() => { setPickerTab('generate'); setPickerOpen(true); setImageMenu(null) }}>{tt('canvas.imageMenuGenerate')}</button>
+      <button type="button" role="menuitem" data-image-menu-video="" onClick={() => { setPickerOpen(false); setImageMenu(null); setVideoPickerOpen(true) }}>{tt('canvas.addVideo')}</button>
     </div> : null}
     <input
       ref={imageFileRef}
@@ -5153,6 +5246,13 @@ export function CanvasWorkspace(props: CanvasWorkspaceProps): React.JSX.Element 
         placeNewNode(node)
         setPickerOpen(false)
       }}
+    /> : null}
+    {videoPickerOpen ? <CanvasVideoPicker
+      api={api}
+      gallery={gallery}
+      onClose={() => setVideoPickerOpen(false)}
+      onAddClip={clip => { addClipNode(clip) }}
+      onAddAsset={asset => { placeNewNode(createFileNode(asset)); setVideoPickerOpen(false) }}
     /> : null}
   </section>
 }

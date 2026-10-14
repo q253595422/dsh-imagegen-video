@@ -19,6 +19,12 @@
  *      undefined, and no bytes reach the asset store)
  *  W3  a canvas video node distinguishes "really rendering" from "really
  *      failed", and a failed node offers retry
+ *  B1  the multi-select strip carries a REAL button, and it is genuinely
+ *      clickable (the strip stays click-through, the button opts back in)
+ *  B2  that button fetches the skill catalog itself, so it works on a fresh
+ *      canvas where no skill menu was ever opened
+ *  B3  it opens the SAME confirm card the node menu opens -- with the ①②
+ *      order reviewable -- and does NOT start the run by itself
  *
  * Run: node scripts/smoke-canvas-video.mjs   (from the package root)
  */
@@ -332,6 +338,19 @@ await check('W1-W3 a finished studio clip lands a referenced node and states are
         id: 'node-clip-noentry', type: 'video', title: '无记录片段', x: 600, y: 340, width: 240, height: 240,
         metadata: { status: 'success', video: { url: CLIP_LEFT_URL, mime: CLIP_MIME, duration: 3 }, videoMode: 'text' },
       },
+      // The only FINISHED clip that also carries a prompt. The E checks need it
+      // because the regenerate control is disabled without one (there is
+      // nothing to resubmit), and every other finished clip here has no prompt
+      // -- so an assertion driven on one of those would pass by being disabled,
+      // i.e. by never exercising the resubmit at all.
+      {
+        id: 'node-clip-prompted', type: 'video', title: '可重生成片段', x: 40, y: 640, width: 240, height: 240,
+        metadata: {
+          status: 'success', prompt: 'a rerunnable cat', mode: 'image', videoMode: 'text',
+          model: 'agnes-video-2.5-flash', aspectRatio: '16:9', resolution: '720P', seconds: 5,
+          video: { url: CLIP_LEFT_URL, mime: CLIP_MIME, duration: 3, entryId: 'clip-entry-prompted' },
+        },
+      },
       // The fixture that can actually SEE the order defect: unequal heights on a
       // shared top edge. Every clip above has equal heights, so the centre-keyed
       // rule and the shipped one agree on them -- which is why this suite stayed
@@ -369,6 +388,8 @@ await check('W1-W3 a finished studio clip lands a referenced node and states are
   const canvasSaves = []
   /** Asset uploads the canvas made: a copied clip would show up here. */
   const canvasAssetUploads = []
+  /** Raw file bodies the picker's upload tab sent (name + declared MIME). */
+  const canvasFileUploads = []
   /** Video submissions the client made (the retry path resubmits one). */
   const videoSubmissions = []
   /** Every path the client fetched, for failure diagnostics. */
@@ -385,8 +406,16 @@ await check('W1-W3 a finished studio clip lands a referenced node and states are
     announceToAgent: true,
     channels: [{
       id: 'default', preset: '', name: 'Default', apiUrl: 'https://example.test/v1',
+      // The image and video aliases are deliberately disjoint: a video node's
+      // model picker reading `modelGroups` instead of `videoGroups` would then
+      // show the IMAGE alias, which the E checks below can see.
       models: [{ alias: 'gpt-image-2', id: 'gpt-image-2' }],
-      videoModels: [{ alias: 'agnes-video-2.5-flash', id: 'agnes-video-2.5-flash' }],
+      videoModels: [
+        { alias: 'agnes-video-2.5-flash', id: 'agnes-video-2.5-flash' },
+        // A second video model so "the picker really fed the resubmit" is
+        // observable: the E check picks this one, then regenerates.
+        { alias: 'agnes-video-2.5-pro', id: 'agnes-video-2.5-pro' },
+      ],
     }],
     defaultChannelId: 'default',
     defaultModel: 'gpt-image-2',
@@ -538,7 +567,26 @@ await check('W1-W3 a finished studio clip lands a referenced node and states are
     }
     if (path.endsWith('/video/history/list')) return json({ ok: true, entries: [] })
     if (path.endsWith('/history/list')) return json({ ok: true, entries: [] })
-    if (path.endsWith('/gallery/list')) return json({ ok: true, entries: [] })
+    if (path.endsWith('/gallery/list')) {
+      // The picker's gallery tab reads the panel's `gallery` prop, which comes
+      // from here. One entry carries a clip and one does not: the filter that
+      // keeps only clips is only observable when something must be dropped.
+      return json({
+        ok: true,
+        entries: [
+          {
+            id: 'fav-clip', createdAt: 4, mode: 'text', model: 'agnes-video-2.5-flash',
+            prompt: 'a favorited clip', aspectRatio: '16:9', resolution: '720P', seconds: 4,
+            images: [], video: { url: CLIP_RIGHT_URL, mime: CLIP_MIME, duration: 4 },
+          },
+          {
+            id: 'fav-image', createdAt: 5, mode: 'text', model: 'gpt-image-2',
+            prompt: 'a favorited image', aspectRatio: '16:9', resolution: '720P', seconds: 0,
+            images: [{ b64: '', mime: 'image/png' }],
+          },
+        ],
+      })
+    }
     if (path.endsWith('/canvas/list')) {
       return json({ ok: true, projects: [{ id: canvasDocument.id, title: canvasDocument.title, revision: canvasDocument.revision, nodeCount: 0, createdAt: 1, updatedAt: 1 }] })
     }
@@ -551,6 +599,17 @@ await check('W1-W3 a finished studio clip lands a referenced node and states are
     if (path.endsWith('/canvas/asset/upload')) {
       canvasAssetUploads.push(JSON.parse(init.body))
       return json({ ok: true, asset: { assetId: `${'b'.repeat(64)}.mp4`, url: `/api/dsh-imagegen/canvas/asset/${'b'.repeat(64)}.mp4`, mime: 'video/mp4', bytes: 64, width: 0, height: 0, origin: 'upload' } })
+    }
+    // NOTE: `path` carries the query string the api adds, so an `endsWith` on
+    // the bare route never matches.
+    if (path.includes('/canvas/file/upload')) {
+      // The picker's upload tab POSTs the File itself (raw body, MIME in the
+      // header) and consumes `asset`. Without this branch the request falls to
+      // the empty envelope below, `readEnvelope().asset` is undefined, and the
+      // file-node half of the E checks could only pass by never running.
+      const name = decodeURIComponent(new URL(path, 'http://localhost').searchParams.get('name') ?? '')
+      canvasFileUploads.push({ name, type: init.headers['content-type'] ?? '' })
+      return json({ ok: true, asset: { assetId: `${'c'.repeat(64)}.mp4`, url: `/api/dsh-imagegen/canvas/asset/${'c'.repeat(64)}.mp4`, mime: 'video/mp4', bytes: 64, width: 0, height: 0, origin: 'upload', kind: 'file', name } })
     }
     if (path.endsWith('/update/check')) return json({ ok: true, update: { current: '1.6.8', latest: '1.6.8', updateAvailable: false } })
     // The empty-state inspiration wall deals 12 samples on mount; without an
@@ -732,8 +791,8 @@ await check('W1-W3 a finished studio clip lands a referenced node and states are
     // different selection, and the panel owns poll timers that must survive.
     Object.assign(shared, {
       jsdomWindow, jsdomDocument, view, waitUntil, waitForSelector, click,
-      canvasDocument, canvasSaves, canvasAssetUploads, videoSubmissions, requestPaths,
-      skillRunRequests, galleryVideoFavorites,
+      canvasDocument, canvasSaves, canvasAssetUploads, canvasFileUploads, videoSubmissions,
+      requestPaths, skillRunRequests, galleryVideoFavorites, FIXTURE_IDS,
       pointerDown, nodeById, badgesNow, pickerMenu, openComposeMenu, closeSkillMenu,
     })
     // ------------------------------------------------- W1 studio clip actions
@@ -848,6 +907,102 @@ await check('W1-W3 a finished studio clip lands a referenced node and states are
     )
 
   })
+
+await check('B1-B3 the stitch strip is a real button that opens the confirm card', async () => {
+  const {
+    jsdomWindow, jsdomDocument, view, waitUntil, waitForSelector, pointerDown,
+    nodeById, badgesNow, skillRunRequests, requestPaths,
+  } = shared
+
+  const selectedNodes = () => [...view.querySelectorAll('[data-node-id]')]
+    .filter(node => node.querySelector('[data-corner]') !== null)
+  const selectClip = async (id, additive = false) => {
+    pointerDown(nodeById(id), additive)
+    assert.ok(
+      await waitUntil(() => nodeById(id).querySelector('[data-corner]') !== null),
+      `B1: ${id} joins the selection`,
+    )
+  }
+
+  try {
+    // This check runs BEFORE any 技能 menu is opened, so the skill catalog has
+    // never been fetched: that is the user's reported situation -- select two
+    // clips, click the strip, expect something. A strip that only works after
+    // opening some node's menu would fail exactly here.
+    assert.equal(
+      requestPaths.filter(path => path.endsWith('/canvas/skills/list')).length, 0,
+      'B1: no skill menu was opened yet, so the catalog is not loaded',
+    )
+
+    // The W check left its own node selected; clear it so this check starts from
+    // a known selection instead of inheriting one.
+    for (const selected of selectedNodes()) {
+      const before = selectedNodes().length
+      pointerDown(selected, true)
+      assert.ok(
+        await waitUntil(() => selectedNodes().length === before - 1),
+        'B1: the previous selection is cleared first',
+      )
+    }
+    await selectClip('node-clip-left')
+    await selectClip('node-clip-right', true)
+    assert.equal(badgesNow().length, 2, 'B1: two clips are selected')
+
+    const strip = view.querySelector('[data-compose-bar]')
+    assert.ok(strip !== null, 'B1: selecting two clips shows the stitch strip')
+    // The strip is a read-out over the canvas, so it stays click-through; only
+    // the button inside it must accept the pointer.
+    assert.equal(jsdomWindow.getComputedStyle(strip).pointerEvents, 'none', 'B1: the strip itself stays click-through')
+    const stripButton = strip.querySelector('[data-compose-bar-run]')
+    assert.ok(stripButton !== null, 'B1: the strip carries a stitch control')
+    assert.equal(stripButton.tagName, 'BUTTON', 'B1: the control is a real button, not a span that looks like one')
+    assert.equal(
+      jsdomWindow.getComputedStyle(stripButton).pointerEvents, 'auto',
+      'B1: the button opts back into pointer events, so the strip is genuinely clickable',
+    )
+
+    // With no menu ever opened, the button has to fetch the catalog ITSELF --
+    // otherwise it would sit disabled on every fresh canvas, which is the same
+    // "nothing happens" complaint in a different colour.
+    assert.ok(
+      await waitUntil(() => stripButton.disabled === false),
+      'B2: the strip loads the skill catalog on its own, without a menu ever opening',
+    )
+    assert.equal(stripButton.textContent, '拼接这 2 段', 'B2: the button states what it will stitch')
+    assert.equal(stripButton.title, '拼接这 2 段', 'B2: the enabled button explains itself on hover')
+
+    const runsBefore = skillRunRequests.length
+    stripButton.dispatchEvent(new jsdomWindow.MouseEvent('click', { bubbles: true, cancelable: true }))
+    await waitForSelector(jsdomDocument, '[data-compose-card]')
+    const card = jsdomDocument.querySelector('[data-compose-card]')
+    assert.ok(
+      card.textContent.includes('顺序按画布位置：①②'),
+      'B3: the button opens the SAME confirm card, so the ①② order stays reviewable',
+    )
+    assert.equal(
+      skillRunRequests.length, runsBefore,
+      'B3: the strip only opens the card -- the run starts when the user confirms it',
+    )
+    const cancel = [...card.querySelectorAll('button')].find(button => button.textContent === '先不运行')
+    assert.ok(cancel !== undefined, 'B3: the confirm card can be dismissed')
+    cancel.dispatchEvent(new jsdomWindow.MouseEvent('click', { bubbles: true, cancelable: true }))
+    assert.ok(
+      await waitUntil(() => jsdomDocument.querySelector('[data-compose-card]') === null),
+      'B3: dismissing the card closes it',
+    )
+    assert.equal(badgesNow().length, 2, 'B3: dismissing the card keeps the two clips selected')
+  } finally {
+    // C1-C3 read the selection this check leaves behind, so a failure here must
+    // not hand them a dirty one -- otherwise one broken assertion would cascade
+    // into every check after it and hide what actually broke.
+    for (const selected of selectedNodes()) {
+      const before = selectedNodes().length
+      pointerDown(selected, true)
+      await waitUntil(() => selectedNodes().length === before - 1)
+    }
+    assert.equal(selectedNodes().length, 0, 'B3: the strip check hands the canvas back with a clean selection')
+  }
+})
 
 await check('C1-C3 compose badges and the stitch strip follow canvas order, not array order', async () => {
   const {
@@ -1237,6 +1392,315 @@ await check('D1-D3 a clip run tells the panel to refresh the clip list, a text r
     'D3: a text run must not refetch the clip list',
   )
   closeComposeCard()
+})
+
+await check('E1-E2 a video node carries its own model picker and regenerate control', async () => {
+  const {
+    jsdomWindow, jsdomDocument, view, waitUntil, waitForSelector, pointerDown, nodeById,
+    videoSubmissions,
+  } = shared
+
+  const selectedNodes = () => [...view.querySelectorAll('[data-node-id]')]
+    .filter(node => node.querySelector('[data-corner]') !== null)
+  /** Every assertion below runs on a SELECTED node's hover toolbar, so a
+   *  failure halfway through must still hand the selection back: a dirty
+   *  selection makes the next check's clicks land on the wrong nodes. */
+  const clearSelection = async () => {
+    for (const selected of selectedNodes()) {
+      const before = selectedNodes().length
+      pointerDown(selected, true)
+      assert.ok(
+        await waitUntil(() => selectedNodes().length === before - 1),
+        'E1: the leftover selection is cleared before the next read',
+      )
+    }
+  }
+
+  try {
+    await clearSelection()
+    pointerDown(nodeById('node-clip-prompted'))
+    assert.ok(
+      await waitUntil(() => nodeById('node-clip-prompted').querySelector('[data-corner]') !== null),
+      'E1: the finished clip joins the selection',
+    )
+    const toolbar = nodeById('node-clip-prompted').querySelector('[data-toolbar]')
+    assert.ok(toolbar !== null, 'E1: a video node renders a hover toolbar')
+
+    // ------------------------------------------- parity: model selection
+    // The trigger is identified by its own stable attributes, not by a class
+    // name (CSS Modules hashes those).
+    const modelTrigger = toolbar.querySelector('button[data-variant="toolbar"][aria-haspopup="menu"]')
+    assert.ok(modelTrigger !== null, 'E1: a video node offers a toolbar model picker')
+    const triggerLabel = modelTrigger.getAttribute('aria-label') ?? ''
+    assert.ok(
+      triggerLabel.startsWith('本节点使用的视频模型'),
+      'E1: the picker is the VIDEO model picker, labelled as such',
+    )
+    // The image and video aliases in this suite are disjoint, so the alias the
+    // trigger prints says which catalog it read. Reading `modelGroups` here
+    // would print the image alias instead.
+    assert.ok(
+      triggerLabel.includes('agnes-video-2.5-flash'),
+      'E1: the picker reads the VIDEO catalog, not the image one',
+    )
+    assert.equal(
+      triggerLabel.includes('gpt-image-2'), false,
+      'E1: the video node never offers the image model',
+    )
+
+    // ------------------------------------------- parity: regenerate
+    const regenerate = toolbar.querySelector('button[aria-label="用当前模型重新生成"]')
+    assert.ok(regenerate !== null, 'E1: a video node offers regenerate')
+    assert.equal(
+      regenerate.disabled, false,
+      'E1: a finished clip that stored its prompt can be regenerated',
+    )
+    // The negative half: without a prompt there is nothing to resubmit, so the
+    // control must be visibly unavailable rather than silently doing nothing.
+    await clearSelection()
+    pointerDown(nodeById('node-clip-left'))
+    assert.ok(
+      await waitUntil(() => nodeById('node-clip-left').querySelector('[data-corner]') !== null),
+      'E1: the promptless clip joins the selection',
+    )
+    const promptlessRegenerate = nodeById('node-clip-left')
+      .querySelector('[data-toolbar] button[aria-label="用当前模型重新生成"]')
+    assert.ok(promptlessRegenerate !== null, 'E1: the control renders on a promptless clip too')
+    assert.equal(
+      promptlessRegenerate.disabled, true,
+      'E1: a clip with no stored prompt cannot be regenerated',
+    )
+
+    // ------------------------------- E2 the picker really feeds the resubmit
+    // Everything above is static markup. This half proves the wiring: choose
+    // the OTHER video model through the real menu, then regenerate, and the
+    // submitted request must carry the chosen alias.
+    await clearSelection()
+    pointerDown(nodeById('node-clip-prompted'))
+    assert.ok(
+      await waitUntil(() => nodeById('node-clip-prompted').querySelector('[data-corner]') !== null),
+      'E2: the clip is selected again',
+    )
+    const clipToolbar = nodeById('node-clip-prompted').querySelector('[data-toolbar]')
+    const secondTrigger = clipToolbar.querySelector('button[data-variant="toolbar"][aria-haspopup="menu"]')
+    assert.ok(secondTrigger !== null, 'E2: the model picker is still offered')
+    secondTrigger.dispatchEvent(new jsdomWindow.MouseEvent('click', { bubbles: true, cancelable: true }))
+    await waitForSelector(jsdomDocument.body, '[role="menu"]')
+
+    // Opening the channel row is what reveals the model list. Clicking it is
+    // enough (the row's click handler opens the flyout too), and it avoids
+    // depending on React's synthetic enter/leave pair, which jsdom cannot
+    // produce without a PointerEvent constructor.
+    await waitUntil(() => jsdomDocument.body.querySelector('[role="menu"] button[role="menuitemradio"]') !== null)
+    const channelRow = jsdomDocument.body.querySelector('[role="menu"] button[role="menuitemradio"]')
+    assert.ok(channelRow !== null, 'E2: the picker lists a channel row')
+    channelRow.dispatchEvent(new jsdomWindow.MouseEvent('click', { bubbles: true, cancelable: true }))
+    assert.ok(
+      await waitUntil(() => [...jsdomDocument.body.querySelectorAll('[role="menu"] button[role="menuitemradio"]')]
+        .some(button => button.textContent === 'agnes-video-2.5-pro')),
+      'E2: the model list reveals both video models',
+    )
+    const proRow = [...jsdomDocument.body.querySelectorAll('[role="menu"] button[role="menuitemradio"]')]
+      .find(button => button.textContent === 'agnes-video-2.5-pro')
+    proRow.dispatchEvent(new jsdomWindow.MouseEvent('click', { bubbles: true, cancelable: true }))
+    assert.ok(
+      await waitUntil(() => nodeById('node-clip-prompted')
+        .querySelector('[data-toolbar] button[data-variant="toolbar"]')
+        ?.getAttribute('aria-label')?.includes('agnes-video-2.5-pro') === true),
+      'E2: the chosen model shows up on the node',
+    )
+
+    const submitsBefore = videoSubmissions.length
+    nodeById('node-clip-prompted')
+      .querySelector('[data-toolbar] button[aria-label="用当前模型重新生成"]')
+      .dispatchEvent(new jsdomWindow.MouseEvent('click', { bubbles: true, cancelable: true }))
+    assert.ok(
+      await waitUntil(() => videoSubmissions.length > submitsBefore, 12_000),
+      'E2: regenerate really resubmits the render',
+    )
+    assert.equal(
+      videoSubmissions.at(-1).model, 'agnes-video-2.5-pro',
+      'E2: the resubmit carries the model chosen through the node picker',
+    )
+    assert.equal(
+      videoSubmissions.at(-1).prompt, 'a rerunnable cat',
+      'E2: the resubmit reuses the prompt the clip was rendered from',
+    )
+    assert.equal(
+      videoSubmissions.at(-1).canvas?.nodeId, 'node-clip-prompted',
+      'E2: the resubmit keeps its canvas lineage',
+    )
+  } finally {
+    await clearSelection()
+  }
+})
+
+await check('E3 a video node right-click offers preview and download', async () => {
+  const { jsdomWindow, jsdomDocument, view, waitUntil, nodeById } = shared
+
+  const openMenu = async id => {
+    nodeById(id).dispatchEvent(new jsdomWindow.MouseEvent('contextmenu', {
+      bubbles: true, cancelable: true, clientX: 20, clientY: 20,
+    }))
+    assert.ok(
+      await waitUntil(() => jsdomDocument.querySelector('[role="menu"]') !== null),
+      `E3: the ${id} context menu opens`,
+    )
+    return jsdomDocument.querySelector('[role="menu"]')
+  }
+  const rowNamed = (menu, name) => [...menu.querySelectorAll('button[role="menuitem"]')]
+    .find(button => (button.textContent ?? '').includes(name))
+
+  // A clip that HAS a history entry.
+  const menu = await openMenu('node-clip-left')
+  assert.ok(rowNamed(menu, '放大预览') !== undefined, 'E3: right-click offers 放大预览')
+  assert.ok(rowNamed(menu, '下载视频') !== undefined, 'E3: right-click offers 下载视频')
+  // The image-only rows must not leak onto a video node.
+  assert.equal(rowNamed(menu, '下载图片'), undefined, 'E3: a video node never offers 下载图片')
+
+  // Preview has to really open the player on the clip, not merely exist.
+  rowNamed(menu, '放大预览').dispatchEvent(new jsdomWindow.MouseEvent('click', { bubbles: true, cancelable: true }))
+  await waitUntil(() => view.querySelector('[data-video-preview]') !== null)
+  const preview = view.querySelector('[data-video-preview]')
+  assert.ok(preview !== null, 'E3: 放大预览 opens the full-screen player')
+  assert.equal(
+    preview.querySelector('video')?.getAttribute('src'), CLIP_LEFT_URL,
+    'E3: the player opens the clip the node points at',
+  )
+  preview.querySelector('button[aria-label="关闭预览"]')
+    .dispatchEvent(new jsdomWindow.MouseEvent('click', { bubbles: true, cancelable: true }))
+  assert.ok(
+    await waitUntil(() => view.querySelector('[data-video-preview]') === null),
+    'E3: the player dismisses',
+  )
+
+  // A clip with a served URL but NO history entry is still playable and
+  // downloadable -- neither control depends on there being an entry to favorite,
+  // which is exactly why this half is asserted separately.
+  const bareMenu = await openMenu('node-clip-noentry')
+  assert.ok(rowNamed(bareMenu, '放大预览') !== undefined, 'E3: an unfavorited clip is still previewable')
+  assert.ok(rowNamed(bareMenu, '下载视频') !== undefined, 'E3: an unfavorited clip is still downloadable')
+  // Dismiss with Escape (how a user does it) rather than by clicking a row:
+  // every row here acts, and the one that would close the menu is 删除, which
+  // would hollow out the fixtures the C checks below still depend on.
+  jsdomWindow.dispatchEvent(new jsdomWindow.KeyboardEvent('keydown', { key: 'Escape', bubbles: true }))
+  assert.equal(
+    await waitUntil(() => jsdomDocument.querySelector('[role="menu"]') === null), true,
+    'E3: Escape dismisses the context menu',
+  )
+  assert.ok(nodeById('node-clip-noentry') !== null, 'E3: dismissing the menu left the node alone')
+})
+
+await check('E4-E6 the in-canvas video picker adds clips and uploads files', async () => {
+  const {
+    jsdomWindow, jsdomDocument, view, waitUntil, waitForSelector,
+    canvasSaves, canvasAssetUploads, canvasFileUploads,
+  } = shared
+
+  const menuRow = name => [...jsdomDocument.body.querySelectorAll('button[role="menuitem"]')]
+    .find(button => (button.textContent ?? '').includes(name))
+  const docNow = () => canvasSaves.at(-1)
+  const nodesOf = type => (docNow()?.nodes ?? []).filter(node => node.type === type)
+  const nodesOfType = type => nodesOf(type).length
+
+  // ------------------------------------------------- E4 the dock entry exists
+  // The dock's own 添加图片 button opens the menu the new row lives in.
+  const dockImage = view.querySelector('[data-dock-item][data-label="添加图片"] button')
+  assert.ok(dockImage !== null, 'E4: the dock offers 添加图片')
+  dockImage.dispatchEvent(new jsdomWindow.MouseEvent('click', { bubbles: true, cancelable: true }))
+  assert.ok(
+    await waitUntil(() => jsdomDocument.querySelector('[data-image-menu-video]') !== null),
+    'E4: the image menu carries an 添加视频 row',
+  )
+  const videoRow = jsdomDocument.querySelector('[data-image-menu-video]')
+  assert.equal(videoRow.textContent, '添加视频', 'E4: the row is labelled 添加视频')
+
+  // -------------------------------- E5 the picker opens and adds a REFERENCE
+  videoRow.dispatchEvent(new jsdomWindow.MouseEvent('click', { bubbles: true, cancelable: true }))
+  await waitForSelector(view, '[data-video-picker]')
+  const picker = view.querySelector('[data-video-picker]')
+  assert.ok(picker !== null, 'E5: the video picker opens')
+  assert.equal(
+    picker.querySelector('[data-video-tab][aria-selected="true"]')?.getAttribute('data-video-tab'),
+    'history',
+    'E5: the picker opens on the clip history tab',
+  )
+
+  // The history list is empty in this suite and the gallery holds one clip plus
+  // one image: switching tabs is what makes the clip visible at all, and the
+  // single card is what proves the image entry was filtered out.
+  picker.querySelector('[data-video-tab="gallery"]')
+    .dispatchEvent(new jsdomWindow.MouseEvent('click', { bubbles: true, cancelable: true }))
+  assert.ok(
+    await waitUntil(() => picker.querySelectorAll('[data-video-card]').length > 0),
+    'E5: the gallery tab lists the favorited clip',
+  )
+  const cards = [...picker.querySelectorAll('[data-video-card]')]
+  assert.equal(cards.length, 1, 'E5: the image entry is filtered out of the clip list')
+  assert.equal(cards[0].getAttribute('data-clip-url'), CLIP_RIGHT_URL, 'E5: the card points at the served clip')
+  assert.equal(
+    cards[0].querySelector('video')?.getAttribute('src'), CLIP_RIGHT_URL,
+    'E5: the card plays the served clip',
+  )
+
+  const videoNodesBefore = nodesOfType('video')
+  const uploadsBefore = canvasAssetUploads.length
+  cards[0].querySelector('[data-video-add]')
+    .dispatchEvent(new jsdomWindow.MouseEvent('click', { bubbles: true, cancelable: true }))
+  assert.ok(
+    await waitUntil(() => nodesOfType('video') > videoNodesBefore),
+    'E5: adding a clip lands a video node on the canvas',
+  )
+  const addedClip = nodesOf('video').find(node => node.metadata?.video?.url === CLIP_RIGHT_URL)
+  assert.ok(addedClip !== undefined, 'E5: the new node points at the clip the card offered')
+  assert.equal(addedClip.metadata.status, 'success', 'E5: an added clip is immediately playable')
+  // The point of the whole path: referenced, never copied.
+  assert.equal(
+    addedClip.metadata.asset, undefined,
+    'E5: the picker lands a REFERENCE -- no canvas asset on the node',
+  )
+  assert.equal(
+    canvasAssetUploads.length, uploadsBefore,
+    'E5: adding the clip copied no bytes into the asset store',
+  )
+
+  // ---------------------------------- E6 the upload tab goes to a FILE node
+  // A different destination on purpose: an uploaded file lands in the asset
+  // store, which the stitcher cannot read, so it must NOT become a clip node.
+  picker.querySelector('[data-video-tab="upload"]')
+    .dispatchEvent(new jsdomWindow.MouseEvent('click', { bubbles: true, cancelable: true }))
+  assert.ok(
+    await waitUntil(() => picker.querySelector('[data-video-upload] input[type="file"]') !== null),
+    'E6: the upload tab offers a file input',
+  )
+  const input = picker.querySelector('[data-video-upload] input[type="file"]')
+  assert.equal(input.getAttribute('accept'), 'video/*', 'E6: the input is scoped to video')
+  const file = new jsdomWindow.File([new Uint8Array([0, 0, 0, 24])], 'uploaded.mp4', { type: 'video/mp4' })
+  // A REAL array, not an array-like: the picker spreads the FileList
+  // (`[...event.target.files]`), and a `{0: file, length: 1}` object is not
+  // iterable -- the handler would throw before the request ever went out.
+  Object.defineProperty(input, 'files', { value: [file], configurable: true })
+  const filesBefore = nodesOfType('file')
+  input.dispatchEvent(new jsdomWindow.Event('change', { bubbles: true }))
+
+  assert.ok(
+    await waitUntil(() => canvasFileUploads.length > 0, 12_000),
+    'E6: uploading posts the raw file to the file route',
+  )
+  assert.equal(canvasFileUploads.at(-1).name, 'uploaded.mp4', 'E6: the upload carries the file name')
+  assert.equal(canvasFileUploads.at(-1).type, 'video/mp4', 'E6: the upload carries the declared MIME')
+  assert.ok(
+    await waitUntil(() => nodesOfType('file') > filesBefore, 12_000),
+    'E6: an uploaded video lands a FILE node, not a clip node',
+  )
+  const addedFile = nodesOf('file').at(-1)
+  assert.ok(addedFile.metadata?.asset !== undefined, 'E6: the file node carries a canvas asset')
+  assert.equal(addedFile.metadata.video, undefined, 'E6: the uploaded file is NOT a stitched-eligible clip')
+  assert.equal(addedFile.metadata.fileKind, 'video', 'E6: the file node is typed as a video file')
+  assert.ok(
+    await waitUntil(() => view.querySelector('[data-video-picker]') === null, 12_000),
+    'E6: the picker closes itself once the upload lands',
+  )
 })
 
 for (const cleanup of cleanups.reverse()) await cleanup()

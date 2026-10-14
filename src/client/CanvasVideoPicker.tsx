@@ -205,6 +205,12 @@ export function CanvasVideoPicker(props: CanvasVideoPickerProps): React.JSX.Elem
   }, [uploadFile])
 
   const empty = clips.length === 0
+  // A FAILED listing is not an empty one: `loadHistory` clears `history` on
+  // error, so `empty` alone cannot tell "there are no clips" from "we do not
+  // know whether there are any". Printing the empty copy in the second case
+  // asserts something false, so it is gated on the absence of an error; the
+  // error line and its retry button render on their own.
+  const showEmptyCopy = empty && !(tab === 'history' && historyError !== null)
 
   return <div className={css.backdrop} role="dialog" aria-modal="true" data-canvas-no-zoom="" data-video-picker="">
     <section className={css.dialog}>
@@ -274,14 +280,15 @@ export function CanvasVideoPicker(props: CanvasVideoPickerProps): React.JSX.Elem
             >{tt('canvas.videoPickerAdd')}</button>
           </div>)}
         </div> : null}
-        {tab !== 'upload' && empty ? <>
+        {tab !== 'upload' && showEmptyCopy ? <>
           <p className={css.empty} data-video-picker-empty="">{tt('canvas.videoPickerEmpty')}</p>
-          {/* A failed listing must be visible but must not masquerade as "no
-              clips": say what happened and offer the retry. */}
-          {tab === 'history' && historyError !== null ? <>
-            <p className={css.errorLine} data-video-load-error="">{tt('canvas.videoLoadFailed', { message: historyError })}</p>
-            <p className={css.empty}><button type="button" className={css.primary} data-video-reload="" onClick={() => { void loadHistory() }}>{tt('canvas.videoRetry')}</button></p>
-          </> : null}
+        </> : null}
+        {/* A failed listing must be visible, and it must NOT masquerade as "no
+            clips": the copy above asserts there are none, which a failed read
+            does not establish. Rendered on its own, not nested under `empty`. */}
+        {tab === 'history' && historyError !== null ? <>
+          <p className={css.errorLine} data-video-load-error="">{tt('canvas.videoLoadFailed', { message: historyError })}</p>
+          <p className={css.empty}><button type="button" className={css.primary} data-video-reload="" onClick={() => { void loadHistory() }}>{tt('canvas.videoRetry')}</button></p>
         </> : null}
         {added > 0 ? <footer className={css.footer}><span data-video-count="">{tt('canvas.videoPicked', { count: added })}</span></footer> : null}
       </div>
