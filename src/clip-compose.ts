@@ -29,8 +29,9 @@ import { spawn } from 'node:child_process'
 import { accessSync, constants as FS_CONSTANTS, promises as fs, statSync } from 'node:fs'
 import { homedir, tmpdir } from 'node:os'
 import path from 'node:path'
-import { VIDEO_API, type ClipComposer, type ClipStitchResult } from './protocol.ts'
+import { GALLERY_API, VIDEO_API, type ClipComposer, type ClipStitchResult } from './protocol.ts'
 import { appendVideoHistory, readVideoFile } from './video-store.ts'
+import { readGalleryVideo } from './gallery-store.ts'
 
 // ---------------------------------------------------------------- constants
 
@@ -255,8 +256,39 @@ function buildStitchArgs(sources: readonly string[], probes: readonly ClipProbe[
 
 // ---------------------------------------------------------------- urls
 
-/** Decode a served clip URL into the video-store file name, when it is one. */
-function videoFileFrom(rawUrl: string): string | undefined {
+/** One place a clip can live: a served-URL prefix plus the store that reads it. */
+interface ClipSource {
+  prefix: string
+  read: (file: string) => Promise<{ path: string } | undefined>
+}
+
+/**
+ * Every store a canvas clip node can point at.
+ *
+ * TWO, because the user can act on a clip before or after favoriting it:
+ *  - the video history (`videos/files/`), what a finished generation writes, and
+ *  - the gallery (`gallery/videos/`), where 「收藏」 COPIES the bytes.
+ * Favoriting used to make a clip un-stitchable: the composer only knew the first
+ * prefix, so `resolve()` answered undefined and the whole run failed. The order
+ * matters only for readability of this list — the prefixes are disjoint.
+ *
+ * Each `read` re-validates the name against that store's own pattern, so a URL
+ * can never reach outside its directory (see below).
+ */
+const CLIP_SOURCES: readonly ClipSource[] = [
+  { prefix: VIDEO_API.file, read: readVideoFile },
+  { prefix: GALLERY_API.videoFile, read: readGalleryVideo },
+]
+
+/**
+ * Decode a served clip URL into the file name and the store that owns it.
+ *
+ * The prefix is matched EXACTLY, as `prefix + '/'`, so a lookalike route such as
+ * `/api/dsh-imagegen/gallery/video-file-x/…` cannot be mistaken for a clip. The
+ * `URL` parse normalizes `..` segments away and the store's own name pattern
+ * rejects whatever survives, so `../../etc/passwd` is still refused.
+ */
+function videoFileFrom(rawUrl: string): { file: string; read: ClipSource['read'] } | undefined {
   if (rawUrl.trim() === '') return undefined
   let pathname: string
   try {
@@ -264,9 +296,12 @@ function videoFileFrom(rawUrl: string): string | undefined {
   } catch {
     return undefined
   }
-  if (!pathname.startsWith(`${VIDEO_API.file}/`)) return undefined
-  const file = decodeURIComponent(pathname.slice(VIDEO_API.file.length + 1))
-  return file === '' ? undefined : file
+  for (const source of CLIP_SOURCES) {
+    if (!pathname.startsWith(`${source.prefix}/`)) continue
+    const file = decodeURIComponent(pathname.slice(source.prefix.length + 1))
+    return file === '' ? undefined : { file, read: source.read }
+  }
+  return undefined
 }
 
 // ---------------------------------------------------------------- composer
@@ -313,9 +348,9 @@ export function createClipComposer(): ClipComposer {
      * the caller must fail the run rather than drop the segment.
      */
     resolve: async (url: string): Promise<string | undefined> => {
-      const file = videoFileFrom(url)
-      if (file === undefined) return undefined
-      const stored = await readVideoFile(file)
+      const found = videoFileFrom(url)
+      if (found === undefined) return undefined
+      const stored = await found.read(found.file)
       return stored?.path
     },
 

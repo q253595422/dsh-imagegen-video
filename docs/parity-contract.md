@@ -33,13 +33,34 @@
 | `src/client/canvas-workspace.module.css` | **canvas-actions** 成员 |
 | `scripts/smoke-canvas-video.mjs` | **canvas-actions** 成员 |
 | `src/client/CanvasVideoPicker.tsx` | **picker-ui** 成员 |
-| `src/client/canvas-video-picker.module.css`（新建） | **picker-ui** 成员 |
+| `src/client/canvas-video-picker.module.css`（新建，已存在） | **picker-ui** 成员 |
 | `scripts/smoke-video-picker.mjs`（新建） | **picker-ui** 成员 |
 | `package.json` | **队长**（test 链） |
 
 **没有任何成员可以 commit**，队长统一提交。
 
 **为什么 `CanvasWorkspace.tsx` 只有一个主人**：A、D、接线三件事都改这个 5465 行文件。上一轮把它交给两个成员会直接互相覆盖。三件事由同一成员**按 A → D → 接线 的顺序**做完；中途不得并行。
+
+### 0.2 为什么分两波（已实测的构建事实）
+
+`lib/client.js` 是**单一 CJS bundle**，只包含被 import 到的模块。`CanvasVideoPicker.tsx` 只有在**被 `CanvasWorkspace.tsx` import 之后**才会进入 bundle，而套件全部通过加载 `lib/client.js` 来驱动客户端。
+
+⇒ **picker-ui 在接线落地前无法为自己的组件写任何套件**（组件不在 bundle 里，`smoke-video-picker.mjs` 无从挂载）。
+
+因此分两波：
+
+| 波次 | 任务 | 归属 | 依赖 |
+|---|---|---|---|
+| **W1** | t1 缺陷 B（两个 store） | host-clip | 无 |
+| **W1** | t2 拾取器组件本体（`CanvasVideoPicker.tsx` + 自己的 CSS） | picker-ui | 无（**不写套件**） |
+| **W1** | t3 任务 A（底部拼接条 → 真按钮） | canvas-actions | 无 |
+| **W2** | t4 任务 D + 任务 C 接线（含 `import` 与挂载拾取器 + smoke-canvas-video 新用例） | canvas-actions | t2, t3 |
+| **W2** | t5 拾取器套件（`scripts/smoke-video-picker.mjs`） | picker-ui | **t4**（等 import 进 bundle） |
+| **W2** | t6 独立验证（B/A/C/D 四项 + 四次反向验证） | compose-verifier | t1, t4, t5 |
+
+**t4 的 `import` 是 t5 的硬前置**：canvas-actions 必须在 t4 里落下
+`import { CanvasVideoPicker } from './CanvasVideoPicker.tsx'`
+并把组件挂到渲染树里，否则 t5 永远拿不到组件。
 
 ---
 
@@ -192,9 +213,31 @@ export interface CanvasVideoPickerProps {
 
 ## 3. 任务 A（canvas-actions）：底部拼接条 → 真按钮
 
-`data-compose-bar` 由 `div` 改为可点容器，新增一个**真 button**，锚点 **`data-compose-run`**？
+### 3.0 🚨 门控更正（这条是契约原文的错，2026-10-14 发现）
 
-不行——`data-compose-run` 已被确认卡占用（`:1090`）。用**新锚点**：
+契约初版写「技能描述符取不到时按钮 `disabled`」。**那是错的** —— 它把「按了没反应」换成「永远灰着」，同一个 bug 换个长相。
+
+实测依据：
+
+```
+$ grep -n "useEffect" -A6 src/client/CanvasWorkspace.tsx | grep loadSkillCatalog
+(空)
+```
+
+`src/client/CanvasWorkspace.tsx:1934` 的 `loadSkillCatalog` **只在 `openSkillMenu`（`:2067`）与几个安装/配置回调里被调用**，**没有任何 mount 时的加载**；`skillCatalog` 初值是 `null`（`:1312`）。⇒ 用户在新开 / 刚载入的画布上选中 2 段时 `skillCatalog` 仍是 `null`，按钮会**一直灰着**，除非他先去点某个节点的「技能」菜单。这就是用户报的同一个病。
+
+**正确做法**：底部按钮**自己负责把目录加载过来** —— 当 `composeIds.length >= 2` 且 `skillCatalog === null` 时，在 effect 里调 `loadSkillCatalog()`。
+
+- **不要**改成 mount 时无条件加载（对从不选两段的用户是白花一次请求，超出范围）
+- **不要**用 `disabled` 当默认态
+- 只有 `skillCatalog !== null` 且真的找不到 compose 条目（宿主给了 `reason`）时才 `disabled` + `canvas.composeUnavailable`
+- 回退文案一律 `canvas.composeUnavailable` + reason，**不许静默无反应**
+
+**必须有的断言**：在**从未打开过技能菜单**的画布上选中 2 段 → 点击底部按钮 → 观察到确认卡（`data-compose-card`）。这正是用户报的场景，也是本任务唯一真正的验收。
+
+### 3.1 锚点
+
+**注意**：不能用 `data-compose-run` —— 它已被确认卡占用（`:1090`）。用**新锚点**：
 
 - `data-compose-bar` 保留在外层容器上（现有 C3 断言读它的 `textContent`，**不许破坏**）
 - 新增 `data-compose-bar-run` 放在新 button 上
@@ -204,7 +247,7 @@ export interface CanvasVideoPickerProps {
 
 **为什么只到确认卡、不直接开跑**：确认卡是用户唯一能核对 ①②③ 顺序的机会（契约 §7 原文）。直接开跑会跳过它。
 
-`composeIds` 就是已有的 `composeClipIds(document.nodes, selectedIds)`（`:87`）。技能描述符从 `skillCatalog.skills.find(skill => skill.id === COMPOSE_SKILL_ID)` 取；**取不到时**（目录未加载）按钮 `disabled` 并 `title={tt('canvas.composeUnavailable', { reason: … })}`，**不得**静默无反应。
+`composeIds` 就是已有的 `composeClipIds(document.nodes, selectedIds)`（`:87`）。技能描述符从 `skillCatalog?.skills.find(skill => skill.id === COMPOSE_SKILL_ID)` 取 —— **门控方式见 §3.0，不要用「取不到就 disabled」**。
 
 CSS：`.composeBar` 的 `pointer-events: none` 必须去掉（或改为容器仍 none、button 单独 `pointer-events: auto`——两种都行，但**必须实测按钮真的可点**）。
 
@@ -261,7 +304,16 @@ if (node !== undefined && node.type === 'video' && (videoOf(node)?.url ?? '') !=
 - 每张片段卡 `data-video-card=""`，且卡上带 `data-clip-url={url}`
 - 卡片内的 `<video preload="metadata" muted playsInline>`，**src = 该片段的 served url**
 - 「加入画布」 `data-video-add=""`
-- 空态 `data-video-empty=""`
+- 空态 **`data-video-picker-empty=""`**
+
+> ⚠️ **空态锚点必须带 `picker` 前缀**（原来我写的是 `data-video-empty`，那是**错的**）。
+> `src/client/CanvasWorkspace.tsx:4217` 的视频节点占位**已经**用了 `data-video-empty=""`：
+> ```tsx
+> : <div className={css.nodeState} data-video-empty=""><span>{tt('canvas.videoEmptyNode')}</span></div>
+> ```
+> 两者同名 ⇒ 任何 `view.querySelector('[data-video-empty]')` 都会命中画布节点而不是拾取器，而且**命中哪个取决于渲染顺序**（画布先挂载），套件会静默测错对象。这正是契约 §1.10 说的那类「不报错但错」的坑。
+> 改名后，`data-video-empty` **只属于画布视频节点占位**，`data-video-picker-empty` **只属于拾取器**。
+> 写套件时仍然建议整个选择器限定在 `[data-video-picker]` 内（双保险，且更可读）。
 
 **上传路径的语义（重要）**：本地视频上传走 `api.canvasFileUpload(file)` 拿到 `CanvasAssetRef`（`url` 形如 `/api/dsh-imagegen/canvas/asset/<sha>.mp4`）。这是**画布资产**，**不是** video store 的片段 ⇒
 

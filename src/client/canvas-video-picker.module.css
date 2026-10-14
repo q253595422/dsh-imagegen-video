@@ -106,8 +106,11 @@
   cursor: pointer;
 }
 
-.card[data-selected] {
+.card:hover {
   border-color: var(--dsw-alias-brand-primary);
+}
+
+.card:focus-within {
   box-shadow: 0 0 0 2px color-mix(in srgb, var(--dsw-alias-brand-primary) 25%, transparent);
 }
 
@@ -131,6 +134,20 @@
   font-size: 10.5px;
 }
 
+.cardAdd {
+  border: 1px solid var(--dsw-alias-border-l1);
+  border-radius: 7px;
+  background: transparent;
+  color: var(--dsw-alias-brand-primary);
+  font-size: 11.5px;
+  padding: 4px 8px;
+  cursor: pointer;
+}
+
+.cardAdd:hover {
+  background: color-mix(in srgb, var(--dsw-alias-brand-primary) 12%, transparent);
+}
+
 .drop {
   display: flex;
   flex-direction: column;
@@ -145,8 +162,26 @@
   cursor: pointer;
 }
 
+.drop:hover {
+  border-color: var(--dsw-alias-brand-primary);
+}
+
 .drop input {
   display: none;
+}
+
+.errorLine {
+  margin: 10px 0 0;
+  text-align: center;
+  color: var(--dsw-alias-label-error);
+  font-size: 11.5px;
+  overflow-wrap: anywhere;
+}
+
+/* The retry button sits on its own line under the empty-state text, so it
+   inherits the centred layout instead of the plain inline default. */
+.empty .primary {
+  display: inline-block;
 }
 
 .empty {

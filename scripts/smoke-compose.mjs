@@ -68,6 +68,10 @@
  *      silently answering a stitch request with a chat completion — both when
  *      the option is omitted (refused up front) and when a wired composer
  *      reports the tools missing (a failed task)
+ *  V22 DEFECT B, real resolver: a clip the user FAVORITED is served under the
+ *      GALLERY prefix out of a DIFFERENT directory, and it must resolve exactly
+ *      like a history clip — with the lookalike route, the favorite route, a
+ *      traversal and a cross-store name all still refused
  *  E1  (real ffmpeg only) two synthetic clips — one with audio, one silent —
  *      stitch through the REAL ClipComposer and the result is ~2x as long
  *
@@ -1005,6 +1009,86 @@ await check('V8 one unresolvable clip fails the whole run instead of stitching t
   assert.equal(okSnapshot.status, 'completed', JSON.stringify(okSnapshot))
   assert.equal(okComposer.record.stitchCalls.length, 1, 'two readable clips still stitch')
   assert.deepEqual(okComposer.record.stitchCalls[0], ['/fake/clip-a-0.mp4', '/fake/clip-c-0.mp4'])
+})
+
+// ------------------------------------ V22 the REAL resolver accepts BOTH stores
+
+/**
+ * Defect B regression, against the real `createClipComposer()` rather than a
+ * fake: favoriting a clip COPIES it into the gallery store (`gallery/videos/`,
+ * served as `${GALLERY_API.videoFile}/<file>`) instead of the video history
+ * (`videos/files/`, served as `${VIDEO_FILE_API}/<file>`). A composer that knew
+ * only the history prefix answered `undefined` for a favorited clip, and
+ * `stitchClips` then failed the WHOLE run — favoriting a clip made it
+ * un-stitchable.
+ *
+ * Everything here is real except the clip bytes: `resolve()` only stats the
+ * file, so a few fake bytes in a real file exercise the whole path (name
+ * validation, store directory, existence).
+ */
+const GALLERY_VIDEO_FILE_API = '/api/dsh-imagegen/gallery/video-file'
+
+await check('V22 the real composer resolves clips from BOTH stores and still refuses the rest', async () => {
+  const storeFilesDir = join(root, 'dsh-imagegen', 'videos', 'files')
+  const galleryVideosDir = join(root, 'dsh-imagegen', 'gallery', 'videos')
+  mkdirSync(storeFilesDir, { recursive: true })
+  mkdirSync(galleryVideosDir, { recursive: true })
+
+  // Names the stores themselves write: `<id>-<index>.<ext>`, both 36-char uuids.
+  const historyFile = '811e60f2-014d-470d-b070-4bcde4eddea7-0.mp4'
+  const galleryFile = 'da599d10-2111-4e05-9f50-728b286fd7fa-0.mp4'
+  const historyPath = join(storeFilesDir, historyFile)
+  const galleryPath = join(galleryVideosDir, galleryFile)
+  writeFileSync(historyPath, Buffer.from([0x00, 0x00, 0x00, 0x18, 0x66, 0x74, 0x79, 0x70]))
+  writeFileSync(galleryPath, Buffer.from([0x00, 0x00, 0x00, 0x18, 0x66, 0x74, 0x79, 0x70]))
+  assert.equal(statSync(historyPath).isFile(), true)
+  assert.equal(statSync(galleryPath).isFile(), true)
+
+  const composer = host.createClipComposer()
+
+  // 1. the video history prefix — the behaviour that already worked.
+  assert.equal(await composer.resolve(`${VIDEO_FILE_API}/${historyFile}`), historyPath,
+    'a clip in the video store resolves to its file on disk')
+
+  // 2. THE REGRESSION: the gallery prefix must resolve too, and it must come
+  // back from the gallery DIRECTORY (not merely "some path") — the two stores
+  // keep different directories, so a fix that read the wrong one would fail
+  // here instead of silently stitching a different file.
+  assert.equal(await composer.resolve(`${GALLERY_VIDEO_FILE_API}/${galleryFile}`), galleryPath,
+    'a FAVORITED clip resolves to its file in the gallery directory (defect B)')
+
+  // 3. the gallery prefix that is NOT a clip: a lookalike route, a strict
+  // prefix of the video-file route, and an image entry must all be refused —
+  // an exact `prefix + '/'` match is what keeps them out.
+  assert.equal(await composer.resolve('/api/dsh-imagegen/gallery/video-file-x/x-0.mp4'), undefined,
+    'a lookalike route (gallery/video-file-x) is not a clip')
+  assert.equal(await composer.resolve('/api/dsh-imagegen/gallery/video/da599d10-2111-4e05-9f50-728b286fd7fa-0.mp4'), undefined,
+    'the favorite ROUTE is not a serve route')
+  assert.equal(await composer.resolve('/api/dsh-imagegen/gallery/image/a-0.png'), undefined,
+    'a gallery image is not a clip')
+  assert.equal(await composer.resolve('https://evil.example/x.mp4'), undefined,
+    'a foreign URL is not a clip')
+
+  // 4. path traversal, both raw and percent-encoded. The URL parse collapses
+  // the raw form out of the prefix; the encoded form survives the prefix match
+  // and must be rejected by the store's own file-name pattern — proving the
+  // fix did not bypass that validation.
+  assert.equal(await composer.resolve(`${VIDEO_FILE_API}/../../etc/passwd`), undefined,
+    'raw traversal out of the video store is refused')
+  assert.equal(await composer.resolve(`${VIDEO_FILE_API}/..%2F..%2Fetc%2Fpasswd`), undefined,
+    'percent-encoded traversal is refused by the store name pattern')
+  assert.equal(await composer.resolve(`${GALLERY_VIDEO_FILE_API}/..%2F..%2F..%2Fvideos%2F${historyFile}`), undefined,
+    'gallery traversal cannot reach across into the video store')
+
+  // 5. same name, wrong store: each store reads only ITS directory, so a file
+  // that exists under one prefix and not the other must not resolve.
+  assert.equal(await composer.resolve(`${GALLERY_VIDEO_FILE_API}/${historyFile}`), undefined,
+    'a video-store file name does not resolve through the gallery prefix')
+  assert.equal(await composer.resolve(`${VIDEO_FILE_API}/${galleryFile}`), undefined,
+    'a gallery file name does not resolve through the video-store prefix')
+
+  rmSync(historyPath, { force: true })
+  rmSync(galleryPath, { force: true })
 })
 
 // ----------------------------------------- V9 no usable local tool on this host
