@@ -55,6 +55,11 @@
  *      rule that treats ANY nested pair as one row welds the low clip to its
  *      host and reads it BEFORE the clip above it — V16/V17 cannot see this
  *      because they nest near the TOP of the host, where both rules agree
+ *  V21 ABOVE-LIFT: the row grouping files a 240x64 clip nested in a tall host
+ *      into the host's row while another tall clip sits wholly BELOW it, so flat
+ *      row order plays the lower clip first — host,right,small against the
+ *      correct host,small,right. A final stable topological pass over "wholly
+ *      above" (a.y + a.height <= b.y) repairs it; this fixture is its only guard
  *  V8  FAILURE HONESTY: one clip whose URL no longer resolves (an evicted
  *      history entry) fails the whole run BEFORE ffmpeg — the offending clip is
  *      named, nothing is stitched and nothing is published, so the user can
@@ -465,6 +470,43 @@ const DEEP_NESTED_TALL_CLIPS = [
 /** Sent in the EXACT REVERSE of the expected order: only geometry can fix it. */
 const DEEP_NESTED_TALL_AS_SENT = ['b', 'c', 'h']
 const DEEP_NESTED_TALL_EXPECTED = ['h', 'c', 'b']
+
+/**
+ * ABOVE-LIFT regression: a short clip that sits WHOLLY ABOVE a taller neighbour
+ * must not be stitched after it, even when the row grouping files them apart.
+ *
+ *   host  : x=0,   y=0,   w=240, h=480   (extent y 0..480)
+ *   small : x=0,   y=64,  w=240, h=64    (extent y 64..128;  x 0..240)
+ *   right : x=240, y=200, w=240, h=480   (extent y 200..680; x 240..480)
+ *
+ * No two of the three overlap at all: `host` and `small` are stacked in the left
+ * column (small nested inside host, both starting at x=0), and `right` is a
+ * separate column to the right. Reading order is plainly host, small, right.
+ *
+ * The row grouping can still be fooled by this shape, and no threshold fixes it:
+ * `small` (64px tall) is nested inside `host` and level-topped with it, so it
+ * joins host's row even though its 64..128 band is nowhere near `right`'s
+ * 200..680; `right` is then pushed onto its own row BELOW, and the flat row
+ * order plays `right` before `small` — host, right, small. That is a strict
+ * inversion: `small` ends at y=128 and `right` starts at y=200, so one is wholly
+ * above the other.
+ *
+ * The repair is not another threshold but a final stable topological pass over
+ * `entirelyAbove` (a.y + a.height <= b.y), seeded by the row order. This fixture
+ * is its only coverage: with the pass disabled every other fixture here — and
+ * the canvas-video and main suites — still passes.
+ *
+ * `small` is 240x64, the MINIMUM node height (reachable by dragging the resize
+ * handle), which is also the automatic height for a 16:9 clip in a shrunk box.
+ */
+const ABOVE_LIFT_CLIPS = [
+  sizedClipNode('host', 0, 0, 240, 480, 'tall left host clip'),
+  sizedClipNode('small', 0, 64, 240, 64, 'short nested clip wholly above the right one'),
+  sizedClipNode('right', 240, 200, 240, 480, 'tall right clip'),
+]
+/** Sent in the EXACT REVERSE of the expected order: only geometry can fix it. */
+const ABOVE_LIFT_AS_SENT = ['right', 'small', 'host']
+const ABOVE_LIFT_EXPECTED = ['host', 'small', 'right']
 
 /**
  * Run one order fixture end to end and assert the whole chain. The three order
@@ -890,6 +932,16 @@ await check('V20 the same holds when the host is tall enough to leave no ambigui
   DEEP_NESTED_TALL_CLIPS,
   DEEP_NESTED_TALL_AS_SENT,
   DEEP_NESTED_TALL_EXPECTED,
+))
+
+// --- V21 a lift: a clip wholly above another must never be stitched after it
+
+await check('V21 a clip wholly above another is lifted ahead of it', () => checkOrderFixture(
+  'V21',
+  'canvas-above-lift',
+  ABOVE_LIFT_CLIPS,
+  ABOVE_LIFT_AS_SENT,
+  ABOVE_LIFT_EXPECTED,
 ))
 
 // ------------------------------------------------- V8 failure honesty
