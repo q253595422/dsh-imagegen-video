@@ -59,6 +59,20 @@ async function waitUntil(predicate, timeout = 1200) {
 }
 
 // ---------------------------------------------------------------- A. host half
+/**
+ * Point the plugin's data root at a scratch dir so the suite never touches the
+ * real ~/.dsh. `DSH_HOME` is read when the module resolves its storage path and
+ * when the canvas store resolves its root, so it must be set before the host
+ * half is imported — the sibling suites (smoke-video, smoke-canvas-video,
+ * smoke-compose) all do this.
+ *
+ * Without it the canvas/skill checks fell through to the real
+ * ~/.dsh/dsh-imagegen/canvas: `makeRoutes` injects no `canvas` backend, so the
+ * route used the real store, whose foreign index made `create` return an
+ * unexpected document and every dependent check fail on `.id` / `.background` —
+ * and the run wrote its fixtures into that real directory.
+ */
+process.env.DSH_HOME = mkdtempSync(join(tmpdir(), 'dsh-imagegen-smoke-'))
 const host = await import(new URL('lib/index.js', root).href)
 const hostLocale = await import(new URL('lib/locale-tables.js', root).href)
 // The host half renders skill copy through the same dictionaries the browser
@@ -2368,6 +2382,12 @@ await check('C10f previewable assets serve inline with byte ranges, markup never
   assert.equal(ranged.status, 206)
   assert.equal(ranged.headers.get('content-range'), `bytes 0-7/${bytes.length}`)
   assert.equal(await ranged.text(), '%PDF-1.4')
+
+  // A range that cannot be satisfied is told so (RFC 7233) instead of silently
+  // receiving the whole body with a 200.
+  const unsatisfiable = await fetch(`${base}${pdf.url}?inline=1`, { headers: { range: 'bytes=999999-' } })
+  assert.equal(unsatisfiable.status, 416)
+  assert.equal(unsatisfiable.headers.get('content-range'), `bytes */${bytes.length}`)
 
   // Text-shaped assets travel as JSON previews, never as an inline response.
   const csv = await uploadCanvasFile('inline.csv', 'text/csv', Buffer.from('a,b\n', 'utf8'))
