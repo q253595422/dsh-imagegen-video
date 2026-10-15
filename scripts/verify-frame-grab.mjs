@@ -15,18 +15,86 @@
  *
  * It generates its own fixture with ffmpeg and needs chrome-headless-shell, so
  * it is NOT part of `pnpm test` (which must stay dependency-free and offline).
+ * Both tools are discovered from a candidate list; when either is missing the
+ * script SKIPs loudly and exits 0, so a machine without them never mistakes a
+ * missing tool for a passing check (or for a regression).
  *
  * Run: node scripts/verify-frame-grab.mjs [path-to-chrome-headless-shell]
+ * Override the tools with FFMPEG=<path> and CHROME_HEADLESS_SHELL=<path>.
  */
 
 import { createServer } from 'node:http'
-import { existsSync, mkdirSync, readFileSync } from 'node:fs'
+import { existsSync, mkdirSync, readFileSync, accessSync, constants, globSync } from 'node:fs'
 import { spawn, spawnSync } from 'node:child_process'
+import { createServer as createProbeServer } from 'node:net'
+import { homedir, tmpdir } from 'node:os'
+import path from 'node:path'
 import assert from 'node:assert/strict'
 
-const FFMPEG = process.env.FFMPEG ?? '~/.local/bin/ffmpeg'
-const CHROME = process.argv[2] ?? process.env.CHROME_HEADLESS_SHELL ?? '/tmp/chromium/chrome-headless-shell/mac_arm-155.0.8059.39/chrome-headless-shell-mac-arm64/chrome-headless-shell'
-const WORK_DIR = '/tmp/framegrab'
+/**
+ * Tool discovery, not hardcoded personal paths. This script ships publicly, so
+ * an absolute /Users/<someone> path would both leak the author's local layout
+ * and make the script fail on every other machine. Override with FFMPEG=<path>.
+ */
+function findFfmpeg () {
+  const explicit = process.env.FFMPEG
+  const usable = candidate => {
+    try { accessSync(candidate, constants.X_OK); return true } catch { return false }
+  }
+  if (explicit !== undefined && explicit !== '') return usable(explicit) ? explicit : null
+  // The same directories the host's own clip composer searches (src/clip-compose.ts).
+  const candidates = [
+    path.join(homedir(), '.local', 'bin', 'ffmpeg'),
+    '/opt/homebrew/bin/ffmpeg',
+    '/usr/local/bin/ffmpeg',
+    '/usr/bin/ffmpeg',
+  ]
+  // A bare `ffmpeg` on PATH is deliberately NOT tried: the DSH host process runs
+  // with a minimal PATH that excludes user bin directories, so a bare name would
+  // resolve differently inside the plugin and outside it.
+  return candidates.find(usable) ?? null
+}
+
+/** Bundled shells newest-first (the agent tooling's usual location), then real browsers. */
+function findChrome () {
+  const explicit = process.argv[2] ?? process.env.CHROME_HEADLESS_SHELL
+  if (explicit !== undefined && explicit !== '') return existsSync(explicit) ? explicit : null
+  const candidates = [
+    ...globSync(`${tmpdir()}/chromium/chrome-headless-shell/*/*/chrome-headless-shell`).sort().reverse(),
+    '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome',
+    '/Applications/Chromium.app/Contents/MacOS/Chromium',
+    ...globSync(`${process.env.HOME ?? ''}/.cache/puppeteer/**/chrome-headless-shell`).sort().reverse(),
+  ]
+  return candidates.find(candidate => existsSync(candidate)) ?? null
+}
+
+/** Ask the OS for a free port: a fixed one collides with a leftover browser. */
+function freePort () {
+  return new Promise((resolve, reject) => {
+    const probe = createProbeServer()
+    probe.unref()
+    probe.on('error', reject)
+    probe.listen(0, '127.0.0.1', () => {
+      const address = probe.address()
+      const port = typeof address === 'object' && address !== null ? address.port : 0
+      probe.close(() => resolve(port))
+    })
+  })
+}
+
+const FFMPEG = findFfmpeg()
+const CHROME = findChrome()
+if (FFMPEG === null || CHROME === null) {
+  const missing = [FFMPEG === null ? 'ffmpeg' : null, CHROME === null ? 'chrome-headless-shell' : null]
+    .filter(name => name !== null).join(' and ')
+  console.error('\n' + '='.repeat(72))
+  console.error(`SKIP: ${missing} not found -- the frame-grab path was NOT verified.`)
+  console.error('This is a MISSING TOOL, not a regression. Install it, or point FFMPEG')
+  console.error('and CHROME_HEADLESS_SHELL at usable binaries, to actually run this check.')
+  console.error('='.repeat(72) + '\n')
+  process.exit(0)
+}
+const WORK_DIR = path.join(tmpdir(), 'framegrab')
 // Build the fixture if it is missing, so the script is self-contained.
 const FIXTURE = `${WORK_DIR}/test.mp4`
 if (!existsSync(FIXTURE)) {
@@ -78,6 +146,7 @@ const server = createServer((req, res) => {
 })
 await new Promise(r => server.listen(0, '127.0.0.1', r))
 const port = server.address().port
+const cdpPort = await freePort()
 
 // The page runs the exact grab algorithm from CanvasWorkspace.grabVideoFrame.
 const pageHtml = `<!doctype html><html><body><script>
@@ -112,14 +181,14 @@ window.grab = async (url) => {
 const PAGE = pageHtml
 
 const browser = spawn(CHROME, [
-  '--headless', '--disable-gpu', '--no-sandbox', '--remote-debugging-port=9333',
+  '--headless', '--disable-gpu', '--no-sandbox', '--remote-debugging-port=' + String(cdpPort),
   `--user-data-dir=${WORK_DIR}/profile`, 'about:blank',
 ], { stdio: 'ignore' })
 
 const waitForCdp = async () => {
   for (let i = 0; i < 60; i++) {
     try {
-      const r = await fetch('http://127.0.0.1:9333/json/version')
+      const r = await fetch(`http://127.0.0.1:${cdpPort}/json/version`)
       if (r.ok) return await r.json()
     } catch {}
     await new Promise(r => setTimeout(r, 250))
@@ -128,7 +197,7 @@ const waitForCdp = async () => {
 }
 const version = await waitForCdp()
 
-const target = await (await fetch(`http://127.0.0.1:9333/json/new?${encodeURIComponent(`http://127.0.0.1:${port}/`)}`, { method: 'PUT' })).json()
+const target = await (await fetch(`http://127.0.0.1:${cdpPort}/json/new?${encodeURIComponent(`http://127.0.0.1:${port}/`)}`, { method: 'PUT' })).json()
 const ws = new WebSocket(target.webSocketDebuggerUrl)
 await new Promise(r => { ws.onopen = r })
 let id = 0
