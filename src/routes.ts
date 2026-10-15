@@ -49,31 +49,51 @@ const CANVAS_INLINE_IMAGE_MIME = /^image\/(png|jpeg|webp|gif|bmp)$/
  */
 const CANVAS_INLINE_MIME = /^(application\/pdf|audio\/[a-z0-9.+-]+|video\/[a-z0-9.+-]+)$/
 
-/** Parse one `bytes=a-b` range header; undefined when absent or unsatisfiable. */
-function parseByteRange(header: string | string[] | undefined, size: number): { start: number; end: number } | undefined {
+/**
+ * Parse one `bytes=a-b` range header. Three outcomes, because the route has to
+ * tell them apart: no range (or a form we do not serve, such as a multi-range
+ * list) means "send the whole body", while a syntactically valid range that
+ * falls outside the file is unsatisfiable and must answer 416 with a
+ * `content-range` naming the real size (RFC 7233). Collapsing the two into one
+ * `undefined` used to answer 200 to a seek past the end.
+ */
+type ByteRange =
+  | { kind: 'none' }
+  | { kind: 'range'; start: number; end: number }
+  | { kind: 'unsatisfiable' }
+
+function parseByteRange(header: string | string[] | undefined, size: number): ByteRange {
   const value = Array.isArray(header) ? header[0] : header
-  if (typeof value !== 'string' || size <= 0) return undefined
+  if (typeof value !== 'string') return { kind: 'none' }
   const match = /^bytes=(\d*)-(\d*)$/.exec(value.trim())
-  if (match === null) return undefined
+  if (match === null) return { kind: 'none' }
   const [, rawStart = '', rawEnd = ''] = match
-  if (rawStart === '' && rawEnd === '') return undefined
+  if (rawStart === '' && rawEnd === '') return { kind: 'none' }
+  // A zero-byte file cannot satisfy any range at all.
+  if (size <= 0) return { kind: 'unsatisfiable' }
   let start: number
   let end: number
   if (rawStart === '') {
-    // Suffix range: the last N bytes.
+    // Suffix range: the last N bytes. `bytes=-0` asks for nothing.
     const length = Number(rawEnd)
-    if (!Number.isSafeInteger(length) || length <= 0) return undefined
+    if (!Number.isSafeInteger(length) || length <= 0) return { kind: 'unsatisfiable' }
     start = Math.max(0, size - length)
     end = size - 1
   } else {
     start = Number(rawStart)
     end = rawEnd === '' ? size - 1 : Number(rawEnd)
-    if (!Number.isSafeInteger(start) || !Number.isSafeInteger(end)) return undefined
-    if (start >= size) return undefined
+    if (!Number.isSafeInteger(start) || !Number.isSafeInteger(end)) return { kind: 'unsatisfiable' }
+    if (start >= size) return { kind: 'unsatisfiable' }
     end = Math.min(end, size - 1)
   }
-  if (end < start) return undefined
-  return { start, end }
+  if (end < start) return { kind: 'unsatisfiable' }
+  return { kind: 'range', start, end }
+}
+
+/** Answer 416 for a range that cannot be satisfied, naming the real size. */
+function writeUnsatisfiable(res: ServerResponse, size: number): void {
+  res.writeHead(416, { 'content-range': `bytes */${size}` })
+  res.end()
 }
 
 /** Settings seam face the bridge needs (the host settings provider). */
@@ -658,7 +678,8 @@ export function makeRoutes(deps: ImageGenRoutesDeps): WebRoute[] {
     // Media elements ask for byte ranges; answering 200 for every request would
     // break seeking in the clip player.
     const range = parseByteRange(req.headers.range, found.size)
-    if (range !== undefined) {
+    if (range.kind === 'unsatisfiable') { writeUnsatisfiable(res, found.size); return }
+    if (range.kind === 'range') {
       res.writeHead(206, {
         ...headers,
         'content-range': `bytes ${range.start}-${range.end}/${found.size}`,
@@ -1605,7 +1626,8 @@ export function makeRoutes(deps: ImageGenRoutesDeps): WebRoute[] {
         // Media elements ask for byte ranges; answering 200 for every request
         // would break seeking in audio/video previews.
         const range = parseByteRange(req.headers.range, found.data.length)
-        if (range !== undefined) {
+        if (range.kind === 'unsatisfiable') { writeUnsatisfiable(res, found.data.length); return }
+        if (range.kind === 'range') {
           const slice = found.data.subarray(range.start, range.end + 1)
           res.writeHead(206, {
             ...headers,

@@ -68,6 +68,15 @@ function startUpstream() {
     }
     if (req.method === 'GET' && url.pathname.startsWith('/v1/videos/')) {
       state.polls.push({ id: url.pathname.slice('/v1/videos/'.length), authorization: req.headers.authorization })
+      // `pollFailures[n]` makes poll request n+1 answer that HTTP status, so a
+      // suite can simulate a status endpoint that hiccups before it recovers.
+      const failures = state.script.pollFailures
+      const failure = Array.isArray(failures) ? failures[state.polls.length - 1] : undefined
+      if (typeof failure === 'number') {
+        res.writeHead(failure, { 'content-type': 'application/json' })
+        res.end(JSON.stringify({ error: { message: 'upstream hiccup' } }))
+        return
+      }
       const list = state.script.polls
       const index = Math.min(state.polls.length - 1, list.length - 1)
       res.writeHead(200, { 'content-type': 'application/json' })
@@ -241,6 +250,53 @@ await check('V1f a provider failure surfaces its own message', async () => {
       ),
       /内容审核未通过/,
     )
+  } finally {
+    await upstream.close()
+  }
+})
+
+await check('V1g a transient status failure is retried, not failed', async () => {
+  const upstream = await startUpstream()
+  upstream.state.script = {
+    submit: { video_id: 'vid_blip', status: 'queued' },
+    // The status endpoint answers 503 twice, then reports the finished clip:
+    // one hiccup must not fail a render the provider is still working on.
+    pollFailures: [503, 503],
+    polls: [{ status: 'completed', metadata: { url: `http://127.0.0.1:${upstream.port}/blip.mp4`, duration: 5 } }],
+  }
+  try {
+    const result = await generateVideo(
+      { apiUrl: upstream.base, apiKey: 'k' },
+      { mode: 'text', model: 'agnes-video-2.5-flash', prompt: 'p', aspectRatio: '16:9', resolution: '720P', seconds: 5 },
+      { family: 'agnes' },
+    )
+    assert.equal(result.videos.length, 1, 'the clip is still produced after the blips')
+    assert.ok(upstream.state.polls.length >= 3, 'the poll loop retried the failed status requests')
+  } finally {
+    await upstream.close()
+  }
+})
+
+await check('V1h a status endpoint that keeps failing gives up with its own error', async () => {
+  const upstream = await startUpstream()
+  upstream.state.script = {
+    submit: { video_id: 'vid_dead', status: 'queued' },
+    // Never recovers: the retry budget is bounded, so this rejects with the
+    // provider's own message instead of looping until the family deadline.
+    pollFailures: [503, 503, 503, 503, 503, 503, 503, 503, 503, 503],
+    polls: [{ status: 'running' }],
+  }
+  try {
+    await assert.rejects(
+      () => generateVideo(
+        { apiUrl: upstream.base, apiKey: 'k' },
+        { mode: 'text', model: 'agnes-video-2.5-flash', prompt: 'p', aspectRatio: '16:9', resolution: '720P', seconds: 5 },
+        { family: 'agnes' },
+      ),
+      /upstream hiccup/,
+      'the provider error text surfaces instead of a bare timeout',
+    )
+    assert.ok(upstream.state.polls.length <= 6, `the retry budget is bounded (saw ${upstream.state.polls.length} polls)`)
   } finally {
     await upstream.close()
   }
@@ -467,9 +523,11 @@ await check('V3b the clip route serves bytes and honors Range for seeking', asyn
     assert.equal(slice.length, 100, 'exactly the requested slice is returned')
     assert.deepEqual(slice, body.subarray(100, 200), 'the slice matches the file bytes')
 
-    // An unsatisfiable range falls back to the whole body rather than failing.
+    // An unsatisfiable range answers 416 with the real size (RFC 7233) rather
+    // than silently sending the whole clip with a 200.
     const open = await fetch(`${origin}/api/dsh-imagegen/video/file/seek-0.mp4`, { headers: { range: 'bytes=999999-' } })
-    assert.ok(open.status === 200 || open.status === 416, 'an unsatisfiable range does not crash the route')
+    assert.equal(open.status, 416, 'an unsatisfiable range answers 416')
+    assert.equal(open.headers.get('content-range'), `bytes */${body.length}`)
   } finally {
     await new Promise(resolve => server.close(resolve))
     rmSync(clipPath, { force: true })

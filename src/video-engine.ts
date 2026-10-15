@@ -32,11 +32,18 @@ import type { VideoGenerateRequest, VideoMode } from './protocol.ts'
 export class VideoGenError extends Error {
   /** Stable wire code. */
   readonly code: string
+  /**
+   * Whether retrying the exact same request could plausibly succeed. Only the
+   * poll loop reads this: a transient status (5xx / rate limit) is retried
+   * against the same deadline, everything else is surfaced as-is.
+   */
+  readonly retryable: boolean
 
-  constructor(message: string, code = 'video-failed') {
+  constructor(message: string, code = 'video-failed', retryable = false) {
     super(message)
     this.name = 'VideoGenError'
     this.code = code
+    this.retryable = retryable
   }
 }
 
@@ -70,6 +77,14 @@ const DOWNLOAD_TIMEOUT_MS = 300_000
 
 /** Cap on one downloaded clip, in bytes (safety valve against a bad URL). */
 const MAX_VIDEO_BYTES = 512 * 1024 * 1024
+
+/**
+ * Status codes worth one more poll. Rendering takes minutes, and the status
+ * endpoint is a third party: a 5xx or a rate limit there says "ask again",
+ * not "this render failed". Everything else — notably 401/403/404 — is a
+ * permanent answer and must reach the user unchanged.
+ */
+const RETRYABLE_STATUS = new Set([408, 425, 429, 500, 502, 503, 504])
 
 /**
  * Poll budgets per family. Rendering a short clip is slow: Agnes took several
@@ -243,7 +258,14 @@ async function postJson(url: string, apiKey: string, body: Record<string, unknow
   return payload
 }
 
-/** GET one status request and return the parsed JSON body. */
+/**
+ * GET one status request and return the parsed JSON body.
+ *
+ * A status code that is worth retrying is flagged on the error (see
+ * `RETRYABLE_STATUS`) so the poll loop can swallow one blip instead of failing
+ * a render the provider is still working on. Every other status keeps the wire
+ * code the route layer already reported.
+ */
 async function getJson(url: string, apiKey: string, signal: AbortSignal): Promise<Record<string, unknown>> {
   const response = await fetch(url, {
     method: 'GET',
@@ -252,7 +274,12 @@ async function getJson(url: string, apiKey: string, signal: AbortSignal): Promis
   })
   const payload = await readJsonSafe(response)
   if (!response.ok) {
-    throw new VideoGenError(errorTextOf(payload, `视频状态查询失败（HTTP ${response.status}）`), 'video-status-failed')
+    const retryable = RETRYABLE_STATUS.has(response.status)
+    throw new VideoGenError(
+      errorTextOf(payload, `视频状态查询失败（HTTP ${response.status}）`),
+      retryable ? 'video-status-transient' : 'video-status-failed',
+      retryable,
+    )
   }
   return payload
 }
@@ -347,6 +374,19 @@ function pollDelayMs(policy: { intervalMs: number }, attempt: number): number {
   return policy.intervalMs
 }
 
+/**
+ * How many poll requests in a row may fail transiently before the loop gives
+ * up. The retries share the family deadline, so a dead endpoint still ends in
+ * `video-timeout` instead of retrying forever.
+ */
+const MAX_POLL_TRANSIENT_RETRIES = 4
+
+/** Short backoff before re-asking a status endpoint that just failed. */
+function pollRetryDelayMs(retry: number): number {
+  const steps = [300, 700, 1_500, 3_000]
+  return steps[Math.min(retry, steps.length) - 1] ?? 3_000
+}
+
 /** Poll one task until terminal or the family deadline passes. */
 async function pollUntilDone(
   upstream: VideoUpstreamConfig,
@@ -359,15 +399,42 @@ async function pollUntilDone(
   const deadline = Date.now() + policy.deadlineMs
   const statusUrl = `${baseUrl}/videos/${encodeURIComponent(taskId)}`
   let attempt = 0
+  // Consecutive transient poll failures. A render takes minutes, so one 5xx or
+  // a dropped connection from the status endpoint must not fail a task the
+  // provider is still working on; the retries stay inside the family deadline.
+  let transientRetries = 0
   while (Date.now() < deadline) {
     await waitForPoll(pollDelayMs(policy, attempt), signal)
     attempt += 1
     const budget = requestSignal(signal, SUBMIT_TIMEOUT_MS)
     try {
       const payload = await getJson(statusUrl, upstream.apiKey, budget.signal)
+      transientRetries = 0
       const outcome = readPoll(payload)
       if (outcome.kind === 'done') return { url: outcome.url, ...outcome.duration === undefined ? {} : { duration: outcome.duration }, ...outcome.poster === undefined ? {} : { poster: outcome.poster } }
       if (outcome.kind === 'failed') throw new VideoGenError(outcome.message, 'video-failed')
+    } catch (error) {
+      // Cancellation is the caller's decision: pass it straight through.
+      if (signal?.aborted === true) throw error
+      // A transient poll error is one the same request could survive: a
+      // retryable status, a per-request budget timeout (the budget aborts with
+      // a TimeoutError DOMException), or a transport failure (which node's
+      // fetch reports as a TypeError). A provider failure that `readPoll`
+      // recognised is a VideoGenError and never retryable, so it is surfaced
+      // immediately; so is anything else unexpected.
+      const transient = error instanceof VideoGenError
+        ? error.retryable
+        : error instanceof TypeError
+          || (error instanceof DOMException && (error.name === 'TimeoutError' || error.name === 'AbortError'))
+      if (!transient) throw error
+      transientRetries += 1
+      if (transientRetries > MAX_POLL_TRANSIENT_RETRIES) throw error
+      // Never spend the backoff past the family deadline: the retries are meant
+      // to stay inside it, so a dead endpoint still ends in `video-timeout`
+      // instead of running one more wait the deadline already passed.
+      if (Date.now() + pollRetryDelayMs(transientRetries) >= deadline) break
+      // Swallow the blip and ask the same endpoint again after a short backoff.
+      await waitForPoll(pollRetryDelayMs(transientRetries), signal)
     } finally {
       budget.dispose()
     }
