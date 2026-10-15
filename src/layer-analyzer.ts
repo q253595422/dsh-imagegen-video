@@ -24,6 +24,11 @@ const MAX_LAYERS = 16
 /** Cap on recognized text length per text layer. */
 const MAX_LAYER_TEXT = 200
 
+/** Bounded wait for the vision call. Layer decomposition sends a whole image,
+ *  so it needs a longer budget than a plain chat completion — but without a
+ *  ceiling a stalled endpoint leaves the canvas tool spinning forever. */
+const LAYER_TIMEOUT_MS = 120_000
+
 const LAYER_SYSTEM_PROMPT = [
   '你是图像图层拆解引擎。用户会给你一张图片，请把它拆成可独立编辑的图层，并且只输出一个 JSON 对象，不要输出任何解释、markdown 或代码块。',
   '输出格式：',
@@ -157,6 +162,7 @@ export async function analyzeLayers(config: PromptModelConfig, image: string): P
         },
       ],
     }),
+    signal: AbortSignal.timeout(LAYER_TIMEOUT_MS),
   })
   const body: unknown = await response.json().catch(() => undefined)
   if (!response.ok) {

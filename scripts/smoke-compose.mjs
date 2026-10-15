@@ -1249,4 +1249,22 @@ await check('E1 (real ffmpeg) two synthetic clips stitch to roughly twice the le
 // ---------------------------------------------------------------- report
 
 process.stderr.write(`\n${results.join('\n')}\n`)
+
+// A skip is NOT a failure — this repo's contract (see README) is that a host
+// without ffmpeg/ffprobe reports a missing tool, not a red suite. But a skip
+// must never be SILENT either: E1 is the only check that drives the REAL
+// ClipComposer end to end, including the branch that synthesizes a
+// length-bounded silent track for a clip with no audio. When it skips, that
+// whole encode path is unverified while every remaining line still reads PASS,
+// so the summary has to say so out loud and name what was skipped.
+const skipped = results.filter(line => line.startsWith('SKIP  '))
+if (skipped.length === 0) {
+  process.stderr.write('\n0 checks skipped: the real ffmpeg encode path ran.\n')
+} else {
+  const names = skipped.map(line => line.slice('SKIP  '.length).split(':')[0].trim())
+  process.stderr.write(
+    `\n!!! ${skipped.length} check(s) skipped, the real encode path was NOT verified: ${names.join(', ')}\n`
+    + '!!! Exit code stays 0 by design: a missing tool is not a regression.\n\n',
+  )
+}
 rmSync(root, { recursive: true, force: true })

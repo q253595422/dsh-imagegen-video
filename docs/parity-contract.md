@@ -5,6 +5,10 @@
 > 时的角色名（队长 / canvas-actions / picker-ui / host-clip / compose-verifier）、本机路径
 > （`~/.dsh/patches/…`、`/private/tmp/…`）与只在当时语境下成立的「归属表」。那些私有
 > 探针与归档**不在本仓库内**，不必去找。功能当前的对外行为见 README 的「无限画布」。
+>
+> **关于行号**：文中的 `文件:行号` 写于当时，会随代码演进漂移（部分锚点已偏移数十至数
+> 百行）。引用时请以**符号名**（函数 / 常量 / `data-*` 锚点）为准；标注「改造前」的
+> 段落记录的是缺陷当时的形态，相关缺陷现已修复，锚点未必还指向那段代码。
 
 本文件冻结本轮四件事的接口。成员按文件归属并行推进；**撞车即失败**，所以先读归属表。
 
@@ -74,7 +78,7 @@
 
 ### 1.1 缺陷 B（真缺陷，已可执行复现）：素材库里收藏的片子**无法参与拼接**
 
-`src/clip-compose.ts:259-270` `videoFileFrom()` 只接受 `${VIDEO_API.file}/` 前缀：
+`src/clip-compose.ts` 的 `videoFileFrom()`（当时在 `:259-270`）只接受 `${VIDEO_API.file}/` 前缀：
 
 ```ts
 if (!pathname.startsWith(`${VIDEO_API.file}/`)) return undefined

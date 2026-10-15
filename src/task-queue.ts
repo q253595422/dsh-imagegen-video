@@ -5,6 +5,18 @@ import type { GenerateRequest, GenerateResult, GenerationTask, GenerationTaskSum
 
 export type GenerationTaskListener = (task: GenerationTask) => void
 
+/**
+ * Cap on retained *terminal* tasks.
+ *
+ * The queue is host-resident and lives as long as the process, and a finished
+ * image task keeps its full `result` — the base64 image payload — so an
+ * unbounded `tasks` array pins every image generated in the session, forever.
+ * Only terminal entries are ever evicted: `queued`/`running` tasks ARE the live
+ * queue and are never touched. The newest entries are the ones kept, because
+ * the panel's task list, `get(id)` and `retry(id)` all look up recent work.
+ */
+const MAX_TERMINAL_TASKS = 200
+
 export class GenerationTaskQueue {
   private readonly tasks: GenerationTask[] = []
   private readonly controllers = new Map<string, AbortController>()
@@ -58,6 +70,7 @@ export class GenerationTaskQueue {
     task.finishedAt = Date.now()
     this.controllers.get(id)?.abort()
     this.publish(task)
+    this.trimTerminal()
     this.drain()
     return this.snapshot(task)
   }
@@ -82,6 +95,31 @@ export class GenerationTaskQueue {
     }
   }
 
+  /**
+   * Drop the oldest terminal tasks past the retention cap.
+   *
+   * Only terminal entries are eligible: a `queued`/`running` task is live
+   * queue state, and `summaries()`/`get()`/`retry()` all expect to find it.
+   * `tasks` is newest-first (every insert is an `unshift`), so the newest
+   * terminal entries sit ahead of the older ones and are the ones kept.
+   */
+  private trimTerminal(): void {
+    let seen = 0
+    for (let index = 0; index < this.tasks.length;) {
+      const task = this.tasks[index]
+      if (task.status === 'queued' || task.status === 'running') {
+        index += 1
+        continue
+      }
+      seen += 1
+      if (seen <= MAX_TERMINAL_TASKS) {
+        index += 1
+        continue
+      }
+      this.tasks.splice(index, 1)
+    }
+  }
+
   private async runTask(task: GenerationTask): Promise<void> {
     task.status = 'running'
     task.startedAt = Date.now()
@@ -95,6 +133,7 @@ export class GenerationTaskQueue {
         task.result = result
         task.finishedAt = Date.now()
         this.publish(task)
+        this.trimTerminal()
       }
     } catch (error) {
       if (this.tasks.find(item => item.id === task.id)?.status !== 'cancelled') {
@@ -102,6 +141,7 @@ export class GenerationTaskQueue {
         task.error = error instanceof Error ? error.message : String(error)
         task.finishedAt = Date.now()
         this.publish(task)
+        this.trimTerminal()
       }
     } finally {
       this.controllers.delete(task.id)

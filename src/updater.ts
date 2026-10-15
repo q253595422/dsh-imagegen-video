@@ -45,11 +45,24 @@ interface GitHubRelease {
 const ARCHIVE_NAME = 'q253595422-dsh-imagegen-video'
 
 /**
+ * GitHub names its auto-generated source archives `<repo>-<tag>.tar.gz`, and
+ * attaches them to a Release even when the maintainer uploaded nothing. They
+ * are never installable: a source tarball has no build output (`lib/` is
+ * produced by `pnpm build`) and `dsh plugin add` does not run `prepare` on a
+ * tarball, so installing one yields a plugin that cannot load. The tag makes
+ * them look "versioned" to the ranking below, so they have to be excluded by
+ * name rather than outranked. (GitHub's `.zip` variant never gets this far —
+ * the extension filter below only accepts `.tgz` / `.tar.gz`.)
+ */
+const SOURCE_ARCHIVE_NAME = /^dsh-imagegen-video-.+\.tar\.gz$/i
+
+/**
  * Pick the release asset to install from. Only archives are considered, and
- * only over HTTPS. Rank order: the package archive for this version, then any
- * archive carrying the version, then the rest; ties break by name so the host
- * never installs a different file just because GitHub listed assets in a
- * different order.
+ * only over HTTPS, and never a GitHub source archive. Rank order: the package
+ * archive for this version, then any archive carrying the version, then the
+ * rest; ties break by name so the host never installs a different file just
+ * because GitHub listed assets in a different order. Returns undefined when
+ * the release carries no installable archive at all.
  */
 function installableAssetUrl(assets: unknown, version: string): string | undefined {
   if (!Array.isArray(assets)) return undefined
@@ -60,6 +73,7 @@ function installableAssetUrl(assets: unknown, version: string): string | undefin
       const name = typeof record.name === 'string' ? record.name : ''
       const url = typeof record.browser_download_url === 'string' ? record.browser_download_url : ''
       if (!/\.(?:tgz|tar\.gz)$/.test(name) || !url.startsWith('https://')) return []
+      if (SOURCE_ARCHIVE_NAME.test(name)) return []
       const versioned = name.includes(version)
       const rank = versioned && name.includes(ARCHIVE_NAME) ? 0 : versioned ? 1 : 2
       return [{ rank, name, url }]

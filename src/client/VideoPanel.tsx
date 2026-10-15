@@ -47,10 +47,10 @@ function readFrame(file: File): Promise<FrameDraft> {
       return
     }
     const reader = new FileReader()
-    reader.onerror = () => { reject(new Error('读取图片失败')) }
+    reader.onerror = () => { reject(new Error(tt('image.readFailed'))) }
     reader.onload = () => {
       const result = typeof reader.result === 'string' ? reader.result : ''
-      if (result === '') { reject(new Error('读取图片失败')); return }
+      if (result === '') { reject(new Error(tt('image.readFailed'))); return }
       resolve({ dataUrl: result, name: file.name })
     }
     reader.readAsDataURL(file)

@@ -17,7 +17,7 @@ import { VIDEO_DURATIONS } from '../protocol.ts'
 // The stitch order is a SHARED rule: the host builds its ffmpeg concat list with
 // the same function, so the numbers on the badges are the order of the file.
 import { orderIdsByPosition } from '../clip-order.ts'
-import type { ImageGenApi } from './api.ts'
+import { ImageGenApiError, type ImageGenApi } from './api.ts'
 import { errorMessage, tt } from './helpers.ts'
 import type { ImageGenKey } from './locales.ts'
 import { autoRemoveBackground, canvasToDataUrl, compositeAnnotatedResult, containRect, cropRaster, drawAnnotation, loadRaster, rectBetween, transparencyRatio } from './image-ops.ts'
@@ -213,7 +213,7 @@ function readImageSize(src: string): Promise<{ width: number; height: number }> 
   return new Promise((resolve, reject) => {
     const image = new Image()
     image.onload = () => resolve({ width: image.naturalWidth || 1, height: image.naturalHeight || 1 })
-    image.onerror = () => reject(new Error('无法读取图片尺寸'))
+    image.onerror = () => reject(new Error(tt('image.sizeReadFailed')))
     image.src = src
   })
 }
@@ -221,12 +221,12 @@ function readImageSize(src: string): Promise<{ width: number; height: number }> 
 async function assetToDataUrl(asset: CanvasAssetRef): Promise<string> {
   if (asset.url.startsWith('data:')) return asset.url
   const response = await fetch(asset.url)
-  if (!response.ok) throw new Error('读取画布图片失败')
+  if (!response.ok) throw new Error(tt('image.canvasReadFailed'))
   const blob = await response.blob()
   return await new Promise((resolve, reject) => {
     const reader = new FileReader()
     reader.onload = () => resolve(String(reader.result))
-    reader.onerror = () => reject(new Error('读取画布图片失败'))
+    reader.onerror = () => reject(new Error(tt('image.canvasReadFailed')))
     reader.readAsDataURL(blob)
   })
 }
@@ -1310,6 +1310,11 @@ export function CanvasWorkspace(props: CanvasWorkspaceProps): React.JSX.Element 
    *  overlay rather than reusing the file one: the file overlay resolves an
    *  asset through the canvas store, which a clip deliberately does not have. */
   const [videoPreviewNodeId, setVideoPreviewNodeId] = useState<string | null>(null)
+  /** Video nodes whose clip the browser refused to load. The canvas stores a
+   *  served URL, not bytes, so clearing the video history (or evicting past
+   *  VIDEO_HISTORY_MAX) deletes the file under a node that still points at it.
+   *  Without this the node renders as a dead player with no explanation. */
+  const [brokenVideoIds, setBrokenVideoIds] = useState<Set<string>>(() => new Set())
   const [skillMenu, setSkillMenu] = useState<{ screen: Point; nodeId: string } | null>(null)
   const [skillCatalog, setSkillCatalog] = useState<{ skills: CanvasSkillDescriptor[]; installed: string[]; reason?: string } | null>(null)
   const [skillCatalogLoading, setSkillCatalogLoading] = useState(false)
@@ -1735,6 +1740,14 @@ export function CanvasWorkspace(props: CanvasWorkspaceProps): React.JSX.Element 
       }
     })
     setSelectedIds(previous => {
+      if (!previous.has(nodeId)) return previous
+      const next = new Set(previous)
+      next.delete(nodeId)
+      return next
+    })
+    // Drop the node's dead-clip mark with it, so an undo does not restore a
+    // node that still claims its clip is missing.
+    setBrokenVideoIds(previous => {
       if (!previous.has(nodeId)) return previous
       const next = new Set(previous)
       next.delete(nodeId)
@@ -3411,8 +3424,9 @@ export function CanvasWorkspace(props: CanvasWorkspaceProps): React.JSX.Element 
         } catch (caught) {
           // Another window saved the same canvas meanwhile: rebase on the
           // server revision and retry once so concurrent editing self-heals.
-          const message = caught instanceof Error ? caught.message : String(caught)
-          if (!message.includes('其他窗口')) throw caught
+          // The conflict is recognised by the host's stable wire code, never by
+          // matching the message: that copy is translated and may be reworded.
+          if (!(caught instanceof ImageGenApiError) || caught.code !== 'canvas-conflict') throw caught
           const server = await api.canvasRead(document.id)
           return await api.canvasSave(document, server.revision)
         }
@@ -3627,7 +3641,7 @@ export function CanvasWorkspace(props: CanvasWorkspaceProps): React.JSX.Element 
       if (files.length > 0) {
         event.preventDefault()
         void Promise.all(files.map(async file => {
-          const dataUrl = await new Promise<string>((resolve, reject) => { const reader = new FileReader(); reader.onload = () => resolve(String(reader.result)); reader.onerror = () => reject(new Error('读取图片失败')); reader.readAsDataURL(file) })
+          const dataUrl = await new Promise<string>((resolve, reject) => { const reader = new FileReader(); reader.onload = () => resolve(String(reader.result)); reader.onerror = () => reject(new Error(tt('image.readFailed'))); reader.readAsDataURL(file) })
           const dimensions = await readImageSize(dataUrl)
           return api.canvasUpload(dataUrl, dimensions.width, dimensions.height, { origin: 'upload', originId: file.name })
         })).then(assets => addAssets(assets, canvasCenter())).catch(caught => setError(caught instanceof Error ? caught.message : String(caught)))
@@ -3946,7 +3960,7 @@ export function CanvasWorkspace(props: CanvasWorkspaceProps): React.JSX.Element 
     const others = dropped.filter(file => !file.type.startsWith('image/'))
     if (images.length > 0) {
       void Promise.all(images.map(async file => {
-        const dataUrl = await new Promise<string>((resolve, reject) => { const reader = new FileReader(); reader.onload = () => resolve(String(reader.result)); reader.onerror = () => reject(new Error('读取图片失败')); reader.readAsDataURL(file) })
+        const dataUrl = await new Promise<string>((resolve, reject) => { const reader = new FileReader(); reader.onload = () => resolve(String(reader.result)); reader.onerror = () => reject(new Error(tt('image.readFailed'))); reader.readAsDataURL(file) })
         const dimensions = await readImageSize(dataUrl)
         return api.canvasUpload(dataUrl, dimensions.width, dimensions.height, { origin: 'upload', originId: file.name })
       })).then(assets => addAssets(assets, world)).catch(caught => setError(errorMessage(caught)))
@@ -4058,7 +4072,7 @@ export function CanvasWorkspace(props: CanvasWorkspaceProps): React.JSX.Element 
 
   const uploadBackgroundImage = useCallback(async (file: File): Promise<void> => {
     try {
-      const dataUrl = await new Promise<string>((resolve, reject) => { const reader = new FileReader(); reader.onload = () => resolve(String(reader.result)); reader.onerror = () => reject(new Error('读取图片失败')); reader.readAsDataURL(file) })
+      const dataUrl = await new Promise<string>((resolve, reject) => { const reader = new FileReader(); reader.onload = () => resolve(String(reader.result)); reader.onerror = () => reject(new Error(tt('image.readFailed'))); reader.readAsDataURL(file) })
       const dimensions = await readImageSize(dataUrl)
       const asset = await api.canvasUpload(dataUrl, dimensions.width, dimensions.height, { origin: 'upload', originId: 'canvas-background' })
       mutate(previous => ({ ...previous, background: 'image', backgroundImage: asset.url }))
@@ -4256,16 +4270,32 @@ export function CanvasWorkspace(props: CanvasWorkspaceProps): React.JSX.Element 
         : isVideo
         ? <div className={css.fileBody} data-video-body="">
             {hasVideo
-              ? <video
-                  className={css.fileVideo}
-                  controls
-                  preload="metadata"
-                  // The clip is served from the video store with Range support,
-                  // so pointing the element straight at that route lets the user
-                  // seek without any asset copy inside the canvas.
-                  src={video.url}
-                  onPointerDown={event => event.stopPropagation()}
-                />
+              ? brokenVideoIds.has(node.id)
+                ? <div className={css.nodeStateError} data-video-missing="">
+                    <span>{tt('canvas.videoMissing')}</span>
+                    <span>{tt('canvas.videoMissingHint')}</span>
+                    <button
+                      type="button"
+                      onClick={() => setBrokenVideoIds(previous => {
+                        if (!previous.has(node.id)) return previous
+                        const next = new Set(previous)
+                        next.delete(node.id)
+                        return next
+                      })}
+                    >{tt('canvas.videoReload')}</button>
+                    <button type="button" onClick={() => deleteNode(node.id)}>{tt('canvas.delete')}</button>
+                  </div>
+                : <video
+                    className={css.fileVideo}
+                    controls
+                    preload="metadata"
+                    // The clip is served from the video store with Range support,
+                    // so pointing the element straight at that route lets the user
+                    // seek without any asset copy inside the canvas.
+                    src={video.url}
+                    onPointerDown={event => event.stopPropagation()}
+                    onError={() => setBrokenVideoIds(previous => previous.has(node.id) ? previous : new Set(previous).add(node.id))}
+                  />
               : isGenerating || metadata.status === 'idle'
                 ? <div className={css.nodeState} data-video-generating=""><span className={css.nodeSpinner} aria-hidden="true" /><span>{tt('canvas.videoGeneratingNode')}</span></div>
                 : isError
@@ -5028,7 +5058,7 @@ export function CanvasWorkspace(props: CanvasWorkspaceProps): React.JSX.Element 
         if (files.length === 0) return
         const world = canvasCenter()
         void Promise.all(files.map(async file => {
-          const dataUrl = await new Promise<string>((resolve, reject) => { const reader = new FileReader(); reader.onload = () => resolve(String(reader.result)); reader.onerror = () => reject(new Error('读取图片失败')); reader.readAsDataURL(file) })
+          const dataUrl = await new Promise<string>((resolve, reject) => { const reader = new FileReader(); reader.onload = () => resolve(String(reader.result)); reader.onerror = () => reject(new Error(tt('image.readFailed'))); reader.readAsDataURL(file) })
           const dimensions = await readImageSize(dataUrl)
           return api.canvasUpload(dataUrl, dimensions.width, dimensions.height, { origin: 'upload', originId: file.name })
         })).then(assets => {
@@ -5526,7 +5556,7 @@ function ImagePicker(props: {
   const uploadFiles = (files: File[]): void => {
     setBusy(true)
     void Promise.all(files.map(async file => {
-      const dataUrl = await new Promise<string>((resolve, reject) => { const reader = new FileReader(); reader.onload = () => resolve(String(reader.result)); reader.onerror = () => reject(new Error('读取图片失败')); reader.readAsDataURL(file) })
+      const dataUrl = await new Promise<string>((resolve, reject) => { const reader = new FileReader(); reader.onload = () => resolve(String(reader.result)); reader.onerror = () => reject(new Error(tt('image.readFailed'))); reader.readAsDataURL(file) })
       const sizeOf = await readImageSize(dataUrl)
       return api.canvasUpload(dataUrl, sizeOf.width, sizeOf.height, { origin: 'upload', originId: file.name })
     })).then(assets => { onAssets(assets) }).catch(() => {}).finally(() => setBusy(false))

@@ -994,14 +994,54 @@ export class SkillRunner {
     inputs: RunInput[],
     request: CanvasSkillRunRequest,
   ): Promise<CanvasSkillOutput> {
+    const runRoot = this.options.runRoot().trim() === '' ? path.join(this.options.dataRoot(), 'canvas', 'runs') : this.options.runRoot().trim()
+    const runDir = path.join(runRoot, request.canvasId, task.id)
+    // The run directory is scratch space for one run: inputs are copied in and
+    // the agent writes its products there, which can be tens of MiB per run. It
+    // is deleted as soon as the run reaches a terminal state — successful,
+    // failed or cancelled — because by then the bytes are no longer needed:
+    // `collectHeavyOutput` has already read every produced file into the canvas
+    // asset store (`canvas.putFile`) before it returns, so nothing downstream
+    // holds a path into `runDir`. Without this, running the same canvas again
+    // and again accumulates dead directories forever.
+    try {
+      return await this.runHeavyIn(runDir, task, skill, inputs, request)
+    } finally {
+      await this.discardRunDir(runDir)
+    }
+  }
+
+  /**
+   * Delete a finished run's scratch directory.
+   *
+   * Cleanup is strictly best effort: a failure here (a locked file, a
+   * permission problem, a directory the agent removed itself) must never change
+   * the outcome of the run that just finished, so every error is swallowed and
+   * the worst case is a leftover directory the next sweep can ignore.
+   */
+  private async discardRunDir(runDir: string): Promise<void> {
+    try {
+      await fs.rm(runDir, { recursive: true, force: true })
+    } catch {
+      // Best effort: leftover scratch space is not a run failure.
+    }
+  }
+
+  /** The heavy tier's work, with the run directory handed in by its caller so
+   *  one place owns the directory's whole lifetime (create and delete). */
+  private async runHeavyIn(
+    runDir: string,
+    task: CanvasSkillTask,
+    skill: CanvasSkillDescriptor,
+    inputs: RunInput[],
+    request: CanvasSkillRunRequest,
+  ): Promise<CanvasSkillOutput> {
     const t = this.translate(task.language)
     const agents = this.backend.agents
     if (agents === undefined || !agents.available()) throw new Error(t('canvas.skills.needAgent'))
     const canvas = this.backend.canvas
     const document = await canvas.read(request.canvasId)
     const target = inputs.find(input => request.nodeIds.includes(input.node.id)) ?? inputs[0]!
-    const runRoot = this.options.runRoot().trim() === '' ? path.join(this.options.dataRoot(), 'canvas', 'runs') : this.options.runRoot().trim()
-    const runDir = path.join(runRoot, request.canvasId, task.id)
     const inputDir = path.join(runDir, 'input')
     const outputDir = path.join(runDir, 'output')
     await fs.mkdir(inputDir, { recursive: true })

@@ -14,8 +14,8 @@ body:
     id: plugin_version
     attributes:
       label: 插件版本
-      description: 例如 `1.0.0`（面板标题栏或插件目录下的 `package.json` 里可以查看）
-      placeholder: "1.0.0"
+      description: 例如 `1.7.1`（面板标题栏或插件目录下的 `package.json` 里可以查看）
+      placeholder: "1.7.1"
     validations:
       required: true
 
@@ -26,7 +26,6 @@ body:
       description: 你是如何安装这个插件的？
       options:
         - GitHub Releases tarball（dsh plugin --profile web add <tgz>）
-        - 源码本地开发（link）
         - 源码本地开发（link）
         - 其他 / 不确定
     validations:

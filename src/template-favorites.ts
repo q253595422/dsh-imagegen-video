@@ -9,12 +9,17 @@
  */
 
 import { promises as fs } from 'node:fs'
-import { homedir } from 'node:os'
 import path from 'node:path'
+import { imageDataRoot } from './image-storage-path.ts'
 import { isTemplateSourceId, type TemplateCase, type TemplateFavorite } from './protocol.ts'
 
-const DATA_DIR = path.join(homedir(), '.dsh', 'dsh-imagegen')
-const FAVORITES_PATH = path.join(DATA_DIR, 'templates', 'favorites.json')
+/**
+ * Resolved lazily on every use: the host calls `setImageDataRoot()` while
+ * resolving the plugin, after this module is evaluated, so a module-level
+ * constant would keep pointing at the default `~/.dsh/dsh-imagegen` even when
+ * the profile stores its data elsewhere.
+ */
+function favoritesPath(): string { return path.join(imageDataRoot(), 'templates', 'favorites.json') }
 
 /** Refuse to grow the file without bound; the user curates this list. */
 const MAX_FAVORITES = 1000
@@ -69,7 +74,7 @@ function normalizeFavorite(raw: unknown): TemplateFavorite | undefined {
 export async function listTemplateFavorites(): Promise<TemplateFavorite[]> {
   if (memo !== undefined) return memo
   try {
-    const parsed: unknown = JSON.parse(await fs.readFile(FAVORITES_PATH, 'utf8'))
+    const parsed: unknown = JSON.parse(await fs.readFile(favoritesPath(), 'utf8'))
     memo = Array.isArray(parsed)
       ? parsed.map(normalizeFavorite).filter((entry): entry is TemplateFavorite => entry !== undefined)
       : []
@@ -82,10 +87,11 @@ export async function listTemplateFavorites(): Promise<TemplateFavorite[]> {
 /** Persist the list atomically and update the memo. */
 async function writeFavorites(entries: TemplateFavorite[]): Promise<void> {
   memo = entries
-  await fs.mkdir(path.dirname(FAVORITES_PATH), { recursive: true })
-  const tmp = `${FAVORITES_PATH}.tmp-${process.pid}`
+  const file = favoritesPath()
+  await fs.mkdir(path.dirname(file), { recursive: true })
+  const tmp = `${file}.tmp-${process.pid}`
   await fs.writeFile(tmp, JSON.stringify(entries, null, 2), 'utf8')
-  await fs.rename(tmp, FAVORITES_PATH)
+  await fs.rename(tmp, file)
 }
 
 /** Star one template. Re-starring refreshes the snapshot and is idempotent. */

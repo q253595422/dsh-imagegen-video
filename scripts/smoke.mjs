@@ -20,14 +20,37 @@ import { join } from 'node:path'
 const root = new URL('../', import.meta.url)
 const results = []
 const packageJson = JSON.parse(readFileSync(new URL('package.json', root), 'utf8'))
-/** Run one check; async-aware and sequential so nothing races the servers. */
-async function check(name, fn) {
+/**
+ * Run one check under a hard per-check deadline; async-aware and sequential so
+ * nothing races the servers.
+ *
+ * WHY the deadline: a check that never settles — a mock upstream that accepts
+ * the socket and never answers, a React effect that stops flushing under jsdom
+ * — would otherwise hang the whole suite with no line naming it, so the run
+ * looks like a job that never finished instead of a failing check. The sibling
+ * suites (smoke-video, smoke-canvas-video, smoke-video-picker, smoke-compose)
+ * all bound each check the same way; this one used to be the exception.
+ *
+ * The deadline only decides when a check is DECLARED failed — it never changes
+ * what any check asserts.
+ */
+async function check(name, fn, timeoutMs = 60_000) {
+  // Progress goes to stderr so a hung check is identifiable from the log alone.
+  process.stderr.write(`... ${name}\n`)
+  let timer
   try {
-    await fn()
+    await Promise.race([
+      fn(),
+      new Promise((_resolve, reject) => {
+        timer = setTimeout(() => reject(new Error(`timed out after ${timeoutMs}ms`)), timeoutMs)
+      }),
+    ])
     results.push(`PASS  ${name}`)
   } catch (error) {
     results.push(`FAIL  ${name}: ${error.message}`)
     process.exitCode = 1
+  } finally {
+    clearTimeout(timer)
   }
 }
 
@@ -1824,7 +1847,19 @@ await check('C6c2 bundled community template snapshots expose stable ids and ima
 await check('C6d data-folder route resolves the host directory (no spawn in tests)', async () => {
   const { body } = await post('/api/dsh-imagegen/data-folder/open', { open: false })
   assert.equal(body.ok, true)
-  assert.ok(String(body.path).includes('.dsh'), 'resolved path points at the DSH data dir')
+  // Assert the property that actually matters: the route resolves the SAME data
+  // root the stores use. This suite points DSH_HOME at a temp directory, so the
+  // old `includes('.dsh')` assertion only passed because the route hardcoded
+  // `~/.dsh/dsh-imagegen` — it certified the bug, not the behaviour. Anything
+  // that pins the literal home path would pass here while ignoring DSH_HOME and
+  // a custom localStoragePath, which is exactly the defect being guarded.
+  const dataRoot = process.env.DSH_HOME
+  assert.ok(dataRoot !== undefined && dataRoot !== '', 'this suite must set DSH_HOME')
+  assert.ok(
+    String(body.path).startsWith(dataRoot),
+    `resolved path stays under DSH_HOME (got ${String(body.path)}, DSH_HOME=${dataRoot})`,
+  )
+  assert.ok(String(body.path).endsWith('dsh-imagegen'), 'resolved path is the dsh-imagegen data dir')
 })
 
 await check('C6e storage test route signs and uploads a probe object', async () => {

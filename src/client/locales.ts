@@ -1000,6 +1000,19 @@ export const zh = {
   'video.addToCanvas': '加入画布',
   'video.copyPrompt': '复制描述',
   'video.useLastFrame': '用尾帧续写',
+  // inline image tool view, media read failures, chat resizer, dead video clips
+  'toolview.result': '图片结果',
+  'toolview.loadFailed': '无法读取图片附件（HTTP {status}）。',
+  'toolview.openOriginal': '打开原图',
+  'toolview.imageAlt': '生成图片',
+  'toolview.loading': '正在加载图片…',
+  'chat.resizeHint': '调整对话区域宽度',
+  'image.readFailed': '读取图片失败',
+  'image.sizeReadFailed': '无法读取图片尺寸',
+  'image.canvasReadFailed': '读取画布图片失败',
+  'canvas.videoMissing': '该片段已不存在',
+  'canvas.videoMissingHint': '视频历史被清空或超出上限后，片段文件会被删除。',
+  'canvas.videoReload': '重试加载',
 } as const
 
 export const en: Record<keyof typeof zh, string> = {
@@ -1986,6 +1999,18 @@ export const en: Record<keyof typeof zh, string> = {
   'video.addToCanvas': 'Add to canvas',
   'video.copyPrompt': 'Copy prompt',
   'video.useLastFrame': 'Continue from last frame',
+  'toolview.result': 'Image result',
+  'toolview.loadFailed': 'Could not read the image attachment (HTTP {status}).',
+  'toolview.openOriginal': 'Open the original image',
+  'toolview.imageAlt': 'Generated image',
+  'toolview.loading': 'Loading image…',
+  'chat.resizeHint': 'Resize the conversation pane',
+  'image.readFailed': 'Could not read the image',
+  'image.sizeReadFailed': 'Could not read the image size',
+  'image.canvasReadFailed': 'Could not read the canvas image',
+  'canvas.videoMissing': 'This clip no longer exists',
+  'canvas.videoMissingHint': 'The clip file is deleted once the video history is cleared or exceeds its limit.',
+  'canvas.videoReload': 'Retry loading',
 }
 
 /** Locale key union. */
@@ -2974,4 +2999,16 @@ export const ru: Record<keyof typeof zh, string> = {
   'video.addToCanvas': 'На холст',
   'video.copyPrompt': 'Копировать описание',
   'video.useLastFrame': 'Продолжить с последнего кадра',
+  'toolview.result': 'Результат изображения',
+  'toolview.loadFailed': 'Не удалось прочитать вложение с изображением (HTTP {status}).',
+  'toolview.openOriginal': 'Открыть оригинал',
+  'toolview.imageAlt': 'Сгенерированное изображение',
+  'toolview.loading': 'Загрузка изображения…',
+  'chat.resizeHint': 'Изменить ширину панели диалога',
+  'image.readFailed': 'Не удалось прочитать изображение',
+  'image.sizeReadFailed': 'Не удалось определить размер изображения',
+  'image.canvasReadFailed': 'Не удалось прочитать изображение холста',
+  'canvas.videoMissing': 'Этот фрагмент больше не существует',
+  'canvas.videoMissingHint': 'Файл фрагмента удаляется после очистки истории видео или превышения её лимита.',
+  'canvas.videoReload': 'Повторить загрузку',
 }

@@ -8,6 +8,8 @@ import type {} from '@deepseek-ai/dsh-client-ui-renderer/client'
 import { useEffect, useMemo, useState } from 'react'
 import { AGENT_IMAGE_API } from '../protocol.ts'
 import { CHAT_IMAGE_EVENT } from './conversation-sync.ts'
+import { tt } from './helpers.ts'
+import { useImageGenLanguageTick } from './use-language.ts'
 import css from './image-toolview.module.css'
 
 /** Owner props supplied by the host's keyed tool-call slot. */
@@ -49,7 +51,7 @@ function textOf(block: ToolCallBlock): string {
 }
 
 function resultInfo(block: ToolCallBlock): { status: string; message: string } {
-  if (!isSettled(block)) return { status: 'running', message: '正在生成图片…' }
+  if (!isSettled(block)) return { status: 'running', message: tt('canvas.generating') }
   const text = textOf(block)
   try {
     const parsed = JSON.parse(text) as { status?: unknown; message?: unknown }
@@ -63,10 +65,10 @@ function resultInfo(block: ToolCallBlock): { status: string; message: string } {
 }
 
 function statusLabel(status: string): string {
-  if (status === 'running' || status === 'queued') return '生成中'
-  if (status === 'failed') return '生成失败'
-  if (status === 'cancelled') return '已取消'
-  return '图片结果'
+  if (status === 'running' || status === 'queued') return tt('tasks.running')
+  if (status === 'failed') return tt('tasks.failed')
+  if (status === 'cancelled') return tt('tasks.cancelled')
+  return tt('toolview.result')
 }
 
 function useAttachmentImages(
@@ -126,12 +128,15 @@ export function registerImageToolviews(ctx: ClientContext): void {
       height: String(ref.height),
     })
     const response = await fetch(`${AGENT_IMAGE_API}?${query.toString()}`)
-    if (!response.ok) throw new Error(`无法读取图片附件（HTTP ${response.status}）。`)
+    if (!response.ok) throw new Error(tt('toolview.loadFailed', { status: response.status }))
     const blob = await response.blob()
     return URL.createObjectURL(blob)
   }
 
   const ImageToolView = (props: ImageToolViewProps): React.JSX.Element => {
+    // Tool results are not re-rendered by the panel, so subscribe to the locale
+    // tick here or a DSH language switch leaves this block in the old language.
+    useImageGenLanguageTick()
     const refs = useMemo(() => imageRefsOf(props.block), [props.block])
     const { status, message } = resultInfo(props.block)
     const { images, error } = useAttachmentImages(props.sessionId, refs, load)
@@ -160,12 +165,12 @@ export function registerImageToolviews(ctx: ClientContext): void {
           key={String(image.ref.attachmentId)}
           rel="noreferrer"
           target="_blank"
-          title="打开原图"
+          title={tt('toolview.openOriginal')}
         >
-          <img className={css.image} src={image.src} alt={image.ref.name ?? '生成图片'} />
+          <img className={css.image} src={image.src} alt={image.ref.name ?? tt('toolview.imageAlt')} />
         </a>)}
       </div>}
-      {refs.length > 0 && images.length === 0 && error === null && <p className={css.loading}>正在加载图片…</p>}
+      {refs.length > 0 && images.length === 0 && error === null && <p className={css.loading}>{tt('toolview.loading')}</p>}
       {error !== null && <p className={css.error}>{error}</p>}
     </section>
   }

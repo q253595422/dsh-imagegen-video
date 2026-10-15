@@ -24,7 +24,7 @@
  */
 
 import { createServer } from 'node:http'
-import { existsSync, mkdirSync, readFileSync, accessSync, constants, globSync } from 'node:fs'
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, accessSync, constants, globSync } from 'node:fs'
 import { spawn, spawnSync } from 'node:child_process'
 import { createServer as createProbeServer } from 'node:net'
 import { homedir, tmpdir } from 'node:os'
@@ -39,6 +39,9 @@ import assert from 'node:assert/strict'
 function findFfmpeg () {
   const explicit = process.env.FFMPEG
   const usable = candidate => {
+    // accessSync is the probe: it throws for a missing or non-executable path,
+    // and "not usable" is a normal answer here (we fall through to the next
+    // candidate), so the throw is swallowed deliberately rather than reported.
     try { accessSync(candidate, constants.X_OK); return true } catch { return false }
   }
   if (explicit !== undefined && explicit !== '') return usable(explicit) ? explicit : null
@@ -60,6 +63,11 @@ function findChrome () {
   const explicit = process.argv[2] ?? process.env.CHROME_HEADLESS_SHELL
   if (explicit !== undefined && explicit !== '') return existsSync(explicit) ? explicit : null
   const candidates = [
+    // Both spellings of the temp root: on macOS `os.tmpdir()` is the per-user
+    // /var/folders/... directory, while the tooling that downloads a bundled
+    // shell usually unpacks it under the literal /tmp. Checking only one of
+    // them silently misses the shell on one of the two platforms.
+    ...globSync('/tmp/chromium/chrome-headless-shell/*/*/chrome-headless-shell').sort().reverse(),
     ...globSync(`${tmpdir()}/chromium/chrome-headless-shell/*/*/chrome-headless-shell`).sort().reverse(),
     '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome',
     '/Applications/Chromium.app/Contents/MacOS/Chromium',
@@ -180,20 +188,40 @@ window.grab = async (url) => {
 </script></body></html>`
 const PAGE = pageHtml
 
+// A FRESH profile directory per run. A fixed path is what made this script fail
+// the second time it ran: the leftover profile (and its stale
+// `DevToolsActivePort`) is reused by the new Chrome, which then never listens on
+// the port we asked for, and the failure surfaces only as "CDP did not come up"
+// with no hint that a two-day-old directory was the cause.
+const PROFILE_DIR = mkdtempSync(path.join(tmpdir(), 'framegrab-profile-'))
+
 const browser = spawn(CHROME, [
   '--headless', '--disable-gpu', '--no-sandbox', '--remote-debugging-port=' + String(cdpPort),
-  `--user-data-dir=${WORK_DIR}/profile`, 'about:blank',
-], { stdio: 'ignore' })
+  `--user-data-dir=${PROFILE_DIR}`, 'about:blank',
+], { stdio: ['ignore', 'ignore', 'pipe'] })
+// Keep Chrome's own stderr so a launch failure can be reported instead of
+// guessed at. Capped: a healthy browser still writes a lot of noise.
+let browserLog = ''
+browser.stderr?.on('data', (chunk) => {
+  if (browserLog.length < 4_000) browserLog += String(chunk)
+})
+
+const cleanupProfile = () => { try { rmSync(PROFILE_DIR, { recursive: true, force: true }) } catch {} }
 
 const waitForCdp = async () => {
   for (let i = 0; i < 60; i++) {
+    // A browser that already exited will never open the port; waiting the full
+    // 15s only delays the diagnosis.
+    if (browser.exitCode !== null) break
     try {
       const r = await fetch(`http://127.0.0.1:${cdpPort}/json/version`)
       if (r.ok) return await r.json()
     } catch {}
     await new Promise(r => setTimeout(r, 250))
   }
-  throw new Error('CDP did not come up')
+  browser.kill()
+  cleanupProfile()
+  throw new Error(`CDP did not come up (chrome exitCode=${String(browser.exitCode)})\n${browserLog.trim() || '(no browser output)'}`)
 }
 const version = await waitForCdp()
 
@@ -218,6 +246,7 @@ const result = await send('Runtime.evaluate', {
 })
 ws.close()
 browser.kill()
+cleanupProfile()
 server.close()
 
 // Runtime.evaluate nests its payload: { id, result: { result: { value } } }.

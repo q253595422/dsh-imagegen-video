@@ -10,6 +10,102 @@ detail is in `git log 9305f9f..HEAD`.
 
 ## Releases
 
+### 1.7.1 — the two fixes 1.7.0 shipped without, plus release hygiene
+
+v1.7.0's release asset was uploaded before two fixes landed, and because the
+version constant was not bumped the in-app updater could never offer them
+(`updateAvailable` compares strictly greater). This release carries them, and
+closes the class of gaps that let a release go out with no automated check.
+
+**Fixes that were stranded on `main` after v1.7.0 was published**
+
+- **A transient status blip no longer fails a video render.** Polling retries
+  transient failures (5xx, 429, transport errors) within a bounded budget
+  instead of marking a multi-minute render failed, and gives up with the
+  provider's own message when the budget runs out.
+- **An unsatisfiable `Range` is answered with 416**, not a silent 200 carrying
+  the whole clip.
+
+**Resource bounds (host side)**
+
+- The image and video task queues keep only the newest terminal tasks (200 and
+  100) alongside every live one. A finished image task pins its base64 result,
+  so the previous unbounded array held every image generated in the session.
+- A heavy skill run's working directory is removed once the run reaches a
+  terminal state. Its outputs are already ingested into the canvas asset store
+  by then, which is what makes the deletion safe.
+- Deleting a canvas now sweeps assets nothing references any more. The sweep is
+  deliberately conservative — a page that fails to parse aborts it, so a bug
+  here can leave garbage but cannot delete a file in use. Both reference
+  sources are collected: `metadata.asset` and `backgroundImage`.
+
+**One data root**
+
+- The "open data folder" route, the template snapshot cache and the template
+  favorites all used to hardcode `~/.dsh/dsh-imagegen` while the history,
+  gallery, video and canvas stores honoured `DSH_HOME` and a configured
+  `localStoragePath`. With either set, the button opened the wrong directory
+  and the template data lived in a second tree. All four now resolve through
+  `imageDataRoot()`, lazily, so a path set after import is still honoured.
+
+**Network calls have ceilings**
+
+- Prompt enhancement and the `/models` discovery walk are bounded (60s/30s),
+  and the vision call behind layer split is bounded (120s). The caller's own
+  cancellation is combined with the timeout, not replaced by it.
+
+**Canvas UI**
+
+- A video node whose clip is gone (history cleared, or evicted by the 30-entry
+  cap) now says so, with a retry and a remove control, instead of rendering a
+  dead player with no explanation.
+- The canvas revision-conflict self-heal branches on the stable
+  `canvas-conflict` code instead of matching a translated message string.
+- Hardcoded Chinese copy in the tool view, the panel resize handle, the video
+  panel and the canvas moved into the locale dictionaries, so the English and
+  Russian UIs no longer show Chinese.
+
+**Release and verification**
+
+- `package.json` `files` no longer ships `docs/videos/` (37 MiB of demo
+  recordings no shipped document references) or the rest of `src/`; the
+  bundled prompt snapshots stay, because the runtime reads them relative to
+  `lib/`.
+- **CI** (`.github/workflows/ci.yml`): typecheck, build, the full suite with
+  ffmpeg installed, and an inspection of the packed archive that fails if the
+  tarball is missing the runtime files or has the demo recordings back in it.
+- `scripts/verify-frame-grab.mjs` is part of `pnpm test` now, and uses a fresh
+  browser profile per run — a fixed path made its second run fail with
+  "CDP did not come up" and no hint why.
+- `scripts/verify-video-layout.mjs` validates its fixture's class names against
+  the real component and stylesheet, so a renamed class fails the guard instead
+  of silently measuring markup the panel no longer renders.
+- `scripts/smoke.mjs` gained a per-check timeout, and its data-folder assertion
+  now checks the route follows `DSH_HOME` rather than the literal `.dsh` path —
+  the old assertion passed precisely because the route was hardcoded.
+- `scripts/smoke-compose.mjs` reports how many checks were skipped, so a
+  missing ffmpeg is visible instead of looking like a clean run.
+- The update installer refuses GitHub's auto-generated source archives
+  (`<repo>-<tag>.tar.gz`), which carry no build output and would install a
+  plugin that cannot load.
+
+**Docs and licensing**
+
+- `THIRD_PARTY_NOTICES.md` now credits every upstream the bundled snapshots
+  actually come from — including `freestylefly/awesome-gpt-image-2` (MIT, the
+  largest single source), which was missing entirely — and states which
+  snapshots pin a commit versus which reference a moving branch. It also flags
+  `songguoxs/gpt4o-image-prompts`, which declares **no licence** upstream and is
+  the source of six on-demand image URLs, as an open question rather than
+  quietly listing it as fine.
+- The compose and skill-config contracts were corrected against the code: a
+  type name that never existed (`ClipComposeResult` → `ClipStitchResult`), a
+  claim that `'compose'` appears as a video-panel mode tab (it does not — no
+  model catalog declares it), and a secret-masking claim that omitted the
+  four-character threshold in `mask()`.
+- The issue templates lost a duplicated install-method option and an
+  outdated version placeholder.
+
 ### 1.7.0 — first published release of the fork
 
 The fork's first published release. It ships as a **GitHub Release asset**

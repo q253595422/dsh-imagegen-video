@@ -22,9 +22,9 @@
 
 import { createHash } from 'node:crypto'
 import { promises as fs } from 'node:fs'
-import { homedir } from 'node:os'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
+import { imageDataRoot } from './image-storage-path.ts'
 import { DEFAULT_TEMPLATE_SOURCE_ID, TEMPLATE_SOURCES, type TemplateCase, type TemplateListResult, type TemplateRefreshResult, type TemplateSample } from './protocol.ts'
 
 /** Host-side fetch definition of one source (ids mirror TEMPLATE_SOURCES). */
@@ -118,12 +118,21 @@ const CATEGORY_ZH: Record<string, string> = {
   'Other Creative Uses': '其他创意用途',
 }
 
-const DATA_DIR = path.join(homedir(), '.dsh', 'dsh-imagegen')
-const REFRESHED_DIR = path.join(DATA_DIR, 'templates')
-const IMAGE_CACHE_ROOT = path.join(DATA_DIR, 'template-images')
+/**
+ * Data-root paths are resolved lazily, on every use.
+ *
+ * The host calls `setImageDataRoot()` while it resolves the plugin (honouring
+ * `DSH_HOME` and the profile's `localStoragePath`), which happens *after* this
+ * module is evaluated. A module-level constant would therefore capture the
+ * default `~/.dsh/dsh-imagegen` and then disagree with history, gallery, video
+ * and canvas — which read `imageDataRoot()` per call — about where the user's
+ * data lives.
+ */
+function refreshedDir(): string { return path.join(imageDataRoot(), 'templates') }
+function imageCacheRoot(): string { return path.join(imageDataRoot(), 'template-images') }
 /** Pre-1.6 single-source locations (vibeui fallbacks). */
-const LEGACY_SNAPSHOT_PATH = path.join(REFRESHED_DIR, 'cases.json')
-const LEGACY_IMAGE_DIR = IMAGE_CACHE_ROOT
+function legacySnapshotPath(): string { return path.join(refreshedDir(), 'cases.json') }
+function legacyImageDir(): string { return imageCacheRoot() }
 
 /** Budget for one upstream fetch (list refresh or one image). */
 const FETCH_TIMEOUT_MS = 60_000
@@ -244,8 +253,8 @@ export async function listTemplates(sourceId: string = DEFAULT_TEMPLATE_SOURCE_I
   if (def === undefined) throw new Error(`未知的模板库来源：${sourceId}`)
   const memo = memos.get(sourceId)
   if (memo !== undefined) return memo
-  const refreshed = await readSnapshotFile(path.join(REFRESHED_DIR, sourceId, 'cases.json'))
-    ?? (def.legacySnapshotPath !== undefined ? await readSnapshotFile(LEGACY_SNAPSHOT_PATH) : undefined)
+  const refreshed = await readSnapshotFile(path.join(refreshedDir(), sourceId, 'cases.json'))
+    ?? (def.legacySnapshotPath !== undefined ? await readSnapshotFile(legacySnapshotPath()) : undefined)
   if (refreshed !== undefined) {
     const result: TemplateListResult = { sourceId, ...refreshed, total: refreshed.cases.length, origin: 'refreshed' }
     memos.set(sourceId, result)
@@ -296,7 +305,7 @@ export async function refreshTemplates(sourceId: string = DEFAULT_TEMPLATE_SOURC
     totalCases: parsed.cases.length,
     cases: parsed.cases,
   }
-  const target = path.join(REFRESHED_DIR, sourceId, 'cases.json')
+  const target = path.join(refreshedDir(), sourceId, 'cases.json')
   await fs.mkdir(path.dirname(target), { recursive: true })
   const tmp = `${target}.tmp-${process.pid}`
   await fs.writeFile(tmp, JSON.stringify(snapshot), 'utf8')
@@ -474,7 +483,7 @@ export async function readTemplateImage(sourceId: string, file: string): Promise
   if (!isAllowedImageRef(def, file)) return undefined
   const list = await listTemplates(sourceId)
   if (!list.cases.some(entry => entry.image === file)) return undefined
-  const cacheDir = path.join(IMAGE_CACHE_ROOT, sourceId)
+  const cacheDir = path.join(imageCacheRoot(), sourceId)
   const cacheFile = cacheFileOf(file)
   try {
     const data = await fs.readFile(path.join(cacheDir, cacheFile))
@@ -483,7 +492,7 @@ export async function readTemplateImage(sourceId: string, file: string): Promise
   } catch { /* fall through to legacy cache / download */ }
   if (def.legacyImageDir !== undefined && IMAGE_FILE_PATTERN.test(file)) {
     try {
-      const data = await fs.readFile(path.join(LEGACY_IMAGE_DIR, file))
+      const data = await fs.readFile(path.join(legacyImageDir(), file))
       const mime = mimeOfFile(file) ?? sniffImageMime(data)
       if (mime !== undefined) return { data, mime }
     } catch { /* fall through to download */ }

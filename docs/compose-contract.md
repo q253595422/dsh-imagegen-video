@@ -332,7 +332,7 @@ export type VideoMode = 'text' | 'image' | 'keyframe' | 'reference' | 'compose'
 export type CanvasSkillTier = 'light' | 'heavy' | 'local'      // tier 已加第三档
 export type CanvasSkillDescriptor['output'] = 'text' | 'image' | 'file' | 'video' | 'nodes'
 
-export interface ClipComposeResult { bytes: Uint8Array; mime: string; duration?: number; width?: number; height?: number }
+export interface ClipStitchResult { bytes: Uint8Array; mime: string; duration?: number; width?: number; height?: number }
 
 export interface ClipComposer {
   available: () => boolean                  // false = 找不到 ffmpeg+ffprobe
@@ -342,7 +342,7 @@ export interface ClipComposer {
     sources: readonly string[]              // 本地路径，已按最终播放顺序排好
     signal?: AbortSignal
     onStage?: (stage: 'probe' | 'encode') => void
-  }) => Promise<ClipComposeResult>
+  }) => Promise<ClipStitchResult>
   publish: (input: {                       // 落库，返回可直接播放的 served ref
     id: string; bytes: Uint8Array; mime: string; duration?: number; prompt: string
   }) => Promise<{ url: string; mime: string; duration?: number }>
@@ -350,9 +350,15 @@ export interface ClipComposer {
 ```
 
 
-**`'compose'` 不是 provider mode**：`src/routes.ts:407` 的 mode 白名单会把未知值静默降级成
-`'text'`，且它会出现在生视频面板的模式页签里。**永远不要把它送到 `/video/generate`**。
-它的唯一用途是标注视频历史条目里「这条是宿主拼的」。
+**`'compose'` 不是 provider mode**：`src/routes.ts:427` 的 mode 白名单会把未知值静默降级成
+`'text'`。它**不会**出现在生视频面板的模式页签里 —— 页签来自
+`describeVideoModel(model).modes`（`src/client/VideoPanel.tsx:144-148`），而
+`src/video-model-catalog.ts` 的四个协议族分别声明
+`['text','image','keyframe','reference']`（agnes）、`['text','image']`（comemoe，t2v 为
+`['text']`）、`['text','image']`（openai-video）、`['text']`（unknown），没有一个含
+`'compose'`。**永远不要把它送到 `/video/generate`**。它的唯一用途是标注画布视频节点的
+来源（节点标签与底栏，`src/client/CanvasWorkspace.tsx:4195`、`:4366`，走动态 key
+`video.mode.${metadata.videoMode}`）。
 
 **`tier: 'local'` 不是 light/heavy**：不消费模型、不需要 agent。所有 `tier === 'heavy' ? … : …`
 的三元必须显式处理第三档（见第 6 节），否则 local 会静默走进 runLight。

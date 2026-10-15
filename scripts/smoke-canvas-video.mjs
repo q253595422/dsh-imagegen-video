@@ -1998,6 +1998,47 @@ await check('AC2 a clip added through the picker is composable, not just referen
   }
 })
 
+await check('E7 a video node whose clip is gone says so, and can be reloaded', async () => {
+  const { jsdomWindow, view, waitUntil, nodeById } = shared
+
+  // WHY this exists: a canvas video node stores only the served URL, never a
+  // byte copy (see docs/parity-contract.md §1.7). The video store keeps the
+  // newest 30 clips and DELETES the files of the ones it evicts, so a node can
+  // outlive its clip. Before this check the node simply rendered a dead player
+  // with no explanation. jsdom never fires a real media error, so the failure
+  // is delivered the way a browser delivers it: an `error` event on the
+  // element. That is the exact path CanvasWorkspace's onError handler takes.
+  const node = nodeById('node-clip-prompted')
+  const player = node.querySelector('[data-video-body] video')
+  assert.ok(player !== null, 'E7: the clip node renders a player to begin with')
+  assert.equal(
+    node.querySelector('[data-video-missing]'), null,
+    'E7: a healthy clip does NOT show the missing state',
+  )
+
+  player.dispatchEvent(new jsdomWindow.Event('error', { bubbles: false }))
+
+  assert.ok(
+    await waitUntil(() => nodeById('node-clip-prompted').querySelector('[data-video-missing]') !== null),
+    'E7: a failed load is reported, not left as a silent dead player',
+  )
+  const missing = nodeById('node-clip-prompted').querySelector('[data-video-missing]')
+  const buttons = [...missing.querySelectorAll('button')]
+  assert.equal(buttons.length, 2, 'E7: the missing state offers a reload and a remove')
+
+  // The reload control must actually clear the flag: if it only re-rendered the
+  // same state, the node would be permanently stuck on "clip is gone".
+  buttons[0].dispatchEvent(new jsdomWindow.MouseEvent('click', { bubbles: true, cancelable: true }))
+  assert.ok(
+    await waitUntil(() => nodeById('node-clip-prompted').querySelector('[data-video-missing]') === null),
+    'E7: reloading brings the player back instead of leaving the node stuck',
+  )
+  assert.ok(
+    nodeById('node-clip-prompted').querySelector('[data-video-body] video') !== null,
+    'E7: the player is rendered again after the reload',
+  )
+})
+
 for (const cleanup of cleanups.reverse()) await cleanup()
 
 console.log('GALLERY CHECKS OK')

@@ -560,8 +560,76 @@ export class CanvasStore {
       try { await fs.rm(this.pagePath(id), { force: true }) } catch { /* best effort */ }
       const projects = (await this.readIndex()).filter(item => item.id !== id)
       await this.writeIndex(projects)
+      // Only now, with the page gone and the index written, can the sweep see
+      // the true set of surviving references. It runs inside `serialize`, so no
+      // other mutation of this store can be interleaved with it.
+      await this.sweepAssets()
       return projects
     })
+  }
+
+  /**
+   * Delete asset files no surviving canvas page references.
+   *
+   * Assets are content-addressed and written once per upload/generation, and
+   * nothing used to remove them, so deleting a canvas left every byte of its
+   * images and files on disk forever.
+   *
+   * The sweep is deliberately conservative: anything it cannot read or parse
+   * aborts the whole pass instead of being treated as unreferenced. A parse
+   * failure here means an unreadable or half-written page, and guessing that
+   * its assets are free would silently destroy a canvas the user still has.
+   * Leaving garbage behind is recoverable; deleting a live asset is not.
+   */
+  private async sweepAssets(): Promise<void> {
+    let pageFiles: string[]
+    try {
+      pageFiles = (await fs.readdir(this.pagesDir(), { withFileTypes: true }))
+        .filter(entry => entry.isFile() && entry.name.endsWith('.json'))
+        .map(entry => entry.name)
+    } catch {
+      return
+    }
+    const referenced = new Set<string>()
+    for (const name of pageFiles) {
+      // A page that cannot be read or no longer coerces to a document makes the
+      // reference set unknowable, so this pass gives up entirely.
+      const raw = await readJson(path.join(this.pagesDir(), name))
+      if (raw === undefined) return
+      const document = coerceDocument(raw)
+      if (document === undefined) return
+      for (const node of document.nodes) {
+        const asset = (node.metadata as { asset?: unknown } | undefined)?.asset
+        if (isAssetRef(asset) && asset.assetId !== '') referenced.add(asset.assetId)
+      }
+      // The canvas background image is a *URL*, not an asset id, so it has to be
+      // read back out of the served path; missing this would delete the
+      // background of every canvas that has one.
+      const background = document.backgroundImage
+      if (typeof background === 'string' && background !== '') {
+        const last = background.split('/').pop() ?? ''
+        const file = decodeURIComponent(last.split('?')[0] ?? '')
+        if (ASSET_FILE_NAME.test(file)) referenced.add(file)
+      }
+    }
+    let entries: string[]
+    try {
+      entries = (await fs.readdir(this.assetsDir(), { withFileTypes: true }))
+        .filter(entry => entry.isFile())
+        .map(entry => entry.name)
+    } catch {
+      return
+    }
+    for (const file of entries) {
+      // Only this store's own content-addressed names are ever touched; an
+      // unrelated file someone parked in the assets directory is left alone.
+      if (!ASSET_FILE_NAME.test(file) || referenced.has(file)) continue
+      try {
+        await fs.rm(path.join(this.assetsDir(), file), { force: true })
+      } catch {
+        // A failed delete is retried by the next sweep; it never fails the call.
+      }
+    }
   }
 
   /** Store raw bytes under their content hash and return the node-facing ref. */

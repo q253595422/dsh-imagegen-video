@@ -1,0 +1,76 @@
+name: CI
+
+# Every gate this repository has used so far ran only when a human typed the
+# command. That is how a release shipped with the version constant left at the
+# previous number, how the docs drifted from the code, and how a published
+# archive went out with no build of the commit it claimed to be. This workflow
+# is the minimum that makes those failures visible without a person remembering.
+
+on:
+  push:
+    branches: ['**']
+  pull_request:
+  workflow_dispatch:
+
+# A newer push to the same ref makes the older run's result irrelevant.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 12.11.2
+
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - run: pnpm install --frozen-lockfile
+
+      - name: Typecheck
+        run: pnpm run typecheck
+
+      # The suites load the BUILT lib/, so the build has to happen first —
+      # `pnpm test` does it itself, but running it separately makes a build
+      # failure distinguishable from a test failure in the log.
+      - name: Build
+        run: pnpm run build
+
+      # ffmpeg is what the compose path (clip stitching) actually shells out to.
+      # Without it the one check that exercises the real encoder skips, and a
+      # skip is not a verification — so the CI image provides the tool and the
+      # summary line says whether it ran.
+      - name: Install ffmpeg
+        run: sudo apt-get update && sudo apt-get install -y ffmpeg
+
+      - name: Test suites
+        run: pnpm test
+
+      # The built output is what ships (`files` includes lib/, and main/exports
+      # point into it), so the tarball is assembled and inspected here. This is
+      # the check that would have caught the demo videos riding along in docs/.
+      - name: Pack and inspect the published archive
+        run: |
+          pnpm pack --pack-destination .
+          ARCHIVE=$(ls -1 *.tgz | head -n 1)
+          echo "archive: $ARCHIVE ($(du -h "$ARCHIVE" | cut -f1))"
+          echo '--- contents (top level) ---'
+          tar -tzf "$ARCHIVE" | cut -d/ -f2 | sort -u
+          # The runtime reads the bundled prompt snapshots relative to lib/, so a
+          # tarball without them installs a plugin whose template library is empty.
+          for required in package/lib/index.js package/src/templates/cases.json; do
+            tar -tzf "$ARCHIVE" | grep -qx "$required" || { echo "MISSING from archive: $required"; exit 1; }
+          done
+          # The demo recordings are not referenced by any shipped document and
+          # are ~37 MiB of the archive; they must not come back.
+          if tar -tzf "$ARCHIVE" | grep -q 'package/docs/videos/'; then
+            echo 'docs/videos/ must not be published'; exit 1
+          fi

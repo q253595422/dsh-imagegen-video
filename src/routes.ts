@@ -10,7 +10,6 @@ import { createReadStream } from 'node:fs'
 import { spawn } from 'node:child_process'
 import { mkdir as fsMkdir } from 'node:fs/promises'
 import { randomUUID } from 'node:crypto'
-import { homedir } from 'node:os'
 import path from 'node:path'
 import type { WebRoute } from '@deepseek-ai/dsh-host-webserver'
 import type { ImageAttachmentRef, ImageMediaType, SaveImageAttachment } from '@deepseek-ai/dsh-attachment'
@@ -26,6 +25,7 @@ import { clearVideoHistory, listVideoHistory, readVideoFile, removeVideoHistory 
 import { appendGallery, appendGalleryVideo, clearGallery, listGallery, readGalleryImage, readGalleryVideo, removeGallery, updateGalleryTags } from './gallery-store.ts'
 import { baseMime, canvasStore, CanvasConflictError, MAX_CANVAS_FILE_BYTES, mimeFromFileName, safeFileName, type CanvasFileInput, type CanvasImageInput, type CanvasStore } from './canvas-store.ts'
 import { buildFilePreview } from './file-preview.ts'
+import { imageDataRoot } from './image-storage-path.ts'
 import { listTemplates, readTemplateImage, refreshTemplates, sampleTemplates } from './templates-store.ts'
 import { addTemplateFavorite, listTemplateFavorites, removeTemplateFavorite } from './template-favorites.ts'
 import { testStorage, type StorageSyncConfig } from './storage-sync.ts'
@@ -2069,7 +2069,7 @@ export function makeRoutes(deps: ImageGenRoutesDeps): WebRoute[] {
       handler: async (req, res) => {
         if (!guard(req, res, 'POST')) return
         const body = await readJsonBody(req)
-        const dir = path.join(homedir(), '.dsh', 'dsh-imagegen')
+        const dir = imageDataRoot()
         try {
           await fsMkdir(dir, { recursive: true })
         } catch { /* reveal still works when the directory already exists */ }

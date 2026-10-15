@@ -17,6 +17,22 @@ export type { VideoTask, VideoTaskSummary, VideoTaskStatus } from './protocol.ts
 
 export type VideoTaskListener = (task: VideoTask) => void
 
+/**
+ * Cap on retained *terminal* video tasks.
+ *
+ * Same reasoning as `task-queue.ts`, but the number is deliberately smaller:
+ * a finished image task pins one base64 image, while a finished video task
+ * pins its full `result` — the served clip URL plus the whole history entry
+ * (which carries the reference frames' provenance and the clip metadata). A
+ * video render also costs minutes of wall clock and hundreds of MiB upstream,
+ * so a session accumulates far fewer of them than images; keeping 200 of these
+ * would hold megabytes of result objects for work nobody will retry. Only
+ * terminal entries are ever evicted: `queued`/`running` tasks ARE the live
+ * queue and are never touched. The newest entries are kept because the panel's
+ * task list, `get(id)` and `retry(id)` all look up recent work.
+ */
+const MAX_TERMINAL_TASKS = 100
+
 export class VideoTaskQueue {
   private readonly tasks: VideoTask[] = []
   private readonly controllers = new Map<string, AbortController>()
@@ -67,6 +83,7 @@ export class VideoTaskQueue {
     task.finishedAt = Date.now()
     this.controllers.get(id)?.abort()
     this.publish(task)
+    this.trimTerminal()
     this.drain()
     return this.snapshot(task)
   }
@@ -89,6 +106,31 @@ export class VideoTaskQueue {
     }
   }
 
+  /**
+   * Drop the oldest terminal tasks past the retention cap.
+   *
+   * Only terminal entries are eligible: a `queued`/`running` task is live
+   * queue state, and `summaries()`/`get()`/`retry()` all expect to find it.
+   * `tasks` is newest-first (every insert is an `unshift`), so the newest
+   * terminal entries sit ahead of the older ones and are the ones kept.
+   */
+  private trimTerminal(): void {
+    let seen = 0
+    for (let index = 0; index < this.tasks.length;) {
+      const task = this.tasks[index]
+      if (task.status === 'queued' || task.status === 'running') {
+        index += 1
+        continue
+      }
+      seen += 1
+      if (seen <= MAX_TERMINAL_TASKS) {
+        index += 1
+        continue
+      }
+      this.tasks.splice(index, 1)
+    }
+  }
+
   private async runTask(task: VideoTask): Promise<void> {
     task.status = 'running'
     task.startedAt = Date.now()
@@ -102,6 +144,7 @@ export class VideoTaskQueue {
         task.result = result
         task.finishedAt = Date.now()
         this.publish(task)
+        this.trimTerminal()
       }
     } catch (error) {
       if (this.tasks.find(item => item.id === task.id)?.status !== 'cancelled') {
@@ -109,6 +152,7 @@ export class VideoTaskQueue {
         task.error = error instanceof Error ? error.message : String(error)
         task.finishedAt = Date.now()
         this.publish(task)
+        this.trimTerminal()
       }
     } finally {
       this.controllers.delete(task.id)

@@ -3,6 +3,14 @@
 import { isLikelyImageModelId } from './model-catalog.ts'
 import { isChatCompletionsUrl, resolveChannelProtocol, type ChannelProtocolPreference } from './protocol.ts'
 
+/** Bounded wait for one chat completion. A hung chat endpoint would otherwise
+ *  leave prompt enhancement (and the canvas light tier) pending forever. */
+const CHAT_TIMEOUT_MS = 60_000
+
+/** Bounded wait per `/models` attempt. Discovery walks a few candidate URLs in
+ *  turn, so this caps each one instead of the whole walk. */
+const MODELS_TIMEOUT_MS = 30_000
+
 export interface PromptModelConfig {
   apiUrl: string
   apiKey: string
@@ -109,7 +117,10 @@ interface ModelListAttempt {
 }
 
 async function fetchModelRecords(url: string, apiKey: string): Promise<ModelListAttempt> {
-  const response = await fetch(url, { headers: headers(apiKey) })
+  const response = await fetch(url, {
+    headers: headers(apiKey),
+    signal: AbortSignal.timeout(MODELS_TIMEOUT_MS),
+  })
   const text = await response.text().catch(() => '')
   let body: unknown
   try {
@@ -251,6 +262,8 @@ export interface ChatOptions {
  * layer analyzer: it owns the endpoint, auth, error shaping (an upstream
  * `error.message` is surfaced verbatim) and the reasoning-strip step, so every
  * caller sees the same behaviour.
+ * The wait is bounded, but the caller's own cancellation still wins: the
+ * timeout signal is combined with `options.signal` rather than replacing it.
  * @param config - endpoint, secret and model.
  * @param options - prompt parts plus optional sampling controls.
  * @returns the model's visible answer, with reasoning artifacts removed.
@@ -259,6 +272,8 @@ export async function chatComplete(config: PromptModelConfig, options: ChatOptio
   if (config.apiUrl.trim() === '' || config.model.trim() === '') {
     throw new Error('chat model is not configured (left sidebar > Image settings > Prompt enhancement)')
   }
+  const timeoutSignal = AbortSignal.timeout(CHAT_TIMEOUT_MS)
+  const signal = options.signal === undefined ? timeoutSignal : AbortSignal.any([options.signal, timeoutSignal])
   const response = await fetch(endpoint(config.apiUrl, '/chat/completions'), {
     method: 'POST',
     headers: headers(config.apiKey),
@@ -274,7 +289,7 @@ export async function chatComplete(config: PromptModelConfig, options: ChatOptio
         },
       ],
     }),
-    ...options.signal === undefined ? {} : { signal: options.signal },
+    signal,
   })
   const body = await responseJson(response)
   const choices = Array.isArray(body.choices) ? body.choices : []

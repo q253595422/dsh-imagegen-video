@@ -22,6 +22,7 @@ import type { ImageGenController } from './controller.ts'
 import { ImageGenPanel } from './ImageGenPanel.tsx'
 import type { ImageGenScope } from './settings-scope.ts'
 import type { ConversationService } from './conversation-sync.ts'
+import { tt } from './helpers.ts'
 import css from './panel.module.css'
 
 /** The injected panel container (kept in the DOM, hidden when inactive). */
@@ -77,7 +78,7 @@ function createChatResizer(column: HTMLElement): HTMLDivElement {
   resizer.className = css.chatResizer
   resizer.setAttribute('role', 'separator')
   resizer.setAttribute('aria-orientation', 'vertical')
-  resizer.setAttribute('aria-label', '调整对话区域宽度')
+  resizer.setAttribute('aria-label', tt('chat.resizeHint'))
   resizer.tabIndex = 0
 
   const saved = readChatWidth()
