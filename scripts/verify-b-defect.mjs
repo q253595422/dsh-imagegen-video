@@ -111,10 +111,30 @@ const cases = [
   [`${GALLERY_PREFIX}/..%2F..%2F..%2F..%2Fetc%2Fpasswd`, undefined, 'B: percent-encoded traversal out of the gallery store is refused'],
   [`${GALLERY_PREFIX}/..%2Fvideos%2F${twinFile}`, undefined, 'B: gallery traversal cannot reach across into the video store'],
   ['', undefined, 'B: the empty URL resolves to undefined'],
+  // Malformed escapes: decodeURIComponent throws on these, and a raw URIError
+  // would escape resolve() as an engine message instead of the caller's own
+  // "this segment could not be read" report. An unreadable clip is undefined.
+  [`${VIDEO_PREFIX}/%ZZ-0.mp4`, undefined, 'B: an invalid percent escape is an unreadable clip, not a crash'],
+  [`${VIDEO_PREFIX}/%E0%A4%A-0.mp4`, undefined, 'B: a truncated multi-byte escape is an unreadable clip, not a crash'],
+  [`${GALLERY_PREFIX}/%C3%28-0.mp4`, undefined, 'B: a malformed gallery escape is an unreadable clip, not a crash'],
 ]
 for (const [url, expected, label] of cases) {
-  const got = await composer.resolve(url)
-  check(got === expected, `${label}${got === expected ? '' : ` — got ${String(got)}, wanted ${String(expected)}`}`)
+  let got
+  let threw
+  try {
+    got = await composer.resolve(url)
+  } catch (error) {
+    threw = error
+  }
+  // `threw === undefined` is part of the check on purpose: without it a throw
+  // leaves `got` undefined, which equals the expected undefined and would let
+  // the very defect this guards against pass silently.
+  check(
+    threw === undefined && got === expected,
+    `${label}${threw !== undefined
+      ? ` — it THREW ${threw.constructor.name}: ${threw.message}`
+      : got === expected ? '' : ` — got ${String(got)}, wanted ${String(expected)}`}`,
+  )
 }
 
 // A file added AFTER the first call must be seen (no stale negative cache).

@@ -3423,8 +3423,8 @@ await check('D3 sidebar entry mounts inside desktop and unknown sidebar shells, 
   assert.equal(warnings.length, 0, `a mounted sidebar entry logs nothing: ${warnings.join(' | ')}`)
 
   disposeDesktop()
-  assert.equal(jsdomDocument.querySelector('[data-dsh-imagegen-session-tabs]'), null, 'the disposer takes the tabs back out')
-  assert.equal(jsdomDocument.querySelector('[data-dsh-imagegen-history-host]'), null, 'the disposer takes the history host back out')
+  assert.equal(jsdomDocument.querySelector('[data-dsh-imagegen-session-tabs]') === null, true, 'the disposer takes the tabs back out')
+  assert.equal(jsdomDocument.querySelector('[data-dsh-imagegen-history-host]') === null, true, 'the disposer takes the history host back out')
   assert.equal(shellButton.style.display, '', 'the shell button keeps its native display after unload')
   assert.equal(shellButton.hasAttribute('aria-hidden'), false)
   assert.equal(shellButton.hasAttribute('tabindex'), false)
@@ -3472,7 +3472,7 @@ await check('D3 sidebar entry mounts inside desktop and unknown sidebar shells, 
   jsdomDocument.documentElement.removeAttribute('data-dsh-imagegen-active')
   disposeUnknown()
   assert.equal(replacementButton.hasAttribute('data-dsh-imagegen-new-session'), false, 'the replacement action is cleaned up on unload')
-  assert.equal(jsdomDocument.querySelector('[data-dsh-imagegen-session-tabs]'), null)
+  assert.equal(jsdomDocument.querySelector('[data-dsh-imagegen-session-tabs]') === null, true)
 
   // --- a shell with no New Session affordance must not be mistaken for one: no
   // tabs, no hidden brand button, and one explicit warning, because the silent
@@ -3483,8 +3483,8 @@ await check('D3 sidebar entry mounts inside desktop and unknown sidebar shells, 
     + '<div class="regionArea"></div>'
     + '</div>'
   const disposeUnmounted = mount(controller, 'Session', 'Back to the current conversation', 'Image', 'Open the image studio')
-  assert.equal(jsdomDocument.querySelector('[data-dsh-imagegen-session-tabs]'), null, 'no tabs mount without a shell button to replace')
-  assert.equal(jsdomDocument.querySelector('[data-dsh-imagegen-history-host]'), null, 'no history host mounts either')
+  assert.equal(jsdomDocument.querySelector('[data-dsh-imagegen-session-tabs]') === null, true, 'no tabs mount without a shell button to replace')
+  assert.equal(jsdomDocument.querySelector('[data-dsh-imagegen-history-host]') === null, true, 'no history host mounts either')
   assert.equal(jsdomDocument.querySelector('.brandButton').style.display, '', 'the brand button is not mistaken for the new-session control')
   await new Promise(resolve => setTimeout(resolve, 60))
   const warning = warnings.find(line => line.includes('sidebar entry stayed unmounted'))
@@ -4257,13 +4257,13 @@ await check('E1 client apply mounts the sidebar entry and studio (jsdom)', async
     assert.ok(entry !== null, 'session tabs were mounted')
     assert.equal(entry.querySelectorAll('[data-dsh-imagegen-tab]').length, 2, 'session and image tabs are present')
     assert.ok(entry.textContent.includes('生图'), 'image tab label localized')
-    assert.equal(jsdomDocument.querySelector('[data-dsh-imagegen-entry]'), null, 'standalone image entry was removed')
+    assert.equal(jsdomDocument.querySelector('[data-dsh-imagegen-entry]') === null, true, 'standalone image entry was removed')
     const view = jsdomDocument.querySelector('[data-dsh-imagegen-view]')
     assert.ok(view !== null, 'studio view container was mounted')
     assert.ok(view.isConnected, 'view container attached to the center column')
     assert.ok(jsdomDocument.querySelector('[data-dsh-imagegen-chat-resizer]') !== null, 'chat resizer was mounted')
     assert.ok(jsdomDocument.querySelector('[data-dsh-imagegen-history-host] [data-dsh-imagegen-history]') !== null, 'history moved into the sidebar region')
-    assert.equal(view.querySelector('[data-dsh-imagegen-history]'), null, 'studio no longer owns the history column')
+    assert.equal(view.querySelector('[data-dsh-imagegen-history]') === null, true, 'studio no longer owns the history column')
     assert.ok(jsdomDocument.querySelector('[data-history-new]') !== null, 'new creation button rendered beside history clear')
     assert.ok(jsdomDocument.querySelector('[data-history-clear]') !== null, 'history clear button rendered')
     jsdomDocument.querySelector('[data-history-clear]')?.dispatchEvent(new jsdomWindow.MouseEvent('click', { bubbles: true }))
@@ -4301,7 +4301,7 @@ await check('E1 client apply mounts the sidebar entry and studio (jsdom)', async
     assert.equal(historyFilterMenu.getAttribute('aria-activedescendant'), historyFilterMenu.querySelector('[role="option"]:last-child').id, 'End moves keyboard focus to the last option')
     historyFilterMenu.dispatchEvent(new jsdomWindow.KeyboardEvent('keydown', { key: 'Escape', bubbles: true }))
     await new Promise(resolve => setTimeout(resolve, 20))
-    assert.equal(jsdomDocument.querySelector('[data-dsh-select-menu]'), null, 'Escape closes the menu')
+    assert.equal(jsdomDocument.querySelector('[data-dsh-select-menu]') === null, true, 'Escape closes the menu')
     assert.equal(jsdomDocument.activeElement, historyFilter, 'closing the menu restores keyboard focus')
     assert.ok(historyFilter.textContent.includes('全部模型'), 'canceling preserves the current filter')
     const chatToggle = view.querySelector('button[data-open]')
@@ -4436,8 +4436,8 @@ await check('E1 client apply mounts the sidebar entry and studio (jsdom)', async
     galleryPill.click()
     await new Promise(resolve => setTimeout(resolve, 50))
     await waitForSelector(view, '[data-gallery-add-conversation]')
-    assert.equal(view.querySelector('textarea[placeholder*="描述你想要的画面"]'), null, 'gallery hides normal generation prompt')
-    assert.equal(view.querySelector('button[class*="generateButton"]'), null, 'gallery hides normal generation button')
+    assert.equal(view.querySelector('textarea[placeholder*="描述你想要的画面"]') === null, true, 'gallery hides normal generation prompt')
+    assert.equal(view.querySelector('button[class*="generateButton"]') === null, true, 'gallery hides normal generation button')
     assert.equal(view.textContent?.includes('灵感案例'), false, 'gallery hides inspiration examples')
     assert.ok(view.querySelector('[data-gallery="true"]') !== null, 'gallery workspace is isolated')
     assert.ok(jsdomDocument.querySelector('[data-dsh-imagegen-history-host] [data-dsh-imagegen-history]') !== null, 'history remains visible in gallery mode')
@@ -4482,12 +4482,12 @@ await check('E1 client apply mounts the sidebar entry and studio (jsdom)', async
     assert.ok(clipCard !== null, 'the clip card is marked as a clip')
     assert.ok(clipCard.querySelector('video') !== null, 'the clip card renders a video element')
     assert.match(clipCard.querySelector('video').getAttribute('src'), /gallery\/video-file\//, 'the clip card plays the served gallery clip URL')
-    assert.equal(clipCard.querySelector('img'), null, 'a clip card does not fake an image')
+    assert.equal(clipCard.querySelector('img') === null, true, 'a clip card does not fake an image')
     assert.ok(clipCard.textContent?.includes('视频'), 'the clip card is badged as a video')
     // The clip card offers a download and NOT the image-only conversation action.
     assert.ok(clipCard.querySelector('[data-gallery-video-download]') !== null, 'the clip card offers download')
     assert.ok(clipCard.querySelector('[data-gallery-video-canvas]') !== null, 'the clip card offers add-to-canvas')
-    assert.equal(clipCard.querySelector('[data-gallery-add-conversation]'), null, 'the clip card has no image-only add-to-conversation')
+    assert.equal(clipCard.querySelector('[data-gallery-add-conversation]') === null, true, 'the clip card has no image-only add-to-conversation')
 
     // The image card is unaffected and keeps its own actions.
     const imageCard = [...view.querySelectorAll('article')].find(card => card.getAttribute('data-clip') === null && card.querySelector('img') !== null)
@@ -4556,7 +4556,7 @@ await check('E1 client apply mounts the sidebar entry and studio (jsdom)', async
     assert.equal(registered.some(item => item.name === 'main' || item.name === 'sidebar.panellist'), false)
 
     // The asset library must not inherit the normal generation inspiration wall.
-    assert.equal(jsdomDocument.querySelector('[aria-label="灵感案例"]'), null, 'asset library hides inspiration wall')
+    assert.equal(jsdomDocument.querySelector('[aria-label="灵感案例"]') === null, true, 'asset library hides inspiration wall')
     normalSwitch.click()
     await new Promise(resolve => setTimeout(resolve, 50))
     // Inspiration wall belongs to the empty normal-generation canvas only.
@@ -4582,7 +4582,7 @@ await check('E1 client apply mounts the sidebar entry and studio (jsdom)', async
     videoTab.click()
     await waitForSelector(view, '[id="dsh-video-prompt"]')
     assert.ok(view.querySelector('[id="dsh-video-prompt"]') !== null, 'video prompt renders')
-    assert.equal(view.querySelector('button[class*="generateButton"]'), null, 'the image generate button is replaced in video mode')
+    assert.equal(view.querySelector('button[class*="generateButton"]') === null, true, 'the image generate button is replaced in video mode')
     assert.ok(view.querySelector('button[class*="videoGenerate"]') !== null, 'video generate button renders')
 
     // The configured video model is offered; image-only models are not.
@@ -4626,7 +4626,7 @@ await check('E1 client apply mounts the sidebar entry and studio (jsdom)', async
     textTab.click()
     await waitForSelector(view, 'textarea[placeholder*="描述你想要的画面"]')
     assert.ok(view.querySelector('textarea[placeholder*="描述你想要的画面"]') !== null, 'the image composer returns after video mode')
-    assert.equal(view.querySelector('[id="dsh-video-prompt"]'), null, 'the video composer is unmounted outside video mode')
+    assert.equal(view.querySelector('[id="dsh-video-prompt"]') === null, true, 'the video composer is unmounted outside video mode')
 
     // Template-library regression: choose a card, use its prompt, and verify
     // the text editor receives it while the modal closes.
@@ -4648,7 +4648,7 @@ await check('E1 client apply mounts the sidebar entry and studio (jsdom)', async
     useTemplate.click()
     await new Promise(resolve => setTimeout(resolve, 50))
     assert.equal(jsdomDocument.querySelector('textarea')?.value, 'A reusable template prompt')
-    assert.equal(jsdomDocument.querySelector('[role="dialog"][aria-label="提示词模板库"]'), null, 'template modal closed after use')
+    assert.equal(jsdomDocument.querySelector('[role="dialog"][aria-label="提示词模板库"]') === null, true, 'template modal closed after use')
 
     // --- save-flow regression: a secret field's save must report success ---
     // The redacted wire view never returns the key, so the form judges the
@@ -4807,12 +4807,12 @@ await check('E1 client apply mounts the sidebar entry and studio (jsdom)', async
     assert.ok(clipRow.querySelector('[data-history-video-gallery]') !== null, 'the clip row offers add-to-gallery')
     assert.ok(clipRow.querySelector('[data-history-video-canvas]') !== null, 'the clip row offers add-to-canvas')
     assert.ok(clipRow.querySelector('[data-history-video-download]') !== null, 'the clip row offers download')
-    assert.equal(clipRow.querySelector('[data-history-add-canvas]'), null, 'the clip row has no image-only add-to-canvas action')
-    assert.equal(clipRow.querySelector('[data-history-add-conversation]'), null, 'the clip row has no image-only add-to-conversation action')
+    assert.equal(clipRow.querySelector('[data-history-add-canvas]') === null, true, 'the clip row has no image-only add-to-canvas action')
+    assert.equal(clipRow.querySelector('[data-history-add-conversation]') === null, true, 'the clip row has no image-only add-to-conversation action')
     // An image row keeps its own actions and gains no clip action.
     const imageRow = [...histHost.querySelectorAll('[data-kind="image"]')][0]
     assert.ok(imageRow.querySelector('[data-history-add-canvas]') !== null, 'image rows keep add-to-canvas')
-    assert.equal(imageRow.querySelector('[data-history-video-gallery]'), null, 'image rows have no clip gallery action')
+    assert.equal(imageRow.querySelector('[data-history-video-gallery]') === null, true, 'image rows have no clip gallery action')
 
     // Deleting a clip removes only that row, from the clip store.
     const clipDelete = clipRow.querySelector('.historyIconAction[data-danger], [data-danger]')
@@ -5048,7 +5048,7 @@ await check('E1 client apply mounts the sidebar entry and studio (jsdom)', async
     await new Promise(resolve => setTimeout(resolve, 40))
     const videoSend = await waitUntil(() => view.querySelector('[aria-label="生成视频"]'))
     assert.ok(videoSend !== null && videoSend !== false, 'the composer send button switches to video')
-    assert.equal(view.querySelector('[aria-label="生成图片"]'), null, 'the image send button is replaced in video mode')
+    assert.equal(view.querySelector('[aria-label="生成图片"]') === null, true, 'the image send button is replaced in video mode')
 
     // The composer swaps in the video model picker: its trigger shows the model
     // the run will use, and the image-only selects are gone.
@@ -5063,8 +5063,8 @@ await check('E1 client apply mounts the sidebar entry and studio (jsdom)', async
       videoPicker.getAttribute('aria-label').includes('agnes-video-2.5-flash'),
       `the video picker shows the configured video model: ${videoPicker.getAttribute('aria-label')}`,
     )
-    assert.equal(composer.querySelector('[aria-label="清晰度"]'), null, 'image-only selects are absent in video mode')
-    assert.equal(composer.querySelector('[aria-label="画面比例"]'), null, 'the image ratio select is replaced by the video ratio select')
+    assert.equal(composer.querySelector('[aria-label="清晰度"]') === null, true, 'image-only selects are absent in video mode')
+    assert.equal(composer.querySelector('[aria-label="画面比例"]') === null, true, 'the image ratio select is replaced by the video ratio select')
 
     // Fill the prompt through the native setter (React 18 + jsdom), then submit.
     const canvasPrompt = canvasPromptBox
@@ -5160,7 +5160,7 @@ await check('E1 client apply mounts the sidebar entry and studio (jsdom)', async
     assert.equal(overlayPlayer.getAttribute('src'), filled.metadata.video.url, 'the full-screen player uses the served clip URL')
     clipOverlay.querySelector('button').dispatchEvent(new jsdomWindow.MouseEvent('click', { bubbles: true, cancelable: true }))
     await new Promise(resolve => setTimeout(resolve, 40))
-    assert.equal(view.querySelector('[data-video-preview]'), null, 'the full-screen player dismisses')
+    assert.equal(view.querySelector('[data-video-preview]') === null, true, 'the full-screen player dismisses')
 
     // Switching back to the image kind restores the image controls.
     const imageKindButton = [...view.querySelectorAll('[class*="composerKind"] button')].find(button => button.textContent === '图片')

@@ -875,7 +875,7 @@ await check('W1-W3 a finished studio clip lands a referenced node and states are
       await waitUntil(() => renderingEl.querySelector('[data-video-generating]') !== null),
       'W3: a node that is really rendering shows the rendering state',
     )
-    assert.equal(renderingEl.querySelector('[data-video-error]'), null, 'W3: a rendering node shows NO error state')
+    assert.equal(renderingEl.querySelector('[data-video-error]') === null, true, 'W3: a rendering node shows NO error state')
     assert.equal(
       (renderingEl.textContent ?? '').includes('生成失败'), false,
       'W3: a rendering node never paints 生成失败',
@@ -890,7 +890,7 @@ await check('W1-W3 a finished studio clip lands a referenced node and states are
       'W3: a failed video node shows the error state',
     )
     assert.ok(failedEl.textContent?.includes('上游拒绝了这个请求'), 'W3: the real failure message is shown, not a generic one')
-    assert.equal(failedEl.querySelector('[data-video-generating]'), null, 'W3: a failed node shows no rendering state')
+    assert.equal(failedEl.querySelector('[data-video-generating]') === null, true, 'W3: a failed node shows no rendering state')
     const retryButton = failedEl.querySelector('[data-video-error] button')
     assert.ok(retryButton !== null, 'W3: the failed node offers a retry action')
     retryButton.dispatchEvent(new jsdomWindow.MouseEvent('click', { bubbles: true, cancelable: true }))
@@ -1021,7 +1021,7 @@ await check('C1-C3 compose badges and the stitch strip follow canvas order, not 
     'C1: a plain pointerdown selects the clip',
   )
   assert.equal(
-    nodeById('node-clip-right').querySelector('[data-corner]'), null,
+    nodeById('node-clip-right').querySelector('[data-corner]') === null, true,
     'C1: the other clip is NOT selected -- the pointerdown was not additive',
   )
   await openComposeMenu('node-clip-left')
@@ -1066,7 +1066,7 @@ await check('C1-C3 compose badges and the stitch strip follow canvas order, not 
   // A node the host would NOT stitch must not be numbered: no number is a
   // promise that it is not in the file.
   assert.equal(
-    nodeById('node-clip-noentry').querySelector('[data-compose-badge]'), null,
+    nodeById('node-clip-noentry').querySelector('[data-compose-badge]') === null, true,
     'C2: an unselected clip gets no badge',
   )
 
@@ -1075,7 +1075,7 @@ await check('C1-C3 compose badges and the stitch strip follow canvas order, not 
   pointerDown(nodeById('node-clip-right'), true)
   assert.ok(await waitUntil(() => badgesNow().length === 0), 'C2: the badges disappear below two selected clips')
   assert.equal(
-    view.querySelector('[data-compose-bar]'), null,
+    view.querySelector('[data-compose-bar]') === null, true,
     'C2: the multi-select strip disappears with them',
   )
   pointerDown(nodeById('node-clip-right'), true)

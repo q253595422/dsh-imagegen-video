@@ -623,7 +623,7 @@ await check('C7 an empty clip list shows the picker empty state', async () => {
   assert.ok(empty !== null, 'C7: the history tab shows the empty state when the store returns no clips')
   assert.equal(empty.textContent, '这里还没有可用的视频', 'C7: it uses the picker’s own empty copy')
   assert.equal(pickerRoot().querySelectorAll('[data-video-card]').length, 0, 'C7: no cards are faked')
-  assert.equal(pickerRoot().querySelector('[data-video-load-error]'), null, 'C7: a successful empty read is not an error')
+  assert.equal(pickerRoot().querySelector('[data-video-load-error]') === null, true, 'C7: a successful empty read is not an error')
   assert.ok(pathsBefore > 0, 'C7: the picker did fetch the list itself')
 
   // The gallery tab has its own empty state for the same reason.
@@ -656,7 +656,7 @@ await check('C9 a failed listing is shown as a failure, not as an empty list', a
 
   const error = pickerRoot().querySelector('[data-video-load-error]')
   assert.equal(error.textContent, '读取视频列表失败：store offline', 'C9: the failure carries the localized copy and the host message')
-  assert.equal(pickerRoot().querySelector('[data-video-picker-empty]'), null,
+  assert.equal(pickerRoot().querySelector('[data-video-picker-empty]') === null, true,
     'C9: a failed read must NOT claim there are no clips — that would be a lie')
   assert.equal(pickerRoot().querySelectorAll('[data-video-card]').length, 0, 'C9: no stale cards survive a failed read')
   assert.ok(pickerRoot().querySelector('[data-video-reload]') !== null, 'C9: the failure offers a retry')
@@ -666,7 +666,7 @@ await check('C9 a failed listing is shown as a failure, not as an empty list', a
   shared.clickElement(pickerRoot().querySelector('[data-video-reload]'))
   assert.equal(await waitUntil(() => pickerRoot().querySelectorAll('[data-video-card]').length === 3), true,
     'C9: the retry re-reads the list and recovers')
-  assert.equal(pickerRoot().querySelector('[data-video-load-error]'), null, 'C9: the error clears on success')
+  assert.equal(pickerRoot().querySelector('[data-video-load-error]') === null, true, 'C9: the error clears on success')
 })
 
 await check('C10 a failing history must not suppress the gallery empty state', async () => {
@@ -682,7 +682,7 @@ await check('C10 a failing history must not suppress the gallery empty state', a
   shared.clickElement(shared.tabButton('gallery'))
   assert.equal(await waitUntil(() => pickerRoot().querySelector('[data-video-picker-empty]') !== null), true,
     'C10: an empty GALLERY still shows the empty copy while history is failing')
-  assert.equal(pickerRoot().querySelector('[data-video-load-error]'), null,
+  assert.equal(pickerRoot().querySelector('[data-video-load-error]') === null, true,
     'C10: the history failure is not reported on a tab that cannot fail')
   assert.equal(pickerRoot().querySelectorAll('[data-video-card]').length, 0, 'C10: an empty gallery shows no cards')
 })

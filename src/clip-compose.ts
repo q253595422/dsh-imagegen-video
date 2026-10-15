@@ -287,6 +287,11 @@ const CLIP_SOURCES: readonly ClipSource[] = [
  * `/api/dsh-imagegen/gallery/video-file-x/…` cannot be mistaken for a clip. The
  * `URL` parse normalizes `..` segments away and the store's own name pattern
  * rejects whatever survives, so `../../etc/passwd` is still refused.
+ *
+ * A malformed escape (`%ZZ`, or a truncated `%E0%A4%A`) makes
+ * `decodeURIComponent` throw a `URIError`. That is an unreadable clip like any
+ * other, so it resolves to `undefined` here and the run reports it by name
+ * instead of surfacing a raw engine error.
  */
 function videoFileFrom(rawUrl: string): { file: string; read: ClipSource['read'] } | undefined {
   if (rawUrl.trim() === '') return undefined
@@ -298,7 +303,12 @@ function videoFileFrom(rawUrl: string): { file: string; read: ClipSource['read']
   }
   for (const source of CLIP_SOURCES) {
     if (!pathname.startsWith(`${source.prefix}/`)) continue
-    const file = decodeURIComponent(pathname.slice(source.prefix.length + 1))
+    let file: string
+    try {
+      file = decodeURIComponent(pathname.slice(source.prefix.length + 1))
+    } catch {
+      return undefined
+    }
     return file === '' ? undefined : { file, read: source.read }
   }
   return undefined
