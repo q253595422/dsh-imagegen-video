@@ -461,7 +461,7 @@ t6（compose-verifier，attempt 2）verdict = **pass**：B/A/D/C 四项都由它
 
 #### F2（low，已由 t9 补齐）无 compose 描述符的 disabled 分支曾无守卫
 
-契约 §3.0 要求「catalog 加载**成功**但没有 compose 描述符 ⇒ 按钮 `disabled` 且 `title` 写明宿主 reason，绝不静默无反应」。t6 注入 `disabled={false}` 后 **162 条全绿** —— 实现是对的，但没有任何已发布套件守它。只被它自己未发布的 `scripts/verify-acd.mjs` AC1 抓住。t9 把 AC1 并入 `scripts/smoke-canvas-video.mjs`。
+契约 §3.0 要求「catalog 加载**成功**但没有 compose 描述符 ⇒ 按钮 `disabled` 且 `title` 写明宿主 reason，绝不静默无反应」。t6 注入 `disabled={false}` 后 **162 条全绿** —— 实现是对的，但没有任何已发布套件守它。只被它自己未发布的 `scripts/verify-acd.mjs` AC1 抓住。t9 把 AC1 并入 `scripts/smoke-canvas-video.mjs`（现已在该文件里，探测脚本本身已归档到 `~/.dsh/patches/verifier-probes-absorbed/`，只留作证据）。
 
 #### F3（low，已由 t9 处理）B1-B3 中止会污染 C6-C7
 
