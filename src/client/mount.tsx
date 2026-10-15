@@ -22,7 +22,7 @@ import type { ImageGenController } from './controller.ts'
 import { ImageGenPanel } from './ImageGenPanel.tsx'
 import type { ImageGenScope } from './settings-scope.ts'
 import type { ConversationService } from './conversation-sync.ts'
-import { tt } from './helpers.ts'
+import { subscribeImageGenLanguage, tt } from './helpers.ts'
 import css from './panel.module.css'
 
 /** The injected panel container (kept in the DOM, hidden when inactive). */
@@ -80,7 +80,10 @@ function createChatResizer(column: HTMLElement): HTMLDivElement {
   resizer.setAttribute('aria-orientation', 'vertical')
   resizer.setAttribute('aria-label', tt('chat.resizeHint'))
   resizer.tabIndex = 0
-
+  // This handle is created once and lives outside the React tree, so nothing
+  // re-renders it on a DSH language switch. The subscription is wired in
+  // `ensure` (where the element's lifetime is owned) rather than here, because
+  // a replaced resizer must be able to release it.
   const saved = readChatWidth()
   if (saved !== undefined) column.style.setProperty('--dsh-imagegen-chat-width', `${saved}px`)
 
@@ -137,6 +140,8 @@ export function mountPanel(
   let root: Root | undefined
   let container: HTMLDivElement | undefined
   let resizer: HTMLDivElement | undefined
+  /** Releases the resizer's language subscription; re-pointed in `ensure`. */
+  let stopResizerLanguageWatch: (() => void) | undefined
   let panelActive = false
 
   const renderPanel = (): void => {
@@ -153,6 +158,10 @@ export function mountPanel(
       container = undefined
       resizer?.remove()
       resizer = undefined
+      // The old resizer is gone with its element, so its language subscription
+      // would keep writing to a detached node forever.
+      stopResizerLanguageWatch?.()
+      stopResizerLanguageWatch = undefined
     }
     const column = conversationColumn()
     if (column === undefined) return
@@ -164,6 +173,13 @@ export function mountPanel(
     renderPanel()
     resizer = column.querySelector<HTMLDivElement>(RESIZER_SELECTOR) ?? createChatResizer(column)
     if (resizer.parentElement !== column) column.appendChild(resizer)
+    // Re-point the language subscription at whichever element now owns the
+    // handle: a re-created resizer starts in the language of its creation.
+    stopResizerLanguageWatch?.()
+    resizer.setAttribute('aria-label', tt('chat.resizeHint'))
+    stopResizerLanguageWatch = subscribeImageGenLanguage(() => {
+      resizer?.setAttribute('aria-label', tt('chat.resizeHint'))
+    })
   }
 
   // The frame mounts after boot settlement; watch for the column's arrival.
@@ -217,5 +233,7 @@ export function mountPanel(
     container = undefined
     resizer?.remove()
     resizer = undefined
+    stopResizerLanguageWatch?.()
+    stopResizerLanguageWatch = undefined
   }
 }

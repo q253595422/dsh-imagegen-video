@@ -10,6 +10,20 @@ detail is in `git log 9305f9f..HEAD`.
 
 ## Releases
 
+### 1.7.3 — small correctness fixes around the edges
+
+- **A `~` in the data-folder setting now means the home directory.** The value
+  is typed by hand into the settings form, where `~/my-images` is the natural
+  thing to write, and `path.resolve` does not expand it — so the host created a
+  directory literally named `~` under its working directory and stored
+  everything there while the user looked in their home folder. A `~user` form
+  is deliberately left alone.
+- **The chat-resize handle's `aria-label` follows the interface language.** It
+  is created once and lives outside the React tree, so nothing re-rendered it
+  on a DSH language switch and it kept the language it was built in. It now
+  subscribes, and releases the subscription when the element is replaced or the
+  panel unmounts.
+
 ### 1.7.2 — video nodes could not be saved at all
 
 **A canvas holding a video node could not be persisted.** The host's canvas
