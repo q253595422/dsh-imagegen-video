@@ -630,7 +630,7 @@ await check('W1-W3 a finished studio clip lands a referenced node and states are
       canvasFileUploads.push({ name, type: init.headers['content-type'] ?? '' })
       return json({ ok: true, asset: { assetId: `${'c'.repeat(64)}.mp4`, url: `/api/dsh-imagegen/canvas/asset/${'c'.repeat(64)}.mp4`, mime: 'video/mp4', bytes: 64, width: 0, height: 0, origin: 'upload', kind: 'file', name } })
     }
-    if (path.endsWith('/update/check')) return json({ ok: true, update: { current: '1.6.8', latest: '1.6.8', updateAvailable: false } })
+    if (path.endsWith('/update/check')) return json({ ok: true, update: { current: '1.7.0', latest: '1.7.0', updateAvailable: false } })
     // The empty-state inspiration wall deals 12 samples on mount; without an
     // explicit (empty) list its `setSamples(undefined)` crashes the render.
     if (path.endsWith('/templates/sample')) return json({ ok: true, samples: [] })

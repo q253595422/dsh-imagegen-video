@@ -8,6 +8,26 @@ commit after that is this fork's own work.
 The list below describes the fork's delta against that baseline. Commit-level
 detail is in `git log 9305f9f..HEAD`.
 
+## Releases
+
+### 1.7.0 — first published release of the fork
+
+The fork's first npm publication, under its own name
+`@q253595422/dsh-imagegen-video`. Everything in "What the fork adds" below is in
+this release.
+
+- **Version line starts above upstream.** Upstream had already published v1.6.9
+  by the time this fork shipped, so publishing as 1.6.8 would have looked older
+  than what it derives from. The fork therefore starts at 1.7.0.
+- **No absolute paths ship in the tarball.** `lib/` is published (it is in
+  `files`), and Rolldown stamps each module's id into a `//#region <id>` banner
+  that survives into the bundle. The CSS Modules virtual id used to be the CSS
+  file's absolute path, so `lib/client.js` embedded ten
+  `/Users/<name>/…/src/client/*.module.css.mjs` strings and the bundle's bytes
+  depended on where it was checked out. The virtual id is now repo-relative
+  (`\0dsh-css:src/client/panel.module.css.mjs`), which is stable, unique, and
+  reveals nothing the repository does not already publish.
+
 ## What the fork adds
 
 ### Video generation (the original motivation for the fork)
@@ -138,4 +158,3 @@ verified" instead of a false failure.
 
 - No paid upstream verification is performed by the test suites; all upstream
   interactions are replayed from fixtures.
-- The fork does not publish to npm under its own scope yet.

@@ -12,7 +12,7 @@
  */
 import { existsSync } from 'node:fs'
 import { readFile } from 'node:fs/promises'
-import { basename, dirname, resolve as resolvePath } from 'node:path'
+import { basename, dirname, relative, resolve as resolvePath } from 'node:path'
 import type { UserConfig } from 'tsdown'
 import { transform } from 'lightningcss'
 
@@ -34,9 +34,28 @@ const CLIENT_EXTERNALS: readonly string[] = [
   '@deepseek-ai/dsh-client-store',
 ]
 
-/** Virtual-id wrapper keeping module CSS away from tsdown's own css pipeline. */
+/**
+ * Virtual-id wrapper keeping module CSS away from tsdown's own css pipeline.
+ *
+ * The id is deliberately synthetic (`\0dsh-css:src/client/panel.module.css.mjs`)
+ * rather than the CSS file's absolute path. Rolldown stamps each module's id
+ * into a `//#region <id>` banner that survives into the emitted bundle, and
+ * lib/ IS published to npm (see `files`) — an absolute id would therefore ship
+ * this machine's directory layout to every consumer, and would make the
+ * bundle's bytes depend on where the repo was checked out. A repo-relative id
+ * is stable, unique, and reveals nothing the repository does not already
+ * publish.
+ */
 const CSS_VIRTUAL_PREFIX = '\0dsh-css:'
 const CSS_VIRTUAL_SUFFIX = '.mjs'
+/** Absolute CSS path -> synthetic virtual id (repo-relative). */
+function cssVirtualId(absolutePath: string): string {
+  return CSS_VIRTUAL_PREFIX + relative(process.cwd(), absolutePath) + CSS_VIRTUAL_SUFFIX
+}
+/** Synthetic virtual id -> absolute CSS path. */
+function cssRealPath(virtualId: string): string {
+  return resolvePath(process.cwd(), virtualId.slice(CSS_VIRTUAL_PREFIX.length, -CSS_VIRTUAL_SUFFIX.length))
+}
 
 /** Node half: plain ESM library, host-shared packages stay bare (module
  *  identity must be the host runtime's own copies — bundling them would
@@ -104,11 +123,11 @@ const clientConfig: UserConfig = {
     resolveId(source: string, importer: string | undefined) {
       if (!source.endsWith('.module.css')) return null
       const abs = importer !== undefined ? sourceAssetPath(source, importer) : source
-      return CSS_VIRTUAL_PREFIX + abs + CSS_VIRTUAL_SUFFIX
+      return cssVirtualId(abs)
     },
     async load(virtualId: string) {
       if (!virtualId.startsWith(CSS_VIRTUAL_PREFIX)) return null
-      const fileId = virtualId.slice(CSS_VIRTUAL_PREFIX.length, -CSS_VIRTUAL_SUFFIX.length)
+      const fileId = cssRealPath(virtualId)
       this.addWatchFile(fileId)
       const source = await readFile(fileId)
       const { code, exports: cssExports } = transform({

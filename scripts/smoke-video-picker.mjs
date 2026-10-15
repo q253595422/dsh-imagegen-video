@@ -257,7 +257,7 @@ await check('C1 the dock menu offers 添加视频 and the picker opens with thre
         },
       })
     }
-    if (path.endsWith('/update/check')) return json({ ok: true, update: { current: '1.6.8', latest: '1.6.8', updateAvailable: false } })
+    if (path.endsWith('/update/check')) return json({ ok: true, update: { current: '1.7.0', latest: '1.7.0', updateAvailable: false } })
     if (path.endsWith('/templates/sample')) return json({ ok: true, samples: [] })
     if (path.endsWith('/templates/list')) return json({ ok: true, sourceId: 'vibeui', cases: [], total: 0, origin: 'bundled', repository: '', fetchedAt: '' })
     if (path.endsWith('/templates/favorites/list')) return json({ ok: true, favorites: [] })
