@@ -10,6 +10,34 @@ detail is in `git log 9305f9f..HEAD`.
 
 ## Releases
 
+### 1.7.2 — video nodes could not be saved at all
+
+**A canvas holding a video node could not be persisted.** The host's canvas
+node guard accepted only `image` / `text` / `file` / `config` while
+`CanvasNodeType` also declares `video`, so `coerceDocument` returned undefined
+and `save()` answered `malformed canvas document`. Video nodes on the canvas
+are this fork's headline feature, which made the feature unusable end to end:
+place a clip, and the canvas stopped saving.
+
+No suite caught it because the canvas-video suite answers `/canvas/save` with a
+stub that records the payload, so the real guard never ran against a video
+node. `smoke.mjs` now round-trips a video node through the real route and the
+real store, in all three states a video node can be in (finished clip,
+rendering, failed). Removing `video` from the guard makes that check fail with
+the exact error a user saw.
+
+Also in this release:
+
+- The full-screen clip preview marks the node when its clip will not load,
+  instead of being the same dead player one click deeper.
+- The dead-clip marker is now cleared by reload, single delete, bulk delete and
+  regenerate. Regenerating used to leave a node claiming its clip was gone even
+  after a fresh clip landed; bulk delete left marks for an undo to restore.
+- The template favorites memo and the template list memo are keyed by the data
+  root they were read from. Both were module-level and outlived a repointed
+  root, so changing `localStoragePath` could read the old root and write back to
+  the new one.
+
 ### 1.7.1 — the two fixes 1.7.0 shipped without, plus release hygiene
 
 v1.7.0's release asset was uploaded before two fixes landed, and because the
