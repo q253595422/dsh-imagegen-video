@@ -443,6 +443,66 @@ const CLIP_SOURCES = [
 - C：坞站菜单出现「添加视频」；打开拾取器；`history`/`gallery` 页签能加到画布且**是引用型 video 节点**（`metadata.asset === undefined`）；`upload` 页签走 file 节点
 - 对四项各做一次反向验证
 
+### 7.4 t6 独立验证的结论与四条 finding（含已修项）
+
+t6（compose-verifier，attempt 2）verdict = **pass**：B/A/D/C 四项都由它自己造夹具独立复现（不是只读代码、也不是只跑别人的套件），四次反向验证各只失败预期断言，全链 162 PASS / 0 FAIL / 0 SKIP。它的结构性结论：**四项改动真的接通**；它对 upload 路径的读法（产物是 file 节点，走 `onAddAsset`）被两套套件独立佐证 —— 它故意改成草稿的错误读法后，canvas 套件与 picker 套件各恰好失败一条。
+
+#### F1（medium，真缺陷，已修）失败的元素断言会静默 OOM
+
+`assert.equal(<jsdom element>, null, …)` 一旦失败，Node 会去 inspect **整棵已挂载的 React/DOM 图**，在本仓库的套件里以 **SIGKILL、exit 137、stdout 截断在 check 名、无任何 PASS/FAIL 行**结束。把堆调到 8GB **仍被 SIGKILL**。队长在自己的探针上复现并做了 A/B：故意写坏空态门控 ⇒ 元素写法 exit 137 静默，只把写法改成 `element === null` 对 `true` 就正常报 `FAIL C9: a failed read must NOT claim there are no clips`。
+
+**全树已改 32 处**（`smoke.mjs` 23、`smoke-video-picker.mjs` 4、`smoke-canvas-video.mjs` 5），语义不变、全链仍绿。每个文件都做了反向验证：把某一处重写过的期望翻转 ⇒ 该文件报出**具名 FAIL** 而不是静默 137。**新增断言一律用布尔形式**，不要引入第 33 处。
+
+#### F4（low，非本轮引入，已修）畸形百分号编码让 `resolve()` 抛 URIError
+
+片段 URL 末段含非法转义（`%ZZ`、被截断的 `%E0%A4%A`）时 `decodeURIComponent` 抛 `URIError`，而它原本不在 try 内 ⇒ 引擎原话外泄成 run 的失败消息，而不是 §1.2 那种「这一段读不出来」的具名报告。修法：`decodeURIComponent` 包 try，失败按**不可读片段**处理（返回 `undefined`）。`scripts/verify-b-defect.mjs` 覆盖三种形状。
+
+**写这条守卫时踩到的坑（值得记住）**：最初写成 `check(got === expected, …)`，而抛错时 `got` 就是 `undefined`、恰好等于期望的 `undefined` ⇒ **这个守卫自己被同一个缺陷骗过**，改坏后仍然全绿。必须把 `threw === undefined` 也纳入条件。加上之后，退回旧实现恰好失败那三条。
+
+#### F2（low，已由 t9 补齐）无 compose 描述符的 disabled 分支曾无守卫
+
+契约 §3.0 要求「catalog 加载**成功**但没有 compose 描述符 ⇒ 按钮 `disabled` 且 `title` 写明宿主 reason，绝不静默无反应」。t6 注入 `disabled={false}` 后 **162 条全绿** —— 实现是对的，但没有任何已发布套件守它。只被它自己未发布的 `scripts/verify-acd.mjs` AC1 抓住。t9 把 AC1 并入 `scripts/smoke-canvas-video.mjs`。
+
+#### F3（low，已由 t9 处理）B1-B3 中止会污染 C6-C7
+
+canvas 套件共用一棵活 jsdom 树：B1-B3 若在 B3 点击前中止，会**约 2/3 概率**（非确定性）连带让 C6-C7 以 `[data-skill-run]` 未渲染失败 —— 只是归因混淆，不影响产物。t9 给 B 检查加 `try/finally` 还原选中态（t3 的 B 检查本就有这个结构，照抄）。t6 自己也说这是非确定性、四组对照都没复现出稳定触发条件。
+
+#### 追加覆盖缺口（队长发现）：picker 加进来的片段**可参与拼接**无人守
+
+套件 E5 断到「picker 落了一个引用型 video 节点」就停了，**从未证明经 picker 加进来的片段真的能参与拼接**。verifier 的 AC2 是唯一覆盖这条的，而它所在文件不进测试链 ⇒ 覆盖等于不存在。t9 一并并入。
+
+> AC2 的关键陷阱（verifier 原文警告）：新节点的身份**只能靠「id 集合差」认定**，不能按 url 或按类型计数 —— 该 check 跑在已被前面 W/E 检查加过节点的同一棵活树上，而夹具本身已有一个 `node-clip-right` 就是 `CLIP_RIGHT_URL`，按 url 或计数查会静默命中旧节点，检查会**因为错误的原因通过**。
+
+#### t6 明确无法验证的（诚实边界）
+
+真实浏览器 hover 触发悬浮条（jsdom 无 hover 态，只证明控件在渲染树里齐全可点）、真实 mp4 解码播放（夹具是 4KB 假 ftyp，只断言属性）、真实文件选择器交互（jsdom `File` + 合成 change，`[...files]` 展开靠喂真数组绕过）、模型菜单的真实 hover 飞出（无 PointerEvent，走的是点频道行）、真 ffmpeg 端到端拼接（仓库既有 E1 覆盖，它的 PART 2 是 wrap 掉 stitch/publish）。
+
+---
+
+### 7.5 t9 落地的三处守卫 + 队长修掉 E5 的「因错误原因通过」
+
+t9（canvas-actions，attempt 1，verdict=pass）只动 `scripts/smoke-canvas-video.mjs`（+284，1865 → 2149 行），把 t6 发现的缺口从未进测试链的探针搬进已发布套件。
+
+- **AC1（F2）**：catalog **加载成功但没有 compose 描述符** ⇒ 条与按钮仍在、`disabled === true`、`title` 精确等于 `拼接功能当前不可用（<宿主 reason>）`、点击不弹确认卡也不发 run。新增可变状态 `probeCatalog` 按需替换 `/canvas/skills/list` 响应。
+  - **判据偏离（已接受）**：任务文本要求「在从未打开过技能菜单的状态下测」，但 AC1 必须排在 B1-B3 之后，而 B 就是首次装载目录的检查 ⇒ 计数必然不为 0。改为「先证基线（出厂目录下按钮可用）+ 再证探针生效」——**比原判据更强**：额外排除了「无条件 disabled」这个会因错误原因通过的分支。队长独立反向验证的正是这个方向：把 `disabled={composeSkill === null}` 改成 `disabled={true}` ⇒ `FAIL AC1: with the shipped catalog the button works`（外加 B2，因为自加载也不成立）。
+- **AC2**：picker 加进来的片段**真的可参与拼接** —— 身份只靠 **id 集合差**认定（按 url 会静默命中夹具既有的 `node-clip-right`），再断 `type==='video'` / `metadata.video.url` / `metadata.asset === undefined` / 双徽标 + 拼接条出现。
+- **F3**：B1-B3 的 `finally` 除还原选中态外，还关掉残留确认卡并断言无卡遗留。诚实边界：任务描述的「自然中止约 2/3 概率污染 C6-C7」**未能复现**（与 t6 一致）；能证明的是「人工中止下 finally 的还原逻辑承重」（守卫改成 no-op 后同一中止额外失败 AC1），污染受害者是 B 之后第一个 check，不是 C6-C7。
+
+#### 队长修掉 E5：它一直在**因为错误的原因通过**
+
+t9 反向验证 AC2 时顺带发现（原文：「E4-E6 仍 PASS —— E5 按 url 找新节点，而夹具既有 `node-clip-right` 就是 `CLIP_RIGHT_URL`，它因为错误的原因通过」）。队长独立确认并修掉：E5 原本用 `nodesOf('video').find(node => node.metadata?.video?.url === CLIP_RIGHT_URL)` 认定「picker 落下的节点」，而夹具 `node-clip-right` 本来就指向同一个 URL ⇒ 即使 picker 一个节点都没落，`find` 也会命中旧节点，后续「引用而非复制」的断言全部照过。
+
+修法：改为**按 id 集合差**认定，并补一条 `addedClips.length === 1`（「恰好一个新节点」）。
+
+**判别性证明（同一破坏、两套断言，结论相反）**：把 `addClipNode` 的 `metadata.video` 换成 `metadata.asset`（正是「引用变复制」的破坏）后——
+
+| 断言版本 | E4-E6 结果 |
+|---|---|
+| 修前（按 url 找） | **PASS**（死的） |
+| 修后（按 id 找） | **FAIL `E5: the new node points at the clip the card offered`** |
+
+两次都逐字节还原（`src/client/CanvasWorkspace.tsx` 回到 `2b0d5c78`、套件回到 `6c599600`），全树标记扫描为空。**教训（第三次同类）**：认一个「刚被创建的实体」必须靠身份差，不能靠属性匹配——夹具里早已存在一个属性相同的实体。同一句话在 AC2 上写对了、在 E5 上写错了，套件照样全绿。
+
 ---
 
 ## 8. 明确不做（本期）

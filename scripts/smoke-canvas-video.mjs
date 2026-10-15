@@ -25,6 +25,11 @@
  *      canvas where no skill menu was ever opened
  *  B3  it opens the SAME confirm card the node menu opens -- with the ①②
  *      order reviewable -- and does NOT start the run by itself
+ *  AC1 a catalog that LOADED but lists no compose descriptor disables that
+ *      button and names the host reason -- it never looks clickable and does
+ *      nothing
+ *  AC2 a clip that arrived through the picker is a FIRST-CLASS compose
+ *      participant: it takes a badge beside another clip and summons the strip
  *
  * Run: node scripts/smoke-canvas-video.mjs   (from the package root)
  */
@@ -219,6 +224,17 @@ const cleanups = []
  * all, so a missed seam fails loudly instead of passing vacuously.
  */
 const clipStored = { wired: false, calls: 0 }
+
+/**
+ * A skill catalog to answer `/canvas/skills/list` with INSTEAD of the normal
+ * one, while armed. The AC1 check uses it to reach the branch no other check
+ * here covers: `loadSkillCatalog()` SUCCEEDS but the host lists no
+ * `compose.videos` and gives a reason instead. Contract §3.0: the strip button
+ * must then be DISABLED and name that reason -- never a click that silently
+ * does nothing. A build with `disabled={false}` leaves every other assertion in
+ * this file green, which is exactly why the guard has to live here.
+ */
+let probeCatalog = null
 
 await check('W1-W3 a finished studio clip lands a referenced node and states are honest', async () => {
 
@@ -459,6 +475,9 @@ await check('W1-W3 a finished studio clip lands a referenced node and states are
       // The catalog the compose flow needs. `compose.videos` is the `local` tier:
       // no model, no agent, ffmpeg on this machine, and `accepts: ['video']` is
       // what the picker uses to grey it out on any other node type.
+      // One check substitutes a DIFFERENT, valid catalog (see `probeCatalog`) to
+      // reach the "loaded, but no compose descriptor" branch.
+      if (probeCatalog !== null) return json(probeCatalog)
       return json({
         ok: true,
         skills: [
@@ -1001,6 +1020,152 @@ await check('B1-B3 the stitch strip is a real button that opens the confirm card
       await waitUntil(() => selectedNodes().length === before - 1)
     }
     assert.equal(selectedNodes().length, 0, 'B3: the strip check hands the canvas back with a clean selection')
+    // The strip and any half-opened dialog are navigation state, not selection
+    // state, and C1-C3 drives the very same tree: leaving either behind turns one
+    // broken assertion in here into a confusing failure several checks later.
+    const leftoverCard = jsdomDocument.querySelector('[data-compose-card]')
+    if (leftoverCard !== null) {
+      const cancel = [...leftoverCard.querySelectorAll('button')].find(button => button.textContent === '先不运行')
+      cancel?.dispatchEvent(new jsdomWindow.MouseEvent('click', { bubbles: true, cancelable: true }))
+      await waitUntil(() => jsdomDocument.querySelector('[data-compose-card]') === null)
+    }
+    assert.equal(
+      jsdomDocument.querySelector('[data-compose-card]') === null, true,
+      'B3: no confirm card survives this check, so the next one starts from a closed canvas',
+    )
+    assert.equal(
+      view.querySelector('[data-compose-bar]') === null, true,
+      'B3: with the selection empty the strip is gone too -- the canvas is handed back cold',
+    )
+  }
+})
+
+await check('AC1 a catalog with NO compose descriptor disables the strip AND says why', async () => {
+  const {
+    jsdomWindow, jsdomDocument, view, waitUntil, pointerDown, nodeById, badgesNow,
+    skillRunRequests, requestPaths,
+  } = shared
+
+  // The branch no other check here covers: `loadSkillCatalog()` SUCCEEDS but the
+  // host lists no `compose.videos` -- it hands back a reason instead. Contract
+  // §3.0: a button the user can see must be DISABLED and say why, never a click
+  // that silently does nothing (the original complaint, in a different colour).
+  // A build with `disabled={false}` leaves every other assertion in this file
+  // green, which is what makes this guard worth its lines.
+  const selectedNodes = () => [...view.querySelectorAll('[data-node-id]')]
+    .filter(node => node.querySelector('[data-corner]') !== null)
+  const clearSelection = async () => {
+    for (const selected of selectedNodes()) {
+      const before = selectedNodes().length
+      pointerDown(selected, true)
+      assert.ok(
+        await waitUntil(() => selectedNodes().length === before - 1),
+        'AC1: the leftover selection is cleared first',
+      )
+    }
+  }
+
+  try {
+    await clearSelection()
+
+    // Baseline FIRST, with the shipped catalog still in force: the button is
+    // enabled. Without this, a build that disabled the strip unconditionally
+    // would satisfy the assertions below for entirely the wrong reason.
+    pointerDown(nodeById('node-clip-left'))
+    assert.ok(
+      await waitUntil(() => nodeById('node-clip-left').querySelector('[data-corner]') !== null),
+      'AC1: the first clip is selected for the baseline',
+    )
+    pointerDown(nodeById('node-clip-right'), true)
+    assert.ok(
+      await waitUntil(() => badgesNow().length === 2),
+      'AC1: two clips are selected for the baseline',
+    )
+    const baseline = view.querySelector('[data-compose-bar-run]')
+    assert.ok(baseline !== null, 'AC1: the strip renders for two clips')
+    assert.equal(baseline.disabled, false, 'AC1: with the shipped catalog the button works')
+    await clearSelection()
+
+    // Swap in a VALID catalog that simply has no stitch skill, and let the app
+    // fetch it the way it already does -- through the skill menu, which reloads
+    // the catalog in openSkillMenu. A text node is used on purpose: its menu
+    // renders regardless of whether a compose row exists, so this cannot hang on
+    // the very row the probe removes.
+    probeCatalog = {
+      ok: true,
+      skills: [{ id: 'polish.text', name: '润色文本', tier: 'light', accepts: ['text'], output: 'text' }],
+      agentAvailable: true, registryAvailable: true, installed: [],
+      reason: '这台主机没有可用的拼接技能',
+    }
+    const readsBefore = requestPaths.filter(path => path.endsWith('/canvas/skills/list')).length
+    const skillButton = nodeById('node-note').querySelector('[data-toolbar] button[aria-label="技能"]')
+    assert.ok(skillButton !== null, 'AC1: the text node offers the skill menu')
+    skillButton.dispatchEvent(new jsdomWindow.MouseEvent('click', { bubbles: true, cancelable: true }))
+    await shared.closeSkillMenu()
+    assert.ok(
+      await waitUntil(() => requestPaths.filter(path => path.endsWith('/canvas/skills/list')).length > readsBefore),
+      'AC1: opening that menu really re-read the catalog, so the probe is the one in force',
+    )
+    await clearSelection()
+
+    pointerDown(nodeById('node-clip-left'))
+    assert.ok(
+      await waitUntil(() => nodeById('node-clip-left').querySelector('[data-corner]') !== null),
+      'AC1: the first clip is selected again',
+    )
+    pointerDown(nodeById('node-clip-right'), true)
+    assert.ok(
+      await waitUntil(() => badgesNow().length === 2),
+      'AC1: two clips are selected again',
+    )
+
+    // (1) the strip and its control are still there -- a missing descriptor must
+    // not make the read-out vanish, or the user learns nothing at all.
+    const strip = view.querySelector('[data-compose-bar]')
+    assert.ok(strip !== null, 'AC1: the strip still renders when the skill is missing')
+    assert.ok(strip.querySelector('[data-compose-bar-run]') !== null, 'AC1: the strip still carries the run button')
+    const button = view.querySelector('[data-compose-bar-run]')
+
+    // (2) it is DISABLED. The catalog is already loaded (non-null) by now, so
+    // this is the terminal state, not the transient "still loading" one.
+    assert.ok(
+      await waitUntil(() => button.disabled === true),
+      'AC1: with no compose descriptor the button is DISABLED, not a silent no-op',
+    )
+
+    // (3) and it names the host reason -- not the loading copy, not "unknown".
+    assert.equal(
+      button.title, '拼接功能当前不可用（这台主机没有可用的拼接技能）',
+      'AC1: the disabled button names the host reason instead of leaving the user guessing',
+    )
+
+    // (4) a click changes nothing: no card, no run. The handler guards on the
+    // missing descriptor, so this holds even if the event does fire.
+    const runsBefore = skillRunRequests.length
+    button.dispatchEvent(new jsdomWindow.MouseEvent('click', { bubbles: true, cancelable: true }))
+    await new Promise(resolve => setTimeout(resolve, 300))
+    // Boolean comparison on purpose: `assert.equal(element, null)` makes Node
+    // inspect the cyclic jsdom DOM when it fails, and the process dies as an OOM
+    // (exit 137) with the output truncated -- the failure becomes unreadable.
+    assert.equal(
+      jsdomDocument.querySelector('[data-compose-card]') === null, true,
+      'AC1: a disabled click opens no confirm card',
+    )
+    assert.equal(skillRunRequests.length, runsBefore, 'AC1: a disabled click starts no run')
+  } finally {
+    // Hand the REAL catalog back before C1-C3, which expects the stitch row to be
+    // offered again, then leave a cold canvas.
+    probeCatalog = null
+    const skillButton = nodeById('node-note')?.querySelector('[data-toolbar] button[aria-label="技能"]')
+    if (skillButton !== null && skillButton !== undefined) {
+      skillButton.dispatchEvent(new jsdomWindow.MouseEvent('click', { bubbles: true, cancelable: true }))
+      await shared.closeSkillMenu()
+    }
+    await clearSelection()
+    assert.equal(
+      view.querySelector('[data-compose-bar]') === null, true,
+      'AC1: the canvas is handed back without a strip, ready for C1-C3',
+    )
   }
 })
 
@@ -1644,6 +1809,12 @@ await check('E4-E6 the in-canvas video picker adds clips and uploads files', asy
   )
 
   const videoNodesBefore = nodesOfType('video')
+  // Identify the added node by IDENTITY, never by URL. The fixture already ships
+  // `node-clip-right` pointing at CLIP_RIGHT_URL, so a URL lookup resolves to
+  // that pre-existing node and every assertion below would pass even if the
+  // picker landed nothing at all. (AC2 avoids this same trap; E5 was the
+  // original offender, found while reverse-verifying AC2.)
+  const videoIdsBefore = new Set(nodesOf('video').map(node => node.id))
   const uploadsBefore = canvasAssetUploads.length
   cards[0].querySelector('[data-video-add]')
     .dispatchEvent(new jsdomWindow.MouseEvent('click', { bubbles: true, cancelable: true }))
@@ -1651,8 +1822,13 @@ await check('E4-E6 the in-canvas video picker adds clips and uploads files', asy
     await waitUntil(() => nodesOfType('video') > videoNodesBefore),
     'E5: adding a clip lands a video node on the canvas',
   )
-  const addedClip = nodesOf('video').find(node => node.metadata?.video?.url === CLIP_RIGHT_URL)
-  assert.ok(addedClip !== undefined, 'E5: the new node points at the clip the card offered')
+  const addedClips = nodesOf('video').filter(node => !videoIdsBefore.has(node.id))
+  assert.equal(addedClips.length, 1, 'E5: adding a clip lands exactly one new video node')
+  const addedClip = addedClips[0]
+  assert.equal(
+    addedClip.metadata?.video?.url, CLIP_RIGHT_URL,
+    'E5: the new node points at the clip the card offered',
+  )
   assert.equal(addedClip.metadata.status, 'success', 'E5: an added clip is immediately playable')
   // The point of the whole path: referenced, never copied.
   assert.equal(
@@ -1701,6 +1877,125 @@ await check('E4-E6 the in-canvas video picker adds clips and uploads files', asy
     await waitUntil(() => view.querySelector('[data-video-picker]') === null, 12_000),
     'E6: the picker closes itself once the upload lands',
   )
+})
+
+await check('AC2 a clip added through the picker is composable, not just referenced', async () => {
+  const {
+    jsdomWindow, jsdomDocument, view, waitUntil, waitForSelector, pointerDown, nodeById, badgesNow,
+  } = shared
+  const docNow = () => shared.canvasSaves.at(-1)
+  const idsOnCanvas = () => [...view.querySelectorAll('[data-node-id]')]
+    .map(node => node.getAttribute('data-node-id'))
+  const selectedNodes = () => [...view.querySelectorAll('[data-node-id]')]
+    .filter(node => node.querySelector('[data-corner]') !== null)
+  const clearSelection = async () => {
+    for (const selected of selectedNodes()) {
+      const before = selectedNodes().length
+      pointerDown(selected, true)
+      assert.ok(
+        await waitUntil(() => selectedNodes().length === before - 1),
+        'AC2: the selection is cleared before asserting',
+      )
+    }
+  }
+
+  try {
+    // The upload in E6 leaves its own file node selected; start from a known
+    // selection instead of inheriting one this check never asked for.
+    await clearSelection()
+
+    // Reopen the picker the way a user does: the dock's 添加图片 button, then the
+    // 添加视频 row, then the gallery tab.
+    const dockImage = view.querySelector('[data-dock-item][data-label="添加图片"] button')
+    assert.ok(dockImage !== null, 'AC2: the dock offers 添加图片')
+    dockImage.dispatchEvent(new jsdomWindow.MouseEvent('click', { bubbles: true, cancelable: true }))
+    assert.ok(
+      await waitUntil(() => jsdomDocument.querySelector('[data-image-menu-video]') !== null),
+      'AC2: the image menu carries the 添加视频 row',
+    )
+    jsdomDocument.querySelector('[data-image-menu-video]')
+      .dispatchEvent(new jsdomWindow.MouseEvent('click', { bubbles: true, cancelable: true }))
+    await waitForSelector(view, '[data-video-picker]')
+    const picker = view.querySelector('[data-video-picker]')
+    picker.querySelector('[data-video-tab="gallery"]')
+      .dispatchEvent(new jsdomWindow.MouseEvent('click', { bubbles: true, cancelable: true }))
+    assert.ok(
+      await waitUntil(() => picker.querySelectorAll('[data-video-card]').length > 0),
+      'AC2: the gallery tab lists the favorited clip',
+    )
+
+    // The new node is identified by ID-SET DIFF, never by url and never by a type
+    // count: this check runs on the SAME live tree the W and E checks have already
+    // added nodes to, and the fixture itself already carries `node-clip-right` on
+    // CLIP_RIGHT_URL. A url or count search would silently return an older node and
+    // this check would then pass for entirely the wrong reason.
+    const beforeIds = new Set(idsOnCanvas())
+    picker.querySelector('[data-video-card] [data-video-add]')
+      .dispatchEvent(new jsdomWindow.MouseEvent('click', { bubbles: true, cancelable: true }))
+    assert.ok(
+      await waitUntil(() => idsOnCanvas().some(id => !beforeIds.has(id)), 12_000),
+      'AC2: adding a clip lands a node on the canvas',
+    )
+    const freshIds = idsOnCanvas().filter(id => !beforeIds.has(id))
+    assert.equal(freshIds.length, 1, 'AC2: exactly ONE node appeared for one add click')
+    const addedId = freshIds[0]
+    assert.ok(
+      await waitUntil(() => (docNow()?.nodes ?? []).some(node => node.id === addedId), 12_000),
+      'AC2: the added clip reaches the saved document',
+    )
+    const added = (docNow()?.nodes ?? []).find(node => node.id === addedId)
+
+    assert.equal(added.type, 'video', 'AC2: the picker lands a video node')
+    assert.equal(
+      added.metadata?.video?.url, CLIP_RIGHT_URL,
+      'AC2: the new node points at the clip the card offered',
+    )
+    assert.equal(
+      added.metadata?.asset, undefined,
+      'AC2: the picker clip is a REFERENCE -- no canvas asset was copied',
+    )
+
+    // THE ADDITIVE CLAIM. The shipped checks stop at "the node references the
+    // served url"; a picker path that landed a node the stitcher silently ignores
+    // would satisfy every one of them. Being on the canvas is not the same as being
+    // usable, and this is the difference the user actually reported.
+    picker.querySelector('[data-video-picker-close]')
+      .dispatchEvent(new jsdomWindow.MouseEvent('click', { bubbles: true, cancelable: true }))
+    assert.ok(
+      await waitUntil(() => view.querySelector('[data-video-picker]') === null, 12_000),
+      'AC2: the picker closes so the canvas is clickable again',
+    )
+
+    pointerDown(nodeById(addedId))
+    assert.ok(
+      await waitUntil(() => nodeById(addedId).querySelector('[data-corner]') !== null),
+      'AC2: the picker-added clip selects like any other node',
+    )
+    pointerDown(nodeById('node-clip-left'), true)
+    assert.ok(
+      await waitUntil(() => nodeById('node-clip-left').querySelector('[data-corner]') !== null),
+      'AC2: it multi-selects beside an existing clip',
+    )
+    assert.equal(
+      badgesNow().length, 2,
+      'AC2: the picker-added clip is COMPOSABLE -- it takes a badge beside another clip',
+    )
+    assert.ok(
+      nodeById(addedId).querySelector('[data-compose-badge]') !== null,
+      'AC2: the picker-added node carries its own badge',
+    )
+    assert.ok(
+      view.querySelector('[data-compose-bar]') !== null,
+      'AC2: the strip appears for [picker clip, existing clip]',
+    )
+  } finally {
+    // Hand the canvas back cold, the same contract every other check here keeps.
+    await clearSelection()
+    assert.equal(
+      view.querySelector('[data-compose-bar]') === null, true,
+      'AC2: the canvas is handed back without a strip',
+    )
+  }
 })
 
 for (const cleanup of cleanups.reverse()) await cleanup()
