@@ -169,6 +169,11 @@ await check('A3 updater parses stable Releases and caches checks', async () => {
       body: '## Changes\n\n- Faster update discovery\n- Show release notes',
       draft: false,
       prerelease: false,
+      assets: [
+        { name: 'checksums.txt', browser_download_url: 'https://github.com/q253595422/dsh-imagegen-video/releases/download/v9.9.9/checksums.txt' },
+        { name: 'notes-9.9.9.tgz', browser_download_url: 'https://github.com/q253595422/dsh-imagegen-video/releases/download/v9.9.9/notes-9.9.9.tgz' },
+        { name: 'q253595422-dsh-imagegen-video-9.9.9.tgz', browser_download_url: 'https://github.com/q253595422/dsh-imagegen-video/releases/download/v9.9.9/q253595422-dsh-imagegen-video-9.9.9.tgz' },
+      ],
     }), { status: 200, headers: { 'content-type': 'application/json' } })
   }
   const first = await host.checkForUpdate(fetchRelease, 1000)
@@ -178,6 +183,65 @@ await check('A3 updater parses stable Releases and caches checks', async () => {
   assert.match(first.releaseNotes, /Faster update discovery/)
   assert.equal(second, first)
   assert.equal(calls, 1)
+  // This fork ships as a Release asset, not an npm package, so the installable
+  // archive has to be discovered among the assets rather than guessed from the
+  // tag. `notes-9.9.9.tgz` also carries the version, so the expected name is
+  // what actually distinguishes the plugin archive from a same-version file.
+  assert.equal(
+    first.tarballUrl,
+    'https://github.com/q253595422/dsh-imagegen-video/releases/download/v9.9.9/q253595422-dsh-imagegen-video-9.9.9.tgz',
+  )
+  assert.equal(host.isInstallableTarballUrl(first.tarballUrl), true)
+  host.clearUpdateCache()
+})
+
+await check('A3b update install refuses what it cannot verify, and never guesses a registry name', async () => {
+  const spawnCalls = []
+  const spawnFn = (...args) => {
+    spawnCalls.push(args)
+    return { once: (event, handler) => { if (event === 'exit') queueMicrotask(() => { handler(0, null) }) } }
+  }
+  const releaseWith = assets => async () => new Response(JSON.stringify({
+    tag_name: 'v9.9.9', html_url: 'https://github.com/q253595422/dsh-imagegen-video/releases/tag/v9.9.9',
+    draft: false, prerelease: false, assets,
+  }), { status: 200, headers: { 'content-type': 'application/json' } })
+  const argv = ['node', 'dsh', '--profile', 'desktop']
+
+  // A release with no archive must fail rather than fall back to an npm spec:
+  // this fork is not on npm, so installing `@q253595422/dsh-imagegen-video@9.9.9`
+  // would fetch nothing while looking like it worked.
+  host.clearUpdateCache()
+  await assert.rejects(
+    () => host.installUpdate('9.9.9', spawnFn, argv, {}, releaseWith([])),
+    /publishes no installable archive/,
+  )
+  assert.equal(spawnCalls.length, 0)
+
+  // The download URL arrives from the network, so an off-GitHub host is refused
+  // before anything is executed.
+  host.clearUpdateCache()
+  await assert.rejects(
+    () => host.installUpdate('9.9.9', spawnFn, argv, {}, releaseWith([
+      { name: 'q253595422-dsh-imagegen-video-9.9.9.tgz', browser_download_url: 'https://evil.example/x.tgz' },
+    ])),
+    /untrusted download host/,
+  )
+  assert.equal(spawnCalls.length, 0)
+  assert.equal(host.isInstallableTarballUrl('http://github.com/a.tgz'), false)
+  assert.equal(host.isInstallableTarballUrl('https://github.com.evil.example/a.tgz'), false)
+  assert.equal(host.isInstallableTarballUrl('not a url'), false)
+
+  // The happy path hands the archive URL to `dsh plugin add`, and the profile
+  // comes from the running process instead of being hardcoded.
+  host.clearUpdateCache()
+  await host.installUpdate('9.9.9', spawnFn, argv, {}, releaseWith([
+    { name: 'q253595422-dsh-imagegen-video-9.9.9.tgz', browser_download_url: 'https://github.com/q253595422/dsh-imagegen-video/releases/download/v9.9.9/q253595422-dsh-imagegen-video-9.9.9.tgz' },
+  ]))
+  assert.equal(spawnCalls.length, 1)
+  assert.deepEqual(spawnCalls[0][1], [
+    'plugin', '--profile', 'desktop', 'add',
+    'https://github.com/q253595422/dsh-imagegen-video/releases/download/v9.9.9/q253595422-dsh-imagegen-video-9.9.9.tgz',
+  ])
   host.clearUpdateCache()
 })
 

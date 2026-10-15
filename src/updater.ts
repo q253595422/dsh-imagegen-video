@@ -5,7 +5,6 @@ import { PLUGIN_VERSION } from './protocol.ts'
 
 /** Keep this in sync with package.json for each published release. */
 export const CURRENT_VERSION = PLUGIN_VERSION
-export const PACKAGE_NAME = '@q253595422/dsh-imagegen-video'
 export const RELEASES_URL = 'https://api.github.com/repos/q253595422/dsh-imagegen-video/releases/latest'
 
 const CHECK_TIMEOUT_MS = 10_000
@@ -19,6 +18,12 @@ export interface UpdateInfo {
   publishedAt?: string
   /** Markdown release body shown in the update popover. */
   releaseNotes?: string
+  /**
+   * Download URL of the release's installable archive. This fork ships as a
+   * GitHub Release asset, not as an npm package, so installing an update means
+   * handing `dsh plugin add` this URL — there is no registry spec to resolve.
+   */
+  tarballUrl?: string
 }
 
 interface GitHubRelease {
@@ -28,6 +33,55 @@ interface GitHubRelease {
   body?: unknown
   draft?: unknown
   prerelease?: unknown
+  assets?: unknown
+}
+
+/**
+ * `pnpm pack` names the archive after the package, with the scope's `/` replaced
+ * by `-`. Matching on it is what keeps a release's *other* version-carrying
+ * archive — a source tarball, a checksum bundle, anything a maintainer attaches
+ * later — from winning the ranking by alphabetical accident.
+ */
+const ARCHIVE_NAME = 'q253595422-dsh-imagegen-video'
+
+/**
+ * Pick the release asset to install from. Only archives are considered, and
+ * only over HTTPS. Rank order: the package archive for this version, then any
+ * archive carrying the version, then the rest; ties break by name so the host
+ * never installs a different file just because GitHub listed assets in a
+ * different order.
+ */
+function installableAssetUrl(assets: unknown, version: string): string | undefined {
+  if (!Array.isArray(assets)) return undefined
+  const candidates = assets
+    .flatMap((asset) => {
+      if (asset === null || typeof asset !== 'object') return []
+      const record = asset as { name?: unknown; browser_download_url?: unknown }
+      const name = typeof record.name === 'string' ? record.name : ''
+      const url = typeof record.browser_download_url === 'string' ? record.browser_download_url : ''
+      if (!/\.(?:tgz|tar\.gz)$/.test(name) || !url.startsWith('https://')) return []
+      const versioned = name.includes(version)
+      const rank = versioned && name.includes(ARCHIVE_NAME) ? 0 : versioned ? 1 : 2
+      return [{ rank, name, url }]
+    })
+    .sort((left, right) => left.rank - right.rank || (left.name < right.name ? -1 : left.name > right.name ? 1 : 0))
+  return candidates[0]?.url
+}
+
+/**
+ * Only the download host GitHub serves release assets from may be installed
+ * from. The URL comes from a release the host already fetched, but a redirect
+ * to an arbitrary host would still turn "install the update" into "run
+ * whatever the network returns", so the host is checked before spawning.
+ */
+export function isInstallableTarballUrl(url: string): boolean {
+  let parsed: URL
+  try {
+    parsed = new URL(url)
+  } catch {
+    return false
+  }
+  return parsed.protocol === 'https:' && (parsed.hostname === 'github.com' || parsed.hostname.endsWith('.githubusercontent.com'))
 }
 
 let cached: { expiresAt: number; value: UpdateInfo } | undefined
@@ -68,6 +122,7 @@ export async function checkForUpdate(fetchFn: typeof fetch = fetch, now = Date.n
   if (latestVersion === undefined) throw new Error('latest GitHub Release has an invalid version tag')
   const releaseUrl = typeof release.html_url === 'string' ? release.html_url : 'https://github.com/q253595422/dsh-imagegen-video/releases'
   const releaseNotes = typeof release.body === 'string' ? release.body.trim() : ''
+  const tarballUrl = installableAssetUrl(release.assets, latestVersion)
   const value: UpdateInfo = {
     currentVersion: CURRENT_VERSION,
     latestVersion,
@@ -75,6 +130,7 @@ export async function checkForUpdate(fetchFn: typeof fetch = fetch, now = Date.n
     releaseUrl,
     ...typeof release.published_at === 'string' ? { publishedAt: release.published_at } : {},
     ...releaseNotes === '' ? {} : { releaseNotes: releaseNotes.slice(0, 20_000) },
+    ...tarballUrl === undefined ? {} : { tarballUrl },
   }
   cached = { expiresAt: now + CACHE_TTL_MS, value }
   return value
@@ -91,19 +147,36 @@ export function profileFromProcess(argv: readonly string[] = process.argv, env: 
   return 'web'
 }
 
-/** Run the same official command documented for plugin installation. */
-export function installUpdate(
+/**
+ * Run the same official command documented for plugin installation, but point
+ * it at this fork's release archive.
+ *
+ * There is deliberately no `PACKAGE_NAME@version` spec here: this fork ships as
+ * a GitHub Release asset and is not on npm, so a registry spec would resolve to
+ * nothing. The route has just fetched the latest release, so resolving the URL
+ * through `checkForUpdate` is a cache hit, not a second request.
+ */
+export async function installUpdate(
   version: string,
   spawnFn: typeof spawn = spawn,
   argv: readonly string[] = process.argv,
   env: NodeJS.ProcessEnv = process.env,
+  fetchFn: typeof fetch = fetch,
 ): Promise<void> {
   if (!/^\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?$/.test(version)) {
-    return Promise.reject(new Error('invalid update version'))
+    throw new Error('invalid update version')
+  }
+  const release = await checkForUpdate(fetchFn)
+  const tarballUrl = release.tarballUrl
+  if (tarballUrl === undefined) {
+    throw new Error(`release ${release.latestVersion} publishes no installable archive`)
+  }
+  if (!isInstallableTarballUrl(tarballUrl)) {
+    throw new Error(`release ${release.latestVersion} points at an untrusted download host`)
   }
   const profile = profileFromProcess(argv, env)
   const command = process.platform === 'win32' ? 'dsh.cmd' : 'dsh'
-  const child = spawnFn(command, ['plugin', '--profile', profile, 'add', `${PACKAGE_NAME}@${version}`], {
+  const child = spawnFn(command, ['plugin', '--profile', profile, 'add', tarballUrl], {
     shell: process.platform === 'win32',
     stdio: 'ignore',
   }) as ChildProcess

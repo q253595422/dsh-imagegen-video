@@ -12,9 +12,9 @@ detail is in `git log 9305f9f..HEAD`.
 
 ### 1.7.0 — first published release of the fork
 
-The fork's first npm publication, under its own name
-`@q253595422/dsh-imagegen-video`. Everything in "What the fork adds" below is in
-this release.
+The fork's first published release. It ships as a **GitHub Release asset**
+(`q253595422-dsh-imagegen-video-1.7.0.tgz`), not as an npm package. Everything in
+"What the fork adds" below is in this release.
 
 - **Version line starts above upstream.** Upstream had already published v1.6.9
   by the time this fork shipped, so publishing as 1.6.8 would have looked older
@@ -27,6 +27,15 @@ this release.
   depended on where it was checked out. The virtual id is now repo-relative
   (`\0dsh-css:src/client/panel.module.css.mjs`), which is stable, unique, and
   reveals nothing the repository does not already publish.
+- **The in-app update button installs the release archive.** `installUpdate` used
+  to run `dsh plugin add <package>@<version>`, which is a registry lookup: with no
+  npm publication it resolves to nothing and the button would fail while looking
+  like it worked. It now reads the archive URL from the release's own assets and
+  hands that URL to `dsh plugin add`. Two guards came with it — a release with no
+  archive is refused instead of falling back to a registry spec, and the download
+  host must be GitHub, because the URL arrives from the network. Asset ranking is
+  by name (the package archive for this version first), so a release that also
+  carries another version-named archive cannot win by alphabetical accident.
 
 ## What the fork adds
 
@@ -112,10 +121,16 @@ mistaken for, upstream:
 
 | Where | Value |
 | --- | --- |
-| npm package | `@q253595422/dsh-imagegen-video` |
+| release archive (`q253595422-dsh-imagegen-video-<version>.tgz`) | `https://github.com/q253595422/dsh-imagegen-video/releases` |
 | plugin id (stamped by `tsdown.config.ts` into the `__ModuleLoader__` handoff) | `@q253595422/dsh-imagegen-video` |
 | `cordis.patch.yml` row `name` | `@q253595422/dsh-imagegen-video` |
 | update check (`src/updater.ts`) | this repository |
+
+The npm package name is `@q253595422/dsh-imagegen-video` as well, but nothing is
+published there: the fork distributes through GitHub Releases, so both the README
+and the in-app update button install the release asset. `src/updater.ts` reads the
+asset URL from the release itself and refuses to install a release that carries no
+archive, rather than falling back to a registry spec that would resolve to nothing.
 
 The **runtime identity is deliberately left alone**: the `/api/dsh-imagegen/*`
 route family, the `dsh-imagegen` settings namespace, the `~/.dsh/dsh-imagegen/`

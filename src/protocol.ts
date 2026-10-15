@@ -1436,6 +1436,12 @@ export interface UpdateInfo {
   publishedAt?: string
   /** Markdown release body shown in the update popover. */
   releaseNotes?: string
+  /**
+   * Download URL of the release's installable archive. This fork ships as a
+   * GitHub Release asset rather than an npm package, so the host installs from
+   * this URL. Absent when the release carries no archive.
+   */
+  tarballUrl?: string
 }
 
 /** One history image reference as the browser consumes it (a served URL). */

@@ -8,6 +8,6 @@ contact_links:
     url: https://github.com/q253595422/dsh-imagegen-video#readme
     about: 安装、配置与开发说明，遇到使用问题先看这里
 
-  - name: 🧩 插件市场
-    url: https://www.npmjs.com/package/@q253595422/dsh-imagegen-video
-    about: npm 包页面，可查看版本与依赖信息
+  - name: 📦 下载与版本
+    url: https://github.com/q253595422/dsh-imagegen-video/releases
+    about: GitHub Releases 页面，下载安装包并查看各版本更新说明

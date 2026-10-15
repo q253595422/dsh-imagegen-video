@@ -6,9 +6,9 @@
 > 本仓库相对上游改了什么见 [CHANGELOG.md](./CHANGELOG.md)。
 
 <div align="center">
-  <a href="https://www.npmjs.com/package/@q253595422/dsh-imagegen-video"><img src="https://img.shields.io/npm/v/@q253595422/dsh-imagegen-video?color=cb3837&logo=npm&label=npm" alt="npm" /></a>
+  <a href="https://github.com/q253595422/dsh-imagegen-video/releases"><img src="https://img.shields.io/github/v/release/q253595422/dsh-imagegen-video?color=cb3837&label=release" alt="Latest release" /></a>
   &nbsp;
-  <a href="https://www.npmjs.com/package/@q253595422/dsh-imagegen-video"><img src="https://badgen.net/npm/dt/@q253595422/dsh-imagegen-video?label=downloads&color=blue" alt="npm total downloads" /></a>
+  <a href="https://github.com/q253595422/dsh-imagegen-video/releases"><img src="https://img.shields.io/github/downloads/q253595422/dsh-imagegen-video/total?label=downloads&color=blue" alt="Release downloads" /></a>
   &nbsp;
   <a href="./LICENSE"><img src="https://img.shields.io/badge/license-Apache--2.0-3b82f6.svg" alt="License" /></a>
   &nbsp;
@@ -24,8 +24,16 @@
 
 需要已安装 [DeepSeek Harness](https://github.com/deepseek-ai/DeepSeek-Harness) 和 Node.js 20+。
 
+本插件**不在 npm 上发布**，安装包以 GitHub Release 资产的形式分发：
+
 ```bash
-dsh plugin --profile web add @q253595422/dsh-imagegen-video
+dsh plugin --profile web add https://github.com/q253595422/dsh-imagegen-video/releases/download/v1.7.0/q253595422-dsh-imagegen-video-1.7.0.tgz
+```
+
+也可以先到 [Releases](https://github.com/q253595422/dsh-imagegen-video/releases) 页面下载 `.tgz`，再安装本地文件：
+
+```bash
+dsh plugin --profile web add ./q253595422-dsh-imagegen-video-1.7.0.tgz
 ```
 
 > ⚠️ **不要与原版 `@dickpy/dsh-imagegen` 同时安装。** 两者注册的是同一套
@@ -39,8 +47,8 @@ dsh plugin --profile web add @q253595422/dsh-imagegen-video
 <summary><b>其他安装方式、升级与回滚</b></summary>
 
 - **让 Agent 安装：**把上面的安装命令发给 DSH、Codex 或其他 coding agent。
-- **指定版本：**使用 `@q253595422/dsh-imagegen-video@<版本号>`，或从 [GitHub Releases](https://github.com/q253595422/dsh-imagegen-video/releases) 下载 tgz 后安装。
-- **升级：**重复执行 `add` 命令；插件也会在面板中提示新版本。更新后重启 `dsh web`。
+- **指定版本：**把 URL 里的 `v1.7.0` 与文件名里的版本号换成目标版本，或从 [GitHub Releases](https://github.com/q253595422/dsh-imagegen-video/releases) 下载对应版本的 tgz 后安装。
+- **升级：**重复执行 `add` 命令指向新版本即可；插件也会在面板中提示新版本。更新后重启 `dsh web`。
 - 渠道配置、历史记录和画廊数据保存在 DSH 宿主侧，正常升级不会清空。
 
 </details>
