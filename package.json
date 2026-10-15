@@ -74,6 +74,23 @@
     "THIRD_PARTY_NOTICES.md"
   ],
   "license": "Apache-2.0",
+  "author": "q253595422",
+  "keywords": [
+    "deepseek-harness",
+    "dsh",
+    "dsh-plugin",
+    "image-generation",
+    "video-generation",
+    "text-to-image",
+    "text-to-video",
+    "image-to-video",
+    "infinite-canvas",
+    "ffmpeg"
+  ],
+  "publishConfig": {
+    "access": "public",
+    "registry": "https://registry.npmjs.org"
+  },
   "repository": {
     "type": "git",
     "url": "git+https://github.com/q253595422/dsh-imagegen-video.git"
