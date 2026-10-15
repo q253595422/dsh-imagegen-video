@@ -5220,6 +5220,11 @@ export function CanvasWorkspace(props: CanvasWorkspaceProps): React.JSX.Element 
         preload="metadata"
         src={videoPreviewNode.clip.url}
         onClick={event => event.stopPropagation()}
+        // Same reason as the node's own player: the clip is served by reference
+        // and the store deletes evicted files, so the full-screen view can be
+        // opened onto a clip that is already gone. Marking the node keeps the
+        // two views consistent — closing the overlay shows the node saying so.
+        onError={() => setBrokenVideoIds(previous => previous.has(videoPreviewNode.node.id) ? previous : new Set(previous).add(videoPreviewNode.node.id))}
       />
       <button
         type="button"
