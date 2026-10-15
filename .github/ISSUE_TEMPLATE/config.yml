@@ -5,9 +5,9 @@ blank_issues_enabled: false
 
 contact_links:
   - name: 📖 使用文档（README）
-    url: https://github.com/dickpy/dsh-imagegen#readme
+    url: https://github.com/q253595422/dsh-imagegen-video#readme
     about: 安装、配置与开发说明，遇到使用问题先看这里
 
   - name: 🧩 插件市场
-    url: https://www.npmjs.com/package/@dickpy/dsh-imagegen
+    url: https://www.npmjs.com/package/@q253595422/dsh-imagegen-video
     about: npm 包页面，可查看版本与依赖信息

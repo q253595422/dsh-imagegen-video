@@ -1,5 +1,5 @@
 name: 🐛 Bug 报告
-description: 提交一个 bug，帮助改进 dsh-imagegen
+description: 提交一个 bug，帮助改进 dsh-imagegen-video
 title: "[Bug] "
 labels: ["bug"]
 body:
@@ -14,7 +14,7 @@ body:
     id: plugin_version
     attributes:
       label: 插件版本
-      description: 例如 `1.0.0`（可在 `package.json` 或 `npm view @dickpy/dsh-imagegen version` 查看）
+      description: 例如 `1.0.0`（可在 `package.json` 或 `npm view @q253595422/dsh-imagegen-video version` 查看）
       placeholder: "1.0.0"
     validations:
       required: true

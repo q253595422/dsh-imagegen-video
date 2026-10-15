@@ -1,17 +1,22 @@
-# dsh-imagegen
+# dsh-imagegen-video
+
+> **这是 [dickpy/dsh-imagegen](https://github.com/dickpy/dsh-imagegen) 的衍生版（fork）。**
+> 上游只做生图；本仓库在上游 v1.6.8 源码基础上增加了**完整的生视频链路**与
+> **画布视频节点、片段拼接**。上游的署名与许可证见 [NOTICE](./NOTICE)，
+> 本仓库相对上游改了什么见 [CHANGELOG.md](./CHANGELOG.md)。
 
 <div align="center">
-  <a href="https://www.npmjs.com/package/@dickpy/dsh-imagegen"><img src="https://img.shields.io/npm/v/@dickpy/dsh-imagegen?color=cb3837&logo=npm&label=npm" alt="npm" /></a>
+  <a href="https://www.npmjs.com/package/@q253595422/dsh-imagegen-video"><img src="https://img.shields.io/npm/v/@q253595422/dsh-imagegen-video?color=cb3837&logo=npm&label=npm" alt="npm" /></a>
   &nbsp;
-  <a href="https://www.npmjs.com/package/@dickpy/dsh-imagegen"><img src="https://badgen.net/npm/dt/@dickpy/dsh-imagegen?label=downloads&color=blue" alt="npm total downloads" /></a>
+  <a href="https://www.npmjs.com/package/@q253595422/dsh-imagegen-video"><img src="https://badgen.net/npm/dt/@q253595422/dsh-imagegen-video?label=downloads&color=blue" alt="npm total downloads" /></a>
   &nbsp;
   <a href="./LICENSE"><img src="https://img.shields.io/badge/license-Apache--2.0-3b82f6.svg" alt="License" /></a>
   &nbsp;
-  <a href="https://github.com/dickpy/dsh-imagegen"><img src="https://img.shields.io/badge/platform-DeepSeek%20Harness-111827" alt="Platform" /></a>
+  <a href="https://github.com/q253595422/dsh-imagegen-video"><img src="https://img.shields.io/badge/platform-DeepSeek%20Harness-111827" alt="Platform" /></a>
 
-  <p><strong>在 DeepSeek Harness 里，生成、编辑、管理，一站完成。</strong></p>
+  <p><strong>在 DeepSeek Harness 里，生成、编辑、管理，一站完成；图片与视频同一套工作流。</strong></p>
   <p><strong>快速导航</strong></p>
-  <p><a href="#quick-start">🚀 快速开始</a>　·　<a href="#canvas">无限画布</a>　·　<a href="#ecommerce">电商套图</a>　·　<a href="#txt2img">文生图 / 图生图</a>　·　<a href="#gallery">模板 / 画廊</a>　·　<a href="#configuration">模型配置</a>　·　<a href="#community">👥 QQ 交流群</a></p>
+  <p><a href="#quick-start">🚀 快速开始</a>　·　<a href="#canvas">无限画布</a>　·　<a href="#compose">片段拼接</a>　·　<a href="#ecommerce">电商套图</a>　·　<a href="#txt2img">文生图 / 图生图</a>　·　<a href="#txt2video">生视频</a>　·　<a href="#gallery">模板 / 画廊</a>　·　<a href="#configuration">模型配置</a>　·　<a href="#upstream">上游与授权</a></p>
 </div>
 
 <a id="quick-start"></a>
@@ -20,8 +25,13 @@
 需要已安装 [DeepSeek Harness](https://github.com/deepseek-ai/DeepSeek-Harness) 和 Node.js 20+。
 
 ```bash
-dsh plugin --profile web add @dickpy/dsh-imagegen
+dsh plugin --profile web add @q253595422/dsh-imagegen-video
 ```
+
+> ⚠️ **不要与原版 `@dickpy/dsh-imagegen` 同时安装。** 两者注册的是同一套
+> `/api/dsh-imagegen/*` 路由和同一个 UI 面板（该路由前缀继承自上游，不是本
+> 衍生版引入的），同时启用会冲突。数据目录 `~/.dsh/dsh-imagegen/` 也与上游
+> **共用**，切换前请先备份。详见 [上游与授权](#upstream)。
 
 安装后重启 `dsh web`，侧边栏会出现「生图」入口。到「设置 → 生图配置」添加提供方、填写 API 地址与密钥、检测并选择生图模型，保存后即可开始创作。Windows 若遇 PowerShell 脚本策略限制，请使用 `dsh.cmd`。
 
@@ -29,7 +39,7 @@ dsh plugin --profile web add @dickpy/dsh-imagegen
 <summary><b>其他安装方式、升级与回滚</b></summary>
 
 - **让 Agent 安装：**把上面的安装命令发给 DSH、Codex 或其他 coding agent。
-- **指定版本：**使用 `@dickpy/dsh-imagegen@<版本号>`，或从 [GitHub Releases](https://github.com/dickpy/dsh-imagegen/releases) 下载 tgz 后安装。
+- **指定版本：**使用 `@q253595422/dsh-imagegen-video@<版本号>`，或从 [GitHub Releases](https://github.com/q253595422/dsh-imagegen-video/releases) 下载 tgz 后安装。
 - **升级：**重复执行 `add` 命令；插件也会在面板中提示新版本。更新后重启 `dsh web`。
 - 渠道配置、历史记录和画廊数据保存在 DSH 宿主侧，正常升级不会清空。
 
@@ -41,11 +51,12 @@ dsh plugin --profile web add @dickpy/dsh-imagegen
 | 能力 | 用途 |
 | --- | --- |
 | **无限画布** | 把提示词、参考图和生成节点连成可迭代的创作流程。 |
+| **视频节点与拼接** | 视频节点与图片节点同一套控制；多选后按画布位置拼成一条成片。 |
 | **电商套图** | 从商品参考图生成主图、卖点图、场景图等成套素材。 |
 | **文生图 / 图生图** | 使用兼容的生图渠道生成、编辑并比较图片。 |
 | **生视频** | 文生视频、图生视频、首尾帧与多参考图；按协议族适配异步渲染与轮询。 |
 | **对话与 Agent** | 在 DSH 对话中生成图片、继续编辑，并把结果带回会话。 |
-| **画廊与历史** | 管理创作结果、模板与标签；在不同设备上接续创作。 |
+| **画廊与历史** | 图片与视频同列管理，支持模板与标签；在不同设备上接续创作。 |
 
 <a id="canvas"></a>
 
@@ -58,7 +69,7 @@ dsh plugin --profile web add @dickpy/dsh-imagegen
 <details>
 <summary><b>画布、文件节点与技能细节</b></summary>
 
-- 支持图片、文本、生成配置和文件节点；图片节点可标注、移除背景或拆分图层。
+- 支持图片、文本、视频、生成配置和文件节点；图片节点可标注、移除背景或拆分图层。
 - 单个文件最大 50MB；可在画布内预览常见文档、表格、PDF、图片与音视频。
 - 内置文本润色、图片描述、内容抽取和图片转可编辑 PPT 等技能；图片转 PPT 不需要另外安装第三方技能或配置 OCR token。
 - 图片转 PPT 使用配置的聊天模型理解版式，在本地生成可编辑文字与基础矢量形状；复杂照片或插画可能会简化。
@@ -67,6 +78,19 @@ dsh plugin --profile web add @dickpy/dsh-imagegen
 - 技能配置格式与安全边界见 [`docs/skill-config.md`](docs/skill-config.md)。
 
 </details>
+
+<a id="compose"></a>
+### 片段拼接
+
+把生好的视频片段拖到画布上，**框选两段以上**，底部会出现「拼接这 N 段」按钮。
+
+- **顺序按画布位置**：从上到下、从左到右；每个被选中的片段上会标出 ①②③，确认卡里也会列出最终顺序 —— 你看到的序号就是成片里的顺序。
+- **本机 ffmpeg 执行**：不调用任何模型、不联网、不消耗额度。工具从 `~/.local/bin`、`/opt/homebrew/bin`、`/usr/local/bin`、`/usr/bin` 依次查找；找不到时按钮会明确说明原因，而不是静默失败。
+- **成片进入视频历史**：拼接结果作为一条普通视频记录落盘，可以在侧栏看到、播放，也可以收藏进素材库。
+- 找不到的片段会让**整次拼接失败**并指出是第几段，而不是悄悄少拼一段。
+- 输出统一为 1280×720 / 30fps / H.264 + AAC，不同尺寸或帧率的输入会等比缩放并补边，不会变形。
+
+判定规则与已知边界见 [`docs/compose-contract.md`](docs/compose-contract.md)。
 
 <a id="ecommerce"></a>
 
@@ -153,18 +177,22 @@ dsh plugin --profile web add @dickpy/dsh-imagegen
 - 外部重任务技能可能读写本机文件并执行命令；运行前请确认技能可信、输入内容可共享。
 - 生图会消耗上游 API 额度；请人工检查生成结果。不要把 API 密钥贴到 Issue、日志或截图中。
 
-<a id="community"></a>
-## QQ 交流群与支持
+<a id="upstream"></a>
+## 上游与授权
 
-欢迎加入 QQ 群，一起交流 DSH、AI 生图与插件使用，也欢迎分享提示词、工作流和改进建议。
+本仓库是 [dickpy/dsh-imagegen](https://github.com/dickpy/dsh-imagegen) 的衍生版，按
+[Apache-2.0](./LICENSE) 发布。上游的版权与来源见 [NOTICE](./NOTICE)；本仓库相对
+上游 v1.6.8 的全部改动逐条列在 [CHANGELOG.md](./CHANGELOG.md)。
 
-<p align="center">
-  <img src="docs/images/community-qq.png" alt="扫码加入 dsh-imagegen QQ 交流群" width="360" />
-</p>
+**这个衍生版做了什么**：上游只有生图。本仓库在上游源码上补齐了生视频链路
+（异步提交/轮询、视频渠道目录、视频标签页、Agent 视频工具），并把视频接进
+无限画布（视频节点、片段拼接、视频节点与图片节点同一套控制）。
 
-- [Bug 报告](https://github.com/dickpy/dsh-imagegen/issues/new?template=bug_report.yml) · [功能建议](https://github.com/dickpy/dsh-imagegen/issues/new?template=feature_request.yml)
-- [查看所有 Issues](https://github.com/dickpy/dsh-imagegen/issues) · [GitHub Releases](https://github.com/dickpy/dsh-imagegen/releases)
-- 如果这个插件对你有帮助，欢迎给项目点个 Star。
+**支持与问题反馈请提到本仓库的 Issues**（[Bug 报告](https://github.com/q253595422/dsh-imagegen-video/issues/new?template=bug_report.yml) · [功能建议](https://github.com/q253595422/dsh-imagegen-video/issues/new?template=feature_request.yml) · [全部 Issues](https://github.com/q253595422/dsh-imagegen-video/issues)），不要提到上游仓库 —— 上游并不维护这里的代码。上游的 QQ 交流群与本仓库无关，这里不代为宣传。
+
+**与上游不能共存**：两者注册同一套 `/api/dsh-imagegen/*` 路由与同一个 UI
+面板，同时安装会冲突；数据目录 `~/.dsh/dsh-imagegen/` 也是共用的。要换回
+原版，请先卸载本插件。
 
 <details>
 <summary><b>本地开发</b></summary>
@@ -180,8 +208,12 @@ node scripts/smoke.mjs
 
 ```bash
 pnpm pack --pack-destination .
-dsh plugin --profile web add ./dickpy-dsh-imagegen-<版本>.tgz
+dsh plugin --profile web add ./q253595422-dsh-imagegen-video-<版本>.tgz
 ```
+
+仓库里的离线套件不需要网络与付费上游调用；需要浏览器或 `ffmpeg` 的检查在缺
+少工具时会**明确跳过并返回成功**，而不是伪装成失败。并行跑构建与测试请用
+`./scripts/with-lock.sh`，它会把整棵工作树串行化。
 
 </details>
 
@@ -189,4 +221,4 @@ dsh plugin --profile web add ./dickpy-dsh-imagegen-<版本>.tgz
 
 [Apache-2.0](./LICENSE)
 
-内置模板所引用的第三方项目与许可见 [THIRD_PARTY_NOTICES.md](./THIRD_PARTY_NOTICES.md)。
+上游与本仓库的署名见 [NOTICE](./NOTICE)。内置模板所引用的第三方项目与许可见 [THIRD_PARTY_NOTICES.md](./THIRD_PARTY_NOTICES.md)。

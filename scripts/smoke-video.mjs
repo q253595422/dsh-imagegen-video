@@ -1,5 +1,5 @@
 /**
- * Smoke suite for the video half of @dickpy/dsh-imagegen, run against the
+ * Smoke suite for the video half of @q253595422/dsh-imagegen-video, run against the
  * BUILT artifacts exactly like scripts/smoke.mjs.
  *
  * Everything here is offline: a local HTTP server plays the upstream video

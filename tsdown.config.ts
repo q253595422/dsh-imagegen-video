@@ -1,5 +1,5 @@
 /**
- * Standalone tsdown build for @dickpy/dsh-imagegen.
+ * Standalone tsdown build for @q253595422/dsh-imagegen-video.
  *
  * Replicates the dsh client-bundle contract (packages/client/tsdown.client.ts
  * preset) so the package builds without depending on the dsh monorepo:
@@ -17,7 +17,7 @@ import type { UserConfig } from 'tsdown'
 import { transform } from 'lightningcss'
 
 /** Plugin id (package name) stamped into the __ModuleLoader__.load handoff. */
-const ID = '@dickpy/dsh-imagegen'
+const ID = '@q253595422/dsh-imagegen-video'
 
 /**
  * The module specifiers the web shell shares into the frozen module table

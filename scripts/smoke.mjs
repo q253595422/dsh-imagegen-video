@@ -1,5 +1,5 @@
 /**
- * Standalone smoke test for the built @dickpy/dsh-imagegen artifacts:
+ * Standalone smoke test for the built @q253595422/dsh-imagegen-video artifacts:
  *
  *  A. host half loads and exposes the plugin contract
  *  B. generate engine works against a mock OpenAI-compatible upstream
@@ -164,7 +164,7 @@ await check('A3 updater parses stable Releases and caches checks', async () => {
     calls += 1
     return new Response(JSON.stringify({
       tag_name: 'v9.9.9',
-      html_url: 'https://github.com/dickpy/dsh-imagegen/releases/tag/v9.9.9',
+      html_url: 'https://github.com/q253595422/dsh-imagegen-video/releases/tag/v9.9.9',
       published_at: '2026-08-17T00:00:00Z',
       body: '## Changes\n\n- Faster update discovery\n- Show release notes',
       draft: false,
@@ -3008,7 +3008,7 @@ await check('D1 client bundle registers via __ModuleLoader__ and exposes the can
   sandbox.window.window = sandbox.window
   vm.runInNewContext(source, sandbox, { filename: 'client.js' })
   assert.ok(handoff !== undefined, 'load() was called')
-  assert.equal(handoff.id, '@dickpy/dsh-imagegen')
+  assert.equal(handoff.id, '@q253595422/dsh-imagegen-video')
   assert.equal(typeof handoff.factory, 'function')
   // Evaluate the factory with stubbed platform modules; only the exports
   // surface is exercised (apply never runs without a real DOM). The react
