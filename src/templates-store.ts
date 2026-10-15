@@ -10,11 +10,17 @@
  * Each case list ships as a bundled snapshot (src/templates/<file>, inside the
  * npm package) so every library works offline out of the box; a successful
  * refresh (manual, or the periodic background sync) writes a runtime copy
- * under ~/.dsh/dsh-imagegen/templates/<sourceId>/ which then takes precedence.
+ * under <data root>/templates/<sourceId>/ which then takes precedence.
  * Reference images are not bundled (hundreds of files, ≈100 MB per source) —
  * they are fetched from the source's mirror on demand, cached on disk under
- * ~/.dsh/dsh-imagegen/template-images/<sourceId>/, and served from there on
- * every later view.
+ * <data root>/template-images/<sourceId>/, and served from there on every
+ * later view.
+ *
+ * `<data root>` is `imageDataRoot()`, i.e. `$DSH_HOME/dsh-imagegen` (defaulting
+ * to `~/.dsh/dsh-imagegen`) unless the plugin's `localStoragePath` setting
+ * overrides it. Every path below is resolved per call rather than captured at
+ * import time: the host applies that setting while resolving the plugin, which
+ * happens after this module is loaded.
  *
  * Framework-free (node:fs only) so the route layer and tests can drive it
  * directly.
@@ -153,8 +159,17 @@ interface CasesSnapshot {
   cases?: unknown
 }
 
-/** Per-source in-memory memo of the active list (avoid re-parsing per request). */
+/**
+ * Per-source in-memory memo of the active list (avoid re-parsing per request).
+ *
+ * Keyed by `${dataRoot}\0${sourceId}` rather than by source id alone: the
+ * refreshed runtime copy lives under the data root, and that root can be
+ * repointed after this module loads. A memo keyed only by source id would keep
+ * serving the OLD root's list while the image cache had already moved to the
+ * new one, so the two would disagree about where this source's data lives.
+ */
 const memos = new Map<string, TemplateListResult>()
+function memoKey(sourceId: string): string { return `${imageDataRoot()}\0${sourceId}` }
 
 /** Per-file in-flight downloads, so a gallery scroll never double-fetches. */
 const inflightImages = new Map<string, Promise<{ data: Buffer; mime: string } | undefined>>()
@@ -251,23 +266,23 @@ async function readSnapshotFile(file: string): Promise<ReturnType<typeof parseSn
 export async function listTemplates(sourceId: string = DEFAULT_TEMPLATE_SOURCE_ID): Promise<TemplateListResult> {
   const def = sourceDefOf(sourceId)
   if (def === undefined) throw new Error(`未知的模板库来源：${sourceId}`)
-  const memo = memos.get(sourceId)
+  const memo = memos.get(memoKey(sourceId))
   if (memo !== undefined) return memo
   const refreshed = await readSnapshotFile(path.join(refreshedDir(), sourceId, 'cases.json'))
     ?? (def.legacySnapshotPath !== undefined ? await readSnapshotFile(legacySnapshotPath()) : undefined)
   if (refreshed !== undefined) {
     const result: TemplateListResult = { sourceId, ...refreshed, total: refreshed.cases.length, origin: 'refreshed' }
-    memos.set(sourceId, result)
+    memos.set(memoKey(sourceId), result)
     return result
   }
   const bundled = await readSnapshotFile(def.bundledPath)
   if (bundled !== undefined) {
     const result: TemplateListResult = { sourceId, ...bundled, total: bundled.cases.length, origin: 'bundled' }
-    memos.set(sourceId, result)
+    memos.set(memoKey(sourceId), result)
     return result
   }
   const result: TemplateListResult = { sourceId, cases: [], total: 0, origin: 'bundled', repository: 'freestylefly/awesome-gpt-image-2', fetchedAt: '' }
-  memos.set(sourceId, result)
+  memos.set(memoKey(sourceId), result)
   return result
 }
 
@@ -311,7 +326,7 @@ export async function refreshTemplates(sourceId: string = DEFAULT_TEMPLATE_SOURC
   await fs.writeFile(tmp, JSON.stringify(snapshot), 'utf8')
   await fs.rename(tmp, target)
   const result: TemplateListResult = { sourceId, cases: parsed.cases, total: parsed.cases.length, origin: 'refreshed', repository: parsed.repository, fetchedAt }
-  memos.set(sourceId, result)
+  memos.set(memoKey(sourceId), result)
   return { sourceId, total: parsed.cases.length, fetchedAt }
 }
 

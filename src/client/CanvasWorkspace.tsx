@@ -1315,6 +1315,17 @@ export function CanvasWorkspace(props: CanvasWorkspaceProps): React.JSX.Element 
    *  VIDEO_HISTORY_MAX) deletes the file under a node that still points at it.
    *  Without this the node renders as a dead player with no explanation. */
   const [brokenVideoIds, setBrokenVideoIds] = useState<Set<string>>(() => new Set())
+  /** Drop the unloadable marker for one node. Used by the node's reload button,
+   *  by delete (so an undone node does not come back claiming its clip is gone),
+   *  and by a regenerate (which produces a new clip that may load fine). */
+  const clearBrokenVideo = useCallback((id: string): void => {
+    setBrokenVideoIds(previous => {
+      if (!previous.has(id)) return previous
+      const next = new Set(previous)
+      next.delete(id)
+      return next
+    })
+  }, [])
   const [skillMenu, setSkillMenu] = useState<{ screen: Point; nodeId: string } | null>(null)
   const [skillCatalog, setSkillCatalog] = useState<{ skills: CanvasSkillDescriptor[]; installed: string[]; reason?: string } | null>(null)
   const [skillCatalogLoading, setSkillCatalogLoading] = useState(false)
@@ -1721,6 +1732,14 @@ export function CanvasWorkspace(props: CanvasWorkspaceProps): React.JSX.Element 
         connections: previous.connections.filter(connection => !result.removed.has(connection.fromNodeId) && !result.removed.has(connection.toNodeId) && connection.id !== connectionId),
       }
     })
+    // Bulk delete must clear the dead-clip marks too, exactly like deleteNode:
+    // an undo would otherwise restore nodes that still claim their clip is gone.
+    setBrokenVideoIds(previous => {
+      if (previous.size === 0) return previous
+      const next = new Set(previous)
+      for (const id of removed) next.delete(id)
+      return next
+    })
     setSelectedIds(new Set()); setSelectedConnectionId(null)
   }, [mutate, selectedConnectionId])
 
@@ -1747,13 +1766,8 @@ export function CanvasWorkspace(props: CanvasWorkspaceProps): React.JSX.Element 
     })
     // Drop the node's dead-clip mark with it, so an undo does not restore a
     // node that still claims its clip is missing.
-    setBrokenVideoIds(previous => {
-      if (!previous.has(nodeId)) return previous
-      const next = new Set(previous)
-      next.delete(nodeId)
-      return next
-    })
-  }, [mutate])
+    clearBrokenVideo(nodeId)
+  }, [clearBrokenVideo, mutate])
 
   /** Duplicate one specific node (same rule as {@link deleteNode}). */
   const duplicateNode = useCallback((nodeId: string): void => {
@@ -3082,11 +3096,16 @@ export function CanvasWorkspace(props: CanvasWorkspaceProps): React.JSX.Element 
       localVideoTaskIds.current.add(task.id)
       processedVideoTasks.current.delete(task.id)
       patchNode(node.id, { status: 'generating', error: undefined, taskId: task.id, model: choice.model })
+      // A retry produces a NEW clip, so whatever made the old one unloadable no
+      // longer applies. Clearing the marker here is what lets the node show the
+      // fresh clip when the task lands — without it the node would sit on
+      // "the clip is gone" until the user found the reload button.
+      clearBrokenVideo(node.id)
       setError(null)
     } catch (caught) {
       setError(errorMessage(caught))
     }
-  }, [api, channelIsConnected, defaultChannelId, onOpenSettings, patchNode, videoGroups])
+  }, [api, channelIsConnected, clearBrokenVideo, defaultChannelId, onOpenSettings, patchNode, videoGroups])
 
   const retryGeneration = useCallback(async (node: CanvasNode): Promise<void> => {
     const current = documentRef.current
@@ -4276,12 +4295,7 @@ export function CanvasWorkspace(props: CanvasWorkspaceProps): React.JSX.Element 
                     <span>{tt('canvas.videoMissingHint')}</span>
                     <button
                       type="button"
-                      onClick={() => setBrokenVideoIds(previous => {
-                        if (!previous.has(node.id)) return previous
-                        const next = new Set(previous)
-                        next.delete(node.id)
-                        return next
-                      })}
+                      onClick={() => clearBrokenVideo(node.id)}
                     >{tt('canvas.videoReload')}</button>
                     <button type="button" onClick={() => deleteNode(node.id)}>{tt('canvas.delete')}</button>
                   </div>

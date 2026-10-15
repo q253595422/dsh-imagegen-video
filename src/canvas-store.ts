@@ -3,7 +3,7 @@
 import { promises as fs } from 'node:fs'
 import { createHash, randomUUID } from 'node:crypto'
 import path from 'node:path'
-import type { CanvasAssetRef, CanvasDocument, CanvasFileKind, CanvasNode, CanvasSummary } from './protocol.ts'
+import type { CanvasAssetRef, CanvasDocument, CanvasFileKind, CanvasNode, CanvasSummary, CanvasVideoRef } from './protocol.ts'
 import { imageDataRoot } from './image-storage-path.ts'
 
 /** Cap on one canvas file asset (arbitrary types travel as raw bytes). */
@@ -303,17 +303,45 @@ function isAssetRef(value: unknown): value is CanvasAssetRef {
   return true
 }
 
+/** A video node's reference to a served clip (`CanvasVideoRef` in protocol.ts).
+ *  Only `url` and `mime` are required; the rest is metadata the provider may not
+ *  have reported, so its absence is not a malformed document. */
+function isVideoRef(value: unknown): value is CanvasVideoRef {
+  if (value === null || typeof value !== 'object') return false
+  const video = value as Record<string, unknown>
+  if (typeof video.url !== 'string' || typeof video.mime !== 'string') return false
+  if (video.duration !== undefined && typeof video.duration !== 'number') return false
+  if (video.bytes !== undefined && typeof video.bytes !== 'number') return false
+  if (video.entryId !== undefined && typeof video.entryId !== 'string') return false
+  if (video.sourceUrl !== undefined && typeof video.sourceUrl !== 'string') return false
+  return true
+}
+
 function isNode(value: unknown): value is CanvasNode {
   if (value === null || typeof value !== 'object') return false
   const node = value as Record<string, unknown>
   if (typeof node.id !== 'string' || typeof node.title !== 'string' || typeof node.x !== 'number'
     || typeof node.y !== 'number' || typeof node.width !== 'number' || typeof node.height !== 'number') return false
-  if (node.type !== 'image' && node.type !== 'text' && node.type !== 'file' && node.type !== 'config') return false
+  // Keep this list in step with `CanvasNodeType` in protocol.ts. A type the
+  // union declares but this guard rejects is not a rejected document — it is a
+  // document that can never be saved: `coerceDocument` returns undefined and
+  // `save()` throws 'malformed canvas document'. `video` was exactly that, so
+  // every canvas holding a video node failed to save.
+  if (node.type !== 'image' && node.type !== 'text' && node.type !== 'file'
+    && node.type !== 'config' && node.type !== 'video') return false
   const metadata = node.metadata
   if (metadata !== undefined && (metadata === null || typeof metadata !== 'object')) return false
   const state = (metadata ?? {}) as Record<string, unknown>
   if (node.type === 'image') {
     if (state.asset !== undefined && !isAssetRef(state.asset)) return false
+    return state.status === undefined || state.status === 'idle' || state.status === 'generating' || state.status === 'success' || state.status === 'error'
+  }
+  if (node.type === 'video') {
+    // A video node carries a REFERENCE to a served clip, never a byte copy
+    // (docs/parity-contract.md §1.7), so the reference is what gets validated.
+    // `video` is optional: a node that is still generating, failed, or was
+    // never given a clip is a legitimate document.
+    if (state.video !== undefined && !isVideoRef(state.video)) return false
     return state.status === undefined || state.status === 'idle' || state.status === 'generating' || state.status === 'success' || state.status === 'error'
   }
   if (node.type === 'file') {

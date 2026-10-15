@@ -2191,6 +2191,56 @@ await check('C10c a file node round-trips through canvas save with its asset int
   assert.equal(storedNode.metadata.fileKind, 'text')
 })
 
+await check('C10c3 a video node round-trips through canvas save (every CanvasNodeType must)', async () => {
+  // WHY this exists: the canvas node guard used to accept only image/text/file/
+  // config, while `CanvasNodeType` (protocol.ts) also declares 'video'. That
+  // mismatch did not reject a document — it made every canvas holding a video
+  // node UNSAVABLE ('malformed canvas document'). No suite caught it because
+  // the canvas-video suite answers /canvas/save with a stub that records the
+  // payload, so the real guard never ran on a video node. This check goes
+  // through the real route and the real store, like C10c does for file nodes.
+  const created = await post('/api/dsh-imagegen/canvas/create', { title: 'video nodes' })
+  const document = created.body.document
+
+  // The three states a video node legitimately has: a finished clip, one still
+  // rendering, and one that failed. Only the reference is validated, and its
+  // absence must not make the document malformed.
+  const nodes = [
+    {
+      id: 'node-video-clip', type: 'video', title: '视频节点', x: 40, y: 40, width: 240, height: 240,
+      metadata: { status: 'success', videoMode: 'text', video: { url: '/api/dsh-imagegen/video/file/clip.mp4', mime: 'video/mp4', duration: 5, bytes: 1024, entryId: 'entry-1' } },
+    },
+    {
+      id: 'node-video-rendering', type: 'video', title: '视频节点', x: 40, y: 340, width: 240, height: 240,
+      metadata: { status: 'generating', taskId: 'vt-1', prompt: 'still rendering', model: 'agnes-video-2.5-flash', videoMode: 'text' },
+    },
+    {
+      id: 'node-video-failed', type: 'video', title: '视频节点', x: 340, y: 40, width: 240, height: 240,
+      metadata: { status: 'error', error: '上游拒绝了这个请求', videoMode: 'image' },
+    },
+  ]
+  const saved = await post('/api/dsh-imagegen/canvas/save', {
+    document: { ...document, nodes: [...document.nodes, ...nodes] },
+    expectedRevision: document.revision,
+  })
+  assert.equal(saved.body.ok, true, `a canvas with video nodes must save: ${JSON.stringify(saved.body)}`)
+  const stored = saved.body.document.nodes.filter(node => node.type === 'video')
+  assert.equal(stored.length, 3, 'all three video nodes survive the save')
+  const clip = stored.find(node => node.id === 'node-video-clip')
+  assert.equal(clip.metadata.video.url, '/api/dsh-imagegen/video/file/clip.mp4')
+  assert.equal(clip.metadata.video.entryId, 'entry-1')
+  assert.equal(clip.metadata.videoMode, 'text')
+
+  // Read it back through the list route too: the guard runs on the way in AND
+  // on the way out, and a node that only survived one direction is still broken.
+  const reopened = await post('/api/dsh-imagegen/canvas/read', { id: document.id })
+  assert.equal(reopened.body.ok, true)
+  assert.equal(
+    reopened.body.document.nodes.filter(node => node.type === 'video').length, 3,
+    'the video nodes are still there when the canvas is reopened',
+  )
+})
+
 await check('C10c2 canvas favorites persist across saves and project lists', async () => {
   const created = await post('/api/dsh-imagegen/canvas/create', { title: 'favorite canvas' })
   const document = created.body.document

@@ -24,8 +24,12 @@ function favoritesPath(): string { return path.join(imageDataRoot(), 'templates'
 /** Refuse to grow the file without bound; the user curates this list. */
 const MAX_FAVORITES = 1000
 
-/** In-memory memo of the persisted list. */
-let memo: TemplateFavorite[] | undefined
+/** In-memory memo of the persisted list, together with the file it was read
+ *  from. The data root can be repointed after this module loads (a
+ *  `localStoragePath` change), and a memo that outlived its root would serve
+ *  the OLD root's favorites while writing them back to the NEW one. Keying the
+ *  memo on the path makes a repointed root miss the memo and re-read. */
+let memo: { path: string; entries: TemplateFavorite[] } | undefined
 
 /** Build the stable key of one case within a source. */
 export function templateFavoriteKey(sourceId: string, caseId: string): string {
@@ -70,24 +74,27 @@ function normalizeFavorite(raw: unknown): TemplateFavorite | undefined {
   return { key: record.key, sourceId, savedAt: record.savedAt, case: snapshot }
 }
 
-/** Read + parse the favorites file (memoized). */
+/** Read + parse the favorites file (memoized per data root). */
 export async function listTemplateFavorites(): Promise<TemplateFavorite[]> {
-  if (memo !== undefined) return memo
+  const file = favoritesPath()
+  if (memo !== undefined && memo.path === file) return memo.entries
+  let entries: TemplateFavorite[]
   try {
-    const parsed: unknown = JSON.parse(await fs.readFile(favoritesPath(), 'utf8'))
-    memo = Array.isArray(parsed)
+    const parsed: unknown = JSON.parse(await fs.readFile(file, 'utf8'))
+    entries = Array.isArray(parsed)
       ? parsed.map(normalizeFavorite).filter((entry): entry is TemplateFavorite => entry !== undefined)
       : []
   } catch {
-    memo = []
+    entries = []
   }
-  return memo
+  memo = { path: file, entries }
+  return entries
 }
 
 /** Persist the list atomically and update the memo. */
 async function writeFavorites(entries: TemplateFavorite[]): Promise<void> {
-  memo = entries
   const file = favoritesPath()
+  memo = { path: file, entries }
   await fs.mkdir(path.dirname(file), { recursive: true })
   const tmp = `${file}.tmp-${process.pid}`
   await fs.writeFile(tmp, JSON.stringify(entries, null, 2), 'utf8')
@@ -108,7 +115,7 @@ export async function addTemplateFavorite(sourceId: string, item: TemplateCase):
 /** Unstar one template by key; unknown keys are a no-op. */
 export async function removeTemplateFavorite(key: string): Promise<TemplateFavorite[]> {
   const next = (await listTemplateFavorites()).filter(entry => entry.key !== key)
-  if (next.length === memo?.length) return next
+  if (next.length === memo?.entries.length) return next
   await writeFavorites(next)
   return next
 }
