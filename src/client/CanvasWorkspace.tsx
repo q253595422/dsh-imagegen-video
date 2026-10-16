@@ -28,10 +28,14 @@ import { CanvasFileBody, CanvasFileOverlay, fileKindLabel, fileKindOfAsset, file
 import { DotFieldBackground, DotGridBackground, FaultyTerminalBackground, FloatingLinesBackground, FlowBackground, GalaxyBackground, LiquidEtherBackground, ShapeGridBackground, SilkBackground, WavesBackground } from './CanvasBackgrounds.tsx'
 import { Select } from './Select.tsx'
 import { CanvasVideoPicker } from './CanvasVideoPicker.tsx'
+import { onTablistKeyDown, tabIndexFor } from './tablist.ts'
 import css from './canvas-workspace.module.css'
 
 type CanvasTool = 'select' | 'pan'
 type BackgroundMode = CanvasDocument['background']
+
+/** The image picker's tab order, in one place: the render maps it, the arrows index it. */
+const PICKER_TABS = ['upload', 'history', 'gallery', 'generate'] as const
 
 const MIN_SCALE = 0.05
 const MAX_SCALE = 5
@@ -53,6 +57,17 @@ const SKETCH_WIDTH_DOTS = [5, 8, 12]
 const SKETCH_ERASER_RADIUS = 16
 const HISTORY_LIMIT = 60
 const WORLD_PAD = 12000
+/**
+ * How long to wait before the autosave retries after a rejected write.
+ *
+ * WHY not "stop until the user clicks": the toast's × only clears the message,
+ * so a plain stop left the document unsaved forever with no visible way back —
+ * worse than the retry storm it replaced. WHY not 650 ms: that was the storm
+ * (a failed host meant a request 1.5 times a second). A slow, quiet retry keeps
+ * the edit on its way to disk while staying out of the user's way; the toast's
+ * explicit retry is still there for an immediate attempt.
+ */
+const SAVE_RETRY_BACKOFF_MS = 15_000
 /** Footprint of the prompt card the 标注 tool drops next to a boxed image. */
 const ANNOTATION_TEXT_SIZE = { width: 268, height: 132 }
 /** Horizontal gap used when new nodes are laid out beside their source. */
@@ -113,6 +128,17 @@ interface CanvasWorkspaceProps {
   connectedChannelIds?: ReadonlySet<string>
   /** Whether the chat model used by canvas light actions is configured. */
   promptReady?: boolean
+  /**
+   * The workspace is on screen. Required rather than defaulted: every consumer
+   * of it is a listener bound OUTSIDE this subtree, so a caller that forgets it
+   * would silently restore the old behaviour (the canvas claiming Ctrl+A /
+   * Ctrl+Z / Delete from the whole document while it is hidden). Making it
+   * mandatory lets the type checker catch that instead of a user.
+   *
+   * The panel container stays mounted (hidden by a stylesheet rule) so node
+   * state survives a tab or panel switch.
+   */
+  active: boolean
   history: HistoryEntry[]
   gallery: HistoryEntry[]
   tasks: GenerationTask[]
@@ -165,6 +191,21 @@ interface MarqueeState {
   current: Point
   additive: boolean
   initialIds: string[]
+}
+
+/**
+ * A live two-finger zoom.
+ *
+ * `base` is the viewport as it stood when the second finger landed; the
+ * gesture is expressed relative to it so the transform cannot accumulate
+ * rounding drift across a long pinch. The anchor is the world point under the
+ * fingers' starting centroid, kept pinned there for the whole gesture -- that
+ * is what makes a pinch feel attached to the canvas instead of to its corner.
+ */
+interface PinchState {
+  base: CanvasDocument['viewport']
+  startDistance: number
+  startCenter: Point
 }
 
 interface ConnectState {
@@ -233,6 +274,43 @@ async function assetToDataUrl(asset: CanvasAssetRef): Promise<string> {
 
 function clampScale(scale: number): number {
   return Math.min(MAX_SCALE, Math.max(MIN_SCALE, scale))
+}
+
+/**
+ * `target.closest(selector)` without an `instanceof` check.
+ *
+ * Duck-typed for the same reason `matchesSelector` in the keyboard handler is:
+ * this code also runs inside the jsdom smoke sandbox, which exposes a
+ * `document` but no `Element` constructor on its global. `x instanceof Element`
+ * therefore throws a ReferenceError there, which aborted the whole
+ * `onViewportPointerDown` / `onWheel` handler before it did anything -- so the
+ * suite could not exercise the viewport at all, and a broken gesture would have
+ * looked green. A real browser and jsdom agree on the duck-typed form.
+ */
+function closestOf(target: EventTarget | null, selector: string): Element | null {
+  const element = target as { closest?: unknown } | null
+  if (element === null || typeof element !== 'object' || typeof element.closest !== 'function') return null
+  return (element.closest as (value: string) => Element | null)(selector)
+}
+
+/**
+ * Snapshot the two-finger gesture from the live pointer positions.
+ *
+ * Returns null unless exactly two fingers are down: a pinch is defined by a
+ * pair, and a third finger must not silently re-anchor the gesture that the
+ * first two already started.
+ */
+function pinchStateFrom(
+  pointers: Map<number, Point>,
+  viewport: CanvasDocument['viewport'],
+): PinchState | null {
+  const [first, second] = [...pointers.values()]
+  if (first === undefined || second === undefined) return null
+  return {
+    base: viewport,
+    startDistance: Math.max(1, Math.hypot(second.x - first.x, second.y - first.y)),
+    startCenter: { x: (first.x + second.x) / 2, y: (first.y + second.y) / 2 },
+  }
 }
 
 function sizeForAsset(asset: CanvasAssetRef): { width: number; height: number } {
@@ -1262,7 +1340,7 @@ function ComposerSelect(props: {
 }
 
 export function CanvasWorkspace(props: CanvasWorkspaceProps): React.JSX.Element {
-  const { api, modelGroups, defaultChannelId, connected, connectedChannelIds, promptReady = connected, history, gallery, tasks, videoGroups, videoTasks, importRequest, onImportRequestHandled, onClipStored, onOpenSettings } = props
+  const { api, modelGroups, defaultChannelId, connected, connectedChannelIds, promptReady = connected, history, gallery, tasks, videoGroups, videoTasks, importRequest, onImportRequestHandled, onClipStored, onOpenSettings, active } = props
   const [projects, setProjects] = useState<ProjectSummary[]>([])
   const [document, setDocument] = useState<CanvasDocument | null>(null)
   const [selectedIds, setSelectedIds] = useState<Set<string>>(() => new Set())
@@ -1271,6 +1349,21 @@ export function CanvasWorkspace(props: CanvasWorkspaceProps): React.JSX.Element 
   const [spacePressed, setSpacePressed] = useState(false)
   const [ctrlPressed, setCtrlPressed] = useState(false)
   const [viewportSize, setViewportSize] = useState({ width: 0, height: 0 })
+  /**
+   * The latest `active` for the window-level listeners below.
+   *
+   * They are registered once, but the flag they must consult changes: reading
+   * it through a ref keeps the keyboard effect's dependency list stable while
+   * still letting a handler that fires while the panel is closed bail out.
+   */
+  const activeRef = useRef(active)
+  activeRef.current = active
+  /**
+   * True once the backoff after a rejected save has elapsed. Gates the autosave
+   * effect so a failure does not re-arm the 650 ms debounce (a retry storm) and
+   * does not stop saving for good either (see SAVE_RETRY_BACKOFF_MS).
+   */
+  const [failedSaveRetryDue, setFailedSaveRetryDue] = useState(false)
   const [marquee, setMarquee] = useState<MarqueeState | null>(null)
   const [connecting, setConnecting] = useState<ConnectState | null>(null)
   const [contextMenu, setContextMenu] = useState<ContextMenuState | null>(null)
@@ -2627,7 +2720,7 @@ export function CanvasWorkspace(props: CanvasWorkspaceProps): React.JSX.Element 
     const asset = usableAsset(source)
     if (asset === undefined || boxes.length === 0) return undefined
     const raster = await loadRaster(asset.url)
-    const composite = drawAnnotation(raster, boxes.map((box, index) => ({ rect: box.rect, index })))
+    const composite = drawAnnotation(raster, boxes.map((box, index) => ({ rect: box.rect, index })), rootRef.current)
     const percent = (value: number): string => `${Math.round(clamp01(value) * 100)}%`
     const lines = boxes.map((box, index) => {
       const rect = box.rect
@@ -3483,10 +3576,30 @@ export function CanvasWorkspace(props: CanvasWorkspaceProps): React.JSX.Element 
         })
       }
       setSaveState('saved')
+      // A successful write clears the backoff so the next edit saves promptly.
+      setFailedSaveRetryDue(false)
       return true
     } catch (caught) {
       if (seq === saveSeqRef.current) {
         setError(caught instanceof Error ? caught.message : String(caught))
+        // WHY the action and not just the message: `syncedRef` only advances on
+        // a SUCCESSFUL write, so while an edit stays unsynced the autosave
+        // effect below re-ran on every `saveState` change and re-armed its
+        // 650 ms timer -- an offline host meant one failing request 1.5 times a
+        // second, forever, with the toast re-set on each round (which is also
+        // why dismissing it looked broken: the next tick put it straight back).
+        // Failing stops the loop; the user decides when to try again.
+        setErrorAction({
+          label: tt('canvas.saveRetry'),
+          forError: caught instanceof Error ? caught.message : String(caught),
+          run: () => {
+            const live = documentRef.current
+            if (live !== null) void writeCanvas(live)
+          },
+        })
+        // Arm the quiet retry: dismissing the toast must not mean "never saved".
+        setFailedSaveRetryDue(false)
+        window.setTimeout(() => { setFailedSaveRetryDue(true) }, SAVE_RETRY_BACKOFF_MS)
         setSaveState('error')
       }
       return false
@@ -3510,6 +3623,12 @@ export function CanvasWorkspace(props: CanvasWorkspaceProps): React.JSX.Element 
 
   useEffect(() => {
     if (document === null || saveState === 'loading') return
+    // A failed write leaves the document unsynced, so the plain 650 ms debounce
+    // must not re-arm: that was a request every 650 ms for as long as the host
+    // stayed unreachable. Retry on a slow backoff instead of stopping outright
+    // -- stopping lost the edit for good as soon as the user dismissed the
+    // toast, since its × only clears the message.
+    if (saveState === 'error' && !failedSaveRetryDue) return
     // A flush owns the write right now; it reconciles `syncedRef` itself and
     // this effect re-runs when it sets the save state, so nothing is lost.
     if (flushRef.current) return
@@ -3523,9 +3642,9 @@ export function CanvasWorkspace(props: CanvasWorkspaceProps): React.JSX.Element 
       const live = documentRef.current
       if (live === null || JSON.stringify(live) === syncedRef.current) return
       void writeCanvas(live)
-    }, 650)
+    }, saveState === 'error' ? SAVE_RETRY_BACKOFF_MS : 650)
     return () => window.clearTimeout(timer)
-  }, [api, document, saveState, writeCanvas])
+  }, [api, document, saveState, writeCanvas, failedSaveRetryDue])
 
   // ------------------------------------------------------- compose (stitch)
 
@@ -3659,11 +3778,27 @@ export function CanvasWorkspace(props: CanvasWorkspaceProps): React.JSX.Element 
       if (element === null || typeof element !== 'object' || typeof element.matches !== 'function') return false
       return (element.matches as (value: string) => boolean)(selector)
     }
-    const isEditingTarget = (target: EventTarget | null): boolean => matchesSelector(target, 'input, textarea, select, [data-dsh-select], [data-dsh-select-menu], [contenteditable="true"]')
+    const isEditingTarget = (target: EventTarget | null): boolean => matchesSelector(target, 'input, textarea, select, [data-dsh-select], [data-dsh-select-menu], [data-model-picker-menu], [contenteditable="true"]')
+    /**
+     * True when the focused element activates on Space by itself.
+     *
+     * `isEditingTarget` answers "is the user typing text", which is a different
+     * question: a native <button> is not an editing target, yet Space is its
+     * standard activation key. Treating it as a canvas gesture meant the
+     * preventDefault below ate that keypress, so every button in the panel —
+     * the dock, the node toolbars, the zoom controls — lost half of its
+     * keyboard activation while the canvas was on screen.
+     */
+    const isActivatableTarget = (target: EventTarget | null): boolean => matchesSelector(target, 'button, [role="button"], [role="menuitem"], [role="radio"], [role="option"], a[href], summary, label')
 
     const onKeyDown = (event: KeyboardEvent): void => {
+      // The panel container is hidden by a stylesheet rule rather than being
+      // unmounted, so this listener stays live while the user is in the chat
+      // beside it. Claiming Ctrl+A / Ctrl+Z / Delete there would eat the
+      // browser's own shortcuts in a surface the canvas is not even showing.
+      if (!activeRef.current) return
       if (event.key === 'Control') setCtrlPressed(true)
-      if (event.code === 'Space' && !isEditingTarget(event.target)) {
+      if (event.code === 'Space' && !isEditingTarget(event.target) && !isActivatableTarget(event.target)) {
         event.preventDefault()
         setSpacePressed(true)
       }
@@ -3674,6 +3809,18 @@ export function CanvasWorkspace(props: CanvasWorkspaceProps): React.JSX.Element 
         setColorPickerNodeId(null)
         // Esc leaves the 标注 tool first, then clears the selection.
         if (annotateNodeId !== null) { setAnnotateNodeId(null); setAnnotationDraft(null); return }
+        // The in-canvas overlays come next, topmost first. They are rendered by
+        // this component rather than portalled, so they cannot register their
+        // own listener the way CanvasVideoPicker / CanvasFilePreview do --
+        // without these branches Esc fell through to the selection reset below,
+        // which read as "Esc did something invisible and left what I wanted
+        // closed still open".
+        if (videoPreviewNodeId !== null) { setVideoPreviewNodeId(null); return }
+        if (pendingSkill !== null) { setPendingSkill(null); return }
+        if (skillMenu !== null) { setSkillMenu(null); return }
+        if (polishNode !== null) { setPolishNode(null); return }
+        if (skillLibraryOpen) { setSkillLibraryOpen(false); return }
+        if (pickerOpen) { setPickerOpen(false); return }
         if (!isEditingTarget(event.target)) { setSelectedIds(new Set()); setSelectedConnectionId(null) }
         return
       }
@@ -3719,6 +3866,9 @@ export function CanvasWorkspace(props: CanvasWorkspaceProps): React.JSX.Element 
     }
     const onBlur = (): void => { setSpacePressed(false); setCtrlPressed(false) }
     const onPaste = (event: ClipboardEvent): void => {
+      // Same rule as the keyboard handler: a hidden canvas must not consume a
+      // paste aimed at the chat.
+      if (!activeRef.current) return
       if (isEditingTarget(event.target)) return
       const files = [...(event.clipboardData?.files ?? [])].filter(file => file.type.startsWith('image/'))
       if (files.length > 0) {
@@ -3742,7 +3892,7 @@ export function CanvasWorkspace(props: CanvasWorkspaceProps): React.JSX.Element 
       window.removeEventListener('blur', onBlur)
       window.removeEventListener('paste', onPaste)
     }
-  }, [addAssets, annotateNodeId, api, canvasCenter, copySelection, deleteNode, deleteSelection, duplicateSelection, pasteClipboard, redo, undo])
+  }, [addAssets, annotateNodeId, api, canvasCenter, copySelection, deleteNode, deleteSelection, duplicateSelection, pasteClipboard, pickerOpen, polishNode, redo, skillLibraryOpen, skillMenu, undo, videoPreviewNodeId, pendingSkill])
 
   // ------------------------------------------------------ viewport events
 
@@ -3754,7 +3904,10 @@ export function CanvasWorkspace(props: CanvasWorkspaceProps): React.JSX.Element 
     const observer = new ResizeObserver(measure)
     observer.observe(container)
     const preventWheel = (event: WheelEvent): void => {
-      if (event.target instanceof Element && event.target.closest(`[data-canvas-no-zoom]`)) return
+      // The scroll-lock is only honest while the canvas is on screen; a hidden
+      // container that still swallows wheel events blocks the page underneath.
+      if (!activeRef.current) return
+      if (closestOf(event.target, '[data-canvas-no-zoom]') !== null) return
       event.preventDefault()
     }
     container.addEventListener('wheel', preventWheel, { passive: false })
@@ -3763,11 +3916,36 @@ export function CanvasWorkspace(props: CanvasWorkspaceProps): React.JSX.Element 
 
   const temporaryPanTool = spacePressed || ctrlPressed
 
+  /**
+   * Pointers currently down on the viewport, in insertion order.
+   *
+   * A touch device never sends a wheel event, so pinch is the only way to zoom
+   * there. The map is the pinch's whole state: two entries means a pinch is in
+   * progress, and the centroid/distance between them drive the transform.
+   */
+  const activePointersRef = useRef<Map<number, { x: number; y: number }>>(new Map())
+  const pinchRef = useRef<PinchState | null>(null)
+
   const onViewportPointerDown = (event: ReactPointerEvent<HTMLDivElement>): void => {
-    const target = event.target instanceof Element ? event.target : null
+    const target = event.target as Element | null
     setContextMenu(null); setCreateMenu(null); setNodeAddMenu(null)
-    if (!target?.closest('[data-canvas-no-zoom]')) { setBackgroundMenu(null); setImageMenu(null) }
-    const isBackground = target?.closest('[data-node-id],[data-connection-hit]') === null
+    if (closestOf(target, '[data-canvas-no-zoom]') === null) { setBackgroundMenu(null); setImageMenu(null) }
+    if (event.pointerType === 'touch') {
+      activePointersRef.current.set(event.pointerId, { x: event.clientX, y: event.clientY })
+      if (activePointersRef.current.size === 2) {
+        // The second finger turns a pending pan or marquee into a pinch: the
+        // single-pointer gesture it started is superseded, and leaving it armed
+        // would pan the canvas under the pinch.
+        panRef.current = null
+        marqueeRef.current = null
+        setMarquee(null)
+        event.preventDefault()
+        pinchRef.current = pinchStateFrom(activePointersRef.current, documentRef.current?.viewport ?? { x: 0, y: 0, k: 1 })
+        return
+      }
+      if (activePointersRef.current.size > 2) return
+    }
+    const isBackground = closestOf(target, '[data-node-id],[data-connection-hit]') === null
     const shouldPan = event.button === 1 || (event.button === 0 && (tool === 'pan' || temporaryPanTool) && isBackground)
     if (shouldPan) {
       event.preventDefault()
@@ -3792,7 +3970,7 @@ export function CanvasWorkspace(props: CanvasWorkspaceProps): React.JSX.Element 
   const onWheel = (event: React.WheelEvent<HTMLDivElement>): void => {
     const current = documentRef.current
     if (current === null) return
-    if (event.target instanceof Element && event.target.closest('[data-canvas-no-zoom]')) return
+    if (closestOf(event.target, '[data-canvas-no-zoom]') !== null) return
     event.preventDefault()
     const bounds = viewportRef.current?.getBoundingClientRect()
     if (bounds === undefined) return
@@ -3840,6 +4018,26 @@ export function CanvasWorkspace(props: CanvasWorkspaceProps): React.JSX.Element 
 
   useEffect(() => {
     const move = (event: PointerEvent): void => {
+      const pinch = pinchRef.current
+      if (pinch !== null && activePointersRef.current.has(event.pointerId)) {
+        activePointersRef.current.set(event.pointerId, { x: event.clientX, y: event.clientY })
+        const [first, second] = [...activePointersRef.current.values()]
+        if (first !== undefined && second !== undefined) {
+          const bounds = viewportRef.current?.getBoundingClientRect()
+          const left = bounds?.left ?? 0
+          const top = bounds?.top ?? 0
+          const distance = Math.max(1, Math.hypot(second.x - first.x, second.y - first.y))
+          const nextScale = clampScale(pinch.base.k * (distance / pinch.startDistance))
+          const worldX = (pinch.startCenter.x - left - pinch.base.x) / pinch.base.k
+          const worldY = (pinch.startCenter.y - top - pinch.base.y) / pinch.base.k
+          setViewport({
+            x: (first.x + second.x) / 2 - left - worldX * nextScale,
+            y: (first.y + second.y) / 2 - top - worldY * nextScale,
+            k: nextScale,
+          })
+        }
+        return
+      }
       const drag = dragRef.current
       if (drag !== null) {
         const scale = documentRef.current?.viewport.k ?? 1
@@ -3907,7 +4105,18 @@ export function CanvasWorkspace(props: CanvasWorkspaceProps): React.JSX.Element 
       }
     }
 
-    const up = (): void => {
+    const up = (event: PointerEvent): void => {
+      if (event.pointerType === 'touch') {
+        activePointersRef.current.delete(event.pointerId)
+        if (pinchRef.current !== null && activePointersRef.current.size < 2) {
+          // Lifting one finger ends the pinch. The finger still down does NOT
+          // become a pan: its pan state was discarded when the pinch started,
+          // so resuming one would jump the canvas by the gap between the
+          // gesture's start point and wherever that finger now is.
+          pinchRef.current = null
+          return
+        }
+      }
       const drag = dragRef.current
       if (drag !== null) {
         dragRef.current = null
@@ -3966,7 +4175,7 @@ export function CanvasWorkspace(props: CanvasWorkspaceProps): React.JSX.Element 
       window.removeEventListener('pointerup', up)
       window.removeEventListener('pointercancel', up)
     }
-  }, [commitSnapshot, connectNodes, screenToWorld, updateDocument, updateNodes])
+  }, [commitSnapshot, connectNodes, screenToWorld, setViewport, updateDocument, updateNodes])
 
   // --------------------------------------------------------- node events
 
@@ -4251,6 +4460,15 @@ export function CanvasWorkspace(props: CanvasWorkspaceProps): React.JSX.Element 
       key={node.id}
       data-node-id={node.id}
       data-annotating={annotating ? '' : undefined}
+      // The node is the tab stop, not the toolbar buttons. A hidden toolbar
+      // cannot hold focus at all (`visibility: hidden` removes its subtree from
+      // the tab order), so `.node:focus-within` below would never fire if the
+      // buttons were the only way in -- the two rules would deadlock and the
+      // node's actions would be unreachable by keyboard. Focusing the node makes
+      // the toolbar visible, and only then do its buttons become focusable.
+      tabIndex={0}
+      role="group"
+      aria-label={node.title}
       className={`${css.node} ${isSketch ? css.sketchNode : isConfig ? css.configNode : isTextual ? css.textNode : css.imageNode} ${isSelected ? css.nodeSelected : ''} ${isRelated ? css.nodeRelated : ''} ${isConnectTarget ? css.nodeConnectTarget : ''}`}
       style={{ left: node.x, top: node.y, width: node.width, height: node.height }}
       onPointerDown={event => handleNodePointerDown(event, node.id)}
@@ -4975,13 +5193,13 @@ export function CanvasWorkspace(props: CanvasWorkspaceProps): React.JSX.Element 
       onPointerDown={onViewportPointerDown}
       onWheel={onWheel}
       onDoubleClick={event => {
-        const target = event.target instanceof Element ? event.target : null
-        if (target?.closest('[data-node-id],[data-canvas-no-zoom]')) return
+        const target = event.target as Element | null
+        if (closestOf(target, '[data-node-id],[data-canvas-no-zoom]') !== null) return
         setCreateMenu({ screen: { x: event.clientX, y: event.clientY }, world: screenToWorld(event.clientX, event.clientY) })
       }}
       onContextMenu={event => {
-        const target = event.target instanceof Element ? event.target : null
-        if (target?.closest('[data-node-id],[data-connection-hit],[data-canvas-no-zoom]')) return
+        const target = event.target as Element | null
+        if (closestOf(target, '[data-node-id],[data-connection-hit],[data-canvas-no-zoom]') !== null) return
         event.preventDefault()
         setContextMenu({ type: 'canvas', screen: { x: event.clientX, y: event.clientY }, world: screenToWorld(event.clientX, event.clientY) })
       }}
@@ -5353,6 +5571,7 @@ export function CanvasWorkspace(props: CanvasWorkspaceProps): React.JSX.Element 
       initialTab={pickerTab}
       onClose={() => setPickerOpen(false)}
       onAssets={assets => { addAssets(assets); setPickerOpen(false) }}
+      onError={setError}
       onTask={task => {
         if (document === null) return
         const center = canvasCenter()
@@ -5565,6 +5784,10 @@ function SketchBoard(props: {
           data-active={item === color && !erasing ? '' : undefined}
           className={css.sketchSwatch}
           style={{ background: item }}
+          // A swatch's only visible cue is its fill, which never reaches the
+          // accessibility tree: without a name all eight read as the same
+          // "brush colour" radio and the colour cannot be chosen by keyboard.
+          aria-label={`${tt('canvas.sketchColor')} ${item}`}
           title={tt('canvas.sketchBrush')}
           onClick={() => { setColor(item); setErasing(false) }}
         />)}
@@ -5621,9 +5844,11 @@ function ImagePicker(props: {
   initialTab?: 'upload' | 'history' | 'gallery' | 'generate'
   onClose: () => void
   onAssets: (assets: CanvasAssetRef[]) => void
+  /** Report an upload failure to the canvas banner the dialog sits over. */
+  onError: (message: string) => void
   onTask: (task: GenerationTask) => void
 }): React.JSX.Element {
-  const { api, history, gallery, modelGroups, defaultChannelId, canvasId, connected, connectedChannelIds, onClose, onAssets } = props
+  const { api, history, gallery, modelGroups, defaultChannelId, canvasId, connected, connectedChannelIds, onClose, onAssets, onError } = props
   const [tab, setTab] = useState<'upload' | 'history' | 'gallery' | 'generate'>(props.initialTab ?? 'upload')
   const [selected, setSelected] = useState<string[]>([])
   const [dimensions, setDimensions] = useState<Record<string, { width: number; height: number }>>({})
@@ -5649,7 +5874,12 @@ function ImagePicker(props: {
       const dataUrl = await new Promise<string>((resolve, reject) => { const reader = new FileReader(); reader.onload = () => resolve(String(reader.result)); reader.onerror = () => reject(new Error(tt('image.readFailed'))); reader.readAsDataURL(file) })
       const sizeOf = await readImageSize(dataUrl)
       return api.canvasUpload(dataUrl, sizeOf.width, sizeOf.height, { origin: 'upload', originId: file.name })
-    })).then(assets => { onAssets(assets) }).catch(() => {}).finally(() => setBusy(false))
+    })).then(assets => { onAssets(assets) })
+      // Every other upload path in this file reports through the canvas error
+      // banner; swallowing it here left the dialog open with nothing added and
+      // no explanation, which reads as "the button is broken".
+      .catch(caught => { onError(errorMessage(caught)) })
+      .finally(() => setBusy(false))
   }
   const addSelected = async (): Promise<void> => {
     setBusy(true)
@@ -5675,10 +5905,16 @@ function ImagePicker(props: {
   }
   return <div className={css.modalBackdrop} role="dialog" aria-modal="true" data-canvas-no-zoom=""><section className={css.picker}>
     <header className={css.pickerHeader}><strong>{tt('canvas.addImage')}</strong><button type="button" aria-label={tt('canvas.close')} title={tt('canvas.close')} onClick={onClose}>×</button></header>
-    <nav className={css.pickerTabs} role="tablist">{(['upload', 'history', 'gallery', 'generate'] as const).map(item => <button key={item} type="button" role="tab" aria-selected={tab === item} data-active={tab === item ? '' : undefined} onClick={() => { setTab(item); setSelected([]) }}>{item === 'upload' ? tt('canvas.tabUpload') : item === 'history' ? tt('canvas.tabHistory') : item === 'gallery' ? tt('canvas.tabGallery') : tt('canvas.tabGenerate')}</button>)}</nav>
+    <nav className={css.pickerTabs} role="tablist">{PICKER_TABS.map((item, index) => <button key={item} type="button" role="tab" aria-selected={tab === item} data-active={tab === item ? '' : undefined} tabIndex={tabIndexFor(tab === item)} onKeyDown={event => { onTablistKeyDown(event, { count: PICKER_TABS.length, index, select: next => { setTab(PICKER_TABS[next]!); setSelected([]) } }) }} onClick={() => { setTab(item); setSelected([]) }}>{item === 'upload' ? tt('canvas.tabUpload') : item === 'history' ? tt('canvas.tabHistory') : item === 'gallery' ? tt('canvas.tabGallery') : tt('canvas.tabGenerate')}</button>)}</nav>
     <div className={css.pickerBody}>
-      {tab === 'upload' ? <label className={css.uploadBox} onDragOver={event => event.preventDefault()} onDrop={event => { event.preventDefault(); const files = [...(event.dataTransfer.files ?? [])].filter(file => file.type.startsWith('image/')); if (files.length === 0) return; uploadFiles(files) }}><input type="file" accept="image/png,image/jpeg,image/webp,image/gif" multiple disabled={busy} onChange={event => { const files = [...(event.target.files ?? [])]; if (files.length > 0) uploadFiles(files) }} /><span className={css.uploadIcon}><ToolbarIcon name="image" /></span><strong>{tt('canvas.dropHint')}</strong><small>{tt('canvas.dropSub')}</small></label> : null}
-      {(tab === 'history' || tab === 'gallery') ? <><div className={css.pickerGrid}>{items.map(item => <button key={item.key} type="button" role="option" aria-selected={selected.includes(item.key)} className={css.pickerCard} data-selected={selected.includes(item.key) ? '' : undefined} onClick={() => toggle(item.key)}><img draggable={false} src={item.image.url} alt={item.entry.prompt} onLoad={event => { const image = event.currentTarget; setDimensions(previous => ({ ...previous, [item.key]: { width: image.naturalWidth || 1, height: image.naturalHeight || 1 } })) }} /><span className={css.pickerCardPrompt}>{item.entry.prompt || tt('canvas.untitledWork')}</span><small>{item.entry.model} · {item.index + 1}/{item.entry.images.length}</small></button>)}</div><footer className={css.pickerFooter}><span>{tt('canvas.picked', { count: selected.length })}</span><button type="button" disabled={busy || selected.length === 0} onClick={() => { void addSelected() }}>{tt('canvas.addToCanvas')}</button></footer></> : null}
+      {tab === 'upload' ? <label className={css.uploadBox} onDragOver={event => event.preventDefault()} onDrop={event => { event.preventDefault(); const files = [...(event.dataTransfer.files ?? [])].filter(file => file.type.startsWith('image/')); if (files.length === 0) return; uploadFiles(files) }}><input type="file" accept="image/png,image/jpeg,image/webp,image/gif" multiple disabled={busy} onChange={event => {
+        const files = [...(event.target.files ?? [])]
+        // Cleared so re-picking the same file fires change again: a failed
+        // upload leaves the dialog open, and retrying it means the same file.
+        event.target.value = ''
+        if (files.length > 0) uploadFiles(files)
+      }} /><span className={css.uploadIcon}><ToolbarIcon name="image" /></span><strong>{tt('canvas.dropHint')}</strong><small>{tt('canvas.dropSub')}</small></label> : null}
+      {(tab === 'history' || tab === 'gallery') ? <><div className={css.pickerGrid} role="listbox" aria-multiselectable="true" aria-label={tt(tab === 'history' ? 'canvas.tabHistory' : 'canvas.tabGallery')}>{items.map(item => <button key={item.key} type="button" role="option" aria-selected={selected.includes(item.key)} aria-label={`${item.entry.prompt || tt('canvas.untitledWork')} · ${item.entry.model} · ${item.index + 1}/${item.entry.images.length}`} className={css.pickerCard} data-selected={selected.includes(item.key) ? '' : undefined} onClick={() => toggle(item.key)}><img draggable={false} src={item.image.url} alt="" onLoad={event => { const image = event.currentTarget; setDimensions(previous => ({ ...previous, [item.key]: { width: image.naturalWidth || 1, height: image.naturalHeight || 1 } })) }} /><span className={css.pickerCardPrompt}>{item.entry.prompt || tt('canvas.untitledWork')}</span><small>{item.entry.model} · {item.index + 1}/{item.entry.images.length}</small></button>)}</div><footer className={css.pickerFooter}><span>{tt('canvas.picked', { count: selected.length })}</span><button type="button" disabled={busy || selected.length === 0} onClick={() => { void addSelected() }}>{tt('canvas.addToCanvas')}</button></footer></> : null}
       {tab === 'generate' ? <div className={css.generateForm}><textarea value={prompt} onChange={event => setPrompt(event.target.value)} placeholder={tt('canvas.composerPlaceholder')} /><ModelPicker groups={modelGroups} value={{ channelId, model }} channelLabel={tt('model.channel')} modelLabel={tt('model.label')} channelPlaceholder={tt('model.channelPlaceholder')} emptyLabel={tt('canvas.modelPlaceholder')} ariaLabel={tt('canvas.model')} onChange={choice => { setChannelId(choice.channelId); setModel(choice.model) }} /><div className={css.inspectorRow}><ComposerSelect value={size} options={[{ value: 'auto', label: tt('canvas.sizeAuto') }, { value: '1:1', label: '1:1' }, { value: '3:4', label: '3:4' }, { value: '16:9', label: '16:9' }, { value: '9:16', label: '9:16' }]} ariaLabel={tt('canvas.size')} onChange={setSize} /><ComposerSelect value={quality} options={[{ value: 'auto', label: tt('canvas.qualityAuto') }, { value: '1k', label: '1K' }, { value: '2k', label: '2K' }, { value: '4k', label: '4K' }]} ariaLabel={tt('canvas.quality')} onChange={setQuality} /></div><button type="button" disabled={!(connectedChannelIds?.has(channelId) ?? connected) || busy || prompt.trim() === ''} onClick={() => { void generate() }}><ToolbarIcon name="sparkle" />{tt('canvas.generateAndAdd')}</button>{!(connectedChannelIds?.has(channelId) ?? connected) ? <small>{tt('canvas.needApi')}</small> : null}</div> : null}
     </div>
   </section></div>

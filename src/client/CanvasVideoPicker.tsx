@@ -45,6 +45,7 @@ import { useCallback, useEffect, useState } from 'react'
 import type { CanvasAssetRef, HistoryEntry, VideoHistoryEntry } from '../protocol.ts'
 import type { ImageGenApi } from './api.ts'
 import { errorMessage, tt } from './helpers.ts'
+import { onTablistKeyDown, tabIndexFor } from './tablist.ts'
 import css from './canvas-video-picker.module.css'
 
 export interface CanvasVideoPickerProps {
@@ -67,6 +68,9 @@ export interface CanvasVideoPickerProps {
 }
 
 type VideoPickerTab = 'upload' | 'history' | 'gallery'
+
+/** The tab order, in one place: the render maps it and the arrow keys index it. */
+const TABS: readonly VideoPickerTab[] = ['upload', 'history', 'gallery']
 
 /** One clip row, normalised across the two stores that can serve clips. */
 interface PickerClip {
@@ -176,6 +180,19 @@ export function CanvasVideoPicker(props: CanvasVideoPickerProps): React.JSX.Elem
   // default tab, so a lazy fetch would only push the first paint later.
   useEffect(() => { void loadHistory() }, [loadHistory])
 
+  // Esc dismisses the dialog. Registered in the capture phase so it wins over
+  // the canvas's own window-level Escape handler underneath -- that one clears
+  // the node selection, which happened invisibly behind the still-open dialog.
+  useEffect(() => {
+    const onKey = (event: KeyboardEvent): void => {
+      if (event.key !== 'Escape') return
+      event.stopPropagation()
+      onClose()
+    }
+    window.addEventListener('keydown', onKey, true)
+    return () => window.removeEventListener('keydown', onKey, true)
+  }, [onClose])
+
   const clips = tab === 'gallery' ? galleryClips(gallery) : historyClips(history)
 
   const addClip = useCallback((clip: PickerClip): void => {
@@ -212,14 +229,28 @@ export function CanvasVideoPicker(props: CanvasVideoPickerProps): React.JSX.Elem
   // error line and its retry button render on their own.
   const showEmptyCopy = empty && !(tab === 'history' && historyError !== null)
 
-  return <div className={css.backdrop} role="dialog" aria-modal="true" data-canvas-no-zoom="" data-video-picker="">
-    <section className={css.dialog}>
+  return <div
+    className={css.backdrop}
+    role="dialog"
+    aria-modal="true"
+    // `role="dialog"` without a name announces only "dialog" and the user has
+    // no way to tell which one opened. Every other dialog in this plugin
+    // carries `aria-label`; this one was the exception.
+    aria-label={tt('canvas.videoPicker')}
+    data-canvas-no-zoom=""
+    data-video-picker=""
+    // Clicking the dimmed area dismisses, like every other overlay in this
+    // plugin; the dialog section stops the bubble so a click inside it does
+    // not close the picker mid-edit.
+    onClick={onClose}
+  >
+    <section className={css.dialog} onClick={event => { event.stopPropagation() }}>
       <header className={css.header}>
         <strong>{tt('canvas.videoPicker')}</strong>
         <button type="button" className={css.close} data-video-picker-close="" aria-label={tt('canvas.close')} title={tt('canvas.close')} onClick={onClose}>×</button>
       </header>
       <nav className={css.tabs} role="tablist">
-        {(['upload', 'history', 'gallery'] as const).map(item => <button
+        {TABS.map((item, index) => <button
           key={item}
           type="button"
           role="tab"
@@ -227,6 +258,8 @@ export function CanvasVideoPicker(props: CanvasVideoPickerProps): React.JSX.Elem
           data-video-tab={item}
           aria-selected={tab === item}
           data-active={tab === item ? '' : undefined}
+          tabIndex={tabIndexFor(tab === item)}
+          onKeyDown={event => { onTablistKeyDown(event, { count: 3, index, select: next => { setTab(TABS[next]!) } }) }}
           onClick={() => { setTab(item) }}
         >{item === 'upload' ? tt('canvas.videoPickerUpload') : item === 'history' ? tt('canvas.videoPickerHistory') : tt('canvas.videoPickerGallery')}</button>)}
       </nav>

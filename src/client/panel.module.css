@@ -8,6 +8,122 @@
  * plugin).
  */
 
+/* ------------------------------------------------------------ stacking order
+ *
+ * WHY these are variables in one place: every layer used to be a literal in
+ * whichever module needed it, so two modules could pick the same number by
+ * coincidence and the winner was decided by document order. Several pairs did
+ * exactly that and only worked because the element inserted last happened to be
+ * the one that should win. A single ordered scale removes the coincidence: a
+ * new layer picks the rung for its role instead of guessing a number.
+ *
+ * HOW the numbers were chosen: they are the values these layers already had.
+ * A role that was uniquely numbered keeps its number (that is why the rungs are
+ * sparse and uneven -- 31, 35, 55, 86, 90 are all somebody's original). Only
+ * layers that genuinely shared a number were moved, and only as far as needed
+ * to keep every existing comparison intact. A rewrite that renumbered "by role"
+ * instead would silently re-stack the UI -- it did, once: the select menu fell
+ * from 1000 to 60 and rendered *under* the modal that contained it.
+ *
+ * Defined on :root so EVERY module can read it -- the modules are separate CSS
+ * Module bundles, but custom properties inherit, so one declaration here serves
+ * all of them. Rung NAMES are unique, and one name may serve several layers
+ * when they share a role (that is the point of `--z-content`); two different
+ * names must never share a number, or the coincidence is back.
+ *
+ *    0  canvas-links      connection lines, under the nodes they join
+ *    2  content           in-flow decorations inside a card, node or panel
+ *    3  content-raised    handles and badges sitting on top of content
+ *    4  hover             hover toolbars, compose badges, card overlays
+ *    5  badge             corner badges on a canvas node
+ *    6  tray              task tray and its resize handle
+ *   10  inline-popover    a small popover anchored inside a form
+ *   20  marquee           the canvas selection rectangle
+ *   21  panel-header      a panel's own header row
+ *   30  dock              canvas docks, minimap, sidebar host, panel toasts
+ *   31  dock-raised       the multi-select strip above the canvas dock
+ *   35  composer          the floating composer
+ *   40  topbar            canvas title bar and the panel's model strip
+ *   45  anchored-menu     a menu anchored to the canvas background
+ *   60  takeover          the container that takes over a shell column. Its
+ *                          value is fixed: sibling panels from other plugins
+ *                          are measured against it, so it keeps its HEAD value
+ *   61  notice            the canvas error / notice toast (was 60, tied with
+ *                          the takeover and the picker backdrop; the tie meant
+ *                          the winner depended on insertion order)
+ *   62  picker-backdrop   the video picker's own backdrop (was 60; it must
+ *                          cover the notice, which it only did by tree order)
+ *   70  scrim             the canvas modal scrim
+ *   71  popover-raised    the skills menu / dialog above that scrim
+ *   72  chat-resizer      the column resize handle, above the takeover
+ *   86  file-overlay      the full-screen file reader
+ *   90  context-menu      canvas context menu and the update popover
+ *  120  modal             the settings editor backdrop
+ *  130  modal-backdrop    the template library backdrop
+ *  131  menu-raised       the model picker panel
+ *  132  menu-flyout       the model picker's cascading flyout
+ *  400  media-viewer      full-screen video preview
+ * 1000  lightbox          full-screen image preview
+ * 1005  modal-picker      the provider picker modal
+ * 1010  select-menu       any <Select> dropdown: must clear every modal that
+ *                          can contain a select
+ * 1100  guide             the host-adjacent config guide
+ * 1200  fullscreen        the comparison full-screen view
+ */
+:root {
+  /* in-flow decorations */
+  --z-content: 2;
+  --z-content-raised: 3;
+  --z-hover: 4;
+  --z-badge: 5;
+  --z-tray: 6;
+  --z-inline-popover: 10;
+
+  /* canvas selection */
+  --z-marquee: 20;
+
+  /* panel chrome */
+  --z-panel-header: 21;
+
+  /* docks, toolbars, floating composers */
+  --z-dock: 30;
+  --z-dock-raised: 31;
+  --z-composer: 35;
+  --z-topbar: 40;
+
+  /* anchored menus, notices, takeovers */
+  --z-anchored-menu: 45;
+  --z-takeover: 60;
+  --z-notice: 61;
+  --z-picker-backdrop: 62;
+
+  /* popovers and their scrims */
+  --z-scrim: 70;
+  --z-popover-raised: 71;
+  --z-chat-resizer: 72;
+
+  /* canvas overlays above the scrim */
+  --z-file-overlay: 86;
+  --z-context-menu: 90;
+  --z-canvas-links: 0;
+
+  /* modal surfaces */
+  --z-modal: 120;
+  --z-modal-backdrop: 130;
+  --z-menu-raised: 131;
+  --z-menu-flyout: 132;
+
+  /* full-screen viewers */
+  --z-media-viewer: 400;
+  --z-lightbox: 1000;
+  --z-modal-picker: 1005;
+  --z-select-menu: 1010;
+
+  /* host-adjacent surfaces */
+  --z-guide: 1100;
+  --z-fullscreen: 1200;
+}
+
 /* --- center-column takeover (global rules, attribute-scoped) ----------------- */
 
 /* The panel container rides inside the conversation grid item as an extra
@@ -29,7 +145,7 @@
   grid-column: 1;
   grid-row: 1;
   display: none;
-  z-index: 60;
+  z-index: var(--z-takeover);
   min-width: 0;
   min-height: 0;
   background: var(--dsw-alias-bg-base);
@@ -99,7 +215,7 @@ html[data-dsh-imagegen-active]:not([data-dsh-taskboard-active]):not([data-dsh-ss
 
 .chatResizer {
   position: relative;
-  z-index: 70;
+  z-index: var(--z-chat-resizer);
   display: none;
   width: 8px;
   min-width: 8px;
@@ -291,7 +407,7 @@ html[data-dsh-imagegen-active] [data-dsh-imagegen-sidebar-root] > :not([data-dsh
 
 .sidebarHistoryHost {
   position: absolute;
-  z-index: 30;
+  z-index: var(--z-dock);
   inset: 0;
   display: none;
   min-width: 0;
@@ -364,7 +480,7 @@ html[data-dsh-imagegen-active] .sidebarHistoryHost {
 
 .panelHeader {
   position: relative;
-  z-index: 20;
+  z-index: var(--z-panel-header);
   display: flex;
   align-items: center;
   justify-content: space-between;
@@ -481,7 +597,7 @@ html[data-dsh-imagegen-active] .sidebarHistoryHost {
   position: absolute;
   top: calc(100% + 8px);
   left: 0;
-  z-index: 90;
+  z-index: var(--z-context-menu);
   display: flex;
   flex-direction: column;
   width: min(430px, calc(100vw - 40px));
@@ -635,6 +751,20 @@ html[data-dsh-imagegen-active] .sidebarHistoryHost {
   gap: 14px;
   min-width: 0;
   min-height: 0;
+  /* Positioning context for the children of the `display: contents` result
+     container in the video tab (the task tray is absolutely positioned against
+     its nearest positioned ancestor). */
+  position: relative;
+}
+
+/* In the video tab the result container is `display: contents`, so its children
+   become flex items of `.generation` itself. The error line must take a full
+   row under the studio rather than sitting beside it as a column; wrapping
+   makes that possible. Keyed on an explicit attribute rather than `:has()`,
+   whose support is recent and which the rest of this stylesheet avoids. */
+.generation[data-empty-result-host='true'] {
+  flex-wrap: wrap;
+  align-content: flex-start;
 }
 
 /* The canvas workspace owns the full generation surface. Keep the classic
@@ -745,7 +875,7 @@ html[data-dsh-imagegen-active] .sidebarHistoryHost {
 
 .taskTray {
   position: absolute;
-  z-index: 6;
+  z-index: var(--z-tray);
   top: 12px;
   right: 12px;
   width: min(360px, calc(100% - 24px));
@@ -781,7 +911,7 @@ html[data-dsh-imagegen-active] .sidebarHistoryHost {
 .taskRow button { padding: 2px 7px; border: 0; border-radius: 5px; color: var(--dsw-alias-label-secondary); background: var(--dsw-alias-bg-layer-2); cursor: pointer; font: inherit; font-size: 11px; }
 .taskRow button:hover { color: var(--dsw-alias-brand-primary); }
 
-.configGuide { position: fixed; inset: 0; z-index: 1100; display: grid; place-items: center; padding: 20px; background: rgb(0 0 0 / 35%); }
+.configGuide { position: fixed; inset: 0; z-index: var(--z-guide); display: grid; place-items: center; padding: 20px; background: rgb(0 0 0 / 35%); }
 .configGuideBody { display: flex; width: min(360px, 100%); flex-direction: column; gap: 12px; padding: 18px; border: 1px solid var(--dsw-alias-border-l2); border-radius: 10px; color: var(--dsw-alias-label-primary); background: var(--dsw-alias-bg-layer-1); box-shadow: 0 14px 40px rgb(0 0 0 / 20%); }
 .configGuideBody span { color: var(--dsw-alias-label-secondary); font-size: 13px; line-height: 1.55; }
 .configGuideBody button { align-self: flex-end; min-height: 30px; padding: 0 12px; border: 0; border-radius: 7px; color: var(--dsw-alias-bg-layer-1); background: var(--dsw-alias-brand-primary); cursor: pointer; font: inherit; font-size: 12px; }
@@ -1911,7 +2041,7 @@ html[data-dsh-imagegen-chat-collapsed] [data-dsh-imagegen-chat-resizer] {
   width: 6px;
   height: 100%;
   cursor: col-resize;
-  z-index: 6;
+  z-index: var(--z-tray);
 }
 
 .configResizer:hover {
@@ -2212,7 +2342,7 @@ html[data-dsh-imagegen-chat-collapsed] [data-dsh-imagegen-chat-resizer] {
   left: 0;
   right: 0;
   bottom: calc(100% + 6px);
-  z-index: 40;
+  z-index: var(--z-topbar);
   display: flex;
   flex-direction: column;
   padding: 4px;
@@ -2574,7 +2704,7 @@ html[data-dsh-imagegen-chat-collapsed] [data-dsh-imagegen-chat-resizer] {
 .lightbox {
   position: fixed;
   inset: 0;
-  z-index: 1000;
+  z-index: var(--z-lightbox);
   display: flex;
   align-items: center;
   justify-content: center;
@@ -2827,7 +2957,7 @@ html[data-dsh-imagegen-chat-collapsed] [data-dsh-imagegen-chat-resizer] {
   left: 50%;
   bottom: 24px;
   transform: translateX(-50%);
-  z-index: 30;
+  z-index: var(--z-dock);
   display: inline-flex;
   align-items: center;
   gap: 7px;
@@ -2853,7 +2983,7 @@ html[data-dsh-imagegen-chat-collapsed] [data-dsh-imagegen-chat-resizer] {
   position: absolute;
   left: 50%;
   bottom: 24px;
-  z-index: 30;
+  z-index: var(--z-dock);
   display: inline-flex;
   align-items: center;
   gap: 7px;
@@ -2924,7 +3054,7 @@ html[data-dsh-imagegen-chat-collapsed] [data-dsh-imagegen-chat-resizer] {
 .compareChannelGroup { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; }
 .compareChannelName { flex-basis: 100%; color: var(--dsw-alias-label-tertiary); font-size: 10px; font-weight: 600; }
 .compareModelChoices label { padding: 4px 6px; border: 1px solid var(--dsw-alias-border-l1); border-radius: 5px; font-size: 10px; }
-.comparisonBoard { position: absolute; z-index: 4; top: 14px; right: 14px; bottom: 14px; left: 14px; display: flex; flex-direction: column; overflow: hidden; border: 1px solid var(--dsw-alias-border-l2); border-radius: 8px; background: var(--dsw-alias-bg-layer-1); box-shadow: 0 8px 24px rgb(0 0 0 / 12%); }
+.comparisonBoard { position: absolute; z-index: var(--z-hover); top: 14px; right: 14px; bottom: 14px; left: 14px; display: flex; flex-direction: column; overflow: hidden; border: 1px solid var(--dsw-alias-border-l2); border-radius: 8px; background: var(--dsw-alias-bg-layer-1); box-shadow: 0 8px 24px rgb(0 0 0 / 12%); }
 .comparisonBoard > header { display: flex; align-items: center; justify-content: space-between; padding: 10px 12px; border-bottom: 1px solid var(--dsw-alias-border-l1); }
 .comparisonBoard > header div { display: flex; align-items: baseline; gap: 7px; }
 .comparisonBoard > header strong { color: var(--dsw-alias-label-primary); font-size: 13px; }
@@ -2937,7 +3067,7 @@ html[data-dsh-imagegen-chat-collapsed] [data-dsh-imagegen-chat-resizer] {
 .comparisonImageButton:focus-visible { outline: 2px solid var(--dsw-alias-brand-primary); outline-offset: -2px; }
 .comparisonGrid article > span { display: grid; flex: 1; min-height: 0; place-items: center; color: var(--dsw-alias-label-tertiary); background: var(--dsw-alias-bg-layer-2); font-size: 12px; }
 .comparisonGrid img { display: block; width: 100%; height: 100%; min-height: 0; max-height: none; flex: 1; object-fit: contain; background: var(--dsw-alias-bg-base); }
-.comparisonFullscreen { position: fixed; z-index: 1200; inset: 0; overflow: auto; padding: 54px 24px 24px; background: rgb(0 0 0 / 92%); }
+.comparisonFullscreen { position: fixed; z-index: var(--z-fullscreen); inset: 0; overflow: auto; padding: 54px 24px 24px; background: rgb(0 0 0 / 92%); }
 .comparisonFullscreenGrid { display: grid; min-height: 100%; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); align-items: start; gap: 18px; }
 .comparisonFullscreen figure { min-width: 0; margin: 0; }
 .comparisonFullscreen figcaption { margin-bottom: 8px; color: #fff; font-size: 13px; font-weight: 600; }
@@ -2948,7 +3078,7 @@ html[data-dsh-imagegen-chat-collapsed] [data-dsh-imagegen-chat-resizer] {
 .galleryMasonry::-webkit-scrollbar-thumb { background: var(--dsw-alias-border-l2); border-radius: 999px; }
 .galleryCard { position: relative; display: block; width: 100%; margin: 0; overflow: hidden; border: 1px solid var(--dsw-alias-border-l1); border-radius: 14px; background: var(--dsw-alias-bg-layer-1); box-shadow: 0 5px 18px rgb(24 32 54 / 7%); }
 .galleryCard[data-selected] { border-color: var(--dsw-alias-brand-primary); box-shadow: 0 0 0 2px color-mix(in srgb, var(--dsw-alias-brand-primary) 26%, transparent), 0 5px 18px rgb(24 32 54 / 7%); }
-.gallerySelect { position: absolute; z-index: 2; top: 9px; right: 9px; display: grid; width: 26px; height: 26px; place-items: center; border: 1px solid rgb(255 255 255 / 75%); border-radius: 7px; background: rgb(0 0 0 / 58%); cursor: pointer; }
+.gallerySelect { position: absolute; z-index: var(--z-content); top: 9px; right: 9px; display: grid; width: 26px; height: 26px; place-items: center; border: 1px solid rgb(255 255 255 / 75%); border-radius: 7px; background: rgb(0 0 0 / 58%); cursor: pointer; }
 .gallerySelect input { width: 16px; height: 16px; margin: 0; accent-color: var(--dsw-alias-brand-primary); cursor: pointer; }
 .galleryImageButton { position: relative; display: block; width: 100%; padding: 0; border: 0; background: var(--dsw-alias-bg-base); cursor: zoom-in; }
 .galleryImageButton[data-selecting] { cursor: pointer; }
@@ -3020,6 +3150,26 @@ html[data-dsh-imagegen-chat-collapsed] [data-dsh-imagegen-chat-resizer] {
    its own composer, so an empty footer bar would be the only thing left. */
 .generation > .footer[data-video='true'] {
   display: none !important;
+}
+
+/* The classic result container stays mounted in the video tab so switching tabs
+   is instant, and it is a `flex: 1` sibling of the video section -- so an empty
+   one silently halved the studio's width while a blank card took the other
+   half. It must NOT be `display: none` though: this container also renders
+   things that are NOT gated on the image modes and are meant to be visible on
+   the video tab too (the generation task tray, and the `role="alert"` error
+   line that add-to-conversation failures land in). Taking it out of the flex
+   row keeps its children laid out (the tray is `position: absolute`, the error
+   line is in flow) while giving the video section the whole width. */
+.generation > .canvas[data-empty-result='true'] {
+  display: contents;
+}
+
+/* `display: contents` removes the box, so the children are laid out against the
+   `.generation` row -- give the error line its own row instead of letting it
+   sit beside the studio. */
+.generation > .canvas[data-empty-result='true'] > .canvasError {
+  flex: 1 1 100%;
 }
 
 /* ------------------------------------------------------------------ video tab

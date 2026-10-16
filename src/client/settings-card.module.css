@@ -783,7 +783,7 @@
 .editorBackdrop {
   position: fixed;
   inset: 0;
-  z-index: 120;
+  z-index: var(--z-modal);
   display: flex;
   align-items: flex-start;
   justify-content: center;
@@ -1176,7 +1176,7 @@
   position: absolute;
   left: 0;
   bottom: calc(100% + 8px);
-  z-index: 10;
+  z-index: var(--z-inline-popover);
   width: min(420px, calc(100vw - 48px));
   max-height: min(440px, 60vh);
   overflow-y: auto;
@@ -1440,7 +1440,7 @@
 /* Keep the commit controls visible while long panels scroll. */
 .footer {
   position: sticky;
-  z-index: 4;
+  z-index: var(--z-hover);
   bottom: -8px;
   margin: 14px -16px 0;
   padding: 12px 16px 10px;
@@ -1452,7 +1452,7 @@
 
 .pickerOverlay {
   position: fixed;
-  z-index: 1000;
+  z-index: var(--z-modal-picker);
   inset: 0;
   display: grid;
   place-items: center;

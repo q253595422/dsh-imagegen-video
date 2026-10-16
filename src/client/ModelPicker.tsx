@@ -71,13 +71,26 @@ export function ModelPicker(props: {
       setOpen(false)
     }
     const closeOnViewportChange = (): void => { setOpen(false) }
+    // Keyboard parity with the shared Select: Escape closes the menu and hands
+    // focus back to the trigger. Without this the canvas's window-level Escape
+    // ran instead -- closing nothing and clearing the node selection behind the
+    // menu, which reads as "Esc did something random".
+    const onKeyDown = (event: KeyboardEvent): void => {
+      if (event.key !== 'Escape') return
+      event.preventDefault()
+      event.stopPropagation()
+      setOpen(false)
+      triggerRef.current?.focus()
+    }
     window.addEventListener('pointerdown', close, true)
     window.addEventListener('resize', closeOnViewportChange)
     window.addEventListener('scroll', closeOnViewportChange, true)
+    window.addEventListener('keydown', onKeyDown, true)
     return () => {
       window.removeEventListener('pointerdown', close, true)
       window.removeEventListener('resize', closeOnViewportChange)
       window.removeEventListener('scroll', closeOnViewportChange, true)
+      window.removeEventListener('keydown', onKeyDown, true)
     }
   }, [open])
 
@@ -120,6 +133,8 @@ export function ModelPicker(props: {
         style={{ left: position.left, top: position.top, width: channelMenuWidth, transform: position.above ? 'translateY(-100%)' : undefined }}
         role="menu"
         aria-label={props.ariaLabel}
+        data-canvas-no-zoom=""
+        data-model-picker-menu=""
       >
         <div className={`${css.pane} ${css.channelPane}`}>
           <span className={css.sectionLabel}>{props.channelLabel}</span>
@@ -147,6 +162,8 @@ export function ModelPicker(props: {
         }}
         role="menu"
         aria-label={`${props.ariaLabel}: ${props.modelLabel}`}
+        data-canvas-no-zoom=""
+        data-model-picker-menu=""
       >
         <span className={css.sectionLabel}>{props.modelLabel}</span>
         {(draftGroup?.models ?? []).map(model => <button

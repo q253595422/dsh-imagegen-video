@@ -45,6 +45,39 @@ function context2d(canvas: HTMLCanvasElement): CanvasRenderingContext2D {
   return ctx
 }
 
+/**
+ * Resolve one CSS custom property to a concrete color.
+ *
+ * WHY this exists: the annotation marker is drawn twice with the same color —
+ * once by CSS (the boxes, badges and leader lines the user sees) and once by
+ * Canvas2D (the marker burnt into the image the model receives). A literal in
+ * both places drifts the moment either is restyled, and the promise the feature
+ * makes ("the box you drew is the box the model is told to change") depends on
+ * them being the SAME color. Reading the token makes the two one value.
+ *
+ * `origin` is the element the token is declared on. It must be the canvas
+ * workspace root, NOT `document.documentElement`: these are plugin-private
+ * properties declared on the canvas root class, and a custom property is only
+ * visible on the element that declares it and its descendants. Reading them
+ * from `documentElement` returned an empty string in every real browser, so the
+ * marker silently fell back to the literal while the CSS boxes used the token's
+ * value -- exactly the drift this function exists to prevent.
+ *
+ * Falls back to `fallback` when there is no document (jsdom smoke sandbox) or
+ * the property is unset.
+ */
+export function themeColor(property: string, fallback: string, origin?: Element | null): string {
+  // Duck-typed, not `instanceof`: the same code runs inside the jsdom smoke
+  // sandbox, which has a `document` but no `getComputedStyle` on its global.
+  // Calling it there threw and took the whole annotation flow down with it.
+  if (typeof globalThis.document === 'undefined') return fallback
+  if (typeof globalThis.getComputedStyle !== 'function') return fallback
+  const target = origin ?? globalThis.document.documentElement
+  if (target === undefined || target === null) return fallback
+  const value = globalThis.getComputedStyle(target).getPropertyValue(property).trim()
+  return value === '' ? fallback : value
+}
+
 export function canvasToDataUrl(canvas: HTMLCanvasElement): string {
   return canvas.toDataURL('image/png')
 }
@@ -126,10 +159,17 @@ export function transparencyRatio(source: HTMLCanvasElement, step = 4): number {
 export function drawAnnotation(
   source: HTMLCanvasElement,
   boxes: Array<{ rect: CanvasRect; index: number }>,
+  /** The canvas root, where `--canvas-annotation` is declared. See themeColor. */
+  tokenOrigin?: Element | null,
 ): HTMLCanvasElement {
   const canvas = createCanvas(source.width, source.height)
   const ctx = context2d(canvas)
   ctx.drawImage(source, 0, 0)
+  // The marker color is the SAME token the CSS uses for the on-screen boxes and
+  // badges (see `--canvas-annotation` in canvas-workspace.module.css), so the
+  // box the user drew and the box the model is told about cannot drift apart.
+  const marker = themeColor('--canvas-annotation', '#ff2d55', tokenOrigin)
+  const markerInk = themeColor('--canvas-annotation-ink', '#ffffff', tokenOrigin)
   // Stroke width and label size scale with the image so the mark stays visible
   // on small previews and does not swallow large ones.
   const stroke = Math.max(2, Math.round(Math.min(source.width, source.height) * 0.006))
@@ -138,10 +178,10 @@ export function drawAnnotation(
     const { x, y, width, height } = rectToPixels(box.rect, source.width, source.height)
     ctx.save()
     ctx.lineJoin = 'round'
-    ctx.strokeStyle = '#ff2d55'
+    ctx.strokeStyle = marker
     ctx.lineWidth = stroke * 2.2
     ctx.strokeRect(x, y, width, height)
-    ctx.strokeStyle = '#ffffff'
+    ctx.strokeStyle = markerInk
     ctx.lineWidth = stroke
     ctx.strokeRect(x, y, width, height)
     // Numbered tag so the prompt can address each box by index.
@@ -152,9 +192,9 @@ export function drawAnnotation(
     const tagHeight = Math.round(fontSize * 1.5)
     const tagX = Math.min(x, Math.max(0, source.width - tagWidth))
     const tagY = Math.max(0, y - tagHeight)
-    ctx.fillStyle = '#ff2d55'
+    ctx.fillStyle = marker
     ctx.fillRect(tagX, tagY, tagWidth, tagHeight)
-    ctx.fillStyle = '#ffffff'
+    ctx.fillStyle = markerInk
     ctx.textBaseline = 'middle'
     ctx.textAlign = 'center'
     ctx.fillText(label, tagX + tagWidth / 2, tagY + tagHeight / 2)

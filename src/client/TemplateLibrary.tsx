@@ -15,6 +15,7 @@ import { createPortal } from 'react-dom'
 import { Button } from '@deepseek-ai/dsh-client-ui-primitives'
 import type { ImageGenApi } from './api.ts'
 import { errorMessage, tt } from './helpers.ts'
+import { onTablistKeyDown, tabIndexFor } from './tablist.ts'
 import { TEMPLATE_SOURCES, TEMPLATES_API, type TemplateCase, type TemplateFavorite, type TemplateListResult } from '../protocol.ts'
 import css from './templates.module.css'
 
@@ -63,13 +64,18 @@ function TemplateThumb(props: { sourceId: string; item: TemplateCase }) {
 
 /** Card-corner star toggle; the click must not open the detail view. Rendered
  *  as a span (a button cannot nest inside the card button). */
-function FavoriteStar(props: { active: boolean; title: string; onToggle: () => void }) {
+function FavoriteStar(props: { active: boolean; unknown?: boolean; title: string; onToggle: () => void }) {
   return (
+    // `data-unknown` marks a star whose state could not be read: it is neither a
+    // claim of "favorited" nor of "not favorited". It stays clickable on
+    // purpose -- the host deduplicates a repeated add, and a successful toggle
+    // answers with the real list, so the star is also a way back.
     <span
       role="button"
       tabIndex={0}
       className={css.favStar}
       data-active={props.active ? '' : undefined}
+      data-unknown={props.unknown === true ? '' : undefined}
       aria-label={props.title}
       title={props.title}
       onClick={(event) => { event.stopPropagation(); props.onToggle() }}
@@ -96,7 +102,14 @@ export function TemplateLibrary(props: {
   const [activeSource, setActiveSource] = useState(TEMPLATE_SOURCES[0]!.id)
   const [lists, setLists] = useState<Record<string, TemplateListResult>>({})
   const [loadErrors, setLoadErrors] = useState<Record<string, string>>({})
-  const [favorites, setFavorites] = useState<TemplateFavorite[]>([])
+  // `null` = never read successfully, which is NOT the same answer as an empty
+  // array: an empty list is a real "you have no favorites", a failed read is
+  // "we do not know". Storing the failure as `[]` (the old behaviour) painted
+  // every star as "not favorited" and told the user their favorites were gone.
+  const [favorites, setFavorites] = useState<TemplateFavorite[] | null>(null)
+  // Kept apart from the list so the message survives while the last known list
+  // stays on screen.
+  const [favoritesError, setFavoritesError] = useState<string | null>(null)
   const [query, setQuery] = useState('')
   const [category, setCategory] = useState('')
   const [favoritesView, setFavoritesView] = useState(false)
@@ -108,7 +121,10 @@ export function TemplateLibrary(props: {
   const searchRef = useRef<HTMLInputElement>(null)
 
   const list = lists[activeSource]
-  const loadError = favoritesView ? null : loadErrors[activeSource] || null
+  // The favorites tab reads its own endpoint, so it carries its own error.
+  // Blanking the error here (the previous behaviour) left that tab with no error
+  // path at all: the one failure it can hit was reported nowhere.
+  const loadError = favoritesView ? favoritesError : loadErrors[activeSource] || null
 
   /** Fetch one source's list into the per-source cache. */
   const loadSource = (sourceId: string): void => {
@@ -120,10 +136,18 @@ export function TemplateLibrary(props: {
       .catch(caught => { setLoadErrors(current => ({ ...current, [sourceId]: errorMessage(caught) })) })
   }
 
+  /** Read the host-side favorites. A failure keeps the last known list and
+   *  surfaces its own error, so the stars never silently reset to "unstarred". */
+  const loadFavorites = (): void => {
+    api.favoritesList()
+      .then(result => { setFavorites(result); setFavoritesError(null) })
+      .catch(caught => { setFavoritesError(errorMessage(caught)) })
+  }
+
   // Load the first source plus the favorites on open; focus the search box.
   useEffect(() => {
     loadSource(TEMPLATE_SOURCES[0]!.id)
-    api.favoritesList().then(setFavorites).catch(() => { /* favorites stay empty; toggling retries */ })
+    loadFavorites()
     searchRef.current?.focus()
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
@@ -138,16 +162,31 @@ export function TemplateLibrary(props: {
     if (lists[sourceId] === undefined) loadSource(sourceId)
   }
 
+  /** The favorites view, reachable both from its tab and from the arrow keys. */
+  const showFavorites = (): void => {
+    setFavoritesView(true)
+    setCategory('')
+    setSelected(null)
+    setNotice(null)
+  }
+
+  /** Select the tab at `index` of the source row; the last one is favorites. */
+  const selectSourceTab = (index: number): void => {
+    const source = TEMPLATE_SOURCES[index]
+    if (source === undefined) showFavorites()
+    else switchSource(source.id)
+  }
+
   /** Every favorite keeps its source so the favorites tab can group libraries. */
   const favoriteItems = useMemo<TemplateEntry[]>(
-    () => favorites.map(entry => ({ sourceId: entry.sourceId, item: entry.case })),
+    () => (favorites ?? []).map(entry => ({ sourceId: entry.sourceId, item: entry.case })),
     [favorites],
   )
   const visibleItems = useMemo<TemplateEntry[]>(() => {
     if (favoritesView) return favoriteItems
     return (list?.cases ?? []).map(item => ({ sourceId: activeSource, item }))
   }, [activeSource, favoriteItems, favoritesView, list])
-  const favKeys = useMemo(() => new Set(favorites.map(entry => entry.key)), [favorites])
+  const favKeys = useMemo(() => new Set((favorites ?? []).map(entry => entry.key)), [favorites])
 
   const categories = useMemo(() => {
     const counts = new Map<string, { label: string; count: number }>()
@@ -205,7 +244,11 @@ export function TemplateLibrary(props: {
     const pending = favKeys.has(key)
       ? api.favoritesRemove(key)
       : api.favoritesAdd(sourceId, item)
-    pending.then(setFavorites).catch(() => { /* leave the star as-is on failure */ })
+    // A successful toggle answers with the whole list, so it also clears a
+    // stale read error: the star doubles as a retry for the favorites list.
+    pending
+      .then(result => { setFavorites(result); setFavoritesError(null) })
+      .catch(() => { /* leave the star as-is on failure */ })
   }
 
   /** Mirror every reference image of the active source through the host cache. */
@@ -264,6 +307,9 @@ export function TemplateLibrary(props: {
         {item.featured ? <span className={css.featuredBadge}>{tt('templates.featured')}</span> : null}
         <FavoriteStar
           active={active}
+          // The fill is a claim about the host's list, and there is no list to
+          // make that claim against while the read is failing or never succeeded.
+          unknown={favorites === null}
           title={active ? tt('templates.favoriteRemove') : tt('templates.favoriteAdd')}
           onToggle={() => { toggleFavorite(sourceId, item) }}
         />
@@ -296,7 +342,9 @@ export function TemplateLibrary(props: {
           <span className={css.heading}>
             <h3 className={css.title}>{tt('templates.title')}</h3>
             {favoritesView ? (
-              <span className={css.meta}>{tt('templates.favoritesCount', { count: favorites.length })}</span>
+              // No count while the list is unknown: a number here would be an
+              // invented one.
+              favorites === null ? null : <span className={css.meta}>{tt('templates.favoritesCount', { count: favorites.length })}</span>
             ) : list !== undefined ? (
               <span className={css.meta}>{tt('templates.meta', { count: list.total, origin: originLabel })}</span>
             ) : null}
@@ -327,7 +375,7 @@ export function TemplateLibrary(props: {
         </header>
 
         <div className={css.sourceTabs} role="tablist" aria-label={tt('templates.sources')}>
-          {TEMPLATE_SOURCES.map(source => (
+          {TEMPLATE_SOURCES.map((source, index) => (
             <button
               key={source.id}
               type="button"
@@ -336,6 +384,8 @@ export function TemplateLibrary(props: {
               className={css.sourceTab}
               data-active={!favoritesView && source.id === activeSource ? '' : undefined}
               title={source.description}
+              tabIndex={tabIndexFor(!favoritesView && source.id === activeSource)}
+              onKeyDown={event => { onTablistKeyDown(event, { count: TEMPLATE_SOURCES.length + 1, index, select: selectSourceTab }) }}
               onClick={() => { switchSource(source.id) }}
             >
               {source.label}
@@ -349,15 +399,12 @@ export function TemplateLibrary(props: {
             className={css.sourceTab}
             data-active={favoritesView ? '' : undefined}
             title={tt('templates.favoritesHint')}
-            onClick={() => {
-              setFavoritesView(true)
-              setCategory('')
-              setSelected(null)
-              setNotice(null)
-            }}
+            tabIndex={tabIndexFor(favoritesView)}
+            onKeyDown={event => { onTablistKeyDown(event, { count: TEMPLATE_SOURCES.length + 1, index: TEMPLATE_SOURCES.length, select: selectSourceTab }) }}
+            onClick={showFavorites}
           >
             ★ {tt('templates.favorites')}
-            {favorites.length > 0 ? <span className={css.sourceTabCount}>{favorites.length}</span> : null}
+            {favorites !== null && favorites.length > 0 ? <span className={css.sourceTabCount}>{favorites.length}</span> : null}
           </button>
         </div>
 
@@ -403,6 +450,16 @@ export function TemplateLibrary(props: {
             </div>
           ) : null}
 
+          {/* The favorites tab reads its own endpoint, so it needs its own
+              loading line: without it the first paint of that tab claimed
+              "no favorites yet" while the request was still in flight. */}
+          {favoritesView && favorites === null && favoritesError === null ? (
+            <div className={css.state} role="status">
+              <span className={css.spinner} />
+              <span>{tt('templates.loading')}</span>
+            </div>
+          ) : null}
+
           {!favoritesView && loadError !== null ? (
             <div className={css.state} role="alert">
               <span>{tt('templates.loadFailed', { error: loadError })}</span>
@@ -412,7 +469,21 @@ export function TemplateLibrary(props: {
             </div>
           ) : null}
 
-          {favoritesView && filtered.length === 0 ? (
+          {/* A failed favorites read must be visible and must NOT masquerade as
+              "you have no favorites": that copy asserts the host returned an
+              empty list, which a failure does not establish. */}
+          {favoritesView && favoritesError !== null ? (
+            <div className={css.state} role="alert">
+              {/* Its own copy: `templates.loadFailed` names the library, but the
+                  request that failed here is the favorites list. */}
+              <span>{tt('templates.favoritesLoadFailed', { error: favoritesError })}</span>
+              <Button variant="outline" size="sm" onClick={() => { setFavoritesError(null); loadFavorites() }}>
+                {tt('templates.retry')}
+              </Button>
+            </div>
+          ) : null}
+
+          {favoritesView && favorites !== null && favoritesError === null && filtered.length === 0 ? (
             <div className={css.state}>{tt('templates.favoritesEmpty')}</div>
           ) : null}
 

@@ -26,6 +26,7 @@ import type { ImageGenKey } from './locales.ts'
 import { tt, type TranslateValues } from './helpers.ts'
 import { useImageGenLanguageTick } from './use-language.ts'
 import { Select } from './Select.tsx'
+import { onTablistKeyDown, tabIndexFor } from './tablist.ts'
 import css from './settings-card.module.css'
 
 /** The global (non-channel) fields this card's staged form edits. */
@@ -1179,8 +1180,18 @@ function PresetPicker(props: {
           <button type="button" className={css.editorClose} aria-label={t('preview.close')} onClick={props.onClose}>×</button>
         </header>
         <div className={css.pickerTabs} role="tablist" aria-label={t('channels.presetPickerTitle')}>
-          <button type="button" role="tab" aria-selected={tab === 'api-key'} data-active={tab === 'api-key' ? '' : undefined} onClick={() => { setTab('api-key'); setQuery('') }}>{t('channels.presetTabApiKey')}</button>
-          <button type="button" role="tab" aria-selected={tab === 'subscription'} data-active={tab === 'subscription' ? '' : undefined} onClick={() => { setTab('subscription'); setQuery('') }}>{t('channels.presetTabSubscription')}</button>
+          {([['api-key', 'channels.presetTabApiKey'], ['subscription', 'channels.presetTabSubscription']] as const).map(([value, labelKey], index) => (
+            <button
+              key={value}
+              type="button"
+              role="tab"
+              aria-selected={tab === value}
+              data-active={tab === value ? '' : undefined}
+              tabIndex={tabIndexFor(tab === value)}
+              onKeyDown={event => { onTablistKeyDown(event, { count: 2, index, select: next => { setTab(next === 0 ? 'api-key' : 'subscription'); setQuery('') } }) }}
+              onClick={() => { setTab(value); setQuery('') }}
+            >{t(labelKey)}</button>
+          ))}
         </div>
         <input
           className={css.pickerSearch}

@@ -22,6 +22,7 @@ import { VIDEO_ASPECT_RATIOS, VIDEO_DURATIONS, type VideoResolution } from '../p
 import { describeVideoModel, isLikelyVideoModelId } from '../video-model-catalog.ts'
 import { Select } from './Select.tsx'
 import type { ImageGenKey } from './locales.ts'
+import { onTablistKeyDown, tabIndexFor } from './tablist.ts'
 import css from './panel.module.css'
 
 /** How often the tab asks the host for task state while something runs. */
@@ -188,6 +189,22 @@ export function VideoPanel(props: VideoPanelProps) {
     return () => { disposed = true; window.clearInterval(timer) }
   }, [api, active, props.tasks])
 
+  // Keyboard dismissal for the full-screen clip. The studio's other overlay
+  // gestures (double-click a row, the expand button) are pointer-only, so
+  // without this the only way out was the × — and Esc, which the panel around
+  // it treats as "close the topmost thing", did nothing here at all.
+  useEffect(() => {
+    if (previewClip === null) return
+    const onKey = (event: KeyboardEvent): void => {
+      if (event.key === 'Escape') {
+        event.stopPropagation()
+        setPreviewClip(null)
+      }
+    }
+    window.addEventListener('keydown', onKey, true)
+    return () => window.removeEventListener('keydown', onKey, true)
+  }, [previewClip])
+
   // A seconds counter for running renders only.
   const anyRunning = tasks.some(task => task.status === 'running' || task.status === 'queued')
   useEffect(() => {
@@ -236,11 +253,17 @@ export function VideoPanel(props: VideoPanelProps) {
   }
 
   const cancel = (id: string): void => {
-    void api.videoTaskCancel(id).then(() => { refreshTasks() }).catch(() => { /* ignore */ })
+    // A failed cancel/retry used to be swallowed entirely, so the row simply
+    // did not change and the user pressed the button again. The composer
+    // reports its own failures through `error`; these are the same class of
+    // failure and belong in the same place.
+    void api.videoTaskCancel(id).then(() => { refreshTasks() })
+      .catch(err => { setError(err instanceof ImageGenApiError ? err.message : String(err)) })
   }
 
   const retry = (id: string): void => {
-    void api.videoTaskRetry(id).then(() => { refreshTasks() }).catch(() => { /* ignore */ })
+    void api.videoTaskRetry(id).then(() => { refreshTasks() })
+      .catch(err => { setError(err instanceof ImageGenApiError ? err.message : String(err)) })
   }
 
   /**
@@ -278,7 +301,7 @@ export function VideoPanel(props: VideoPanelProps) {
     <div className={css.videoWorkspace}>
       <header className={css.videoToolbar}>
         <div className={css.videoModes} role="tablist" aria-label={tt('mode.video')}>
-          {availableModes.map(candidate => (
+          {availableModes.map((candidate, index) => (
             <button
               key={candidate}
               type="button"
@@ -286,6 +309,8 @@ export function VideoPanel(props: VideoPanelProps) {
               aria-selected={mode === candidate}
               className={css.videoModeButton}
               data-active={mode === candidate ? '' : undefined}
+              tabIndex={tabIndexFor(mode === candidate)}
+              onKeyDown={event => { onTablistKeyDown(event, { count: availableModes.length, index, select: next => { setMode(availableModes[next]!) } }) }}
               onClick={() => { setMode(candidate) }}
             >
               {tt(`video.mode.${candidate}`)}
@@ -456,7 +481,17 @@ export function VideoPanel(props: VideoPanelProps) {
                     // empty url can never show a player without working actions
                     // (or the reverse).
                     const clip = clipMetaOf(task)
-                    if (clip === undefined) return null
+                    // A completed task with no servable url is not "nothing to
+                    // show": the row used to collapse to a bare status pill, so
+                    // the user could not tell whether the clip was still coming,
+                    // had been evicted from the host's 30-entry history, or had
+                    // simply failed to attach. Say which it is and offer the
+                    // refresh, instead of an empty card.
+                    if (clip === undefined) {
+                      return task.status === 'completed' && task.resultAvailable
+                        ? <p className={css.videoHint} data-video-result-missing="">{tt('video.resultMissing')}</p>
+                        : null
+                    }
                     const title = task.request.prompt
                     return <>
                       <video

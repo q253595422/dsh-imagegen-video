@@ -645,6 +645,51 @@ await check('C8 the close button calls onClose', async () => {
   assert.equal(await waitUntil(() => pickerRoot() === null), true, 'C8: the dialog is dismissed')
 })
 
+await check('C8b the picker closes on Escape and on a backdrop click', async () => {
+  const { pickerRoot, waitUntil, clickElement, jsdomWindow } = shared
+  picker.gallery = GALLERY_FIXTURE
+  picker.history = HISTORY_FIXTURE
+  picker.historyFailure = null
+
+  // Escape. The dialog is a real modal (`aria-modal`), and before this it was
+  // a promise the keyboard could not keep: Esc did nothing at all, while the
+  // canvas's own window-level Escape underneath cleared the node selection --
+  // a change the user only discovered after closing the dialog.
+  await shared.openPicker()
+  const before = spies.closes
+  jsdomWindow.dispatchEvent(new jsdomWindow.KeyboardEvent('keydown', { key: 'Escape', bubbles: true }))
+  assert.equal(spies.closes, before + 1, 'C8b: Escape closes the picker')
+  assert.equal(await waitUntil(() => pickerRoot() === null), true, 'C8b: the dialog is gone after Escape')
+
+  // A click on the dimmed backdrop closes; a click inside the dialog must not.
+  await shared.openPicker()
+  const closesBeforeBackdrop = spies.closes
+  const dialog = pickerRoot().querySelector('section')
+  assert.ok(dialog !== null, 'C8b: the dialog panel is inside the backdrop')
+  clickElement(dialog)
+  assert.equal(spies.closes, closesBeforeBackdrop, 'C8b: a click inside the dialog does not dismiss it')
+  clickElement(pickerRoot())
+  assert.equal(spies.closes, closesBeforeBackdrop + 1, 'C8b: a click on the backdrop dismisses')
+  assert.equal(await waitUntil(() => pickerRoot() === null), true, 'C8b: the dialog is gone after the backdrop click')
+})
+
+await check('C8c opening the picker does not immediately dismiss it', async () => {
+  const { pickerRoot, waitUntil } = shared
+  picker.gallery = GALLERY_FIXTURE
+  picker.history = HISTORY_FIXTURE
+  picker.historyFailure = null
+  // WHY: the backdrop now closes on click, and the menu item that opens the
+  // dialog is itself a click. If that click reached the freshly mounted
+  // backdrop, the dialog would open and close in the same gesture -- the
+  // classic self-dismiss bug. `openPicker` drives the real menu item, so this
+  // asserts the real path rather than a synthetic mount.
+  const before = spies.closes
+  await shared.openPicker()
+  assert.equal(spies.closes, before, 'C8c: the opening click did not count as a dismissal')
+  await new Promise(resolve => setTimeout(resolve, 120))
+  assert.ok(pickerRoot() !== null, 'C8c: the dialog is still open after the gesture that opened it')
+})
+
 await check('C9 a failed listing is shown as a failure, not as an empty list', async () => {
   const { pickerRoot, waitUntil } = shared
   picker.gallery = GALLERY_FIXTURE

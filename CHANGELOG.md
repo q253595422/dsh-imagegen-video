@@ -10,6 +10,56 @@ detail is in `git log 9305f9f..HEAD`.
 
 ## Releases
 
+### 1.7.5 — every module reviewed, and a stacking scale that cannot drift
+
+A full pass over the plugin's UI, driven by real defects rather than taste. The
+headline is that the theme no longer leaks into component internals and the
+layer order is written down in one place.
+
+- **The nav follows the host theme at runtime.** `GooeyNav` had its four colors
+  baked in as literals and detected the surface only once, at mount. Switching
+  light/dark while it was on screen left it painted for the old surface and
+  unreadable against the new one. The palette now derives from the `--dsw-alias-*`
+  tokens, and a new `surface-theme.ts` subscription re-derives it on the host
+  attribute (including DSH's `data-ds-dark-theme`), on the OS preference, and on
+  re-parenting. **`--dsw-alias-brand-primary` is a neutral inverse, not an
+  accent** (near-white on light, near-black on dark) — it is used as one, and
+  the annotation marker deliberately does not.
+- **The annotation marker is one token, read by both sides.** The on-screen boxes
+  were colored from CSS while the boxes burned into the image by Canvas2D were a
+  `#ff2d55` literal, so the two could drift. Both now read
+  `--canvas-annotation`. Because that token is declared on the canvas root
+  class — not on `documentElement` — `themeColor()` takes an origin element and
+  the caller passes the canvas root; reading it from the document root returns
+  empty and silently falls back to the literal again.
+- **One stacking scale, and it does not renumber what already worked.** Every
+  z-index literal is gone from the module stylesheets in favor of a documented
+  scale in `panel.module.css`. The numbers are the values the layers already
+  had; only layers that genuinely *shared* a number were moved, and only as far
+  as the existing comparisons required (1000 → 1000/1005/1010, 130 → 130/131/132,
+  60 → 60/61/62, 70 → 70/72, 20 → 20/21). Those ties were real: the winner was
+  decided by document order, so a harmless refactor could re-stack the UI. The
+  guard is threefold — the doc table must match the declarations, 26 required
+  orderings must hold, and the three rungs that interleave with the host shell
+  are pinned by value — plus a real-browser check that renders two of the former
+  ties in *reversed* order and requires the same winner.
+- **Overlays no longer clear the canvas selection.** Every overlay (composer,
+  menus, dialogs) is a sibling of the viewport, so a pointerdown on one never
+  reached the viewport handler. This is now asserted structurally rather than by
+  a guard that turned out to be dead code.
+- **Touch pinch zooms the canvas.** Two touch pointers moving apart scale the
+  view, the way a trackpad already did.
+- **Keyboard fixes.** Space on a focused dock button activates the button again
+  instead of being swallowed by the pan handler; Escape closes the in-canvas
+  video preview, the skill menu, the polish dialog and the picker; a node's
+  hidden hover toolbar leaves the tab order and is revealed by focus, so Tab no
+  longer lands on invisible controls (including delete); every `role="tablist"`
+  wired the shared roving-tabIndex and arrow-key contract.
+- **Failures stop masquerading as empty lists.** History, gallery and template
+  favorites showed "nothing here yet" when the read had actually failed. They
+  now show the failure and a retry, and a template favorite whose state could
+  not be read shows an unknown marker instead of an unstarred star.
+
 ### 1.7.4 — timing bugs the user actually hits
 
 - **One artifact the host refuses no longer loses the whole skill run.** A

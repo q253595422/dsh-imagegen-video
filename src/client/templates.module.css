@@ -14,7 +14,7 @@
 .overlay {
   position: fixed;
   inset: 0;
-  z-index: 130;
+  z-index: var(--z-modal-backdrop);
   display: flex;
   align-items: center;
   justify-content: center;
@@ -384,6 +384,15 @@
 
 .favStar[data-active] {
   color: #ffb020;
+}
+
+/* A star whose state could not be read: the fill would be a claim about the
+ * host's favorites list, and there is no list to make that claim against. Shown
+ * hollow rather than merely dimmed, so "unknown" is distinguishable from
+ * "not favorited" instead of looking like the same empty star. */
+.favStar[data-unknown] {
+  color: rgba(255, 255, 255, 0.45);
+  background: rgba(0, 0, 0, 0.2);
 }
 
 /* Touch shells have no hover: keep the star reachable. */

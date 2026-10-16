@@ -363,7 +363,7 @@ export function CanvasFileBody(props: {
     // something readable while the full preview is still on the wire.
     if (error === undefined && fileKind === 'text' && asset.textPreview !== undefined && asset.textPreview !== '') {
       return <div className={css.fileBody} title={hint} onDoubleClick={open}>
-        <pre className={css.fileText} onPointerDown={event => event.stopPropagation()}>{asset.textPreview}</pre>
+        <pre className={css.fileText} data-canvas-no-zoom="" onPointerDown={event => event.stopPropagation()}>{asset.textPreview}</pre>
       </div>
     }
     return <div className={css.fileBody} title={hint} onDoubleClick={open}>
@@ -371,7 +371,7 @@ export function CanvasFileBody(props: {
     </div>
   }
 
-  return <div className={css.fileBody} title={hint} onDoubleClick={open}>
+  return <div className={css.fileBody} title={hint} onDoubleClick={open} data-canvas-no-zoom="">
     <FilePreviewContent preview={preview} loading={loading} error={error} asset={asset} title={title} compact onRetry={reload} />
     <PreviewNotice preview={preview} />
   </div>

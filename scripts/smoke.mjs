@@ -3983,6 +3983,11 @@ await check('E1 client apply mounts the sidebar entry and studio (jsdom)', async
    *  on demand instead of racing a real timer. */
   const heldSaves = []
   let heldSaveBudget = 0
+  /** While > 0, canvas saves answer with a failure instead of committing. Used
+   *  to pin the "a failed save stops retrying" rule (F13). */
+  let failSaveBudget = 0
+  /** How many save requests answered with a failure. */
+  let failedSaveAttempts = 0
   const fetchStub = async (input, init) => {
     const path = String(input)
     requestPaths.push(path)
@@ -4156,6 +4161,13 @@ await check('E1 client apply mounts the sidebar entry and studio (jsdom)', async
     if (path.endsWith('/canvas/save')) {
       const payload = JSON.parse(init.body)
       canvasSaves.push(payload.document)
+      if (failSaveBudget > 0) {
+        failSaveBudget -= 1
+        failedSaveAttempts += 1
+        // A plain failure, not a conflict: the conflict path reads the canvas
+        // back and retries once, which would muddy the count below.
+        return { ok: true, json: async () => ({ ok: false, code: 'write-failed', message: '宿主写入失败' }) }
+      }
       // Recorded before the hold: a check can see the request landed while its
       // answer is still parked.
       if (heldSaveBudget > 0) {
@@ -5131,6 +5143,89 @@ await check('E1 client apply mounts the sidebar entry and studio (jsdom)', async
     await switchProject('smoke')
     assert.ok(await waitUntil(() => view.querySelector('[data-node-id="node-image"]') !== null), 'the fixture canvas is restored for the checks that follow')
 
+    // ------------------------------------- canvas shortcuts yield when hidden
+    // The panel is hidden by a STYLESHEET RULE, not by unmounting: the React
+    // tree (and the canvas inside it) stays alive so node state survives a trip
+    // to the conversation. That also kept the canvas's window-level key handler
+    // live, so it went on claiming Ctrl+A / Ctrl+Z / Delete for the whole
+    // document while the user typed in the chat beside it. This pins the "only
+    // while on screen" rule with the panel properly closed.
+    jsdomDocument.querySelector('[data-dsh-imagegen-tab="image"]').click()
+    await new Promise(resolve => setTimeout(resolve, 80))
+    const nodeElement = () => view.querySelector('[data-node-id="node-image"]')
+    assert.ok(nodeElement() !== null, 'the fixture node is on screen before the panel is closed')
+    // Select it through a real pointerdown, so the Delete below has something
+    // to act on and a surviving deletion is unmistakable.
+    nodeElement().dispatchEvent(new jsdomWindow.MouseEvent('pointerdown', { bubbles: true, button: 0 }))
+    await new Promise(resolve => setTimeout(resolve, 60))
+    assert.match(nodeElement().className, /nodeSelected/, 'pointerdown selects a node while the canvas is on screen')
+
+    // Close the panel through the sidebar switcher, exactly as the user does.
+    jsdomDocument.querySelector('[data-dsh-imagegen-tab="session"]').click()
+    await new Promise(resolve => setTimeout(resolve, 80))
+    assert.equal(jsdomDocument.documentElement.hasAttribute('data-dsh-imagegen-active'), false, 'the panel reports itself closed')
+    assert.ok(nodeElement() !== null, 'the canvas stays mounted while the panel is closed -- that is WHY the listeners outlive visibility')
+
+    const savesBeforeHiddenDelete = canvasSaves.length
+    jsdomWindow.dispatchEvent(new jsdomWindow.KeyboardEvent('keydown', { key: 'Delete', bubbles: true }))
+    // Comfortably past the autosave debounce, so a write that was going to
+    // happen has happened by the assertion below.
+    await new Promise(resolve => setTimeout(resolve, 1200))
+    assert.equal(canvasSaves.length, savesBeforeHiddenDelete, 'Delete with the panel closed never reaches the canvas document')
+    assert.ok(nodeElement() !== null, 'the selected node survives a keypress aimed at the conversation')
+    assert.match(nodeElement().className, /nodeSelected/, 'the closed canvas keeps its selection untouched')
+
+    // Back to the studio for the checks that follow.
+    jsdomDocument.querySelector('[data-dsh-imagegen-tab="image"]').click()
+    await new Promise(resolve => setTimeout(resolve, 80))
+    assert.equal(jsdomDocument.documentElement.hasAttribute('data-dsh-imagegen-active'), true, 'the studio is active again')
+
+    // ------------------------------------- a failed save must stop retrying (F13)
+    // `syncedRef` only advances on a SUCCESSFUL write, so while an edit stays
+    // unsynced the autosave effect re-ran on every `saveState` change and
+    // re-armed its 650 ms timer: an unreachable host meant one failing request
+    // every 650 ms, forever, with the toast re-set on each round -- which is
+    // also why dismissing it looked broken, since the next tick put it back.
+    canvasSwitch.click()
+    await waitForSelector(view, '[data-node-id="node-image"]')
+    failSaveBudget = 1_000
+    const attemptsBeforeFailure = failedSaveAttempts
+    await renameCanvas('save will fail')
+    assert.ok(
+      await waitUntil(() => failedSaveAttempts > attemptsBeforeFailure, 2500),
+      'the failing save reached the host',
+    )
+    // Well past several debounce windows: the old loop fired ~4 times here, and
+    // the backoff is 15s, so anything above 1 means the storm is back.
+    await new Promise(resolve => setTimeout(resolve, 2500))
+    assert.equal(
+      failedSaveAttempts - attemptsBeforeFailure, 1,
+      `a rejected save is not retried on the debounce (attempts: ${failedSaveAttempts - attemptsBeforeFailure})`,
+    )
+    // The toast offers recovery instead of being a dead end.
+    const failedToast = view.querySelector('[class*="errorToast"]')
+    assert.ok(failedToast !== null, 'the failure is surfaced on screen')
+    const retrySaving = [...failedToast.querySelectorAll('button')].find(button => button.textContent === '重试保存')
+    assert.ok(retrySaving !== undefined, 'the toast offers an explicit retry')
+    // Dismissing the toast must NOT mean "this edit is never saved": the × only
+    // clears the message, so a plain stop would strand the document unsaved with
+    // no visible way back. The quiet retry is armed regardless.
+    const dismiss = [...failedToast.querySelectorAll('button')].find(button => button.getAttribute('aria-label') === '关闭提示')
+    assert.ok(dismiss !== undefined, 'the toast can be dismissed')
+    dismiss.click()
+    await new Promise(resolve => setTimeout(resolve, 50))
+    assert.equal(view.querySelector('[class*="errorToast"]'), null, 'the toast is gone after dismissing')
+    // And the failure is not permanent: the retry actually writes.
+    failSaveBudget = 0
+    const attemptsBeforeRetry = failedSaveAttempts
+    retrySaving.click()
+    assert.ok(
+      await waitUntil(() => canvasSaves.some(saved => saved.title === 'save will fail'), 2500),
+      'the explicit retry saves the document that failed',
+    )
+    assert.equal(failedSaveAttempts, attemptsBeforeRetry, 'the retry succeeds rather than failing again')
+    // The notice clears once the write lands.
+    assert.ok(await waitUntil(() => view.querySelector('[class*="errorToast"]') === null, 2500), 'the toast clears after the retry succeeds')
 
     // ------------------------------------------- unified history (clips + images)
     // Clips and images share ONE sidebar list. Both stores are newest-first, so
@@ -5688,6 +5783,131 @@ await check('E1 client apply mounts the sidebar entry and studio (jsdom)', async
     assert.ok(view.querySelector('[role="dialog"]').textContent.includes('paper.pdf'), 'the reader names the PDF')
     view.querySelector('[role="dialog"] [title="关闭预览"]').dispatchEvent(new jsdomWindow.MouseEvent('click', { bubbles: true }))
     assert.ok(await waitUntil(() => view.querySelector('[role="dialog"]') === null), 'the close button dismisses the reader')
+
+    // ------------------------------------------- canvas interaction defects
+    // Every check below pins a defect that was confirmed by the UI sweep and
+    // is NOT visible in the rendered output -- the failure mode is a control
+    // that silently does nothing, or does something invisible.
+
+    // (1) Clicking a floating overlay's blank margin must not clear the
+    // selection that put the overlay on screen.
+    //
+    // The guarantee here is STRUCTURAL, not a guard inside the viewport
+    // handler: every overlay (the composer, the picker, the context menus) is
+    // rendered as a SIBLING of the viewport, so a pointerdown on it never
+    // reaches `onViewportPointerDown` in the first place. Asserting the
+    // structure is what makes this check able to fail -- a behaviour-only
+    // assertion passes whether or not the guard exists, which is how an
+    // earlier version of this check turned out to be vacuous.
+    const configNode = view.querySelector('[data-node-id="node-config"]')
+    configNode.dispatchEvent(new jsdomWindow.MouseEvent('pointerdown', { bubbles: true, clientX: 5, clientY: 5, button: 0 }))
+    await new Promise(resolve => setTimeout(resolve, 60))
+    const composerRoot = view.querySelector('[data-canvas-no-zoom][class*="composer"]')
+    assert.ok(composerRoot !== null, 'the composer is on screen before the overlay pointerdown check')
+    // `=== null` rather than assert.equal: on failure assert.equal runs
+    // util.inspect over the actual value, and inspecting a jsdom element walks
+    // its React fiber (circular, unbounded) until the process is OOM-killed --
+    // the mutation below reproduced exactly that, killing the run before the
+    // failure could be reported.
+    assert.ok(
+      composerRoot.closest('[class*="viewport"]') === null,
+      'the composer sits outside the viewport, so its blank margin cannot clear the selection',
+    )
+    // And the behaviour that structure buys, stated directly.
+    composerRoot.dispatchEvent(new jsdomWindow.MouseEvent('pointerdown', { bubbles: true, clientX: 5, clientY: 5, button: 0 }))
+    await new Promise(resolve => setTimeout(resolve, 60))
+    assert.ok(
+      view.querySelector('[data-canvas-no-zoom][class*="composer"]') !== null,
+      'a pointerdown on the composer overlay does not clear the selection that opened it',
+    )
+
+    // (2) A touch device never sends a wheel event, so pinch is the only zoom
+    // there. Two touch pointers moving apart must raise the viewport scale.
+    const viewportEl = view.querySelector('[class*="viewport"]')
+    assert.ok(viewportEl !== null, 'the canvas viewport is mounted')
+    const zoomPercent = () => Number((view.querySelector('[class*="zoomValue"]')?.textContent ?? '0').replace('%', ''))
+    const beforePinch = zoomPercent()
+    // jsdom has no PointerEvent: the handler reads clientX/clientY/pointerId/
+    // pointerType off the event object, so a MouseEvent with those fields added
+    // exercises the same code path.
+    const touch = (type, id, x, y) => {
+      const event = new jsdomWindow.MouseEvent(type, { bubbles: true, clientX: x, clientY: y, button: 0 })
+      Object.assign(event, { pointerId: id, pointerType: 'touch' })
+      viewportEl.dispatchEvent(event)
+      jsdomWindow.dispatchEvent(event)
+    }
+    touch('pointerdown', 901, 100, 100)
+    touch('pointerdown', 902, 200, 100)
+    touch('pointermove', 902, 400, 100)
+    await new Promise(resolve => setTimeout(resolve, 60))
+    assert.ok(
+      zoomPercent() > beforePinch,
+      `two touch pointers moving apart zoom in (${beforePinch}% -> ${zoomPercent()}%)`,
+    )
+    touch('pointerup', 902, 400, 100)
+    touch('pointerup', 901, 100, 100)
+    await new Promise(resolve => setTimeout(resolve, 40))
+    // Lifting the fingers must not leave a pan armed: the next pointermove
+    // with nothing down has to be inert, or the canvas drifts on the next tap.
+    const afterPinch = zoomPercent()
+    touch('pointermove', 903, 700, 500)
+    await new Promise(resolve => setTimeout(resolve, 40))
+    assert.equal(zoomPercent(), afterPinch, 'the gesture ends cleanly when the fingers lift')
+
+    // (3) Space on a focused button must activate it, not start a canvas pan.
+    // The panel-wide keydown claims Space for the hand tool and preventDefaults
+    // it, which ate the standard activation key of every button in the panel.
+    const dockButton = view.querySelector('[data-canvas-workspace] [role="toolbar"] button')
+    assert.ok(dockButton !== null, 'the dock has a button to focus')
+    let spaceDefaultPrevented = false
+    const spaceProbe = new jsdomWindow.KeyboardEvent('keydown', { key: ' ', code: 'Space', bubbles: true, cancelable: true })
+    dockButton.dispatchEvent(spaceProbe)
+    spaceDefaultPrevented = spaceProbe.defaultPrevented
+    await new Promise(resolve => setTimeout(resolve, 40))
+    assert.equal(spaceDefaultPrevented, false, 'Space on a focused button is left to the button, not eaten by the pan tool')
+    // ...while Space on the canvas background still starts the hand tool.
+    const backgroundProbe = new jsdomWindow.KeyboardEvent('keydown', { key: ' ', code: 'Space', bubbles: true, cancelable: true })
+    viewportEl.dispatchEvent(backgroundProbe)
+    assert.equal(backgroundProbe.defaultPrevented, true, 'Space on the canvas background still arms the pan tool')
+
+    // (4) Esc must close the in-canvas overlays rather than silently reset the
+    // selection behind them. The video preview is the clearest case: its only
+    // other exit is the × button.
+    canvasDocument.nodes = [
+      ...canvasDocument.nodes,
+      { id: 'node-clip', type: 'video', title: 'clip.mp4', x: 0, y: 1200, width: 260, height: 160, metadata: { video: { url: 'data:video/mp4;base64,AAAA', mime: 'video/mp4', width: 320, height: 240, duration: 2 }, status: 'success' } },
+    ]
+    ecommerceSwitch.click()
+    await new Promise(resolve => setTimeout(resolve, 60))
+    canvasSwitch.click()
+    await waitForSelector(view, '[data-node-id="node-clip"]')
+    view.querySelector('[data-node-id="node-clip"] [title="放大预览"]').dispatchEvent(new jsdomWindow.MouseEvent('click', { bubbles: true }))
+    await waitForSelector(view, '[data-video-preview]')
+    jsdomWindow.dispatchEvent(new jsdomWindow.KeyboardEvent('keydown', { key: 'Escape', bubbles: true }))
+    assert.ok(await waitUntil(() => view.querySelector('[data-video-preview]') === null), 'Escape closes the in-canvas video preview')
+
+    // (5) The image picker must clear its file input, so re-picking the same
+    // file after a failure still fires `change`. A stale value makes the retry
+    // look like a dead button.
+    //
+    // This one is asserted from the SOURCE, not from the DOM: jsdom refuses a
+    // non-empty `value` on a file input (InvalidStateError) and reports `''`
+    // either way, so a DOM assertion here is green whether or not the code
+    // clears anything -- a false green that negative verification caught.
+    // Re-picking the same file cannot be reproduced in jsdom at all, so the
+    // honest check is the invariant that the handler clears the field.
+    const pickerSource = readFileSync(new URL('../src/client/CanvasWorkspace.tsx', import.meta.url), 'utf8')
+    const pickerInputBlock = pickerSource.match(/onChange=\{event => \{[\s\S]{0,400}?uploadFiles\(files\)\s*\}\}/)?.[0] ?? ''
+    assert.ok(pickerInputBlock !== '', 'the picker file input handler is findable')
+    assert.match(
+      pickerInputBlock,
+      /event\.target\.value = ''/,
+      'the picker clears its file input so the same file can be re-picked',
+    )
+    // Leave the canvas as this check found it.
+    const closePicker = view.querySelector('[data-canvas-no-zoom][class*="modalBackdrop"] [aria-label="关闭"]')
+    closePicker?.dispatchEvent(new jsdomWindow.MouseEvent('click', { bubbles: true }))
+    await new Promise(resolve => setTimeout(resolve, 60))
   } finally {
     // Drain pending React work BEFORE restoring the globals. React DOM reads
     // `window` during commit (getActiveElementDeep), so a flush that lands after

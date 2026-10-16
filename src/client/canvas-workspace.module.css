@@ -16,6 +16,25 @@
   color: var(--dsw-alias-label-primary);
   font-family: var(--dsw-font-family, inherit);
   user-select: none;
+  /**
+   * The annotation marker's color, defined ONCE for the whole canvas.
+   *
+   * WHY a dedicated token instead of the brand alias: `--dsw-alias-brand-primary`
+   * in DSH is the NEUTRAL inverse (near-white on light, near-black on dark, see
+   * dsh-client-ui-theme), so it is the right token for a selected chip but the
+   * wrong one for a marker that has to stand out against a photo. A marker also
+   * has to mean "this region, not the rest" and survive being drawn on top of
+   * arbitrary artwork, which is what red is for.
+   *
+   * It is a TOKEN rather than a literal because Canvas2D draws the same marker
+   * into the image the model receives (see `drawAnnotation` in image-ops.ts,
+   * which reads this property): the box the user drew and the box the model is
+   * told about have to be the same color, and one value is the only way to
+   * guarantee that.
+   */
+  --canvas-annotation: var(--dsw-static-red-500, #ef4444);
+  /** Ink drawn on top of the marker (the badge number, the inner stroke). */
+  --canvas-annotation-ink: var(--dsw-static-neutral-00, #ffffff);
 }
 
 .selectCursor { cursor: default; }
@@ -31,7 +50,7 @@
   padding: 8px 12px;
   border-bottom: 1px solid var(--dsw-alias-border-l1);
   flex: none;
-  z-index: 40;
+  z-index: var(--z-topbar);
   background: var(--dsw-alias-bg-layer-1);
 }
 
@@ -197,7 +216,7 @@
 .backgroundMenu {
   position: absolute;
   transform: translate(-50%, -100%);
-  z-index: 45;
+  z-index: var(--z-anchored-menu);
   min-width: 168px;
   padding: 5px;
   border-radius: 11px;
@@ -244,7 +263,7 @@
 
 .marquee {
   position: absolute;
-  z-index: 20;
+  z-index: var(--z-marquee);
   border: 1px solid var(--dsw-alias-brand-primary);
   background: color-mix(in srgb, var(--dsw-alias-brand-primary) 8%, transparent);
   border-radius: 4px;
@@ -279,7 +298,7 @@
 
 .nodeSelected {
   border-color: var(--dsw-alias-brand-primary);
-  z-index: 2;
+  z-index: var(--z-content);
 }
 
 .nodeSelected .nodeGlow {
@@ -354,7 +373,7 @@
 .imageInfo {
   position: absolute;
   top: 6px;
-  z-index: 2;
+  z-index: var(--z-content);
   padding: 3px 8px;
   border-radius: 6px;
   background: color-mix(in srgb, var(--dsw-alias-label-primary) 62%, transparent);
@@ -568,15 +587,15 @@
 
 /* The image being boxed stays highlighted while the 标注 tool is armed. */
 .node[data-annotating] {
-  border-color: #ff2d55;
-  box-shadow: 0 0 0 3px rgb(255 45 85 / 22%);
+  border-color: var(--canvas-annotation);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--canvas-annotation) 22%, transparent);
 }
 
 .annotationLayer {
   position: absolute;
   inset: 0;
   pointer-events: none;
-  z-index: 2;
+  z-index: var(--z-content);
 }
 
 .annotationLayer[data-active] {
@@ -587,7 +606,7 @@
 
 .annotationBox {
   position: absolute;
-  border: 1.5px solid #ff2d55;
+  border: 1.5px solid var(--canvas-annotation);
   border-radius: 4px;
   box-shadow: 0 0 0 1px rgb(255 255 255 / 55%) inset;
   pointer-events: none;
@@ -595,7 +614,7 @@
 
 .annotationDraft {
   border-style: dashed;
-  background: rgb(255 45 85 / 14%);
+  background: color-mix(in srgb, var(--canvas-annotation) 14%, transparent);
 }
 
 .annotationBadge {
@@ -606,8 +625,8 @@
   height: 16px;
   padding: 0 4px;
   border-radius: 8px;
-  background: #ff2d55;
-  color: #fff;
+  background: var(--canvas-annotation);
+  color: var(--canvas-annotation-ink);
   font-size: 10px;
   font-weight: 600;
   line-height: 16px;
@@ -619,7 +638,7 @@
 .nodeBusy {
   position: absolute;
   inset: 0;
-  z-index: 3;
+  z-index: var(--z-content-raised);
   display: flex;
   flex-direction: column;
   align-items: center;
@@ -786,7 +805,7 @@
   left: 0;
   right: 0;
   bottom: 14px;
-  z-index: 30;
+  z-index: var(--z-dock);
   display: flex;
   justify-content: center;
   align-items: flex-end;
@@ -873,7 +892,7 @@
 
 .composer {
   position: absolute;
-  z-index: 35;
+  z-index: var(--z-composer);
   width: 560px;
   display: flex;
   flex-direction: column;
@@ -998,7 +1017,7 @@
   opacity: 0;
   transition: opacity 0.12s ease, transform 0.12s ease;
   cursor: crosshair;
-  z-index: 3;
+  z-index: var(--z-content-raised);
 }
 
 .handleLeft { left: -7px; }
@@ -1042,7 +1061,7 @@
   background: var(--dsw-alias-brand-primary);
   border: 2px solid var(--dsw-alias-bg-layer-1);
   box-shadow: 0 1px 4px rgb(15 23 42 / 22%);
-  z-index: 3;
+  z-index: var(--z-content-raised);
 }
 
 .resizeHandle::after {
@@ -1075,14 +1094,27 @@
   box-shadow: 0 8px 22px rgb(15 23 42 / 14%);
   opacity: 0;
   pointer-events: none;
-  transition: opacity 0.12s ease;
-  z-index: 4;
+  /* `opacity: 0` and `pointer-events: none` both leave an element in the Tab
+   * order, so each node used to contribute 5-10 invisible focus stops: a
+   * keyboard user tabbing across the canvas landed on controls that were not
+   * on screen, and Enter then fired whichever one they had landed on --
+   * including the delete button. `visibility: hidden` is the one that actually
+   * removes the subtree from the tab order. */
+  visibility: hidden;
+  transition: opacity 0.12s ease, visibility 0s linear 0.12s;
+  z-index: var(--z-hover);
 }
 
 .node:hover .hoverToolbar,
-.nodeSelected .hoverToolbar {
+.nodeSelected .hoverToolbar,
+/* Focus is the third way in: a node toolbar reached by keyboard (or by a
+ * browser's own focus-follows-tab) has to become visible, or the user is
+ * typing into something they cannot see. */
+.node:focus-within .hoverToolbar {
   opacity: 1;
   pointer-events: auto;
+  visibility: visible;
+  transition: opacity 0.12s ease, visibility 0s;
 }
 
 /* Image nodes hang their toolbar below the frame: the top edge is where the
@@ -1105,7 +1137,7 @@
   position: absolute;
   overflow: visible;
   pointer-events: none;
-  z-index: 0;
+  z-index: var(--z-canvas-links);
 }
 
 .connectionPath {
@@ -1135,12 +1167,12 @@
   position: absolute;
   overflow: visible;
   pointer-events: none;
-  z-index: 3;
+  z-index: var(--z-content-raised);
 }
 
 .annotationLink {
   fill: none;
-  stroke: #ff2d55;
+  stroke: var(--canvas-annotation);
   stroke-width: 2;
   stroke-dasharray: 5 5;
   stroke-opacity: 0.85;
@@ -1150,7 +1182,7 @@
 
 /* Anchor dot on the box edge: makes the line read as "coming out of the box". */
 .annotationLinkDot {
-  fill: #ff2d55;
+  fill: var(--canvas-annotation);
   stroke: #ffffff;
   stroke-width: 1.6;
   pointer-events: none;
@@ -1196,7 +1228,7 @@
   text-align: center;
   color: var(--dsw-alias-label-tertiary);
   pointer-events: none;
-  z-index: 5;
+  z-index: var(--z-badge);
 }
 
 .emptyHint strong {
@@ -1212,7 +1244,7 @@
   position: absolute;
   left: 14px;
   bottom: 14px;
-  z-index: 30;
+  z-index: var(--z-dock);
   display: flex;
   align-items: center;
   gap: 6px;
@@ -1243,7 +1275,7 @@
   position: absolute;
   left: 14px;
   bottom: 62px;
-  z-index: 30;
+  z-index: var(--z-dock);
   width: 220px;
   height: 150px;
   border-radius: 12px;
@@ -1292,7 +1324,7 @@
 
 .contextMenu {
   position: fixed;
-  z-index: 90;
+  z-index: var(--z-context-menu);
   min-width: 176px;
   padding: 5px;
   border-radius: 11px;
@@ -1327,7 +1359,7 @@
   left: 50%;
   top: 14px;
   transform: translateX(-50%);
-  z-index: 60;
+  z-index: var(--z-notice);
   display: flex;
   align-items: center;
   gap: 10px;
@@ -1376,7 +1408,7 @@
 .modalBackdrop {
   position: absolute;
   inset: 0;
-  z-index: 70;
+  z-index: var(--z-scrim);
   background: color-mix(in srgb, var(--dsw-alias-label-primary) 32%, transparent);
   display: flex;
   align-items: center;
@@ -1620,12 +1652,12 @@
 .skillScrim {
   position: fixed;
   inset: 0;
-  z-index: 70;
+  z-index: var(--z-scrim);
 }
 
 .skillMenu {
   position: fixed;
-  z-index: 71;
+  z-index: var(--z-popover-raised);
   width: 360px;
   max-height: min(70vh, 520px);
   display: flex;
@@ -1812,7 +1844,7 @@
    failure), so it never pollutes the document or the undo history. */
 .skillRunNode {
   position: absolute;
-  z-index: 5;
+  z-index: var(--z-badge);
   display: flex;
   flex-direction: column;
   gap: 7px;
@@ -1959,7 +1991,7 @@
 
 .skillDialog {
   position: fixed;
-  z-index: 71;
+  z-index: var(--z-popover-raised);
   left: 50%;
   top: 50%;
   transform: translate(-50%, -50%);
@@ -2631,7 +2663,7 @@
 .fileOverlay {
   position: fixed;
   inset: 0;
-  z-index: 86;
+  z-index: var(--z-file-overlay);
   display: grid;
   place-items: center;
   padding: 32px;
@@ -2722,7 +2754,7 @@
 
 .imageViewerControls {
   position: absolute;
-  z-index: 3;
+  z-index: var(--z-content-raised);
   top: 10px;
   right: 12px;
   display: flex;
@@ -2870,7 +2902,7 @@
 .videoPreview {
   position: fixed;
   inset: 0;
-  z-index: 400;
+  z-index: var(--z-media-viewer);
   display: flex;
   align-items: center;
   justify-content: center;
@@ -2914,7 +2946,7 @@
   position: absolute;
   top: -10px;
   left: -10px;
-  z-index: 4;
+  z-index: var(--z-hover);
   padding: 1px 7px;
   border-radius: 999px;
   border: 1px solid var(--dsw-alias-bg-layer-1);
@@ -2934,7 +2966,7 @@
   left: 50%;
   bottom: 66px;
   transform: translateX(-50%);
-  z-index: 31;
+  z-index: var(--z-dock-raised);
   display: flex;
   align-items: center;
   gap: 8px;

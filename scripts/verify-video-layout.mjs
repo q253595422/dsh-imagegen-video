@@ -59,6 +59,12 @@ if (CHROME === null) {
 // that only works on the machine it was written on.
 const css = readFileSync(new URL('../src/client/panel.module.css', import.meta.url), 'utf8')
 const panelSource = readFileSync(new URL('../src/client/VideoPanel.tsx', import.meta.url), 'utf8')
+// The fixture now spans two components: the shell that lays out the video tab
+// (`.generation` / `.canvas`, from ImageGenPanel) and the studio itself. Both
+// are real sources, so the "is this class still rendered?" question has to be
+// asked of both -- checking only VideoPanel would reject the shell classes, and
+// checking only the stylesheet would accept a class nothing renders any more.
+const shellSource = readFileSync(new URL('../src/client/ImageGenPanel.tsx', import.meta.url), 'utf8')
 
 // ------------------------------------------------- fixture vs. real component
 /**
@@ -76,7 +82,7 @@ const panelSource = readFileSync(new URL('../src/client/VideoPanel.tsx', import.
  *    the width being measured is not the width the panel gets.
  */
 const componentClasses = new Set(
-  [...panelSource.matchAll(/\bcss\.([A-Za-z_$][A-Za-z0-9_$]*)/g)].map(match => match[1]),
+  [...`${panelSource}\n${shellSource}`.matchAll(/\bcss\.([A-Za-z_$][A-Za-z0-9_$]*)/g)].map(match => match[1]),
 )
 const stylesheetClasses = new Set(
   [...css.matchAll(/\.([A-Za-z_][A-Za-z0-9_-]*)/g)].map(match => match[1]),
@@ -92,10 +98,34 @@ function missingFixtureClasses (names) {
   return unknown
 }
 
+/**
+ * The fixture's `data-*` hooks must exist in the sources too.
+ *
+ * WHY this is separate from the class check: the width assertions below are
+ * driven BY these attributes (`#classic` is only a stand-in for the real
+ * `[data-empty-result]` element, and the CSS rule that collapses it is selected
+ * by that attribute). A fixture that hardcodes the attribute stays green after
+ * the component stops rendering it -- which is exactly how the empty-container
+ * bug survived a guard that was supposed to catch it. Checking the attribute
+ * against the shell source closes that window: delete the marker from
+ * ImageGenPanel.tsx and this fails before Chrome even starts.
+ */
+const FIXTURE_ATTRS = ['data-empty-result', 'data-video']
+function missingFixtureAttrs (names) {
+  return names.filter(name => !shellSource.includes(name))
+}
+
 // Reproduce the structure VideoPanel renders: the studio body inside a narrow
 // centre column inside a wide window (the user's real situation). The clip
 // history section is deliberately absent because VideoPanel does not render it
 // either — the shell sidebar owns that list (see the comment in the component).
+//
+// The `.generation` wrapper is part of the fixture on purpose: the video tab
+// renders TWO `.canvas` children into it (the video section, and the classic
+// result container whose contents are all gated on the image modes). Both are
+// `flex: 1`, so an empty one silently halves the studio's width — a bug this
+// guard existed to catch and missed, because the old fixture started at
+// `.videoWorkspace` and never contained the sibling.
 const page = `<!doctype html><html><head><style>
   /* Stand in for the DSH theme tokens the panel relies on. */
   :root { ${[...new Set((css.match(/var\(--dsw-[a-z0-9-]+\)/g) ?? []))].map(t => `${t.slice(4, -1)}: #888`).join('; ')} }
@@ -107,7 +137,20 @@ const page = `<!doctype html><html><head><style>
   ${css}
 </style></head><body>
   <div class="sidebar"></div>
-  <div class="centre" id="centre"><div class="videoWorkspace" id="ws">
+  <div class="centre" id="centre"><div class="generation" id="generation" data-empty-result-host="true">
+    <!-- the classic result container, empty in the video tab -->
+    <section class="canvas" data-video="true" data-empty-result="true" id="classic">
+      <!-- These two are NOT gated on the image modes and must stay visible on
+           the video tab: the generation task tray, and the alert line that
+           add-to-conversation failures land in. The container is collapsed with
+           display:contents (not display:none) precisely so they keep
+           rendering, so the assertions below check they still have a box. -->
+      <section class="taskTray" id="taskTray" aria-label="tasks"><header class="taskTrayHeader"><button type="button" class="taskTrayToggle">本次任务</button></header><div class="taskRows"><div class="taskRow"><span class="taskStatus">排队中</span><span class="taskPrompt">a cat</span><button>取消</button></div></div></section>
+      <div class="canvasError" id="canvasError" role="alert">生成失败：示例</div>
+    </section>
+    <!-- the video studio -->
+    <section class="canvas" data-video="true" id="canvas">
+    <div class="videoWorkspace" id="ws">
     <div class="videoBody" id="body">
       <section class="videoComposer" id="composer">
         <textarea class="videoPrompt" rows="5"></textarea>
@@ -127,6 +170,7 @@ const page = `<!doctype html><html><head><style>
         </ul>
       </section>
     </div>
+    </div></section>
   </div></div>
   <div class="right"></div>
 </body></html>`
@@ -163,6 +207,26 @@ if (unknownClasses.length > 0) {
 }
 console.log(`fixture classes verified against VideoPanel.tsx + panel.module.css: ${fixtureClasses.length}`)
 
+// The same discrimination self-test for the attribute validator, then the real
+// check: the fixture's data hooks must be rendered by the shell.
+if (missingFixtureAttrs(['data-this-does-not-exist']).length !== 1
+  || missingFixtureAttrs(['data-empty-result']).length !== 0) {
+  console.error('STALE FIXTURE GUARD: the attribute validator does not discriminate')
+  process.exit(1)
+}
+const unknownAttrs = missingFixtureAttrs(FIXTURE_ATTRS)
+if (unknownAttrs.length > 0) {
+  console.error('\n' + '='.repeat(72))
+  console.error('FAIL: the fixture depends on attributes the panel no longer renders.')
+  for (const entry of unknownAttrs) console.error(`  - ${entry} (not found in ImageGenPanel.tsx)`)
+  console.error('The fixture keeps rendering them, so the assertions below would')
+  console.error('measure markup that does not exist. Restore the marker in the shell,')
+  console.error('or update the fixture to the attributes it really sets.')
+  console.error('='.repeat(72) + '\n')
+  process.exit(1)
+}
+console.log(`fixture attributes verified against ImageGenPanel.tsx: ${FIXTURE_ATTRS.length}`)
+
 const server = (await import('node:http')).createServer((_req, res) => {
   res.writeHead(200, { 'content-type': 'text/html; charset=utf-8' })
   res.end(page)
@@ -198,7 +262,7 @@ await new Promise(r => setTimeout(r, 400))
 const res = await send('Runtime.evaluate', {
   expression: `JSON.stringify((() => {
     const r = el => { const b = el.getBoundingClientRect(); return { x: Math.round(b.x), w: Math.round(b.width) } }
-    return { body: r(document.getElementById('body')), composer: r(document.getElementById('composer')), results: r(document.getElementById('results')), tasks: r(document.getElementById('tasks')), centre: r(document.getElementById('centre')) }
+    return { body: r(document.getElementById('body')), composer: r(document.getElementById('composer')), results: r(document.getElementById('results')), tasks: r(document.getElementById('tasks')), centre: r(document.getElementById('centre')), classic: r(document.getElementById('classic')), canvas: r(document.getElementById('canvas')), taskTray: r(document.getElementById('taskTray')), canvasError: r(document.getElementById('canvasError')) }
   })())`,
   returnByValue: true,
 })
@@ -206,6 +270,21 @@ ws.close(); browser.kill(); server.close()
 const out = JSON.parse(res.result.result.value)
 console.log(JSON.stringify(out, null, 1))
 const centre = out.centre.w
+// The blank classic container must not consume half the studio: it is display:
+// none, so it has no box at all. (0 rather than "small" -- a flex item that is
+// merely narrow is still a half-width sibling bug waiting to come back.)
+if (out.classic.w !== 0) {
+  console.error(`FAIL: the empty classic result container still has a box (width ${out.classic.w}px) -- it is taking width from the video studio`)
+  process.exit(1)
+}
+// The container must be collapsed WITHOUT hiding what it holds: the generation
+// task tray and the alert line are not gated on the image modes and are meant to
+// be usable from the video tab. `display: none` would pass the check above while
+// silently removing them, so assert they still have a box.
+if (out.taskTray.w === 0 || out.canvasError.w === 0) {
+  console.error(`FAIL: collapsing the empty result container also hid its contents (taskTray ${out.taskTray.w}px, canvasError ${out.canvasError.w}px) -- use display:contents, not display:none`)
+  process.exit(1)
+}
 const share = Math.round((out.composer.w / centre) * 100)
 console.log(`centre=${centre}px composer=${out.composer.w}px -> composer uses ${share}% of the panel width`)
 if (share < 90) { console.error('STILL TOO NARROW'); process.exit(1) }

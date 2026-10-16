@@ -5,22 +5,37 @@
 
 .container {
   --gooey-time: 1500ms;
-  --gooey-color-1: #5227ff;
-  --gooey-color-2: #ff9ffc;
-  --gooey-color-3: #b19eef;
-  --gooey-color-4: #22d3ee;
-  /* light surface (default): dark ink pill, white text */
-  --gooey-pill: #17171c;
-  --gooey-pill-ink: #ffffff;
-  --gooey-ink: #5b5e6b;
+  /* The particle burst is the one decorative flourish in this plugin, so its
+     four hues stay an accent rather than the host's brand color -- but they are
+     derived from the brand token instead of four unrelated literals, so they
+     move with the theme. */
+  --gooey-color-1: var(--dsw-alias-brand-primary, #5227ff);
+  --gooey-color-2: color-mix(in srgb, var(--dsw-alias-brand-primary, #5227ff) 45%, #ff9ffc);
+  --gooey-color-3: color-mix(in srgb, var(--dsw-alias-brand-primary, #5227ff) 55%, #ffffff);
+  --gooey-color-4: color-mix(in srgb, var(--dsw-alias-brand-primary, #5227ff) 40%, #22d3ee);
   position: relative;
   font-size: 13px;
 }
 
+/* The pill and its label are the two colors that carry meaning, so they come
+   from the theme rather than from a literal. The per-surface branches exist for
+   the case where the host tokens are NOT defined (a bare shell, or the jsdom
+   harness): `var()` then falls back to the literal that is readable against
+   that surface. With the tokens present both branches resolve to the same theme
+   values, which are already inverses of each other, so the pill reads as a
+   solid chip under either theme without a hardcoded palette.
+   `data-theme` is set from a LIVE surface reading (see the component), so it is
+   still correct after the host switches theme. */
+.container[data-theme='light'] {
+  --gooey-pill: var(--dsw-alias-label-primary, #17171c);
+  --gooey-pill-ink: var(--dsw-alias-bg-layer-1, #ffffff);
+  --gooey-ink: var(--dsw-alias-label-secondary, #5b5e6b);
+}
+
 .container[data-theme='dark'] {
-  --gooey-pill: #ffffff;
-  --gooey-pill-ink: #17171c;
-  --gooey-ink: #ffffff;
+  --gooey-pill: var(--dsw-alias-label-primary, #ffffff);
+  --gooey-pill-ink: var(--dsw-alias-bg-layer-1, #17171c);
+  --gooey-ink: var(--dsw-alias-label-secondary, #ffffff);
 }
 
 .gooSvg {

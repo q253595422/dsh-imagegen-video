@@ -4,8 +4,8 @@
  *  so the palette flips per detected surface to stay readable in the host
  *  theme. */
 
-import { useEffect, useRef, type ReactNode } from 'react'
-import { detectLightSurface } from './surface-theme.ts'
+import { useEffect, useRef, type KeyboardEvent as ReactKeyboardEvent, type ReactNode } from 'react'
+import { detectLightSurface, subscribeSurfaceTheme } from './surface-theme.ts'
 import css from './GooeyNav.module.css'
 
 export interface GooeyNavItem {
@@ -61,7 +61,13 @@ export function GooeyNav(props: {
     const filter = filterRef.current
     const text = textRef.current
     if (container === null || filter === null || text === null) return
-    container.dataset.theme = detectLightSurface(container) ? 'light' : 'dark'
+    // The ink follows the surface behind the nav. This must SUBSCRIBE, not read
+    // once: the host switches theme on a live page, and nothing about this
+    // element changes when it does, so a one-shot read left the nav painted in
+    // the previous theme's colors against the new surface.
+    const applyTheme = (light: boolean): void => { container.dataset.theme = light ? 'light' : 'dark' }
+    applyTheme(detectLightSurface(container))
+    const stopThemeWatch = subscribeSurfaceTheme(container, applyTheme)
     let disposed = false
     const noise = (amount: number): number => amount / 2 - Math.random() * amount
     const getXY = (distance: number, pointIndex: number, totalPoints: number): [number, number] => {
@@ -127,6 +133,7 @@ export function GooeyNav(props: {
     observer.observe(container)
     return () => {
       disposed = true
+      stopThemeWatch()
       for (const timer of timersRef.current) window.clearTimeout(timer)
       timersRef.current = []
       observer.disconnect()
@@ -145,6 +152,35 @@ export function GooeyNav(props: {
     }
   }, [activeIndex])
 
+  /** Move the selection with the gooey burst; a no-op on the active tab, so a
+   *  click and a keypress take the same path. */
+  const select = (index: number, element: HTMLElement | null): void => {
+    if (index === activeIndexRef.current) return
+    if (element !== null) burstRef.current(element)
+    onSelect(index)
+  }
+
+  /** ARIA tabs keyboard contract: ArrowLeft/ArrowRight wrap, Home/End jump.
+   *  Activation follows the arrow keys because the views behind these tabs are
+   *  already mounted and switching is cheap -- there is nothing an extra Enter
+   *  would protect. Without this the role announced a keyboard model the
+   *  component did not implement: the keys simply did nothing. */
+  const onTabKeyDown = (event: ReactKeyboardEvent<HTMLButtonElement>, index: number): void => {
+    if (items.length === 0) return
+    const next = event.key === 'ArrowRight' ? (index + 1) % items.length
+      : event.key === 'ArrowLeft' ? (index - 1 + items.length) % items.length
+        : event.key === 'Home' ? 0
+          : event.key === 'End' ? items.length - 1
+            : -1
+    if (next < 0) return
+    event.preventDefault()
+    const li = navRef.current?.querySelectorAll('li')[next] ?? null
+    select(next, li)
+    // The roving tabIndex leaves every unselected tab at -1, so focus has to
+    // travel with the selection or the user is stranded on an unreachable one.
+    li?.querySelector('button')?.focus()
+  }
+
   return (
     <div className={css.container} ref={containerRef}>
       <svg className={css.gooSvg} aria-hidden="true" focusable="false">
@@ -157,6 +193,12 @@ export function GooeyNav(props: {
           </filter>
         </defs>
       </svg>
+      {/* `role="tablist"` promises a roving tabIndex: exactly one tab is in the
+          Tab order and the arrow keys move between them. It is kept (rather
+          than dropping the roles) because the tabs ARE tabs, and because the
+          other nav in this panel is queried by that role. `aria-controls` is
+          deliberately absent: the views these tabs switch are not rendered as
+          tabpanels, and pointing at a non-existent id is worse than omitting it. */}
       <nav aria-label={ariaLabel} role="tablist">
         <ul ref={navRef}>
           {items.map((item, index) => (
@@ -165,11 +207,10 @@ export function GooeyNav(props: {
                 type="button"
                 role="tab"
                 aria-selected={activeIndex === index}
+                tabIndex={activeIndex === index ? 0 : -1}
+                onKeyDown={event => { onTabKeyDown(event, index) }}
                 onClick={event => {
-                  if (index === activeIndex) return
-                  const li = event.currentTarget.closest('li')
-                  if (li !== null) burstRef.current(li)
-                  onSelect(index)
+                  select(index, event.currentTarget.closest('li'))
                 }}
               >
                 {item.label}

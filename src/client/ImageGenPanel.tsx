@@ -8,7 +8,7 @@
  * a platform module) so the studio matches the dsh shell look by construction.
  */
 
-import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties, type PointerEvent as ReactPointerEvent } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties, type PointerEvent as ReactPointerEvent, type RefObject } from 'react'
 import { createPortal } from 'react-dom'
 import { Button, Pill } from '@deepseek-ai/dsh-client-ui-primitives'
 import type { SessionId } from '@deepseek-ai/dsh-api-remotes/client'
@@ -36,6 +36,7 @@ import {
   type ChatImageEventDetail, type ConversationDraftAttachment, type ConversationService,
 } from './conversation-sync.ts'
 import { Select } from './Select.tsx'
+import { onTablistKeyDown, tabIndexFor } from './tablist.ts'
 import css from './panel.module.css'
 
 /** Size options, presented as aspect ratios (auto = let the model decide).
@@ -491,6 +492,9 @@ function withAnchorNote(prompt: string): string {
 /** Studio tabs: the generation modes plus the gallery view and video. */
 type PanelTab = GenerateMode | 'video' | 'gallery'
 
+/** The generation sub-modes shown in the mode row, in arrow-key order. */
+const MODE_TABS = ['text', 'edit', 'video'] as const satisfies readonly PanelTab[]
+
 /** Top-level workspaces inside the panel. 'normal' is the classic studio;
  *  more task-oriented modes (prototype, …) can join alongside 'ecommerce'. */
 type PanelWorkspace = 'normal' | 'ecommerce' | 'canvas'
@@ -650,6 +654,32 @@ function modelChoiceFromKey(key: string): ModelPickerValue | undefined {
   const channelId = key.slice(0, separator)
   const model = key.slice(separator + 1)
   return model === '' ? undefined : { channelId, model }
+}
+
+/**
+ * Focus management for an overlay that declares `role="dialog"
+ * aria-modal="true"`.
+ *
+ * Claiming a modal context without moving focus leaves a keyboard user behind
+ * it: the overlay looks open, but Tab and Esc still walk the page underneath.
+ * The container is given `tabIndex={-1}` so it can take focus itself, and the
+ * element that had focus is restored when the overlay closes.
+ *
+ * The opener is duck-typed rather than `instanceof HTMLElement` for the same
+ * reason CanvasWorkspace's matchesSelector is: jsdom hands out elements from a
+ * different realm, where the instance check silently fails.
+ */
+function useDialogFocus(open: boolean, ref: RefObject<HTMLElement | null>): void {
+  useEffect(() => {
+    if (!open) return
+    const opener = document.activeElement
+    ref.current?.focus()
+    return () => {
+      if (opener !== null && typeof (opener as { focus?: unknown }).focus === 'function') {
+        (opener as HTMLElement).focus()
+      }
+    }
+  }, [open, ref])
 }
 
 /** Render the studio. */
@@ -824,6 +854,12 @@ export function ImageGenPanel(props: {
   const [videoTasks, setVideoTasks] = useState<VideoTaskSummary[]>([])
   const tasksRef = useRef<GenerationTask[]>([])
   const initialDataRequestedRef = useRef(false)
+  // A FAILED read is not an empty one. The sidebar and the asset library both
+  // print "there is nothing here" whenever their list is empty, which a failed
+  // request does not establish — so each list keeps its own error and shows
+  // that instead (see loadInitialData).
+  const [historyLoadError, setHistoryLoadError] = useState<string | null>(null)
+  const [galleryLoadError, setGalleryLoadError] = useState<string | null>(null)
   const taskPollStartedAtRef = useRef(Date.now())
   const observedTaskIdsRef = useRef<Set<string>>(new Set())
   const submittedTaskIdsRef = useRef<Set<string>>(new Set())
@@ -880,6 +916,10 @@ export function ImageGenPanel(props: {
   const modeModels = [...new Set(modeGroups.flatMap(group => group.models))]
   const fileInput = useRef<HTMLInputElement>(null)
   const previewStage = useRef<HTMLDivElement>(null)
+  // The three overlays that claim `role="dialog"`; see useDialogFocus.
+  const previewDialogRef = useRef<HTMLDivElement>(null)
+  const comparisonFullscreenRef = useRef<HTMLDivElement>(null)
+  const galleryClipRef = useRef<HTMLDivElement>(null)
   const activeTasks = tasks.filter(task => task.status === 'queued' || task.status === 'running')
   const activeTask = activeTasks.find(task => task.status === 'running') ?? activeTasks[0]
   const generating = submitting || activeTasks.length > 0
@@ -1048,20 +1088,38 @@ export function ImageGenPanel(props: {
   // Load the host-persisted history and gallery once, when the panel first
   // becomes visible. Keeping this out of boot prevents eager full-size image
   // requests while image generation is closed.
+  //
+  // A failed listing must be visible, and it must NOT masquerade as "no
+  // history": the empty copy asserts there are none, which a failed read does
+  // not establish. Each list therefore records its error, and the empty copy is
+  // gated on the absence of one; the retry re-runs this loader.
+  const loadInitialData = useCallback((): void => {
+    setHistoryLoadError(null)
+    setGalleryLoadError(null)
+    api.historyList()
+      .then(entries => { setHistory(entries) })
+      .catch(caught => { setHistoryLoadError(errorMessage(caught)) })
+    api.galleryList()
+      .then(entries => { setGallery(entries) })
+      .catch(caught => { setGalleryLoadError(errorMessage(caught)) })
+    // Clips are listed from the same place they are shown: the unified sidebar,
+    // so a clip-listing failure lands on the sidebar's error line too.
+    api.videoHistoryList()
+      .then(entries => { setVideoHistory(entries) })
+      .catch(caught => { setHistoryLoadError(errorMessage(caught)) })
+  }, [api])
+
   useEffect(() => {
     if (!active || initialDataRequestedRef.current) return
     initialDataRequestedRef.current = true
-    api.historyList()
-      .then(entries => { setHistory(entries) })
-      .catch(() => { /* history unavailable — leave the list empty */ })
-    api.galleryList()
-      .then(entries => { setGallery(entries) })
-      .catch(() => { /* gallery unavailable — leave the list empty */ })
-    // Clips are listed from the same place they are shown: the unified sidebar.
-    api.videoHistoryList()
-      .then(entries => { setVideoHistory(entries) })
-      .catch(() => { /* video history unavailable — leave it empty */ })
-  }, [api, active])
+    loadInitialData()
+  }, [active, loadInitialData])
+
+  /** Retry after a failed first load: un-claim the one-shot read, then re-run it. */
+  const retryInitialData = (): void => {
+    initialDataRequestedRef.current = false
+    loadInitialData()
+  }
 
   // Chat toolviews publish durable refs after they finish loading. Decode the
   // refs through the same host-authorized route and make them the current
@@ -1688,6 +1746,34 @@ export function ImageGenPanel(props: {
     return () => window.removeEventListener('keydown', onKey)
   }, [preview])
 
+  // Esc dismisses the full-screen comparison board. Registered in the capture
+  // phase so it wins over the canvas's own window-level Escape handler
+  // underneath -- that one clears the node selection, which happened invisibly
+  // behind the still-open board.
+  useEffect(() => {
+    if (!comparisonFullscreen) return
+    const onKey = (event: KeyboardEvent): void => {
+      if (event.key !== 'Escape') return
+      event.stopPropagation()
+      setComparisonFullscreen(false)
+    }
+    window.addEventListener('keydown', onKey, true)
+    return () => window.removeEventListener('keydown', onKey, true)
+  }, [comparisonFullscreen])
+
+  // The same for the gallery's clip player. The two overlays cannot be open at
+  // once, so each owns its own Escape without a shared overlay stack.
+  useEffect(() => {
+    if (galleryClip === null) return
+    const onKey = (event: KeyboardEvent): void => {
+      if (event.key !== 'Escape') return
+      event.stopPropagation()
+      setGalleryClip(null)
+    }
+    window.addEventListener('keydown', onKey, true)
+    return () => window.removeEventListener('keydown', onKey, true)
+  }, [galleryClip])
+
   // A scaled image owns real scrollable space, rather than being visually
   // transformed and clipped. Recenter the viewport after every zoom or slide.
   useEffect(() => {
@@ -2267,6 +2353,10 @@ export function ImageGenPanel(props: {
   const previewFrameScale = Math.max(1, previewScale)
   const previewImageScale = previewScale / previewFrameScale
 
+  useDialogFocus(preview !== null && previewImage !== null, previewDialogRef)
+  useDialogFocus(comparisonFullscreen && comparison !== null, comparisonFullscreenRef)
+  useDialogFocus(galleryClip !== null && galleryClip.video !== undefined, galleryClipRef)
+
   /** Drag the config panel's right edge to resize it (persisted per browser). */
   const onConfigResizeStart = (event: ReactPointerEvent<HTMLDivElement>): void => {
     if (event.button !== 0) return
@@ -2371,7 +2461,12 @@ export function ImageGenPanel(props: {
         </Select>
       </div>
 
-      {unifiedHistory.length === 0 ? (
+      {unifiedHistory.length === 0 && historyLoadError !== null ? (
+        <div className={css.historyEmpty} data-history-load-error="">
+          <span>{tt('history.loadFailed', { error: historyLoadError })}</span>
+          <button type="button" className={css.galleryBulkButton} data-history-reload="" style={{ marginLeft: 8 }} onClick={retryInitialData}>{tt('canvas.retry')}</button>
+        </div>
+      ) : unifiedHistory.length === 0 ? (
         <div className={css.historyEmpty}>{tt('history.empty')}</div>
       ) : (
         <div className={css.historyList}>
@@ -2635,7 +2730,7 @@ export function ImageGenPanel(props: {
 
       <div className={css.studio}>
         {/* ------------------------------- left history + generation workspace */}
-        <div className={css.generation} data-workspace={workspace}>
+        <div className={css.generation} data-workspace={workspace} data-empty-result-host={isVideo ? 'true' : undefined}>
           {/* ------------------------------------------------ config sidebar */}
           <aside
             ref={configAsideRef}
@@ -2721,9 +2816,18 @@ export function ImageGenPanel(props: {
             {workspace === 'normal' && tab !== 'gallery' ? (
               <section className={css.card}>
                 <div className={css.modeRow} role="tablist" aria-label={tt('panel.title')}>
-                  <Pill active={tab === 'text'} onClick={() => { setTab('text') }} className={css.modePill}>{tt('mode.text')}</Pill>
-                  <Pill active={tab === 'edit'} onClick={() => { setTab('edit') }} className={css.modePill}>{tt('mode.edit')}</Pill>
-                  <Pill active={tab === 'video'} onClick={() => { setTab('video') }} className={css.modePill}>{tt('mode.video')}</Pill>
+                  {MODE_TABS.map((item, index) => (
+                    <Pill
+                      key={item}
+                      active={tab === item}
+                      role="tab"
+                      aria-selected={tab === item}
+                      tabIndex={tabIndexFor(tab === item)}
+                      onKeyDown={event => { onTablistKeyDown(event, { count: MODE_TABS.length, index, select: next => { setTab(MODE_TABS[next]!) } }) }}
+                      onClick={() => { setTab(item) }}
+                      className={css.modePill}
+                    >{tt(item === 'text' ? 'mode.text' : item === 'edit' ? 'mode.edit' : 'mode.video')}</Pill>
+                  ))}
                 </div>
               </section>
             ) : null}
@@ -3189,6 +3293,7 @@ export function ImageGenPanel(props: {
           {workspace === 'canvas' ? (
             <CanvasWorkspace
               api={api}
+              active={active && workspace === 'canvas'}
               modelGroups={modelGroups}
               defaultChannelId={defaultChannelId}
               connected={connected}
@@ -3232,7 +3337,7 @@ export function ImageGenPanel(props: {
           ) : null}
 
           {/* ------------------------------------------------------- canvas */}
-          <section className={css.canvas} data-gallery={isGallery ? 'true' : undefined} data-video={isVideo ? 'true' : undefined}>
+          <section className={css.canvas} data-gallery={isGallery ? 'true' : undefined} data-video={isVideo ? 'true' : undefined} data-empty-result={isVideo ? 'true' : undefined}>
           {isGallery ? (
             <div className={css.galleryWorkspace}>
               <header className={css.galleryToolbar}>
@@ -3284,7 +3389,12 @@ export function ImageGenPanel(props: {
                   <button type="button" className={css.gallerySelectionClear} onClick={clearGallerySelection}>{tt('gallery.selectionClear')}</button>
                 </section>
               ) : null}
-              {filteredGallery.length === 0 ? (
+              {filteredGallery.length === 0 && galleryLoadError !== null ? (
+                <div className={css.historyEmpty} data-gallery-load-error="">
+                  <span>{tt('gallery.loadFailed', { error: galleryLoadError })}</span>
+                  <button type="button" className={css.galleryBulkButton} data-gallery-reload="" style={{ marginLeft: 8 }} onClick={retryInitialData}>{tt('canvas.retry')}</button>
+                </div>
+              ) : filteredGallery.length === 0 ? (
                 <div className={css.historyEmpty}>{tt('gallery.empty')}</div>
               ) : (
                 <div className={css.galleryMasonry} data-view={galleryView}>
@@ -3708,7 +3818,7 @@ export function ImageGenPanel(props: {
       ) : null}
 
       {comparisonFullscreen && comparison !== null ? createPortal(
-        <div className={css.comparisonFullscreen} role="dialog" aria-modal="true" aria-label={tt('compare.title')} onClick={() => { setComparisonFullscreen(false) }}>
+        <div ref={comparisonFullscreenRef} tabIndex={-1} className={css.comparisonFullscreen} role="dialog" aria-modal="true" aria-label={tt('compare.title')} onClick={() => { setComparisonFullscreen(false) }}>
           <button type="button" className={css.lightboxClose} aria-label={tt('preview.close')} onClick={() => { setComparisonFullscreen(false) }}>×</button>
           <div className={css.comparisonFullscreenGrid} onClick={event => { event.stopPropagation() }}>
             {comparisonResults.map(task => (
@@ -3721,6 +3831,8 @@ export function ImageGenPanel(props: {
       {galleryClip !== null && galleryClip.video !== undefined
         ? createPortal(
           <div
+            ref={galleryClipRef}
+            tabIndex={-1}
             className={css.lightbox}
             role="dialog"
             aria-modal="true"
@@ -3749,6 +3861,8 @@ export function ImageGenPanel(props: {
       {preview !== null && previewImage !== null
         ? createPortal(
           <div
+            ref={previewDialogRef}
+            tabIndex={-1}
             className={css.lightbox}
             role="dialog"
             aria-modal="true"
