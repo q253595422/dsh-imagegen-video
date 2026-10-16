@@ -124,7 +124,7 @@ const NANOBANANA_GEMINI_IDS = new Set([
 /** Classify one upstream model id into its request-shaping family. */
 export function describeModel(model: string): ModelCatalogEntry {
   const id = model.trim()
-  if (/^gpt-image/i.test(id)) return { family: 'gpt-image', ...ENTRIES['gpt-image'] }
+  if (/^gpt-?image/i.test(id)) return { family: 'gpt-image', ...ENTRIES['gpt-image'] }
   if (/^dall-e/i.test(id)) return { family: 'dall-e', ...ENTRIES['dall-e'] }
   if (/^grok-imagine(?:-|$)/.test(id)) return { family: 'grok', ...ENTRIES.grok }
   if (/^nanobanana/i.test(id) || NANOBANANA_GEMINI_IDS.has(id)) return { family: 'nanobanana', ...ENTRIES.nanobanana }
@@ -138,9 +138,16 @@ export function describeModel(model: string): ModelCatalogEntry {
 /** Conservative fallback for providers whose /models response only has ids.
  *  Metadata-aware filtering lives in prompt-enhancer.ts; this catches common
  *  image model naming conventions without treating every unknown model as an
- *  image model. */
+ *  image model.
+ *
+ *  The trailing `\d*` matches the numeric suffixes that OpenAI-compatible
+ *  gateways routinely append to family names (`nanobanana2`, `flux2`). Without
+ *  it, describeModel() recognizes those ids while this predicate rejects them,
+ *  so the panel's "detect models" drops models the catalog itself declares
+ *  known — including DEFAULT_IMAGE_MODELS entries `nanobanana2` and
+ *  `nanobanana2-lite`. */
 export function isLikelyImageModelId(model: string): boolean {
-  return /(?:^|[-_.])(?:image|img|diffusion|flux|cogview|imagen|seedream|nanobanana|grok-imagine|dall-e|stable-diffusion|sdxl|pixart|kolors|ideogram|midjourney|recraft|hunyuan|jimeng|wanx|hidream|playground)(?:$|[-_.])/i.test(model.trim())
+  return /(?:^|[-_.])(?:image|img|diffusion|flux|cogview|imagen|seedream|nanobanana|grok-imagine|dall-e|stable-diffusion|sdxl|pixart|kolors|ideogram|midjourney|recraft|hunyuan|jimeng|wanx|hidream|playground)\d*(?:$|[-_.])/i.test(model.trim())
 }
 
 /** The family a model id routes its request through. */
