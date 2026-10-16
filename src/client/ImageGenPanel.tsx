@@ -1182,6 +1182,12 @@ export function ImageGenPanel(props: {
   // would refetch on every tick forever; keying it off "this completion is
   // new" fetches once per finished render.
   const listedVideoEntriesRef = useRef<Set<string>>(new Set())
+  /** Guards state writes from a poll answer that lands after unmount. */
+  const videoPollAliveRef = useRef(false)
+  useEffect(() => {
+    videoPollAliveRef.current = true
+    return () => { videoPollAliveRef.current = false }
+  }, [])
 
   // Poll the video queue. Video renders take minutes, so this ticks slowly; the
   // summaries carry the finished clip, which both the video tab and the canvas
@@ -1193,34 +1199,38 @@ export function ImageGenPanel(props: {
   // reached the sidebar until a full reload. The image side has refreshed after
   // every completion all along; the video side lost that refresh when its own
   // list moved into the unified sidebar.
-  useEffect(() => {
-    let disposed = false
-    const refresh = (): void => {
-      const refetchFor = (tasks: VideoTaskSummary[]): boolean => {
-        let pending = false
-        for (const task of tasks) {
-          if (task.status !== 'completed' || task.resultEntryId === undefined) continue
-          if (listedVideoEntriesRef.current.has(task.resultEntryId)) continue
-          listedVideoEntriesRef.current.add(task.resultEntryId)
-          pending = true
-        }
-        return pending
+  //
+  // This is the ONLY video poller in the panel. The video tab is handed this
+  // same function as `onRefreshTasks`, so a submit/cancel/retry it performs
+  // lands on this list immediately instead of starting a competing loop.
+  const refreshVideoTasks = useCallback((): void => {
+    const refetchFor = (tasks: VideoTaskSummary[]): boolean => {
+      let pending = false
+      for (const task of tasks) {
+        if (task.status !== 'completed' || task.resultEntryId === undefined) continue
+        if (listedVideoEntriesRef.current.has(task.resultEntryId)) continue
+        listedVideoEntriesRef.current.add(task.resultEntryId)
+        pending = true
       }
-      void api.videoTaskList()
-        .then(next => {
-          if (disposed) return
-          setVideoTasks(next)
-          if (!refetchFor(next)) return
-          void api.videoHistoryList()
-            .then(entries => { if (!disposed) setVideoHistory(entries) })
-            .catch(() => { /* the next completed render tries again */ })
-        })
-        .catch(() => { /* a transient host error must not stop the loop */ })
+      return pending
     }
-    refresh()
-    const timer = window.setInterval(refresh, 5000)
-    return () => { disposed = true; window.clearInterval(timer) }
+    void api.videoTaskList()
+      .then(next => {
+        if (!videoPollAliveRef.current) return
+        setVideoTasks(next)
+        if (!refetchFor(next)) return
+        void api.videoHistoryList()
+          .then(entries => { if (videoPollAliveRef.current) setVideoHistory(entries) })
+          .catch(() => { /* the next completed render tries again */ })
+      })
+      .catch(() => { /* a transient host error must not stop the loop */ })
   }, [api])
+
+  useEffect(() => {
+    refreshVideoTasks()
+    const timer = window.setInterval(refreshVideoTasks, 5000)
+    return () => { window.clearInterval(timer) }
+  }, [refreshVideoTasks])
 
   // Release checks are host-mediated and intentionally best-effort: a GitHub
   // outage must never make the image-generation studio unavailable. The host
@@ -3213,6 +3223,7 @@ export function ImageGenPanel(props: {
                 config={config}
                 active={active && tab === 'video'}
                 tasks={videoTasks}
+                onRefreshTasks={refreshVideoTasks}
                 onAddToConversation={addClipToConversation}
                 onAddToCanvas={addClipToCanvas}
                 conversationBusyKey={addingToConversation === null ? null : String(addingToConversation)}

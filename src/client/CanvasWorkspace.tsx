@@ -1519,6 +1519,12 @@ export function CanvasWorkspace(props: CanvasWorkspaceProps): React.JSX.Element 
   const marqueeRef = useRef<MarqueeState | null>(null)
   const panFrameRef = useRef<number | null>(null)
   const syncedRef = useRef('')
+  /** Sequence of the newest canvas write. A response carrying an older number
+   *  belongs to a superseded edit and must not reach the screen. */
+  const saveSeqRef = useRef(0)
+  /** True while `flushPendingCanvas` owns the write: the autosave effect must
+   *  not schedule a second write of the same snapshot behind it. */
+  const flushRef = useRef(false)
   const processedTasks = useRef(new Set<string>())
   const processedImport = useRef('')
   const localTaskIds = useRef(new Set<string>())
@@ -3431,37 +3437,95 @@ export function CanvasWorkspace(props: CanvasWorkspaceProps): React.JSX.Element 
     return () => { disposed = true }
   }, [api, seedDocument])
 
-  useEffect(() => {
-    if (document === null || saveState === 'loading') return
-    const key = JSON.stringify(document)
-    if (key === syncedRef.current) return
-    setSaveState('saving')
-    const timer = window.setTimeout(() => {
-      const saveWithRetry = async (): Promise<CanvasDocument> => {
-        try {
-          return await api.canvasSave(document, document.revision)
-        } catch (caught) {
-          // Another window saved the same canvas meanwhile: rebase on the
-          // server revision and retry once so concurrent editing self-heals.
-          // The conflict is recognised by the host's stable wire code, never by
-          // matching the message: that copy is translated and may be reworded.
-          if (!(caught instanceof ImageGenApiError) || caught.code !== 'canvas-conflict') throw caught
-          const server = await api.canvasRead(document.id)
-          return await api.canvasSave(document, server.revision)
-        }
+  /**
+   * Persist one canvas snapshot and reconcile the answer with the screen.
+   *
+   * WHY the sequence number: the 650 ms debounce lets a second write start
+   * before the first answers, and the user can leave the canvas inside that
+   * window. A late answer for a superseded write — or for a canvas the user has
+   * already left — must never reach `setDocument`: it used to put the previous
+   * canvas back on screen while the project selector still showed the new one,
+   * and that document's stale `revision` then rode along on the next save.
+   */
+  const writeCanvas = useCallback(async (snapshot: CanvasDocument): Promise<boolean> => {
+    const seq = saveSeqRef.current + 1
+    saveSeqRef.current = seq
+    const key = JSON.stringify(snapshot)
+    const saveWithRetry = async (): Promise<CanvasDocument> => {
+      try {
+        return await api.canvasSave(snapshot, snapshot.revision)
+      } catch (caught) {
+        // Another window saved the same canvas meanwhile: rebase on the server
+        // revision and retry once so concurrent editing self-heals. The
+        // conflict is recognised by the host's stable wire code, never by
+        // matching the message: that copy is translated and may be reworded.
+        if (!(caught instanceof ImageGenApiError) || caught.code !== 'canvas-conflict') throw caught
+        const server = await api.canvasRead(snapshot.id)
+        return await api.canvasSave(snapshot, server.revision)
       }
-      void saveWithRetry().then(next => {
-        syncedRef.current = JSON.stringify(next)
+    }
+    try {
+      const next = await saveWithRetry()
+      // A newer write has been issued since this one: its own answer carries the
+      // truth, so this one stays off the screen and out of `syncedRef`.
+      if (seq !== saveSeqRef.current) return true
+      const live = documentRef.current
+      if (live === null || live.id !== next.id) return true
+      syncedRef.current = JSON.stringify(next)
+      // A newer edit is waiting (the live document is no longer the snapshot we
+      // wrote): keep the user's work on screen and let the debounce write it
+      // next, instead of overwriting it with the server's older copy.
+      if (key === JSON.stringify(live)) {
         setDocument(next)
         setProjects(previous => {
           const favorite = previous.find(item => item.id === next.id)?.favorite === true
           return [summaryOf(next, favorite), ...previous.filter(item => item.id !== next.id)]
         })
-        setSaveState('saved')
-      }).catch(caught => { setError(caught instanceof Error ? caught.message : String(caught)); setSaveState('error') })
+      }
+      setSaveState('saved')
+      return true
+    } catch (caught) {
+      if (seq === saveSeqRef.current) {
+        setError(caught instanceof Error ? caught.message : String(caught))
+        setSaveState('error')
+      }
+      return false
+    }
+  }, [api])
+
+  /**
+   * Write the pending debounced edit before the canvas is replaced.
+   *
+   * WHY: switching projects, creating a canvas or deleting the current one
+   * swaps `document` immediately, and the autosave effect's cleanup cancels the
+   * 650 ms timer — so an edit made just before the click was never sent. The
+   * write goes through the same conflict read-back path as the debounce.
+   */
+  const flushPendingCanvas = useCallback(async (): Promise<void> => {
+    const live = documentRef.current
+    if (live === null || JSON.stringify(live) === syncedRef.current) return
+    flushRef.current = true
+    try { await writeCanvas(live) } finally { flushRef.current = false }
+  }, [writeCanvas])
+
+  useEffect(() => {
+    if (document === null || saveState === 'loading') return
+    // A flush owns the write right now; it reconciles `syncedRef` itself and
+    // this effect re-runs when it sets the save state, so nothing is lost.
+    if (flushRef.current) return
+    const key = JSON.stringify(document)
+    if (key === syncedRef.current) return
+    setSaveState('saving')
+    const timer = window.setTimeout(() => {
+      // Read the live document when the debounce fires: it may have outlived a
+      // canvas switch, a delete or further edits, and the newest snapshot is
+      // the one that must be written.
+      const live = documentRef.current
+      if (live === null || JSON.stringify(live) === syncedRef.current) return
+      void writeCanvas(live)
     }, 650)
     return () => window.clearTimeout(timer)
-  }, [api, document, saveState])
+  }, [api, document, saveState, writeCanvas])
 
   // ------------------------------------------------------- compose (stitch)
 
@@ -3996,6 +4060,7 @@ export function CanvasWorkspace(props: CanvasWorkspaceProps): React.JSX.Element 
 
   const newCanvas = useCallback(async (): Promise<void> => {
     try {
+      await flushPendingCanvas()
       const created = await api.canvasCreate(tt('canvas.untitled'))
       const next = seedDocument(created)
       setProjects(previous => [summaryOf(next), ...previous])
@@ -4003,16 +4068,17 @@ export function CanvasWorkspace(props: CanvasWorkspaceProps): React.JSX.Element 
       syncedRef.current = JSON.stringify(created); setSaveState('saved')
       pastRef.current = []; futureRef.current = []; setHistoryVersion(version => version + 1)
     } catch (caught) { setError(caught instanceof Error ? caught.message : String(caught)) }
-  }, [api, seedDocument])
+  }, [api, seedDocument, flushPendingCanvas])
 
   const selectProject = useCallback(async (id: string): Promise<void> => {
     try {
+      await flushPendingCanvas()
       const next = await api.canvasRead(id)
       setDocument(normalizeConfigNodeSizes(next)); setSelectedIds(new Set()); setSelectedConnectionId(null)
       syncedRef.current = JSON.stringify(next); setSaveState('saved')
       pastRef.current = []; futureRef.current = []; setHistoryVersion(version => version + 1)
     } catch (caught) { setError(caught instanceof Error ? caught.message : String(caught)) }
-  }, [api])
+  }, [api, flushPendingCanvas])
 
   const currentProject = projects.find(project => project.id === document?.id)
   const favoriteProjects = projects.filter(project => project.favorite === true)
@@ -4034,6 +4100,11 @@ export function CanvasWorkspace(props: CanvasWorkspaceProps): React.JSX.Element 
     if (current === null) return
     try {
       const remaining = await api.canvasRemove(current.id)
+      // The canvas is gone, so a pending edit has nothing left to write to:
+      // record the live document as reconciled BEFORE the follow-up project
+      // switch, whose flush would otherwise save it straight back onto the
+      // deleted canvas.
+      syncedRef.current = JSON.stringify(documentRef.current ?? current)
       setConfirmDeleteProject(false)
       const nextId = remaining[0]?.id
       if (nextId === undefined) {

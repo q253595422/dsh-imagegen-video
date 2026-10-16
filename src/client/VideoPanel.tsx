@@ -78,6 +78,14 @@ export interface VideoPanelProps {
    */
   tasks?: VideoTaskSummary[]
   /**
+   * Re-read the queue after this tab mutates it (submit / cancel / retry).
+   * Required in controlled mode: when the parent supplies `tasks` it also owns
+   * the single poller, so the request has to travel up instead of starting a
+   * second loop here. Without it a render the user just submitted stays
+   * invisible for a whole poll cycle.
+   */
+  onRefreshTasks?: () => void
+  /**
    * Attach one finished clip to the current chat draft. Supplied by the parent
    * because it owns the conversation/session seams.
    */
@@ -115,9 +123,12 @@ export function VideoPanel(props: VideoPanelProps) {
   const controlled = props.tasks !== undefined
   const tasks = props.tasks ?? localTasks
   const refreshTasks = useCallback((): void => {
-    if (controlled) return
+    // Controlled: the parent owns the list, so ask it to re-read rather than
+    // fetching here -- a fetch here would be a second poller, and the two
+    // lists could drift apart.
+    if (controlled) { props.onRefreshTasks?.(); return }
     void api.videoTaskList().then(setLocalTasks).catch(() => { /* transient */ })
-  }, [api, controlled])
+  }, [api, controlled, props.onRefreshTasks])
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [now, setNow] = useState(() => Date.now())

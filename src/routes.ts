@@ -7,6 +7,7 @@
 
 import type { IncomingMessage, ServerResponse } from 'node:http'
 import { createReadStream } from 'node:fs'
+import type { ReadStream } from 'node:fs'
 import { spawn } from 'node:child_process'
 import { mkdir as fsMkdir } from 'node:fs/promises'
 import { randomUUID } from 'node:crypto'
@@ -94,6 +95,23 @@ function parseByteRange(header: string | string[] | undefined, size: number): By
 function writeUnsatisfiable(res: ServerResponse, size: number): void {
   res.writeHead(416, { 'content-range': `bytes */${size}` })
   res.end()
+}
+
+/**
+ * Pipe a clip's read stream into the response, absorbing a read error.
+ *
+ * WHY the listener is not optional: `readVideoFile` / `readGalleryVideo` return
+ * the path after `await fs.stat`, and the stream is opened later, so a clip
+ * deleted in that window (removing a history entry, or the 30-entry cap evicting
+ * the oldest while the browser still has the clip preloading) makes the stream
+ * emit `error` with ENOENT. `pipe()` forwards errors to the *destination*, never
+ * the source, and the host installs no `uncaughtException` handler, so an
+ * unhandled `error` event takes the whole dsh web process down. Destroying the
+ * response ends that one request instead.
+ */
+function pipeClip(stream: ReadStream, res: ServerResponse): void {
+  stream.on('error', () => { res.destroy() })
+  stream.pipe(res)
 }
 
 /** Settings seam face the bridge needs (the host settings provider). */
@@ -686,12 +704,12 @@ export function makeRoutes(deps: ImageGenRoutesDeps): WebRoute[] {
         'content-length': range.end - range.start + 1,
       })
       if (req.method === 'HEAD') { res.end(); return }
-      createReadStream(found.path, { start: range.start, end: range.end }).pipe(res)
+      pipeClip(createReadStream(found.path, { start: range.start, end: range.end }), res)
       return
     }
     res.writeHead(200, { ...headers, 'content-length': found.size })
     if (req.method === 'HEAD') { res.end(); return }
-    createReadStream(found.path).pipe(res)
+    pipeClip(createReadStream(found.path), res)
   }
   const resolveImageModels = deps.resolveImageModels ?? (() => normalizeImageModels(undefined))
   const settingsNamespace = deps.settingsNamespace ?? IMAGEGEN_SETTINGS_NAMESPACE

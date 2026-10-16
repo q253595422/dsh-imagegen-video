@@ -50,23 +50,39 @@ Each snapshot also records the upstream it was built from in its own top-level
 - Source: https://github.com/songguoxs/gpt4o-image-prompts
 - License: **none declared upstream.** The repository carries no LICENSE file
   and GitHub reports no license for it (checked 2026-10-16).
-- Referenced by 6 on-demand image URLs in
-  `src/templates/prompt-signal-cases.json` (branch `master`).
+- Referenced by 6 cases in `src/templates/prompt-signal-cases.json`, each in
+  two fields: the `image` URL and the `githubUrl` link (branch `master`).
 
 This one is listed because the URLs are in the shipped data, not because the
 licence position is settled — it is not. See "Open question" below.
 
 ## Open question: the unlicensed image URLs
 
-Six image URLs in `prompt-signal-cases.json` point at a repository that declares
-no licence. Nothing is redistributed from it (only a URL is stored, and the
-image is fetched by the user's browser on demand), but the upstream never
-granted a licence to redistribute. Two ways to settle it, neither taken here
-because it is the maintainer's call:
+Six cases in `prompt-signal-cases.json` carry an `image` URL and a `githubUrl`
+that point at a repository declaring no licence.
 
-1. Remove those six URLs from the snapshot (the cases themselves keep their
-   prompt text), or
-2. leave them and accept the reference as-is.
+**What those six cases are, and are not.** The prompt text in all six is
+**verbatim from the original authors' own posts** — checked case by case against
+the X post already recorded in each case's `sourceUrl`, on 2026-10-16. The
+snapshot's own `sourceLabel` and `sourceUrl` therefore already credit the real
+author; the aggregator supplied only the preview image and the `githubUrl`
+link. It is not the source of the prompts.
+
+Nothing is redistributed from the aggregator either way: only URLs are stored,
+and the image is fetched on demand. But the upstream never granted a licence,
+so the two ways to settle it are still the maintainer's call:
+
+1. Clear the `image` field of those six cases. Each case keeps its prompt text,
+   its title, and its link to the original author's post, so it stays usable —
+   the card simply shows the placeholder thumbnail. This is the option that
+   removes the aggregator from the shipped data entirely.
+2. Leave them and accept the reference as-is.
+
+Pointing the images at the original authors' own media instead
+(`pbs.twimg.com`) was investigated and is **not** a drop-in replacement: three
+of the six posts carry four images each, so the specific image the snapshot
+shows cannot be identified from the post alone, and that host is not reachable
+from every network. If option 1 is taken, do not substitute those.
 
 The other repositories cited one or two times each in the case metadata
 (`wuyoscar/GPT-Image2-Skill`, `zaizhi-1112/ai-image-extension-playbook`,

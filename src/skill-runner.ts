@@ -1227,13 +1227,26 @@ export class SkillRunner {
       const data = await fs.readFile(found.file).catch(() => undefined)
       if (data === undefined) continue
       const name = path.basename(found.file)
-      const asset = await canvas.putFile({
-        data,
-        mime: mimeFromName(name),
-        name,
-        origin: 'generated',
-        originId: task.id,
-      })
+      // WHY per-file: `putFile` refuses a blocked extension (.html/.js/.svg/…),
+      // a file over 50 MB and a few malformed names. Without this catch a single
+      // such artifact unwound the whole run — every node and connection collected
+      // so far was discarded (they are only local arrays until the final return),
+      // the task was marked failed and `runHeavy`'s finally deleted the run
+      // directory, so the user got nothing and had to re-run a task that may have
+      // cost ten minutes. One skipped file is a warning, not a lost run.
+      let asset
+      try {
+        asset = await canvas.putFile({
+          data,
+          mime: mimeFromName(name),
+          name,
+          origin: 'generated',
+          originId: task.id,
+        })
+      } catch (caught) {
+        warnings.push(t('canvas.skills.skippedOutput', { name, message: messageOf(caught) }))
+        continue
+      }
       const node = fileOutputNode(target.node, asset, name, skill.id, skill.name, [target.node.id])
       nodes.push(node)
       connections.push({ id: newId('edge'), fromNodeId: target.node.id, toNodeId: node.id })

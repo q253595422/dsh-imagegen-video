@@ -10,6 +10,32 @@ detail is in `git log 9305f9f..HEAD`.
 
 ## Releases
 
+### 1.7.4 — timing bugs the user actually hits
+
+- **One artifact the host refuses no longer loses the whole skill run.** A
+  canvas skill hands each produced file to the host, which hard-refuses some
+  extensions (`.svg`, `.html`, …) and anything over 50MB. One refusal used to
+  bubble out of the whole run, discarding the artifacts that had already been
+  published to the canvas; the user saw one error and nothing else. The refused
+  file is now skipped, the rest land, and a localized warning names it.
+- **A failing read stream no longer takes the host process down.** A clip is
+  served by piping the file to the response. `pipe` forwards errors to the
+  destination, never to the source, so an unhandled `error` on the read stream
+  terminated the whole web process. The source now has its own listener and
+  ends one response instead.
+- **Switching canvases neither drops a pending edit nor resurrects the old
+  one.** Autosave is debounced, so a rename followed by a canvas switch could
+  silently lose the edit, or let the old canvas's late save answer land on
+  screen and replace the new canvas. Writes now carry a sequence number, an
+  answer behind the newest edit is discarded, the pending snapshot is flushed
+  before the canvas is replaced, and deleting a canvas marks it reconciled so
+  the follow-up switch cannot write it back.
+- **The video studio's submit/cancel updates the list immediately.** The task
+  list is polled once by the parent (so the tab and the canvas share one view),
+  but the tab's own refresh returned early in controlled mode, leaving a new or
+  cancelled row invisible for a full 5s poll cycle. The request now travels up
+  to that single poller instead of starting a second loop.
+
 ### 1.7.3 — small correctness fixes around the edges
 
 - **A `~` in the data-folder setting now means the home directory.** The value

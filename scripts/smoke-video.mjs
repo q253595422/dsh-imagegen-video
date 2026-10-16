@@ -15,6 +15,7 @@
  * Run: node scripts/smoke-video.mjs   (from the package root)
  */
 import { createServer } from 'node:http'
+import net from 'node:net'
 import assert from 'node:assert/strict'
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
@@ -693,6 +694,92 @@ await check('V5 an unconfigured video model list is refused with actionable copy
     )
   } finally {
     dispose()
+  }
+})
+
+await check('V8 a clip deleted between stat and stream open ends the request, not the process', async () => {
+  // WHY this check exists: `readVideoFile` returns the path after `await
+  // fs.stat`, and the route opens the read stream afterwards. A clip removed in
+  // that window — the user deleting the entry, or the 30-entry cap evicting the
+  // oldest while the browser still preloads it — makes the stream emit ENOENT.
+  // `pipe()` forwards errors to the DESTINATION only, and the host installs no
+  // `uncaughtException` handler, so a bare `.pipe(res)` takes the whole dsh web
+  // process down. This drives the real route over a real socket and asserts the
+  // request ends without the suite dying.
+  //
+  // The race is reproduced deterministically rather than by timing: `readFile`
+  // hands back the path of a file that no longer exists, which is exactly the
+  // state the stat/open window produces.
+  const gone = join(mkdtempSync(join(tmpdir(), 'dsh-clip-gone-')), 'evicted.mp4')
+  const routes = host.makeRoutes({
+    settings: { describe: () => [], mutate: async () => ({}) },
+    resolve: () => ({ apiUrl: '', apiKey: '' }),
+    resolveChannels: () => ({ channels: [], defaultChannelId: '' }),
+    runtime: {
+      queue: { submit: () => ({ id: 'x' }), list: () => [], get: () => undefined, cancel: () => undefined, retry: () => undefined, summaries: () => [] },
+      videoQueue: { submit: () => ({ id: 'x' }), summaries: () => [], get: () => undefined, cancel: () => undefined, retry: () => undefined, list: () => [], subscribe: () => () => {} },
+      runVideo: async () => ({ videos: [] }),
+    },
+    video: {
+      list: async () => [],
+      remove: async () => [],
+      clear: async () => [],
+      // stat already succeeded (that is what the size is); the bytes are gone.
+      readFile: async name => name === 'evicted.mp4' ? { path: gone, size: MP4.length, mime: 'video/mp4' } : undefined,
+    },
+  })
+  const exact = new Map(routes.filter(r => r.kind !== 'prefix').map(r => [r.path, r.handler]))
+  const prefixes = routes.filter(r => r.kind === 'prefix')
+  const server = createServer((req, res) => {
+    const pathname = new URL(req.url ?? '/', 'http://127.0.0.1').pathname
+    const handler = exact.get(pathname) ?? prefixes.find(r => pathname.startsWith(`${r.path}/`))?.handler
+    if (handler === undefined) { res.writeHead(404); res.end('no route'); return }
+    void handler(req, res)
+  })
+  await new Promise(resolve => server.listen(0, '127.0.0.1', resolve))
+  const port = server.address().port
+  /**
+   * Drive the route with a raw socket rather than `fetch`.
+   *
+   * WHY: the correct behaviour here is `res.destroy()` — the response headers
+   * for a 206 are already on the wire, so the only honest ending is a torn-down
+   * connection. `fetch` reports that as a rejected promise, which says nothing
+   * about whether the process survived. A raw socket reports "the connection
+   * ended" and lets the assertions below be about the real question.
+   */
+  const rawGet = (path, extraHeaders = '') => new Promise((resolve, reject) => {
+    const socket = net.connect(port, '127.0.0.1', () => {
+      socket.write(`GET ${path} HTTP/1.1\r\nHost: 127.0.0.1:${port}\r\nConnection: close\r\n${extraHeaders}\r\n`)
+    })
+    let received = ''
+    socket.setTimeout(5_000, () => { socket.destroy(); reject(new Error('the route never ended the connection')) })
+    socket.on('data', chunk => { received += chunk.toString('latin1') })
+    socket.on('error', reject)
+    socket.on('close', () => resolve(received))
+  })
+
+  // A read error that reaches no listener kills the process outright, so this
+  // listener is also what turns "the suite died" into a legible failure.
+  let escaped
+  const onEscape = error => { escaped = error }
+  process.on('uncaughtException', onEscape)
+  try {
+    // A Range GET is the shape a <video> element actually sends while seeking.
+    // Note the response is NOT asserted to carry a 206 line: the stream fails
+    // before any byte is written, so the headers never leave the buffer and the
+    // connection just ends. What must hold is that it ENDS — `rawGet` only
+    // resolves on socket close, and rejects on its 5s stall timeout — and that
+    // nothing escaped the route.
+    await rawGet('/api/dsh-imagegen/video/file/evicted.mp4', 'Range: bytes=0-63\r\n')
+    assert.equal(escaped, undefined, 'the range read error never escaped the route')
+
+    // And the plain GET path, which is the other bare pipe.
+    await rawGet('/api/dsh-imagegen/video/file/evicted.mp4')
+    assert.equal(escaped, undefined, 'neither pipe lets the error escape')
+  } finally {
+    process.off('uncaughtException', onEscape)
+    await new Promise(resolve => server.close(resolve))
+    rmSync(gone, { force: true })
   }
 })
 

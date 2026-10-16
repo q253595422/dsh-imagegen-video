@@ -1247,6 +1247,8 @@ mkdirSync(skillRunRoot, { recursive: true })
 const canvasDocuments = new Map()
 const canvasFiles = new Map()
 const canvasBlobs = new Map()
+/** The same self-executing extensions `CanvasStore.putFile` refuses. */
+const BLOCKED_FILE_EXTENSIONS = new Set(['exe', 'js', 'mjs', 'cjs', 'sh', 'bash', 'bat', 'cmd', 'ps1', 'html', 'htm', 'xhtml', 'svg'])
 let canvasFileSeq = 0
 let chatCalls = 0
 let chatReply = 'polished text by model'
@@ -1288,9 +1290,20 @@ const canvasBackend = {
     if (blob === undefined) throw new Error(`missing asset ${ref.assetId}`)
     writeFileSync(targetPath, blob.data)
   },
-  async putFile(input) { return recordCanvasFile(input.data, input.mime, input.name) },
+  async putFile(input) {
+    // Mirrors `CanvasStore.putFile`'s refusals, so a check can stage an
+    // artifact the real store would reject (blocked extension, size cap).
+    const name = String(input.name)
+    const extension = name.includes('.') ? name.split('.').pop().toLowerCase() : ''
+    if (BLOCKED_FILE_EXTENSIONS.has(extension)) throw new Error(`出于安全考虑，不支持上传 .${extension} 文件`)
+    if (input.data.byteLength > 50 * 1024 * 1024) throw new Error('文件超过 50MB 上限')
+    return recordCanvasFile(input.data, input.mime, name)
+  },
 }
 let heavyRunsStarted = 0
+/** Extra artifacts the fake heavy agent writes on top of `deck.pptx`, keyed by
+ *  file name. A check sets this to stage an unpublishable artifact. */
+let heavyArtifacts = []
 /** Isolated skill library root for the install/remove cases. */
 const skillLibraryRoot = mkdtempSync(join(tmpdir(), 'dsh-imagegen-smoke-skills-'))
 /** Isolated local skill root the canvas registry adapter falls back to. */
@@ -1336,6 +1349,9 @@ canvasSkillRunner.attach({
           const outputDir = join(options.cwd, 'output')
           mkdirSync(outputDir, { recursive: true })
           writeFileSync(join(outputDir, 'deck.pptx'), Buffer.from('pptx-bytes'))
+          // Extra artifacts a check may ask for — used to prove that one
+          // unpublishable file does not take the rest of the run down with it.
+          for (const [name, bytes] of heavyArtifacts) writeFileSync(join(outputDir, name), bytes)
         },
         cancel() {},
         async dispose() {},
@@ -2650,6 +2666,47 @@ await check('C11d heavy skills refuse to start without the agent runtime, then p
   assert.match(String(produced.metadata.asset.name), /\.pptx$/)
 })
 
+await check('C11d2 an unpublishable artifact is skipped, not a lost run', async () => {
+  const created = await post('/api/dsh-imagegen/canvas/create', { title: 'deck-with-junk' })
+  const document = created.body.document
+  const imageNode = {
+    id: 'node-image-2', type: 'image', title: 'slide-1', x: 0, y: 0, width: 240, height: 240,
+    metadata: {
+      asset: { assetId: 'img-2', url: '/api/dsh-imagegen/canvas/asset/' + 'b'.repeat(64) + '.png', mime: 'image/png', bytes: pngBytes.length, width: 1, height: 1, origin: 'upload', kind: 'image', name: 'img-2.png' },
+      status: 'success',
+    },
+  }
+  canvasDocuments.set(document.id, { ...document, nodes: [imageNode] })
+  canvasBlobs.set('img-2.png', { data: pngBytes, mime: 'image/png' })
+
+  // A skill that writes an executable-shaped artifact beside its real one: the
+  // store refuses the `.svg`, and before the per-file catch that refusal
+  // unwound the whole run — the deck was thrown away and the task failed.
+  heavyArtifacts = [['chart.svg', Buffer.from('<svg/>', 'utf8')]]
+  try {
+    const run = await post('/api/dsh-imagegen/canvas/skills/run', {
+      canvasId: document.id,
+      skillId: 'ppt.fromImages',
+      nodeIds: ['node-image-2'],
+    })
+    assert.equal(run.body.ok, true, JSON.stringify(run.body))
+    const taskId = run.body.task.id
+    let snapshot = run.body.task
+    for (let attempt = 0; attempt < 200 && snapshot.status !== 'completed' && snapshot.status !== 'failed'; attempt += 1) {
+      await new Promise(resolve => setTimeout(resolve, 25))
+      snapshot = (await post('/api/dsh-imagegen/canvas/skills/task', { taskId })).body.task
+    }
+    assert.equal(snapshot.status, 'completed', JSON.stringify(snapshot))
+    const names = snapshot.output.nodes.filter(node => node.type === 'file').map(node => String(node.metadata.asset.name))
+    assert.deepEqual(names, ['deck.pptx'], `the good artifact still landed: ${JSON.stringify(names)}`)
+    const skipped = snapshot.output.warnings.find(line => line.includes('chart.svg'))
+    assert.ok(skipped !== undefined, `the skipped artifact is reported: ${JSON.stringify(snapshot.output.warnings)}`)
+    assert.match(skipped, /chart\.svg/)
+  } finally {
+    heavyArtifacts = []
+  }
+})
+
 await check('C11e an unknown skill id and a missing canvas fail with copy, not a crash', async () => {
   const unknown = await post('/api/dsh-imagegen/canvas/skills/run', {
     canvasId: 'nope', skillId: 'skill:does-not-exist', nodeIds: [],
@@ -3854,6 +3911,12 @@ await check('E1 client apply mounts the sidebar entry and studio (jsdom)', async
    *  completion-triggered refetch ran (a finished clip used to stay invisible
    *  until the whole app was reloaded). */
   let videoHistoryListCalls = 0
+  /** How many times the client asked for the video task queue. Counted so a
+   *  check can prove the video tab's submit/cancel goes through the PARENT's
+   *  single poller (one extra read) instead of the tab starting its own. */
+  let videoTaskListCalls = 0
+  /** Ids the video tab asked the host to cancel, in order. */
+  const videoCancellations = []
   /** Canvas video runs, recorded so the canvas test can assert the request. */
   const canvasVideoSubmissions = []
   /** Assets the canvas uploaded during a frame grab. */
@@ -3909,6 +3972,17 @@ await check('E1 client apply mounts the sidebar entry and studio (jsdom)', async
     createdAt: 1,
     updatedAt: 1,
   }
+  /** A second canvas the project switch can land on. */
+  const canvasDocument2 = {
+    ...canvasDocument,
+    id: 'canvas-two',
+    title: 'Second canvas',
+    nodes: [{ id: 'node-second', type: 'text', title: 'second', x: 0, y: 0, width: 280, height: 150, metadata: { text: 'second canvas' } }],
+  }
+  /** Saves the check parks mid-flight, so a superseded answer can be released
+   *  on demand instead of racing a real timer. */
+  const heldSaves = []
+  let heldSaveBudget = 0
   const fetchStub = async (input, init) => {
     const path = String(input)
     requestPaths.push(path)
@@ -3930,6 +4004,7 @@ await check('E1 client apply mounts the sidebar entry and studio (jsdom)', async
       }
     }
     if (path.endsWith('/video/tasks/list')) {
+      videoTaskListCalls += 1
       // Completed tasks expose the served clip (mirroring the host summary), so
       // the canvas can fill its placeholder without a second round trip.
       const tasks = videoTasks.map(task => task.status === 'completed'
@@ -3988,6 +4063,13 @@ await check('E1 client apply mounts the sidebar entry and studio (jsdom)', async
       if (body.canvas !== undefined) canvasVideoSubmissions.push(body)
       const task = { id: `vt-${videoSubmissions.length}`, request: body, status: 'queued', createdAt: Date.now() }
       videoTasks.push(task)
+      return { ok: true, json: async () => ({ ok: true, task }) }
+    }
+    if (path.endsWith('/video/tasks/cancel')) {
+      const body = JSON.parse(init.body)
+      videoCancellations.push(body.id)
+      const task = videoTasks.find(entry => entry.id === body.id)
+      if (task !== undefined) task.status = 'cancelled'
       return { ok: true, json: async () => ({ ok: true, task }) }
     }
     if (path.endsWith('/settings/mutate')) {
@@ -4063,14 +4145,23 @@ await check('E1 client apply mounts the sidebar entry and studio (jsdom)', async
       }
     }
     if (path.endsWith('/canvas/list')) {
-      return { ok: true, json: async () => ({ ok: true, projects: [{ id: canvasDocument.id, title: canvasDocument.title, revision: canvasDocument.revision, nodeCount: 0, createdAt: 1, updatedAt: 1 }] }) }
+      const summaryOfCanvas = doc => ({ id: doc.id, title: doc.title, revision: doc.revision, nodeCount: doc.nodes.length, createdAt: 1, updatedAt: 1 })
+      return { ok: true, json: async () => ({ ok: true, projects: [summaryOfCanvas(canvasDocument), summaryOfCanvas(canvasDocument2)] }) }
     }
     if (path.endsWith('/canvas/read')) {
-      return { ok: true, json: async () => ({ ok: true, document: canvasDocument }) }
+      const requested = JSON.parse(init.body).id
+      const found = requested === canvasDocument2.id ? canvasDocument2 : canvasDocument
+      return { ok: true, json: async () => ({ ok: true, document: found }) }
     }
     if (path.endsWith('/canvas/save')) {
       const payload = JSON.parse(init.body)
       canvasSaves.push(payload.document)
+      // Recorded before the hold: a check can see the request landed while its
+      // answer is still parked.
+      if (heldSaveBudget > 0) {
+        heldSaveBudget -= 1
+        await new Promise(resolve => { heldSaves.push(resolve) })
+      }
       return { ok: true, json: async () => ({ ok: true, document: { ...payload.document, revision: payload.document.revision + 1 } }) }
     }
     if (path.endsWith('/canvas/file/preview')) {
@@ -4778,6 +4869,9 @@ await check('E1 client apply mounts the sidebar entry and studio (jsdom)', async
     videoPrompt.dispatchEvent(new jsdomWindow.Event('input', { bubbles: true }))
     await new Promise(resolve => setTimeout(resolve, 30))
     assert.equal(videoGenerate.disabled, false, 'video generate enables once a prompt exists')
+    // Baseline for the check below: the tab must make the PARENT re-read the
+    // queue rather than fetching a list of its own.
+    const taskListCallsBeforeSubmit = videoTaskListCalls
     videoGenerate.click()
     await new Promise(resolve => setTimeout(resolve, 50))
     assert.equal(videoSubmissions.length, 1, 'submitting reached the video route exactly once')
@@ -4786,6 +4880,35 @@ await check('E1 client apply mounts the sidebar entry and studio (jsdom)', async
     assert.equal(videoSubmissions[0].mode, 'text', 'text-to-video is the default mode')
     assert.equal(videoSubmissions[0].seconds, 5, 'the default duration is sent')
     assert.equal(videoSubmissions[0].resolution, '720P', 'the default resolution is sent')
+
+    // --- the studio tab refreshes the queue the parent owns (F11) ---
+    // The parent supplies `tasks` and its own single poller, so the tab has to
+    // push its mutation UP: reading a list of its own would fork the two views
+    // (and the canvas reads the parent's copy). Without the upward refresh a
+    // render the user just submitted stays invisible for a full poll cycle.
+    const submittedAt = Date.now()
+    assert.ok(
+      await waitFor(() => videoTaskListCalls > taskListCallsBeforeSubmit, 1500),
+      `submitting asks the parent to re-read the queue (reads: ${taskListCallsBeforeSubmit} -> ${videoTaskListCalls})`,
+    )
+    assert.ok(Date.now() - submittedAt < 1500, 'the refresh does not wait for the next poll tick')
+    await waitFor(() => view.querySelector('li[data-status="queued"]') !== null, 1500)
+    const queuedRow = view.querySelector('li[data-status="queued"]')
+    // A row existing at all is the proof the tab renders the PARENT's list:
+    // in controlled mode the tab's own `localTasks` is never rendered.
+    assert.ok(queuedRow !== null, 'the submitted render appears on the parent-owned list without waiting for a tick')
+
+    // Cancelling travels the same way, so the row settles immediately too.
+    const cancelCallsBefore = videoCancellations.length
+    const cancelButton = [...queuedRow.querySelectorAll('button')].find(button => button.textContent === '取消')
+    assert.ok(cancelButton !== undefined, 'a queued task offers cancel')
+    cancelButton.click()
+    assert.ok(await waitFor(() => videoCancellations.length > cancelCallsBefore, 1500), 'cancel reaches the host')
+    assert.equal(videoCancellations[0], 'vt-1', 'cancel names the submitted task')
+    assert.ok(
+      await waitFor(() => view.querySelector('li[data-status="cancelled"]') !== null, 1500),
+      'the row shows the cancelled state on the parent-owned list',
+    )
 
     // The theme toggle must clear a frame error surfaced by the tab, so go back
     // to the image mode and confirm the composer returns unchanged.
@@ -4947,6 +5070,66 @@ await check('E1 client apply mounts the sidebar entry and studio (jsdom)', async
       while (!predicate() && Date.now() < deadline) await new Promise(resolve => setTimeout(resolve, 25))
       return predicate()
     }
+
+    // ------------------------------- autosave across a project switch (F8/F9)
+    // Two promises the workspace makes, both driven here through the real UI —
+    // the project selector and the title field — with the save answer parked so
+    // the window is deterministic instead of a race against the 650 ms debounce.
+    /** Open the project menu and pick the first entry whose title starts with
+     *  `label` — the canvas keeps whatever title the check last typed into it. */
+    const switchProject = async label => {
+      const trigger = view.querySelector('[data-canvas-workspace] [data-dsh-select][aria-label="画布项目"]')
+      assert.ok(trigger !== null, 'the project selector is mounted')
+      trigger.dispatchEvent(new jsdomWindow.MouseEvent('click', { bubbles: true }))
+      const wanted = label.toLowerCase()
+      const deadline = Date.now() + 1500
+      let option
+      while (option === undefined && Date.now() < deadline) {
+        option = [...jsdomDocument.querySelectorAll('[data-option-index]')]
+          .find(button => (button.textContent ?? '').trim().toLowerCase().startsWith(wanted))
+        if (option === undefined) await new Promise(resolve => setTimeout(resolve, 20))
+      }
+      assert.ok(option !== undefined, `the project menu offers ${label}: ${JSON.stringify([...jsdomDocument.querySelectorAll('[data-option-index]')].map(button => button.textContent))}`)
+      option.dispatchEvent(new jsdomWindow.MouseEvent('click', { bubbles: true }))
+    }
+    /** Type a new canvas title through the real rename field, then commit it. */
+    const renameCanvas = async title => {
+      view.querySelector('[data-canvas-workspace] button[title="双击重命名"]').dispatchEvent(new jsdomWindow.MouseEvent('dblclick', { bubbles: true }))
+      await waitForSelector(view, '[data-canvas-workspace] input[aria-label="重命名画布"]')
+      const field = view.querySelector('[data-canvas-workspace] input[aria-label="重命名画布"]')
+      nativeInputSetter.call(field, title)
+      field.dispatchEvent(new jsdomWindow.Event('input', { bubbles: true }))
+      field.dispatchEvent(new jsdomWindow.KeyboardEvent('keydown', { key: 'Enter', bubbles: true }))
+      await new Promise(resolve => setTimeout(resolve, 20))
+    }
+
+    // F9: an edit made just before the switch is written BEFORE the canvas is
+    // replaced. The autosave effect's cleanup cancels the pending debounce, so
+    // without the flush this edit never leaves the browser at all.
+    await switchProject('second')
+    assert.ok(await waitUntil(() => view.querySelector('[data-node-id="node-second"]') !== null), 'the second canvas is on screen')
+    await renameCanvas('second edited')
+    await switchProject('smoke')
+    assert.ok(
+      await waitUntil(() => canvasSaves.some(saved => saved.id === 'canvas-two' && saved.title === 'second edited')),
+      'the pending edit was flushed before the canvas was replaced',
+    )
+    assert.ok(await waitUntil(() => view.querySelector('[data-node-id="node-image"]') !== null), 'the fixture canvas is back on screen')
+
+    // F8: an answer that arrives after the user left belongs to a canvas that is
+    // no longer on screen. Letting it through put the previous canvas back —
+    // with its stale revision — while the selector still showed the new one.
+    heldSaveBudget = 1
+    await renameCanvas('smoke edited')
+    assert.ok(await waitUntil(() => heldSaves.length === 1, 3000), 'the first canvas save is in flight')
+    await switchProject('second')
+    assert.ok(await waitUntil(() => view.querySelector('[data-node-id="node-second"]') !== null), 'the switch landed while that answer was still parked')
+    heldSaves.splice(0).forEach(resolve => resolve())
+    await new Promise(resolve => setTimeout(resolve, 200))
+    assert.ok(view.querySelector('[data-node-id="node-second"]') !== null, 'a late answer for the canvas the user left is discarded')
+    assert.equal(view.querySelector('[data-node-id="node-image"]'), null, 'the left canvas does not come back on screen')
+    await switchProject('smoke')
+    assert.ok(await waitUntil(() => view.querySelector('[data-node-id="node-image"]') !== null), 'the fixture canvas is restored for the checks that follow')
 
 
     // ------------------------------------------- unified history (clips + images)
