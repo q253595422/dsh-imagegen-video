@@ -115,6 +115,6 @@
     "test:compose": "node scripts/smoke-compose.mjs",
     "test:picker": "node scripts/smoke-video-picker.mjs",
     "test:defect-b": "node scripts/verify-b-defect.mjs",
-    "test:negative": "node scripts/verify-negative.mjs contracts && node scripts/verify-negative.mjs smoke"
+    "test:negative": "node scripts/verify-negative.mjs contracts && node scripts/verify-negative.mjs smoke && node scripts/verify-negative.mjs video"
   }
 }

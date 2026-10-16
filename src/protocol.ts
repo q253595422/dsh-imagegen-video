@@ -120,6 +120,15 @@ export const TASK_API = {
 /** Reveal the host data directory (saved images) in the OS file manager. */
 export const DATA_FOLDER_API = '/api/dsh-imagegen/data-folder/open' as const
 
+/**
+ * Generation diagnostics (#38): the retained record of upstream attempts, so a
+ * failure can be explained after the fact instead of only being toasted once.
+ */
+export const DIAGNOSTICS_API = {
+  list: '/api/dsh-imagegen/diagnostics/list',
+  clear: '/api/dsh-imagegen/diagnostics/clear',
+} as const
+
 /** Probe the configured S3-compatible object storage. */
 export const STORAGE_API = {
   test: '/api/dsh-imagegen/storage/test',
@@ -1426,6 +1435,43 @@ export interface GenerationTask extends EcommerceTaskMeta {
  */
 export interface GenerationTaskSummary extends Omit<GenerationTask, 'result'> {
   resultAvailable: boolean
+}
+
+/** What one upstream attempt was doing (see diagnostics-store.ts). */
+export type DiagnosticPhase =
+  // image chain
+  | 'generate' | 'fetch-result' | 'poll-task' | 'chat' | 'config'
+  // video chain (added by this fork). Video is a submit → poll → download
+  // pipeline rather than one synchronous call, so each leg is its own phase:
+  // "the render never started" and "the status endpoint stopped answering" are
+  // different problems, and the image phases cannot express that difference.
+  | 'video-submit' | 'video-poll' | 'video-download'
+
+/**
+ * One retained upstream attempt (#38). Every string is already redacted
+ * host-side, so the panel may render and copy these freely.
+ */
+export interface DiagnosticEntry {
+  id: string
+  at: number
+  phase: DiagnosticPhase
+  channel: string
+  model: string
+  mode: string
+  /** The exact URL called, query string stripped. */
+  url: string
+  method: string
+  status?: number
+  errorCode?: string
+  failureCode?: string
+  message: string
+  bodyExcerpt?: string
+  requestExcerpt?: string
+  requestBytes?: number
+  responseBytes?: number
+  durationMs: number
+  hadAuth: boolean
+  apiUrlFull?: boolean
 }
 /** GitHub Release update information shown by the client. */
 export interface UpdateInfo {

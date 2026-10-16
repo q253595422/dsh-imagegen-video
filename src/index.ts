@@ -348,6 +348,7 @@ export { createClipComposer, localVideoToolDirs } from './clip-compose.ts'
 export { isZipDirectory, readZipDirectory, readZipEntry } from './zip.ts'
 export { canvasStore, isBlockedFileName, fileKindOf, MAX_CANVAS_FILE_BYTES, mimeFromFileName, safeFileName } from './canvas-store.ts'
 export { checkForUpdate, clearUpdateCache, compareVersions, CURRENT_VERSION, installUpdate, isInstallableTarballUrl, profileFromProcess } from './updater.ts'
+export { clearDiagnostics, listDiagnostics, networkErrorFields, redactDiagnosticText, recordDiagnostic, DIAGNOSTIC_MAX, type DiagnosticEntry } from './diagnostics-store.ts'
 
 /** The branded settings namespace of this plugin (the card edits it). */
 export const ImageGenSettingsNamespace = settingsNamespaceCompat(IMAGEGEN_SETTINGS_NAMESPACE)

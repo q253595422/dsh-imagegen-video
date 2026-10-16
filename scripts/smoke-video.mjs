@@ -279,6 +279,7 @@ await check('V1g a transient status failure is retried, not failed', async () =>
 })
 
 await check('V1h a status endpoint that keeps failing gives up with its own error', async () => {
+  host.clearDiagnostics()
   const upstream = await startUpstream()
   upstream.state.script = {
     submit: { video_id: 'vid_dead', status: 'queued' },
@@ -290,7 +291,7 @@ await check('V1h a status endpoint that keeps failing gives up with its own erro
   try {
     await assert.rejects(
       () => generateVideo(
-        { apiUrl: upstream.base, apiKey: 'k' },
+        { apiUrl: upstream.base, apiKey: 'k', channelName: 'DeadStatus' },
         { mode: 'text', model: 'agnes-video-2.5-flash', prompt: 'p', aspectRatio: '16:9', resolution: '720P', seconds: 5 },
         { family: 'agnes' },
       ),
@@ -301,6 +302,21 @@ await check('V1h a status endpoint that keeps failing gives up with its own erro
   } finally {
     await upstream.close()
   }
+
+  // A status endpoint that failed the WHOLE budget is the archetypal "it just
+  // sat there" report. The single blip V1g retries is deliberately NOT recorded
+  // (writing every blip would bury this one), so the exhausted budget is the
+  // end of the story and has to be on the record, with the wire code and the
+  // task it was polling (#38, video parity).
+  const exhausted = host.listDiagnostics().find(entry => entry.channel === 'DeadStatus')
+  assert.ok(exhausted !== undefined, 'the exhausted poll retry budget leaves a diagnostic entry')
+  assert.equal(exhausted.phase, 'video-poll', 'the phase says the render started')
+  assert.equal(exhausted.failureCode, 'video-status-failed', 'a spent budget is recorded as a failure, not as transient')
+  assert.equal(exhausted.status, 503, 'the status the endpoint kept answering with is kept')
+  assert.equal(exhausted.method, 'GET')
+  assert.match(exhausted.url, /\/v1\/videos\/vid_dead$/, 'the entry names the task that was being polled')
+  assert.match(exhausted.requestExcerpt ?? '', /vid_dead/, 'the record names the polled task id')
+  assert.match(exhausted.requestExcerpt ?? '', /retries/, 'the record says the budget was spent')
 })
 
 // ---------------------------------------------------------------------- V2/V3
@@ -781,6 +797,131 @@ await check('V8 a clip deleted between stat and stream open ends the request, no
     await new Promise(resolve => server.close(resolve))
     rmSync(gone, { force: true })
   }
+})
+
+await check('V9 a failed video submit is explainable in the SAME diagnostics buffer (#38 parity)', async () => {
+  // Upstream's #38 gave the image chain a retained record of every attempt.
+  // Video is a different pipeline (submit → poll → download), so a user whose
+  // images work and whose videos do not had nothing to look at. This asserts
+  // the parity: the same buffer, with the phase naming which leg failed.
+  host.clearDiagnostics()
+
+  // 1. Refused connection: no response at all, so the URL and the socket code
+  //    are the only evidence the request ever left the process.
+  const closedPort = await (async () => {
+    const probe = createServer(() => {})
+    await new Promise(resolve => probe.listen(0, '127.0.0.1', resolve))
+    const port = probe.address().port
+    await new Promise(resolve => probe.close(resolve))
+    return port
+  })()
+  await assert.rejects(
+    generateVideo(
+      { apiUrl: `http://127.0.0.1:${closedPort}/v1`, apiKey: 'sk-video-secret', channelName: 'MyVideoChannel' },
+      { mode: 'text', model: 'agnes-video-2.5-flash', prompt: 'a cat', aspectRatio: '16:9', resolution: '720P', seconds: 5 },
+      { family: 'agnes' },
+    ),
+  )
+  const refused = host.listDiagnostics().find(entry => entry.phase === 'video-submit')
+  assert.ok(refused !== undefined, 'a refused video submit leaves a diagnostic entry')
+  assert.equal(refused.url, `http://127.0.0.1:${closedPort}/v1/videos`, 'the entry records the FINAL submit URL')
+  assert.equal(refused.channel, 'MyVideoChannel', 'the entry names the channel so it maps to a settings row')
+  assert.equal(refused.model, 'agnes-video-2.5-flash')
+  assert.equal(refused.mode, 'text')
+  assert.equal(refused.method, 'POST')
+  assert.equal(refused.failureCode, 'video-unreachable')
+  assert.equal(refused.hadAuth, true, 'the entry records THAT a key was sent, never its value')
+  assert.equal(refused.status, undefined, 'a request that never got a response carries no status')
+  assert.ok(refused.requestBytes > 0, 'the entry records the submit body size')
+  assert.equal(refused.message.includes('sk-video-secret'), false, 'the key never reaches the message')
+
+  // 2. A non-2xx submit: the status and the gateway's own words have to survive.
+  const bad = createServer((_req, res) => {
+    res.writeHead(400, { 'content-type': 'application/json' })
+    res.end(JSON.stringify({ error: { message: 'unsupported aspect_ratio' }, request_id: 'vid_req_9' }))
+  })
+  await new Promise(resolve => bad.listen(0, '127.0.0.1', resolve))
+  const badPort = bad.address().port
+  try {
+    await assert.rejects(
+      generateVideo(
+        { apiUrl: `http://127.0.0.1:${badPort}/v1`, apiKey: 'k', channelName: 'BadVideo' },
+        { mode: 'text', model: 'agnes-video-2.5-flash', prompt: 'a dog', aspectRatio: '16:9', resolution: '720P', seconds: 5 },
+        { family: 'agnes' },
+      ),
+    )
+  } finally {
+    await new Promise(resolve => bad.close(resolve))
+  }
+  const rejected = host.listDiagnostics().find(entry => entry.channel === 'BadVideo')
+  assert.ok(rejected !== undefined, 'a rejected video submit leaves a diagnostic entry')
+  assert.equal(rejected.phase, 'video-submit')
+  assert.equal(rejected.status, 400, 'the upstream status is recorded')
+  assert.equal(rejected.failureCode, 'video-submit-failed')
+  assert.match(rejected.message, /unsupported aspect_ratio/, 'the upstream message reaches the record')
+  assert.match(rejected.bodyExcerpt ?? '', /vid_req_9/, 'the raw upstream body (with its request id) survives alongside parsing')
+  assert.match(rejected.requestExcerpt ?? '', /a dog/, 'the request excerpt keeps the prompt')
+  assert.equal(
+    (rejected.requestExcerpt ?? '').includes('data:image'),
+    false,
+    'reference images never enter the buffer as payloads',
+  )
+})
+
+await check('V9b the poll and download legs are recorded under their own phases', async () => {
+  host.clearDiagnostics()
+
+  // A render that STARTS and then fails is a different problem from a submit
+  // that never landed, and the phase is what tells them apart.
+  const upstream = await startUpstream()
+  upstream.state.script = {
+    submit: { video_id: 'vid_fail_1', status: 'queued' },
+    polls: [{ status: 'failed', error: { message: 'prompt rejected by the safety filter' } }],
+  }
+  try {
+    await assert.rejects(
+      generateVideo(
+        { apiUrl: upstream.base, apiKey: 'k', channelName: 'PollFail' },
+        { mode: 'text', model: 'agnes-video-2.5-flash', prompt: 'p', aspectRatio: '16:9', resolution: '720P', seconds: 5 },
+        { family: 'agnes' },
+      ),
+    )
+  } finally {
+    await upstream.close()
+  }
+  const polled = host.listDiagnostics().find(entry => entry.channel === 'PollFail')
+  assert.ok(polled !== undefined, 'a provider-side render failure leaves a diagnostic entry')
+  assert.equal(polled.phase, 'video-poll', 'the phase says the render started and the poll reported the failure')
+  assert.equal(polled.failureCode, 'video-failed')
+  assert.match(polled.message, /safety filter/, 'the provider\'s own reason is kept')
+  assert.equal(polled.method, 'GET')
+  assert.match(polled.url, /\/v1\/videos\/vid_fail_1$/, 'the status URL names the task that was being polled')
+  assert.match(polled.requestExcerpt ?? '', /vid_fail_1/, 'the record names the polled task id')
+
+  // The third leg: the status succeeded but the bytes did not. The clip usually
+  // comes from a CDN, so its address is the fact that settles it.
+  const cdn = await startUpstream()
+  cdn.state.script = {
+    submit: { video_id: 'vid_dl_1', status: 'queued' },
+    polls: [{ status: 'completed', metadata: { url: `http://127.0.0.1:${cdn.port}/gone/nothing` } }],
+  }
+  try {
+    await assert.rejects(
+      generateVideo(
+        { apiUrl: cdn.base, apiKey: 'k', channelName: 'DownloadFail' },
+        { mode: 'text', model: 'agnes-video-2.5-flash', prompt: 'p', aspectRatio: '16:9', resolution: '720P', seconds: 5 },
+        { family: 'agnes' },
+      ),
+    )
+  } finally {
+    await cdn.close()
+  }
+  const download = host.listDiagnostics().find(entry => entry.channel === 'DownloadFail')
+  assert.ok(download !== undefined, 'a failed clip download leaves a diagnostic entry')
+  assert.equal(download.phase, 'video-download', 'the download leg has its own phase')
+  assert.equal(download.failureCode, 'video-download-failed')
+  assert.equal(download.status, 404)
+  assert.match(download.url, /\/gone\/nothing$/, 'the entry records the address the bytes were fetched from')
 })
 
 console.log(results.join('\n'))

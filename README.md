@@ -184,6 +184,12 @@ dsh plugin --profile web add ./q253595422-dsh-imagegen-video-1.7.5.tgz
 - 内置轻量技能会把所选内容发送给配置的聊天模型。图片转 PPT 的 PPTX 在本地生成，由原生文字与基础矢量形状组成，不会把整张原图直接铺成幻灯片背景；结果需人工检查。
 - 外部重任务技能可能读写本机文件并执行命令；运行前请确认技能可信、输入内容可共享。
 - 生图会消耗上游 API 额度；请人工检查生成结果。不要把 API 密钥贴到 Issue、日志或截图中。
+- **诊断日志**（两个工作台右上角）：失败的上游请求会留在本机内存里
+  （最多 200 条，重启即清空，不写磁盘，不产生后台请求），
+  可一键复制后贴进 Issue。记录含实际请求地址、HTTP 状态、网络错误码、耗时、
+  体积与上游原始响应；**密钥已在写入前脱敏**（`Bearer` 令牌、查询串密钥、
+  内联 base64 均替换为占位符，API Key 只记「是否发送」）。
+  生图与生视频写同一个缓冲：视频的提交 / 轮询 / 下载三条腿各自标记。
 
 <a id="upstream"></a>
 ## 上游与授权
@@ -191,6 +197,11 @@ dsh plugin --profile web add ./q253595422-dsh-imagegen-video-1.7.5.tgz
 本仓库是 [dickpy/dsh-imagegen](https://github.com/dickpy/dsh-imagegen) 的衍生版，按
 [Apache-2.0](./LICENSE) 发布。上游的版权与来源见 [NOTICE](./NOTICE)；本仓库相对
 上游 v1.6.8 的全部改动逐条列在 [CHANGELOG.md](./CHANGELOG.md)。
+
+本仓库已并入上游 **v1.6.9** 的功能（失败可查的诊断日志、生图面板切换修复）。
+两边仓库**没有共同祖先**（本仓库的基线是 v1.6.8 的 squash），
+所以合并不是 `git merge` 而是逐文件移植；上游的版本号也没跟，
+本仓库自己的版本线在前（当前 v1.7.5）。
 
 **这个衍生版做了什么**：上游只有生图。本仓库在上游源码上补齐了生视频链路
 （异步提交/轮询、视频渠道目录、视频标签页、Agent 视频工具），并把视频接进
@@ -209,8 +220,14 @@ dsh plugin --profile web add ./q253595422-dsh-imagegen-video-1.7.5.tgz
 pnpm run typecheck
 pnpm run build
 pnpm run watch
-node scripts/smoke.mjs
+pnpm test
+node scripts/smoke-video.mjs
+pnpm run test:negative
 ```
+
+`pnpm test` 跑全部九套离线检查；`pnpm run test:negative` 做反向验证——
+把每处修复对应的缺陷重新注回**仓库副本**，要求对应检查变红，
+工作树不被改动。
 
 本地打包并安装到 DSH 验收：
 

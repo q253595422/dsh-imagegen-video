@@ -26,6 +26,14 @@ import {
   normalizeVideoResolution,
   type VideoCatalogEntry,
 } from './video-model-catalog.ts'
+import {
+  bodyByteLength,
+  excerptOf,
+  networkErrorFields,
+  readResponseText,
+  recordDiagnostic,
+  type DiagnosticPhase,
+} from './diagnostics-store.ts'
 import type { VideoGenerateRequest, VideoMode } from './protocol.ts'
 
 /** A video generation failure with a user-presentable message. */
@@ -38,12 +46,22 @@ export class VideoGenError extends Error {
    * against the same deadline, everything else is surfaced as-is.
    */
   readonly retryable: boolean
+  /**
+   * The HTTP status, when the failure came with one.
+   *
+   * Carried on the error because the poll loop only ever sees the error, never
+   * the response: a retryable status that does NOT recover still has to be
+   * recorded with its wire code, and "503 five times running" and "429 five
+   * times running" are different conversations (#38, video parity).
+   */
+  readonly status?: number
 
-  constructor(message: string, code = 'video-failed', retryable = false) {
+  constructor(message: string, code = 'video-failed', retryable = false, status?: number) {
     super(message)
     this.name = 'VideoGenError'
     this.code = code
     this.retryable = retryable
+    this.status = status
   }
 }
 
@@ -228,32 +246,207 @@ function errorTextOf(payload: Record<string, unknown>, fallback: string): string
   return fallback
 }
 
-/** Read a JSON body, tolerating a non-JSON error page. */
-async function readJsonSafe(response: Response): Promise<Record<string, unknown>> {
-  const text = await response.text()
-  if (text.trim() === '') return {}
+/**
+ * Read a JSON body AND keep its raw text for the diagnostics record.
+ *
+ * The body can only be consumed once, so the two consumers share one read:
+ * parsing needs the RAW text, and the record needs a redacted excerpt of the
+ * same text. Reading it twice would silently return an empty excerpt for every
+ * non-2xx response, which is exactly the case the record exists for.
+ */
+async function readJsonWithText(response: Response): Promise<{ payload: Record<string, unknown>; text: string }> {
+  const text = await readResponseText(response)
+  if (text.trim() === '') return { payload: {}, text }
   try {
     const parsed: unknown = JSON.parse(text)
-    return parsed !== null && typeof parsed === 'object' ? parsed as Record<string, unknown> : {}
+    return {
+      payload: parsed !== null && typeof parsed === 'object' ? parsed as Record<string, unknown> : {},
+      text,
+    }
   } catch {
-    return { message: text.slice(0, 300) }
+    return { payload: { message: text.slice(0, 300) }, text }
   }
 }
 
-/** POST one submit request and return the parsed JSON body. */
-async function postJson(url: string, apiKey: string, body: Record<string, unknown>, signal: AbortSignal): Promise<Record<string, unknown>> {
-  const response = await fetch(url, {
-    method: 'POST',
-    headers: {
-      'content-type': 'application/json',
-      authorization: `Bearer ${apiKey}`,
-    },
-    body: JSON.stringify(body),
-    signal,
+/** The URL actually handed to fetch, with any query string dropped (#38). */
+function displayUrl(url: string): string {
+  try {
+    const parsed = new URL(url)
+    return `${parsed.origin}${parsed.pathname}`
+  } catch {
+    return url.split('?')[0] ?? url
+  }
+}
+
+/**
+ * One leg of the video pipeline, ready to be recorded.
+ *
+ * Video is submit → poll → download rather than a single call, so the phase is
+ * what tells the reader WHICH leg failed: a render that never started looks
+ * nothing like a status endpoint that stopped answering, and the panel has to
+ * say which one happened (#38, video parity).
+ */
+interface VideoAttempt {
+  phase: DiagnosticPhase
+  channel: string
+  model: string
+  mode: string
+  url: string
+  method: string
+  hadAuth: boolean
+  apiUrlFull?: boolean
+  requestBytes?: number
+  startedAt: number
+}
+
+/** Build the attempt context for one video request. */
+function videoAttempt(
+  upstream: VideoUpstreamConfig,
+  request: VideoGenerateRequest,
+  model: string,
+  phase: DiagnosticPhase,
+  url: string,
+  method: string,
+  body?: BodyInit,
+): VideoAttempt {
+  return {
+    phase,
+    channel: upstream.channelName?.trim() || '默认渠道',
+    model,
+    mode: request.mode,
+    url: displayUrl(url),
+    method,
+    // Never the key itself, only whether one was sent -- the record is meant to
+    // be pasted into a public issue.
+    hadAuth: upstream.apiKey.trim() !== '',
+    ...upstream.apiUrlFull === true ? { apiUrlFull: true } : {},
+    ...body === undefined ? {} : { requestBytes: bodyByteLength(body) },
+    startedAt: Date.now(),
+  }
+}
+
+/**
+ * Record one failed video attempt against the shared diagnostics buffer.
+ *
+ * The same buffer the image chain writes to: the panel is one surface, and a
+ * user whose image call works and whose video call does not must be able to see
+ * both in one place.
+ */
+function recordVideoFailure(attempt: VideoAttempt, error: VideoGenError, options: {
+  status?: number
+  bodyExcerpt?: string
+  requestExcerpt?: string
+  responseBytes?: number
+} = {}): void {
+  const network = networkErrorFields(error)
+  recordDiagnostic({
+    phase: attempt.phase,
+    channel: attempt.channel,
+    model: attempt.model,
+    mode: attempt.mode,
+    url: attempt.url,
+    method: attempt.method,
+    // The error carries its own status when the caller did not pass one, which
+    // is how a retryable status recorded by the poll loop keeps its wire code.
+    status: options.status ?? error.status,
+    errorCode: network.errorCode,
+    failureCode: error.code,
+    message: error.message,
+    bodyExcerpt: options.bodyExcerpt,
+    requestExcerpt: options.requestExcerpt,
+    requestBytes: attempt.requestBytes,
+    responseBytes: options.responseBytes,
+    durationMs: Date.now() - attempt.startedAt,
+    hadAuth: attempt.hadAuth,
+    apiUrlFull: attempt.apiUrlFull,
   })
-  const payload = await readJsonSafe(response)
+}
+
+/**
+ * Record the poll loop giving up on a status endpoint that kept failing.
+ *
+ * Only the exhausted budget is recorded: one blip is not worth a row (writing
+ * every one would bury the failure that matters), but an endpoint that failed
+ * the whole budget is exactly the "it just sat there" report this buffer
+ * exists to answer. It is recorded as `video-status-failed` -- the transient
+ * reading is over by then -- while still naming the task and the retries.
+ */
+function recordPollExhausted(statusAttempt: VideoAttempt, error: unknown, taskId: string, family: string, retries: number): void {
+  const network = networkErrorFields(error)
+  recordVideoFailure(
+    statusAttempt,
+    new VideoGenError(
+      error instanceof VideoGenError
+        ? error.message
+        : `视频状态查询连续失败：${network.detail}${network.errorCode === undefined ? '' : ` [${network.errorCode}]`} · 请求地址 ${statusAttempt.url}`,
+      'video-status-failed',
+      false,
+      error instanceof VideoGenError ? error.status : undefined,
+    ),
+    { requestExcerpt: excerptOf({ taskId, family, retries }) },
+  )
+}
+
+/**
+ * The submit body worth keeping. Reference frames are data URLs measured in
+ * megabytes, so they are replaced by their count: the panel shows what was
+ * asked for without shipping the payload into the buffer.
+ */
+function videoRequestExcerpt(request: VideoGenerateRequest, body: Record<string, unknown>): string {
+  const shapes = ['image_url', 'image', 'images', 'first_frame', 'last_frame']
+  const shape: Record<string, unknown> = {}
+  for (const [key, value] of Object.entries(body)) {
+    if (shapes.includes(key)) {
+      shape[`${key}<omitted>`] = Array.isArray(value) ? value.length : 1
+    } else {
+      shape[key] = value
+    }
+  }
+  return excerptOf(shape) ?? ''
+}
+
+/** POST one submit request and return the parsed JSON body. */
+async function postJson(attempt: VideoAttempt, request: VideoGenerateRequest, url: string, apiKey: string, body: Record<string, unknown>, signal: AbortSignal): Promise<Record<string, unknown>> {
+  const excerpt = videoRequestExcerpt(request, body)
+  let response: Response
+  try {
+    response = await fetch(url, {
+      method: 'POST',
+      headers: {
+        'content-type': 'application/json',
+        authorization: `Bearer ${apiKey}`,
+      },
+      body: JSON.stringify(body),
+      signal,
+    })
+  } catch (error) {
+    // A rejected fetch means the request never reached the provider: the URL
+    // and the socket code are the only evidence, so both go into the message
+    // AND the record. A cancellation is the caller's own decision and is not a
+    // failure to explain, so it is passed through unrecorded.
+    if (signal.aborted) throw error
+    const network = networkErrorFields(error)
+    const failure = new VideoGenError(
+      `无法连接视频接口：${network.detail}${network.errorCode === undefined ? '' : ` [${network.errorCode}]`} · 请求地址 ${attempt.url}`,
+      'video-unreachable',
+    )
+    recordVideoFailure(attempt, failure, { requestExcerpt: excerpt })
+    throw failure
+  }
+  const { payload, text } = await readJsonWithText(response)
   if (!response.ok) {
-    throw new VideoGenError(errorTextOf(payload, `视频提交失败（HTTP ${response.status}）`), 'video-submit-failed')
+    const failure = new VideoGenError(
+      `${errorTextOf(payload, `视频提交失败（HTTP ${response.status}）`)}（HTTP ${response.status} · ${attempt.url}）`,
+      'video-submit-failed',
+    )
+    recordVideoFailure(attempt, failure, {
+      status: response.status,
+      requestExcerpt: excerpt,
+      // The raw body is what says WHY the gateway refused, so it is kept.
+      bodyExcerpt: excerptOf(text),
+      responseBytes: Buffer.byteLength(text, 'utf8'),
+    })
+    throw failure
   }
   return payload
 }
@@ -266,20 +459,34 @@ async function postJson(url: string, apiKey: string, body: Record<string, unknow
  * a render the provider is still working on. Every other status keeps the wire
  * code the route layer already reported.
  */
-async function getJson(url: string, apiKey: string, signal: AbortSignal): Promise<Record<string, unknown>> {
+async function getJson(attempt: VideoAttempt, url: string, apiKey: string, signal: AbortSignal): Promise<Record<string, unknown>> {
+  // A transport failure here is usually transient and the poll loop retries
+  // it, so it is judged (and, if the retries run out, recorded) THERE rather
+  // than here: recording every blip would bury the one failure that matters.
   const response = await fetch(url, {
     method: 'GET',
     headers: { authorization: `Bearer ${apiKey}` },
     signal,
   })
-  const payload = await readJsonSafe(response)
+  const { payload, text } = await readJsonWithText(response)
   if (!response.ok) {
     const retryable = RETRYABLE_STATUS.has(response.status)
-    throw new VideoGenError(
+    const failure = new VideoGenError(
       errorTextOf(payload, `视频状态查询失败（HTTP ${response.status}）`),
       retryable ? 'video-status-transient' : 'video-status-failed',
       retryable,
+      response.status,
     )
+    // A permanent status is the end of the render: record it now. A transient
+    // one is only recorded if the loop exhausts its retries.
+    if (!retryable) {
+      recordVideoFailure(attempt, failure, {
+        status: response.status,
+        bodyExcerpt: excerptOf(text),
+        responseBytes: Buffer.byteLength(text, 'utf8'),
+      })
+    }
+    throw failure
   }
   return payload
 }
@@ -389,6 +596,7 @@ function pollRetryDelayMs(retry: number): number {
 
 /** Poll one task until terminal or the family deadline passes. */
 async function pollUntilDone(
+  attempt: VideoAttempt,
   upstream: VideoUpstreamConfig,
   baseUrl: string,
   taskId: string,
@@ -398,21 +606,35 @@ async function pollUntilDone(
   const policy = POLL_POLICY[family] ?? POLL_POLICY.unknown!
   const deadline = Date.now() + policy.deadlineMs
   const statusUrl = `${baseUrl}/videos/${encodeURIComponent(taskId)}`
-  let attempt = 0
+  const statusAttempt: VideoAttempt = {
+    ...attempt,
+    phase: 'video-poll',
+    url: displayUrl(statusUrl),
+    method: 'GET',
+  }
+  let attemptCount = 0
   // Consecutive transient poll failures. A render takes minutes, so one 5xx or
   // a dropped connection from the status endpoint must not fail a task the
   // provider is still working on; the retries stay inside the family deadline.
   let transientRetries = 0
   while (Date.now() < deadline) {
-    await waitForPoll(pollDelayMs(policy, attempt), signal)
-    attempt += 1
+    await waitForPoll(pollDelayMs(policy, attemptCount), signal)
+    attemptCount += 1
     const budget = requestSignal(signal, SUBMIT_TIMEOUT_MS)
     try {
-      const payload = await getJson(statusUrl, upstream.apiKey, budget.signal)
+      const payload = await getJson(statusAttempt, statusUrl, upstream.apiKey, budget.signal)
       transientRetries = 0
       const outcome = readPoll(payload)
       if (outcome.kind === 'done') return { url: outcome.url, ...outcome.duration === undefined ? {} : { duration: outcome.duration }, ...outcome.poster === undefined ? {} : { poster: outcome.poster } }
-      if (outcome.kind === 'failed') throw new VideoGenError(outcome.message, 'video-failed')
+      if (outcome.kind === 'failed') {
+        // The provider ran the render and reported it failed: record the task
+        // id and its own words, which is the only place the cause exists.
+        const failure = new VideoGenError(outcome.message, 'video-failed')
+        recordVideoFailure(statusAttempt, failure, {
+          requestExcerpt: excerptOf({ taskId, family, ...payload }),
+        })
+        throw failure
+      }
     } catch (error) {
       // Cancellation is the caller's decision: pass it straight through.
       if (signal?.aborted === true) throw error
@@ -428,7 +650,13 @@ async function pollUntilDone(
           || (error instanceof DOMException && (error.name === 'TimeoutError' || error.name === 'AbortError'))
       if (!transient) throw error
       transientRetries += 1
-      if (transientRetries > MAX_POLL_TRANSIENT_RETRIES) throw error
+      if (transientRetries > MAX_POLL_TRANSIENT_RETRIES) {
+        // The loop is giving up on a status endpoint that keeps failing. This
+        // is the moment to record it: one transient blip is not worth a row,
+        // an exhausted retry budget is exactly what the user needs to see.
+        recordPollExhausted(statusAttempt, error, taskId, family, transientRetries)
+        throw error
+      }
       // Never spend the backoff past the family deadline: the retries are meant
       // to stay inside it, so a dead endpoint still ends in `video-timeout`
       // instead of running one more wait the deadline already passed.
@@ -439,11 +667,17 @@ async function pollUntilDone(
       budget.dispose()
     }
   }
-  throw new VideoGenError(`视频生成超时（已等待 ${Math.round(policy.deadlineMs / 60_000)} 分钟）`, 'video-timeout')
+  const timeout = new VideoGenError(`视频生成超时（已等待 ${Math.round(policy.deadlineMs / 60_000)} 分钟）`, 'video-timeout')
+  // A timeout is the most common "it just sat there" report, so the record
+  // carries which task was being polled and how far the polls got.
+  recordVideoFailure(statusAttempt, timeout, {
+    requestExcerpt: excerptOf({ taskId, family, polls: attemptCount, waitedMs: policy.deadlineMs }),
+  })
+  throw timeout
 }
 
 /** Download the finished clip, forwarding the key only to the API's origin. */
-async function downloadVideo(upstream: VideoUpstreamConfig, url: string, signal?: AbortSignal): Promise<VideoBytes> {
+async function downloadVideo(attempt: VideoAttempt, upstream: VideoUpstreamConfig, url: string, signal?: AbortSignal): Promise<VideoBytes> {
   const budget = requestSignal(signal, DOWNLOAD_TIMEOUT_MS)
   try {
     // The upstream Bearer key is only attached for the provider's own origin;
@@ -451,16 +685,36 @@ async function downloadVideo(upstream: VideoUpstreamConfig, url: string, signal?
     const headers: Record<string, string> = isSameOriginAsApi(url, upstream.apiUrl)
       ? { authorization: `Bearer ${upstream.apiKey}` }
       : {}
-    const response = await fetch(url, { headers, signal: budget.signal })
+    let response: Response
+    try {
+      response = await fetch(url, { headers, signal: budget.signal })
+    } catch (error) {
+      if (signal?.aborted === true) throw error
+      const network = networkErrorFields(error)
+      const failure = new VideoGenError(
+        `无法下载生成的视频：${network.detail}${network.errorCode === undefined ? '' : ` [${network.errorCode}]`} · 视频地址 ${attempt.url}`,
+        'video-download-failed',
+      )
+      recordVideoFailure(attempt, failure)
+      throw failure
+    }
     if (!response.ok) {
-      throw new VideoGenError(`无法下载生成的视频（HTTP ${response.status}）`, 'video-download-failed')
+      const failure = new VideoGenError(`无法下载生成的视频（HTTP ${response.status} · ${attempt.url}）`, 'video-download-failed')
+      recordVideoFailure(attempt, failure, { status: response.status })
+      throw failure
     }
     const buffer = Buffer.from(await response.arrayBuffer())
     if (buffer.byteLength === 0) {
-      throw new VideoGenError('生成的视频内容为空', 'video-download-failed')
+      const failure = new VideoGenError('生成的视频内容为空', 'video-download-failed')
+      recordVideoFailure(attempt, failure, { status: response.status, responseBytes: 0 })
+      throw failure
     }
     if (buffer.byteLength > MAX_VIDEO_BYTES) {
-      throw new VideoGenError('生成的视频超出了单文件体积上限', 'video-too-large')
+      const failure = new VideoGenError('生成的视频超出了单文件体积上限', 'video-too-large')
+      // The size is the whole point here: it is what says the URL returned
+      // something other than the clip that was asked for.
+      recordVideoFailure(attempt, failure, { status: response.status, responseBytes: buffer.byteLength })
+      throw failure
     }
     const contentType = response.headers.get('content-type')?.split(';')[0]?.trim()
     return { bytes: buffer, mime: videoMimeOf(contentType, url), sourceUrl: url }
@@ -573,21 +827,38 @@ export async function generateVideo(
   const baseUrl = upstream.apiUrl.replace(/\/+$/, '')
   const url = endpointUrl(upstream, baseUrl, '/videos')
   const body = submitBody(entry, family, request, references)
+  // The submit leg's own context: every failure from here to the task id is a
+  // "the render never started" report, which is a different problem from a
+  // render that started and then failed.
+  const submitAttempt = videoAttempt(upstream, request, model, 'video-submit', url, 'POST', JSON.stringify(body))
 
   const submitBudget = requestSignal(options.signal, SUBMIT_TIMEOUT_MS)
   let taskId = ''
   try {
-    const payload = await postJson(url, upstream.apiKey, body, submitBudget.signal)
+    const payload = await postJson(submitAttempt, request, url, upstream.apiKey, body, submitBudget.signal)
     taskId = taskIdOf(payload)
     if (taskId === '') {
-      throw new VideoGenError(errorTextOf(payload, '视频接口未返回任务 ID'), 'video-submit-failed')
+      // A 2xx that carries no task id is just as unrecoverable as a rejection,
+      // and the body is the only place the provider explains itself.
+      const failure = new VideoGenError(errorTextOf(payload, '视频接口未返回任务 ID'), 'video-submit-failed')
+      recordVideoFailure(submitAttempt, failure, { requestExcerpt: excerptOf(payload) })
+      throw failure
     }
   } finally {
     submitBudget.dispose()
   }
 
-  const finished = await pollUntilDone(upstream, baseUrl, taskId, family, options.signal)
-  const downloaded = await downloadVideo(upstream, finished.url, options.signal)
+  const finished = await pollUntilDone(submitAttempt, upstream, baseUrl, taskId, family, options.signal)
+  // The download leg gets its own phase and its own URL: the clip usually
+  // comes from a CDN, so "the status worked but the bytes did not" is a
+  // distinct failure the address alone makes obvious.
+  const downloadAttempt: VideoAttempt = {
+    ...submitAttempt,
+    phase: 'video-download',
+    url: displayUrl(finished.url),
+    method: 'GET',
+  }
+  const downloaded = await downloadVideo(downloadAttempt, upstream, finished.url, options.signal)
   return {
     videos: [{
       ...downloaded,

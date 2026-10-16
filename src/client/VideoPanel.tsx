@@ -21,6 +21,7 @@ import type { VideoGenerateRequest, VideoHistoryEntry, VideoMode, VideoTask, Vid
 import { VIDEO_ASPECT_RATIOS, VIDEO_DURATIONS, type VideoResolution } from '../protocol.ts'
 import { describeVideoModel, isLikelyVideoModelId } from '../video-model-catalog.ts'
 import { Select } from './Select.tsx'
+import { DiagnosticsButton, DiagnosticsPanel } from './DiagnosticsPanel.tsx'
 import type { ImageGenKey } from './locales.ts'
 import { onTablistKeyDown, tabIndexFor } from './tablist.ts'
 import css from './panel.module.css'
@@ -132,6 +133,8 @@ export function VideoPanel(props: VideoPanelProps) {
   }, [api, controlled, props.onRefreshTasks])
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  /** #38 video parity: the retained record of upstream attempts. */
+  const [diagnosticsOpen, setDiagnosticsOpen] = useState(false)
   const [now, setNow] = useState(() => Date.now())
   /** The clip (and the run that made it) shown in the full-screen player. */
   const [previewClip, setPreviewClip] = useState<{ url: string; mime: string; duration?: number; title: string } | null>(null)
@@ -318,6 +321,15 @@ export function VideoPanel(props: VideoPanelProps) {
           ))}
         </div>
       </header>
+
+      {/* #38 video parity: the retained upstream attempts are the same record
+          the image studio opens. The entry rides the ALWAYS-rendered toolbar
+          rather than the run list, because a submit that never reached the
+          provider leaves no task row at all -- which is exactly the report
+          this panel exists to answer. */}
+      <div className={css.videoDiagnosticsRow}>
+        <DiagnosticsButton open={diagnosticsOpen} onToggle={() => { setDiagnosticsOpen(open => !open) }} />
+      </div>
 
       <div className={css.videoBody}>
         <section className={css.videoComposer}>
@@ -594,6 +606,7 @@ export function VideoPanel(props: VideoPanelProps) {
           >×</button>
         </div>
       ) : null}
+      <DiagnosticsPanel api={api} open={diagnosticsOpen} onClose={() => { setDiagnosticsOpen(false) }} />
     </div>
   )
 }

@@ -11,6 +11,7 @@
 import { isChatCompletionsUrl, resolveChannelProtocol, type ChannelProtocolPreference, type GeneratedImage, type GenerateRequest, type GenerateResult } from './protocol.ts'
 import { detectImageMime } from './image-format.ts'
 import { modelFamily, promptCharLimit } from './model-catalog.ts'
+import { bodyByteLength, excerptOf, networkErrorFields, readResponseExcerpt, readResponseText, recordDiagnostic, type DiagnosticPhase } from './diagnostics-store.ts'
 
 /** The upstream credentials the panel's settings card configures. */
 export interface UpstreamConfig {
@@ -22,6 +23,8 @@ export interface UpstreamConfig {
   apiUrlFull?: boolean
   /** Request protocol; auto infers chat-completions from an exact chat URL. */
   protocol?: ChannelProtocolPreference
+  /** Channel display name, recorded in diagnostics so a failure maps to a settings row. */
+  channelName?: string
 }
 
 /** A generation failure with a user-presentable message. */
@@ -439,6 +442,16 @@ async function normalizeItem(
     return { b64: parsed.base64, mime: detectImageMime(Buffer.from(parsed.base64, 'base64')) ?? parsed.mime, revisedPrompt }
   }
   const budget = requestSignal(signal, IMAGE_FETCH_TIMEOUT_MS)
+  const resultContext: AttemptContext = {
+    phase: 'fetch-result',
+    channel: upstream.channelName?.trim() || '默认渠道',
+    model: '',
+    mode: 'result',
+    url: displayUrl(url),
+    method: 'GET',
+    hadAuth: upstream.apiKey !== '' && !isPresignedUrl(url) && isSameOriginAsApi(url, upstream.apiUrl),
+    startedAt: Date.now(),
+  }
   try {
     let response: Response
     try {
@@ -454,10 +467,16 @@ async function normalizeItem(
         signal: budget.signal,
       })
     } catch (error) {
-      throw new ImageGenError(`failed to fetch the generated image url: ${error instanceof Error ? error.message : String(error)}`)
+      // A gateway that accepts the job but hands back an unreachable result URL
+      // looks like a silent failure unless the URL is on the record.
+      const failure = new ImageGenError(`failed to fetch the generated image url: ${error instanceof Error ? error.message : String(error)}`)
+      recordFailure(resultContext, failure)
+      throw failure
     }
     if (!response.ok) {
-      throw new ImageGenError(`failed to fetch the generated image url: HTTP ${response.status}`)
+      const failure = new ImageGenError(`failed to fetch the generated image url: HTTP ${response.status}`)
+      recordFailure(resultContext, failure, { status: response.status, bodyExcerpt: await readResponseExcerpt(response) })
+      throw failure
     }
     // Budget stays armed through the body read so a stalled download cannot hang the task.
     const buffer = Buffer.from(await response.arrayBuffer())
@@ -708,13 +727,24 @@ async function pollAsyncTask(
 ): Promise<Array<Record<string, unknown>>> {
   const deadline = Date.now() + ASYNC_POLL_MAX_MS
   let delay = 1000
+  const pollUrl = `${baseUrl}/tasks/${encodeURIComponent(taskId)}`
   while (Date.now() < deadline) {
     const remaining = deadline - Date.now()
     const budget = requestSignal(signal, Math.min(ASYNC_POLL_REQUEST_TIMEOUT_MS, remaining))
+    const context: AttemptContext = {
+      phase: 'poll-task',
+      channel: upstream.channelName?.trim() || '默认渠道',
+      model: '',
+      mode: 'poll',
+      url: displayUrl(pollUrl),
+      method: 'GET',
+      hadAuth: upstream.apiKey.trim() !== '',
+      startedAt: Date.now(),
+    }
     try {
       let response: Response
       try {
-        response = await fetch(`${baseUrl}/tasks/${encodeURIComponent(taskId)}`, {
+        response = await fetch(pollUrl, {
           method: 'GET',
           headers: {
             authorization: `Bearer ${upstream.apiKey.trim()}`,
@@ -723,19 +753,30 @@ async function pollAsyncTask(
           signal: budget.signal,
         })
       } catch (error) {
-        if (signal?.aborted === true) throw new ImageGenError('任务已取消', 'cancelled')
-        if (isBudgetTimeout(error)) throw new ImageGenError('上游异步任务轮询超时', 'upstream-timeout')
-        throw new ImageGenError(`无法轮询上游异步任务：${error instanceof Error ? error.message : String(error)}`, 'upstream-unreachable')
+        const failure = signal?.aborted === true
+          ? new ImageGenError('任务已取消', 'cancelled')
+          : isBudgetTimeout(error)
+            ? new ImageGenError('上游异步任务轮询超时', 'upstream-timeout')
+            : new ImageGenError(`无法轮询上游异步任务：${error instanceof Error ? error.message : String(error)}`, 'upstream-unreachable')
+        recordFailure(context, failure)
+        throw failure
       }
+      // Parsing reads the RAW body: a poll response carries the result images.
+      const responseText = await readResponseText(response)
       let payload: unknown
       try {
-        payload = await response.json()
+        payload = JSON.parse(responseText)
       } catch (error) {
-        if (isBudgetTimeout(error)) throw new ImageGenError('上游异步任务轮询超时', 'upstream-timeout')
-        throw new ImageGenError(`上游任务接口返回了非 JSON 响应（HTTP ${response.status}）`, 'upstream-invalid')
+        const failure = isBudgetTimeout(error)
+          ? new ImageGenError('上游异步任务轮询超时', 'upstream-timeout')
+          : new ImageGenError(`上游任务接口返回了非 JSON 响应（HTTP ${response.status}）`, 'upstream-invalid')
+        recordFailure(context, failure, { status: response.status, bodyExcerpt: responseText })
+        throw failure
       }
       if (!response.ok || payload === null || typeof payload !== 'object') {
-        throw new ImageGenError(asyncErrorMessage(payload, `上游任务轮询失败（HTTP ${response.status}）`), 'upstream-rejected')
+        const failure = new ImageGenError(asyncErrorMessage(payload, `上游任务轮询失败（HTTP ${response.status}）`), 'upstream-rejected')
+        recordFailure(context, failure, { status: response.status, bodyExcerpt: responseText })
+        throw failure
       }
       const record = payload as Record<string, unknown>
       const data = record.data
@@ -873,35 +914,67 @@ async function requestOneImage(
   const budget = requestSignal(signal, UPSTREAM_TIMEOUT_MS)
   try {
     let response: Response
+    // Seedream has no /images/edits endpoint: both modes hit generations.
+    const endpoint = request.mode === 'edit' && !isSeedream(params.model)
+      ? '/images/edits'
+      : '/images/generations'
+    const requestUrl = endpointUrl(upstream, baseUrl, endpoint)
+    const context = attemptContext(upstream, request, 'generate', requestUrl, 'POST', body, Date.now())
     try {
-      // Seedream has no /images/edits endpoint: both modes hit generations.
-      const endpoint = request.mode === 'edit' && !isSeedream(params.model)
-        ? '/images/edits'
-        : '/images/generations'
-      response = await fetch(endpointUrl(upstream, baseUrl, endpoint), {
+      response = await fetch(requestUrl, {
         method: 'POST',
         headers,
         body,
         signal: budget.signal,
       })
     } catch (error) {
-      if (isBudgetTimeout(error)) throw new ImageGenError('上游接口响应超时（240 秒）', 'upstream-timeout')
-      if (signal?.aborted === true) throw new ImageGenError('任务已取消', 'cancelled')
-      throw new ImageGenError(`无法连接上游接口：${error instanceof Error ? error.message : String(error)}`, 'upstream-unreachable')
+      // A rejected fetch means the request never reached the application: the
+      // URL and the network code are the only way to tell a wrong path from a
+      // refused socket (#38). Both go into the message so the cause is visible
+      // without opening diagnostics.
+      const network = networkErrorFields(error)
+      const failure = isBudgetTimeout(error)
+        ? new ImageGenError('上游接口响应超时（240 秒）', 'upstream-timeout')
+        : signal?.aborted === true
+          ? new ImageGenError('任务已取消', 'cancelled')
+          : new ImageGenError(
+            `无法连接上游接口：${network.detail}${network.errorCode === undefined ? '' : ` [${network.errorCode}]`} · 请求地址 ${displayUrl(requestUrl)}`,
+            'upstream-unreachable',
+          )
+      recordFailure(context, failure)
+      throw failure
     }
 
     let payload: unknown
+    // Parsing reads the RAW body; redaction happens only when storing (#38).
+    const responseText = await readResponseText(response)
     try {
       // The budget stays armed through the body read: a gateway that returns
       // headers but never completes the body must not hang the task forever.
-      payload = await response.json()
+      payload = JSON.parse(responseText)
     } catch (error) {
-      if (isBudgetTimeout(error)) throw new ImageGenError('上游接口响应超时（240 秒）', 'upstream-timeout')
-      if (signal?.aborted === true) throw new ImageGenError('任务已取消', 'cancelled')
-      throw new ImageGenError(`上游接口返回了非 JSON 响应（HTTP ${response.status}）`, 'upstream-invalid')
+      const failure = isBudgetTimeout(error)
+        ? new ImageGenError('上游接口响应超时（240 秒）', 'upstream-timeout')
+        : signal?.aborted === true
+          ? new ImageGenError('任务已取消', 'cancelled')
+          : new ImageGenError(`上游接口返回了非 JSON 响应（HTTP ${response.status}）`, 'upstream-invalid')
+      recordFailure(context, failure, { status: response.status, bodyExcerpt: responseText })
+      throw failure
     }
     if (!response.ok || payload === null || typeof payload !== 'object') {
-      throw new ImageGenError(upstreamMessage(payload, response.status), 'upstream-rejected')
+      // Carry the status and the address into the message: an upstream that
+      // answers 404/405 is usually a URL-shape mismatch, and seeing which
+      // address was called settles it without a second attempt (#38).
+      const failure = new ImageGenError(
+        `${upstreamMessage(payload, response.status)}（HTTP ${response.status} · ${displayUrl(requestUrl)}）`,
+        'upstream-rejected',
+      )
+      recordFailure(context, failure, {
+        status: response.status,
+        bodyExcerpt: responseText,
+        responseBytes: Buffer.byteLength(responseText, 'utf8'),
+      })
+      throw failure
     }
 
     const record = payload as Record<string, unknown>
@@ -977,8 +1050,10 @@ async function generateQwenImage(
   const budget = requestSignal(options.signal, UPSTREAM_TIMEOUT_MS)
   try {
     let response: Response
+    const requestUrl = `${baseUrl}/services/aigc/multimodal-generation/generation`
+    const context = attemptContext(upstream, request, 'generate', requestUrl, 'POST', JSON.stringify(body), Date.now())
     try {
-      response = await fetch(`${baseUrl}/services/aigc/multimodal-generation/generation`, {
+      response = await fetch(requestUrl, {
         method: 'POST',
         headers: {
           authorization: `Bearer ${upstream.apiKey.trim()}`,
@@ -988,22 +1063,40 @@ async function generateQwenImage(
         signal: budget.signal,
       })
     } catch (error) {
-      if (isBudgetTimeout(error)) throw new ImageGenError('上游接口响应超时（240 秒）', 'upstream-timeout')
-      if (options.signal?.aborted === true) throw new ImageGenError('任务已取消', 'cancelled')
-      throw new ImageGenError(`无法连接上游接口：${error instanceof Error ? error.message : String(error)}`, 'upstream-unreachable')
+      const network = networkErrorFields(error)
+      const failure = isBudgetTimeout(error)
+        ? new ImageGenError('上游接口响应超时（240 秒）', 'upstream-timeout')
+        : options.signal?.aborted === true
+          ? new ImageGenError('任务已取消', 'cancelled')
+          : new ImageGenError(
+            `无法连接上游接口：${network.detail}${network.errorCode === undefined ? '' : ` [${network.errorCode}]`} · 请求地址 ${displayUrl(requestUrl)}`,
+            'upstream-unreachable',
+          )
+      recordFailure(context, failure)
+      throw failure
     }
 
     let payload: unknown
+    const responseText = await readResponseText(response)
     try {
       // Budget stays armed through the body read (same rationale as the OpenAI path).
-      payload = await response.json()
+      payload = JSON.parse(responseText)
     } catch (error) {
-      if (isBudgetTimeout(error)) throw new ImageGenError('上游接口响应超时（240 秒）', 'upstream-timeout')
-      if (options.signal?.aborted === true) throw new ImageGenError('任务已取消', 'cancelled')
-      throw new ImageGenError(`上游接口返回了非 JSON 响应（HTTP ${response.status}）`, 'upstream-invalid')
+      const failure = isBudgetTimeout(error)
+        ? new ImageGenError('上游接口响应超时（240 秒）', 'upstream-timeout')
+        : options.signal?.aborted === true
+          ? new ImageGenError('任务已取消', 'cancelled')
+          : new ImageGenError(`上游接口返回了非 JSON 响应（HTTP ${response.status}）`, 'upstream-invalid')
+      recordFailure(context, failure, { status: response.status, bodyExcerpt: responseText })
+      throw failure
     }
     if (!response.ok || payload === null || typeof payload !== 'object') {
-      throw new ImageGenError(upstreamMessage(payload, response.status), 'upstream-rejected')
+      const failure = new ImageGenError(
+        `${upstreamMessage(payload, response.status)}（HTTP ${response.status} · ${displayUrl(requestUrl)}）`,
+        'upstream-rejected',
+      )
+      recordFailure(context, failure, { status: response.status, bodyExcerpt: responseText })
+      throw failure
     }
 
   // output.choices[].message.content[] mixes text and { image: url } items.
@@ -1089,8 +1182,10 @@ async function generateMiniMaxImage(
   const budget = requestSignal(options.signal, UPSTREAM_TIMEOUT_MS)
   try {
     let response: Response
+    const requestUrl = `${baseUrl}/image_generation`
+    const context = attemptContext(upstream, request, 'generate', requestUrl, 'POST', JSON.stringify(body), Date.now())
     try {
-      response = await fetch(`${baseUrl}/image_generation`, {
+      response = await fetch(requestUrl, {
         method: 'POST',
         headers: {
           authorization: `Bearer ${upstream.apiKey.trim()}`,
@@ -1100,21 +1195,39 @@ async function generateMiniMaxImage(
         signal: budget.signal,
       })
     } catch (error) {
-      if (isBudgetTimeout(error)) throw new ImageGenError('上游接口响应超时（240 秒）', 'upstream-timeout')
-      if (options.signal?.aborted === true) throw new ImageGenError('任务已取消', 'cancelled')
-      throw new ImageGenError(`无法连接上游接口：${error instanceof Error ? error.message : String(error)}`, 'upstream-unreachable')
+      const network = networkErrorFields(error)
+      const failure = isBudgetTimeout(error)
+        ? new ImageGenError('上游接口响应超时（240 秒）', 'upstream-timeout')
+        : options.signal?.aborted === true
+          ? new ImageGenError('任务已取消', 'cancelled')
+          : new ImageGenError(
+            `无法连接上游接口：${network.detail}${network.errorCode === undefined ? '' : ` [${network.errorCode}]`} · 请求地址 ${displayUrl(requestUrl)}`,
+            'upstream-unreachable',
+          )
+      recordFailure(context, failure)
+      throw failure
     }
 
     let payload: unknown
+    const responseText = await readResponseText(response)
     try {
-      payload = await response.json()
+      payload = JSON.parse(responseText)
     } catch (error) {
-      if (isBudgetTimeout(error)) throw new ImageGenError('上游接口响应超时（240 秒）', 'upstream-timeout')
-      if (options.signal?.aborted === true) throw new ImageGenError('任务已取消', 'cancelled')
-      throw new ImageGenError(`上游接口返回了非 JSON 响应（HTTP ${response.status}）`, 'upstream-invalid')
+      const failure = isBudgetTimeout(error)
+        ? new ImageGenError('上游接口响应超时（240 秒）', 'upstream-timeout')
+        : options.signal?.aborted === true
+          ? new ImageGenError('任务已取消', 'cancelled')
+          : new ImageGenError(`上游接口返回了非 JSON 响应（HTTP ${response.status}）`, 'upstream-invalid')
+      recordFailure(context, failure, { status: response.status, bodyExcerpt: responseText })
+      throw failure
     }
     if (payload === null || typeof payload !== 'object') {
-      throw new ImageGenError(upstreamMessage(payload, response.status), 'upstream-rejected')
+      const failure = new ImageGenError(
+        `${upstreamMessage(payload, response.status)}（HTTP ${response.status} · ${displayUrl(requestUrl)}）`,
+        'upstream-rejected',
+      )
+      recordFailure(context, failure, { status: response.status, bodyExcerpt: responseText })
+      throw failure
     }
     const record = payload as Record<string, unknown>
     const baseResp = record.base_resp
@@ -1180,43 +1293,67 @@ async function requestOneChatImage(
   const budget = requestSignal(signal, UPSTREAM_TIMEOUT_MS)
   try {
     let response: Response
+    const requestUrl = chatEndpointUrl(upstream, baseUrl)
+    const requestBody = JSON.stringify({
+      model: wireModel(request),
+      messages: [{ role: 'user', content }],
+      stream: false,
+    })
+    const context = attemptContext(upstream, request, 'chat', requestUrl, 'POST', requestBody, Date.now())
     try {
-      response = await fetch(chatEndpointUrl(upstream, baseUrl), {
+      response = await fetch(requestUrl, {
         method: 'POST',
         headers: {
           authorization: `Bearer ${upstream.apiKey.trim()}`,
           'content-type': 'application/json',
           accept: 'application/json',
         },
-        body: JSON.stringify({
-          model: wireModel(request),
-          messages: [{ role: 'user', content }],
-          stream: false,
-        }),
+        body: requestBody,
         signal: budget.signal,
       })
     } catch (error) {
-      if (isBudgetTimeout(error)) throw new ImageGenError('上游接口响应超时（240 秒）', 'upstream-timeout')
-      if (signal?.aborted === true) throw new ImageGenError('任务已取消', 'cancelled')
-      throw new ImageGenError(`无法连接上游接口：${error instanceof Error ? error.message : String(error)}`, 'upstream-unreachable')
+      const network = networkErrorFields(error)
+      const failure = isBudgetTimeout(error)
+        ? new ImageGenError('上游接口响应超时（240 秒）', 'upstream-timeout')
+        : signal?.aborted === true
+          ? new ImageGenError('任务已取消', 'cancelled')
+          : new ImageGenError(
+            `无法连接上游接口：${network.detail}${network.errorCode === undefined ? '' : ` [${network.errorCode}]`} · 请求地址 ${displayUrl(requestUrl)}`,
+            'upstream-unreachable',
+          )
+      recordFailure(context, failure)
+      throw failure
     }
 
     let payload: unknown
+    // Parsing reads the RAW body: a chat image response carries base64 images.
+    const responseText = await readResponseText(response)
     try {
-      payload = await response.json()
+      payload = JSON.parse(responseText)
     } catch (error) {
-      if (isBudgetTimeout(error)) throw new ImageGenError('上游接口响应超时（240 秒）', 'upstream-timeout')
-      if (signal?.aborted === true) throw new ImageGenError('任务已取消', 'cancelled')
-      throw new ImageGenError(`上游接口返回了非 JSON 响应（HTTP ${response.status}）`, 'upstream-invalid')
+      const failure = isBudgetTimeout(error)
+        ? new ImageGenError('上游接口响应超时（240 秒）', 'upstream-timeout')
+        : signal?.aborted === true
+          ? new ImageGenError('任务已取消', 'cancelled')
+          : new ImageGenError(`上游接口返回了非 JSON 响应（HTTP ${response.status}）`, 'upstream-invalid')
+      recordFailure(context, failure, { status: response.status, bodyExcerpt: responseText })
+      throw failure
     }
     if (!response.ok || payload === null || typeof payload !== 'object') {
-      throw new ImageGenError(upstreamMessage(payload, response.status), 'upstream-rejected')
+      const failure = new ImageGenError(
+        `${upstreamMessage(payload, response.status)}（HTTP ${response.status} · ${displayUrl(requestUrl)}）`,
+        'upstream-rejected',
+      )
+      recordFailure(context, failure, { status: response.status, bodyExcerpt: responseText })
+      throw failure
     }
 
     const items = chatImageItemsOf(payload as Record<string, unknown>)
     if (items.length === 0) {
       const detail = chatErrorTextOf(payload as Record<string, unknown>)
-      throw new ImageGenError(detail?.slice(0, 1200) || 'Chat Completions 响应中没有可用的图片结果', 'upstream-empty')
+      const failure = new ImageGenError(detail?.slice(0, 1200) || 'Chat Completions 响应中没有可用的图片结果', 'upstream-empty')
+      recordFailure(context, failure, { status: response.status, bodyExcerpt: responseText })
+      throw failure
     }
     return await Promise.all(items.map(item => normalizeItem(item, upstream, signal)))
   } finally {
@@ -1270,6 +1407,113 @@ export async function generateImage(upstream: UpstreamConfig, request: GenerateR
     Array.from({ length: count }, () => requestOneImage(baseUrl, upstream, request, params, options.signal)),
   )
   return { images: batches.flat() }
+}
+
+/**
+ * The URL actually handed to fetch, with any query string dropped: the
+ * diagnostics panel exists to answer "which address did it call", and a signed
+ * query would leak credentials into a bug report.
+ */
+function displayUrl(url: string): string {
+  try {
+    const parsed = new URL(url)
+    return `${parsed.origin}${parsed.pathname}`
+  } catch {
+    return url.split('?')[0] ?? url
+  }
+}
+
+/**
+ * Everything one attempt needs to be recorded on failure. The engine's request
+ * sites all share this shape so every failure path lands in the diagnostics
+ * buffer with the same fields — the reporter of #38 had no way to tell a bad
+ * URL from a refused connection, and that distinction is the whole point.
+ */
+interface AttemptContext {
+  phase: DiagnosticPhase
+  channel: string
+  model: string
+  mode: string
+  url: string
+  method: string
+  hadAuth: boolean
+  apiUrlFull?: boolean
+  requestExcerpt?: string
+  requestBytes?: number
+  startedAt: number
+}
+
+/** Record a failed attempt against the diagnostics buffer. */
+function recordFailure(context: AttemptContext, error: ImageGenError, options: {
+  status?: number
+  bodyExcerpt?: string
+  responseBytes?: number
+} = {}): void {
+  const network = networkErrorFields(error)
+  recordDiagnostic({
+    phase: context.phase,
+    channel: context.channel,
+    model: context.model,
+    mode: context.mode,
+    url: context.url,
+    method: context.method,
+    status: options.status,
+    errorCode: network.errorCode,
+    failureCode: error.code,
+    message: error.message,
+    bodyExcerpt: options.bodyExcerpt,
+    requestExcerpt: context.requestExcerpt,
+    requestBytes: context.requestBytes,
+    responseBytes: options.responseBytes,
+    durationMs: Date.now() - context.startedAt,
+    hadAuth: context.hadAuth,
+    apiUrlFull: context.apiUrlFull,
+  })
+}
+
+/** Build the attempt context for one upstream call. */
+function attemptContext(
+  upstream: UpstreamConfig,
+  request: GenerateRequest,
+  phase: DiagnosticPhase,
+  url: string,
+  method: string,
+  body: BodyInit | undefined,
+  startedAt: number,
+): AttemptContext {
+  return {
+    phase,
+    channel: upstream.channelName?.trim() || '默认渠道',
+    model: wireModel(request),
+    mode: request.mode,
+    url: displayUrl(url),
+    method,
+    hadAuth: upstream.apiKey.trim() !== '',
+    ...upstream.apiUrlFull === true ? { apiUrlFull: true } : {},
+    requestExcerpt: requestExcerptFor(request, body),
+    requestBytes: bodyByteLength(body),
+    startedAt,
+  }
+}
+
+/**
+ * The request excerpt worth keeping. Reference images are stripped (they are
+ * megabytes of base64 already summarised by requestBytes), keeping the shape
+ * and the prompt so the panel shows what was actually asked for.
+ */
+function requestExcerptFor(request: GenerateRequest, body: BodyInit | undefined): string | undefined {
+  if (typeof body === 'string') return excerptOf(body)
+  // multipart edits: no cheap text to quote, so describe the request instead.
+  const shape: Record<string, unknown> = {
+    mode: request.mode,
+    model: wireModel(request),
+    prompt: request.prompt,
+    size: request.size,
+    quality: request.quality,
+    n: request.n,
+  }
+  if (request.image !== undefined) shape.referenceImages = 1 + (request.images?.length ?? 0)
+  return excerptOf(shape)
 }
 
 /** Human-readable failure message from an upstream error payload. */

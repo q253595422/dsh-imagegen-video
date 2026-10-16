@@ -160,6 +160,8 @@ const ordering = [
   ['context-menu', 'scrim', 'the canvas context menu draws above the scrim it opened with'],
   ['popover-raised', 'scrim', 'the skills menu draws over its own scrim'],
   ['file-overlay', 'popover-raised', 'the file reader covers the skills popover'],
+  ['diagnostics', 'file-overlay', 'the diagnostics record is a studio-wide overlay, so it covers the file reader'],
+  ['diagnostics', 'context-menu', 'the diagnostics overlay is studio-wide, so it covers the canvas context menu anchored inside the studio'],
   ['takeover', 'dock-raised', 'the panel container covers the compose strip'],
   ['dock-raised', 'dock', 'the compose strip draws over the dock it floats above'],
   ['topbar', 'dock', 'the canvas top bar draws over the docks below it'],
@@ -318,6 +320,7 @@ const server = (await import('node:http')).createServer((req, res) => {
   // checks need the component relationship, not the whole app.
   if (req.url?.includes('toolbar=1') === true) res.end(toolbarPage)
   else if (req.url?.includes('stack=1') === true) res.end(stackPage)
+  else if (req.url?.includes('mainslot=1') === true) res.end(mainSlotPage)
   else res.end(page)
 })
 await new Promise(r => server.listen(0, '127.0.0.1', r))
@@ -602,6 +605,33 @@ const stackPage = `<!doctype html><html><head><style>
     <div class="errorToast" id="toast" data-canvas-no-zoom="">生成失败，请重试</div>
   </div>
 </body></html>`
+
+// --- the keyed `main` slot is single-occupant (#38) -------------------------
+// The plugin market page and the Conversation both register into the shell's
+// keyed `main` slot. The studio takeover rule hid UNRELATED entries on the
+// column's direct-child axis and deliberately let the `main` anchor through,
+// because the Conversation lives inside it -- which left the market page
+// rendering inside that anchor at the same time, so switching to the studio
+// appeared to do nothing. The fix hides the anchor's non-Conversation entries.
+//
+// Measured here rather than read, because two things the source cannot show
+// decide the outcome: the anchor is `display: contents` (so the hidden entry is
+// laid out by the column), and the minifier escapes the dotted attribute value
+// in the Conversation branch, which is why the rule matches the chat entry
+// POSITIVELY and one bad branch would void the whole selector list.
+const mainSlotPage = `<!doctype html><html><head><style>
+  body { margin: 0; }
+  ${scaleCss}
+</style></head><body>
+  <div class="centerCol" id="centre">
+    <div data-dsh-imagegen-view id="studio">studio</div>
+    <div data-slot="main" style="display: contents">
+      <div data-slot="main.conversation" style="display: contents"><div id="conversation" data-phase="hero">conversation</div></div>
+      <div id="shellPanel">plugin market page</div>
+    </div>
+    <div data-other-plugin-entry id="otherEntry">another plugin</div>
+  </div>
+</body></html>`
 // Serve it from the same server by swapping the body through a query flag.
 const toolbarTarget = await (await fetch(`http://127.0.0.1:${CDP_PORT}/json/new?${encodeURIComponent(`http://127.0.0.1:${port}/?toolbar=1`)}`, { method: 'PUT' })).json()
 const ws2 = new WebSocket(toolbarTarget.webSocketDebuggerUrl)
@@ -729,6 +759,64 @@ if (!stack.topIsPicker) {
 }
 console.log('stacking: the picker backdrop covers the notice regardless of render order')
 
+// --- the keyed `main` slot yields the column to the studio (#38) ------------
+// Switching to the studio used to leave a shell panel rendering inside the same
+// `main` anchor as the Conversation, so the studio never appeared to take over.
+// The activation attribute is set HERE (the shell sets it when the entry is
+// clicked), and the assertion reads COMPUTED display: only the cascade proves
+// the market page is gone, because the element is still mounted either way.
+const mainTarget = await (await fetch(`http://127.0.0.1:${CDP_PORT}/json/new?${encodeURIComponent(`http://127.0.0.1:${port}/?mainslot=1`)}`, { method: 'PUT' })).json()
+const ws4 = new WebSocket(mainTarget.webSocketDebuggerUrl)
+await new Promise(r => { ws4.onopen = r })
+let id4 = 0
+const send4 = (method, params) => new Promise(resolve => {
+  const myId = ++id4
+  const onMessage = e => { const m = JSON.parse(e.data); if (m.id === myId) { ws4.removeEventListener('message', onMessage); resolve(m) } }
+  ws4.addEventListener('message', onMessage)
+  ws4.send(JSON.stringify({ id: myId, method, params }))
+})
+await send4('Runtime.enable', {})
+await new Promise(r => setTimeout(r, 300))
+const takeover = await send4('Runtime.evaluate', {
+  expression: `(() => {
+    document.documentElement.setAttribute('data-dsh-imagegen-active', '')
+    const display = id => getComputedStyle(document.getElementById(id)).display
+    return {
+      shellPanel: display('shellPanel'),
+      conversation: display('conversation'),
+      studio: display('studio'),
+      otherEntry: display('otherEntry'),
+      anchor: display('centre'),
+    }
+  })()`,
+  returnByValue: true,
+  awaitPromise: true,
+})
+if (takeover.result?.exceptionDetails !== undefined) {
+  throw new Error(`page threw: ${JSON.stringify(takeover.result.exceptionDetails)}`)
+}
+const slot = takeover.result.result.value
+console.log(`main slot: shell panel=${slot.shellPanel}, conversation=${slot.conversation}, studio=${slot.studio}, other plugin=${slot.otherEntry}`)
+if (slot.shellPanel !== 'none') {
+  console.error('\nFAIL: a shell panel inside the keyed `main` slot is still rendered (#38).')
+  console.error('The Conversation and a shell-global panel (the plugin market page)')
+  console.error('both register into that one slot, so the studio shares the column with a')
+  console.error('live panel and switching to it looks like it did nothing.')
+  process.exit(1)
+}
+if (slot.conversation === 'none') {
+  console.error('\nFAIL: the takeover hid the Conversation along with the shell panel.')
+  console.error('The studio keeps the conversation in its chat track, so the rule has to')
+  console.error('let the phase-bearing Conversation entry through.')
+  process.exit(1)
+}
+if (slot.studio === 'none') {
+  console.error('\nFAIL: the studio never became visible, so the fixture proves nothing.')
+  process.exit(1)
+}
+console.log('main slot: the shell panel yields the column while the conversation stays')
+
+ws4.close()
 ws3.close()
 ws2.close()
 ws.close(); browser.kill(); server.close()

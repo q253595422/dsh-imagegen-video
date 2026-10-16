@@ -23,8 +23,9 @@ import { GooeyNav } from './GooeyNav.tsx'
 import { InspirationGallery } from './InspirationGallery.tsx'
 import { CanvasWorkspace } from './CanvasWorkspace.tsx'
 import { ModelPicker, resolveModelChoice, type ModelPickerValue } from './ModelPicker.tsx'
+import { DiagnosticsButton, DiagnosticsPanel } from './DiagnosticsPanel.tsx'
 import { useImageGenLanguageTick } from './use-language.ts'
-import type {  EcommerceRefRole, GenerateMode, GenerateRequest, GeneratedImage, GenerationTask, GenerationTaskStatus, GenerationTaskSummary, HistoryEntry, HistoryImageRef, ProductSetDraft, ProductSetSlot, UpdateInfo, VideoHistoryEntry, VideoTaskSummary  } from '../protocol.ts'
+import type { EcommerceRefRole, GenerateMode, GenerateRequest, GeneratedImage, GenerationTask, GenerationTaskStatus, GenerationTaskSummary, HistoryEntry, HistoryImageRef, ProductSetDraft, ProductSetSlot, UpdateInfo, VideoHistoryEntry, VideoTaskSummary } from '../protocol.ts'
 import { AGENT_IMAGE_API, SUBSCRIPTION_API, SUBSCRIPTION_PROVIDERS, type SubscriptionProvider } from '../protocol.ts'
 import type { ImageGenConfig, ImageGenScope, ImageModelGroup } from './settings-scope.ts'
 import { imageModelOptions, videoModelOptions } from './settings-scope.ts'
@@ -864,6 +865,8 @@ export function ImageGenPanel(props: {
   const observedTaskIdsRef = useRef<Set<string>>(new Set())
   const submittedTaskIdsRef = useRef<Set<string>>(new Set())
   const [taskTrayOpen, setTaskTrayOpen] = useState(false)
+  /** #38: the retained record of upstream attempts, opened from the task tray. */
+  const [diagnosticsOpen, setDiagnosticsOpen] = useState(false)
   const [comparison, setComparison] = useState<ComparisonSession | null>(null)
   const [comparisonFullscreen, setComparisonFullscreen] = useState(false)
   const [ecommerce, setEcommerce] = useState<ProductSetDraft>(() => {
@@ -3599,6 +3602,9 @@ export function ImageGenPanel(props: {
                   <span className={css.taskTrayChevron} aria-hidden="true">{taskTrayOpen ? '⌃' : '⌄'}</span>
                 </button>
                 {taskTrayOpen ? <button type="button" className={css.taskTrayClose} aria-label={tt('preview.close')} onClick={() => { setTaskTrayOpen(false) }}>×</button> : null}
+                {/* #38: "the request never arrived and there is nowhere to look".
+                    This is that place: every attempt, with its address and status. */}
+                <DiagnosticsButton open={diagnosticsOpen} onToggle={() => { setDiagnosticsOpen(open => !open) }} />
               </header>
               <div className={css.taskRows}>
                 {tasks.slice(0, 5).map(task => (
@@ -3607,6 +3613,10 @@ export function ImageGenPanel(props: {
                     <span className={css.taskPrompt}>{task.request.prompt}</span>
                     {(task.status === 'queued' || task.status === 'running') ? <button type="button" onClick={() => { void api.taskCancel(task.id) }}>{tt('tasks.cancel')}</button> : null}
                     {task.status === 'failed' || task.status === 'cancelled' ? <button type="button" onClick={() => { void api.taskRetry(task.id) }}>{tt('tasks.retry')}</button> : null}
+                    {/* #38: a bare "失败" told the reporter nothing. Show WHY inline. */}
+                    {task.error !== undefined && task.error !== '' ? (
+                      <p className={css.taskError} role="status">{task.error}</p>
+                    ) : null}
                   </div>
                 ))}
               </div>
@@ -3969,6 +3979,7 @@ export function ImageGenPanel(props: {
           {conversationMessage}
         </div>
       ) : null}
+      <DiagnosticsPanel api={api} open={diagnosticsOpen} onClose={() => { setDiagnosticsOpen(false) }} />
     </div>
   )
 }
@@ -3982,3 +3993,4 @@ function extensionOf(mime: string): string {
     default: return 'png'
   }
 }
+

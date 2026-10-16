@@ -615,6 +615,83 @@ await check('B4 config missing errors are user-presentable', async () => {
   )
 })
 
+await check('B4b a failed call is explainable afterwards (#38)', async () => {
+  // The reporter of #38 reverse-engineered an image API, verified it against
+  // new-api, and then watched every plugin call fail while NEITHER side had a
+  // log entry — because the request never reached their gateway. The plugin
+  // toasted one sentence and kept no record, so the URL it actually called, the
+  // HTTP status and the network error code were all unrecoverable.
+  host.clearDiagnostics()
+
+  // 1. A refused connection: no response at all, so the URL and the socket code
+  //    are the only evidence that the request left the process.
+  const closedPort = await (async () => {
+    const probe = createServer(() => {})
+    await new Promise(resolve => probe.listen(0, '127.0.0.1', resolve))
+    const port = probe.address().port
+    await new Promise(resolve => probe.close(resolve))
+    return port
+  })()
+  await assert.rejects(
+    host.generateImage(
+      { apiUrl: `http://127.0.0.1:${closedPort}/v1`, apiKey: 'sk-secret-key-abcdefghijklmnop', channelName: 'MyChannel' },
+      { mode: 'text', model: 'gpt-image-2', prompt: 'a cat', size: 'auto', quality: 'auto', n: 1, detail: '' },
+    ),
+  )
+  const refused = host.listDiagnostics().find(entry => entry.phase === 'generate')
+  assert.ok(refused !== undefined, 'a refused connection leaves a diagnostic entry')
+  assert.equal(refused.url, `http://127.0.0.1:${closedPort}/v1/images/generations`, 'the diagnostic records the FINAL request URL, including the appended path')
+  assert.equal(refused.channel, 'MyChannel', 'the entry names the channel so it maps to a settings row')
+  assert.equal(refused.model, 'gpt-image-2')
+  assert.equal(refused.method, 'POST')
+  assert.equal(refused.failureCode, 'upstream-unreachable')
+  assert.equal(refused.hadAuth, true, 'the entry records THAT a key was sent, never its value')
+  assert.ok(refused.durationMs >= 0, 'the entry records elapsed time')
+  assert.ok(refused.requestBytes > 0, 'the entry records the request body size (a huge edit can be rejected before the app sees it)')
+  assert.equal(refused.status, undefined, 'a request that never got a response carries no status')
+
+  // 2. A non-2xx upstream: the status and the body have to survive, because
+  //    that is where the gateway says WHY it refused.
+  const bad = createServer((_req, res) => {
+    res.writeHead(413, { 'content-type': 'application/json' })
+    res.end(JSON.stringify({ error: { message: 'payload too large' }, request_id: 'req_123' }))
+  })
+  await new Promise(resolve => bad.listen(0, '127.0.0.1', resolve))
+  const badPort = bad.address().port
+  try {
+    await assert.rejects(
+      host.generateImage(
+        { apiUrl: `http://127.0.0.1:${badPort}/v1`, apiKey: 'k', channelName: 'Bad' },
+        { mode: 'text', model: 'gpt-image-2', prompt: 'a dog', size: 'auto', quality: 'auto', n: 1, detail: '' },
+      ),
+    )
+  } finally {
+    await new Promise(resolve => bad.close(resolve))
+  }
+  const rejected = host.listDiagnostics().find(entry => entry.channel === 'Bad')
+  assert.ok(rejected !== undefined, 'a rejected request leaves a diagnostic entry')
+  assert.equal(rejected.status, 413, 'the upstream status is recorded')
+  assert.equal(rejected.failureCode, 'upstream-rejected')
+  assert.match(rejected.message, /payload too large/, 'the upstream message reaches the record')
+  assert.match(rejected.bodyExcerpt ?? '', /req_123/, 'the raw upstream body (with its request id) is kept for support')
+
+  // 3. Redaction: these entries are meant to be pasted into a public issue.
+  const secret = 'sk-live-abcdefghijklmnopqrstuvwxyz0123456789'
+  const redacted = host.redactDiagnosticText(`Authorization: Bearer ${secret}\n{"apiKey":"${secret}"}\nhttps://x.test/v1?api_key=${secret}`)
+  assert.equal(redacted.includes(secret), false, 'the recorded text never carries the key')
+  assert.match(redacted, /<redacted>|<redacted-key>/, 'the redaction is visible in the text')
+  assert.equal(
+    host.redactDiagnosticText('data:image/png;base64,' + 'A'.repeat(5000)).length < 200,
+    true,
+    'inline base64 image payloads are summarised, not stored',
+  )
+
+  // 4. The buffer is bounded and clearable.
+  assert.ok(host.listDiagnostics().length >= 2, 'entries accumulate newest-first')
+  host.clearDiagnostics()
+  assert.equal(host.listDiagnostics().length, 0, 'the panel can clear the record')
+})
+
 await check('B5 upstream error surfaces its message', async () => {
   const bad = createServer(async (_req, res) => {
     res.writeHead(400, { 'content-type': 'application/json' })
@@ -1682,6 +1759,66 @@ await check('C3 generate route persists history server-side and enforces loopbac
     request.end('{}')
   })
   assert.equal(foreignStatus, 403)
+})
+
+await check('C3b diagnostics routes read back and clear the retained attempts (#38)', async () => {
+  // The panel reads this route after a failure; the record has to survive the
+  // HTTP hop unchanged and stay redacted.
+  host.clearDiagnostics()
+  const clearedOnce = await post('/api/dsh-imagegen/diagnostics/list', {})
+  assert.equal(clearedOnce.body.ok, true)
+  assert.equal(clearedOnce.body.entries.length, 0, 'a fresh buffer is empty')
+
+  // Produce a real failed attempt through the engine, then read it back.
+  host.recordDiagnostic({
+    phase: 'generate',
+    channel: 'SmokeChannel',
+    model: 'gpt-image-2',
+    mode: 'text',
+    url: 'https://api.example.test/v1/images/generations',
+    method: 'POST',
+    status: 404,
+    errorCode: 'ENOTFOUND',
+    failureCode: 'upstream-rejected',
+    message: 'model not found',
+    bodyExcerpt: '{"error":"no such route"}',
+    durationMs: 42,
+    hadAuth: true,
+  })
+  const listed = await post('/api/dsh-imagegen/diagnostics/list', {})
+  assert.equal(listed.body.ok, true)
+  assert.equal(listed.body.entries.length, 1)
+  const entry = listed.body.entries[0]
+  assert.equal(entry.channel, 'SmokeChannel')
+  assert.equal(entry.url, 'https://api.example.test/v1/images/generations', 'the URL the engine called reaches the panel')
+  assert.equal(entry.status, 404)
+  assert.equal(entry.errorCode, 'ENOTFOUND')
+  assert.equal(entry.durationMs, 42)
+  assert.equal(entry.hadAuth, true, 'the panel learns THAT a key was sent, never the key')
+
+  // A secret must not survive the round trip: the store redacts on record.
+  host.recordDiagnostic({
+    phase: 'generate',
+    channel: 'SmokeChannel',
+    model: 'gpt-image-2',
+    mode: 'text',
+    url: 'https://api.example.test/v1/images/generations',
+    method: 'POST',
+    failureCode: 'upstream-unreachable',
+    message: 'failed with Authorization: Bearer {{API_KEY_2iip3dvh}}',
+    bodyExcerpt: '{"apiKey":"{{API_KEY_2iip3dvh}}"}',
+    durationMs: 1,
+    hadAuth: true,
+  })
+  const withSecret = await post('/api/dsh-imagegen/diagnostics/list', {})
+  const serialized = JSON.stringify(withSecret.body)
+  assert.equal(serialized.includes('{{API_KEY_2iip3dvh}}'), false, 'no credential survives to the client')
+  assert.match(serialized, /<redacted/, 'the redaction marker is present instead')
+
+  const cleared = await post('/api/dsh-imagegen/diagnostics/clear', {})
+  assert.equal(cleared.body.ok, true)
+  const afterClear = await post('/api/dsh-imagegen/diagnostics/list', {})
+  assert.equal(afterClear.body.entries.length, 0, 'the Clear action empties the record')
 })
 
 await check('C4 comparison tasks run in parallel and share comparison history metadata', async () => {
@@ -3892,6 +4029,26 @@ await check('E1 client apply mounts the sidebar entry and studio (jsdom)', async
   /** Video tasks the panel sees when polling, and submissions it makes. */
   const videoTasks = []
   const videoSubmissions = []
+  // #38: the record the shared diagnostics panel reads. The video studio opens
+  // the SAME buffer the image tray does, so the fixture is one entry whose phase
+  // names a video leg -- if the panel reached a different surface, or reached
+  // nothing, this is what would show it.
+  const diagnosticsEntries = [{
+    id: 'diag-1',
+    at: Date.now(),
+    phase: 'video-submit',
+    channel: 'Default',
+    model: 'agnes-video-2.5-flash',
+    mode: 'text',
+    url: 'https://example.test/v1/videos',
+    method: 'POST',
+    status: 400,
+    failureCode: 'video-submit-failed',
+    message: '视频提交失败（HTTP 400）',
+    durationMs: 12,
+    hadAuth: true,
+  }]
+  let diagnosticsListCalls = 0
   /** Clip history the sidebar must merge with the image history. */
   const videoHistoryEntries = [
     {
@@ -4022,6 +4179,17 @@ await check('E1 client apply mounts the sidebar entry and studio (jsdom)', async
           }
         : { ...task, resultAvailable: false })
       return { ok: true, json: async () => ({ ok: true, tasks }) }
+    }
+    // #38: the two diagnostics routes the shared panel reads. They live on the
+    // same client as the video studio, so the stub has to answer them or the
+    // panel's own open action throws instead of showing the record.
+    if (path.endsWith('/diagnostics/list')) {
+      diagnosticsListCalls += 1
+      return { ok: true, json: async () => ({ ok: true, entries: diagnosticsEntries }) }
+    }
+    if (path.endsWith('/diagnostics/clear')) {
+      diagnosticsEntries.length = 0
+      return { ok: true, json: async () => ({ ok: true }) }
     }
     if (path.endsWith('/video/history/list')) {
       videoHistoryListCalls += 1
@@ -4588,6 +4756,30 @@ await check('E1 client apply mounts the sidebar entry and studio (jsdom)', async
     const takeoverSelector = "html[data-dsh-imagegen-active]:not([data-dsh-taskboard-active]):not([data-dsh-ssh-active]) [class*='centerCol'] > :not([data-dsh-imagegen-view]):not([data-slot='conversation']):not([data-slot='main']):not([data-dsh-imagegen-chat-resizer])"
     assert.equal(mainSlot.matches(takeoverSelector), false, 'the keyed main slot survives the studio takeover')
     assert.equal(centreCol.querySelector('[data-other-plugin-entry]').matches(takeoverSelector), true, 'unrelated center-column entries are still hidden')
+    // #38: a shell global panel (the plugin market page) registers into the SAME
+    // keyed `main` slot as the Conversation. The direct-child rule above let the
+    // anchor through and therefore left that page rendering inside it, so the
+    // studio ended up sharing the column with a live panel. Assert on computed
+    // style, not selector matching: only the cascade proves the page is gone.
+    const shellPanelSelector = "html[data-dsh-imagegen-active]:not([data-dsh-taskboard-active]):not([data-dsh-ssh-active]) [data-slot='main'] > :not([data-dsh-imagegen-view]):not([data-phase]):not([data-slot='main.conversation'])"
+    const shellPanel = jsdomDocument.createElement('div')
+    shellPanel.setAttribute('data-shell-panel', 'plugins')
+    shellPanel.textContent = 'plugin market page'
+    mainSlot.append(shellPanel)
+    await new Promise(resolve => setTimeout(resolve, 20))
+    assert.equal(
+      jsdomWindow.getComputedStyle(shellPanel).display,
+      'none',
+      'a shell panel rendered into the keyed main slot yields the column to the studio (#38)',
+    )
+    assert.equal(shellPanel.matches(shellPanelSelector), true, 'the shell-panel rule reaches entries nested inside the main anchor')
+    assert.notEqual(
+      jsdomWindow.getComputedStyle(conversationRoot).display,
+      'none',
+      'replacing the main entry never hides the conversation fixture itself',
+    )
+    shellPanel.remove()
+    await new Promise(resolve => setTimeout(resolve, 20))
     const collapseSelector = "html[data-dsh-imagegen-chat-collapsed][data-dsh-imagegen-active]:not([data-dsh-taskboard-active]):not([data-dsh-ssh-active]) [data-slot='main.conversation'] > [data-phase]"
     assert.equal(conversationRoot.matches(collapseSelector), false, 'the open chat track keeps the conversation root')
     // The shipped sheet carries the chat-track placement and the stretch; the
@@ -4921,6 +5113,48 @@ await check('E1 client apply mounts the sidebar entry and studio (jsdom)', async
       await waitFor(() => view.querySelector('li[data-status="cancelled"]') !== null, 1500),
       'the row shows the cancelled state on the parent-owned list',
     )
+
+    // --- #38 video parity: the video studio reaches the SAME record ---
+    // Upstream's diagnostics landed on the image path, whose entry point lives
+    // in the task tray -- and that tray only renders once an IMAGE task exists.
+    // So a user whose images work and whose videos fail had no way in at all,
+    // even though the buffer holds the failed video submit. The entry must be
+    // reachable with zero tasks, and it must be the same panel.
+    const videoTasksAtOpen = videoSubmissions.length
+    const diagnosticsButtons = [...view.querySelectorAll('[data-diagnostics-button]')]
+    assert.equal(diagnosticsButtons.length, 1, 'the video studio renders exactly one diagnostics entry (not two)')
+    const listCallsBeforeOpen = diagnosticsListCalls
+    diagnosticsButtons[0].click()
+    assert.equal(
+      await waitFor(() => view.querySelector('[data-diagnostics-panel]') !== null),
+      true,
+      'the entry opens the diagnostics record without any task row present',
+    )
+    assert.ok(diagnosticsListCalls > listCallsBeforeOpen, 'opening the panel reads the host record')
+    const diagnosticsPanel = view.querySelector('[data-diagnostics-panel]')
+    // The phase the entry shows is the proof it is the shared buffer: a
+    // video-only surface could not name `video-submit`, and the image tray
+    // is not even rendered here.
+    assert.ok(
+      diagnosticsPanel.querySelector('[data-phase="video-submit"]') !== null,
+      'the panel shows the video leg from the shared buffer',
+    )
+    assert.equal(
+      view.querySelectorAll('[data-diagnostics-panel]').length,
+      1,
+      'the record is one overlay, not nested',
+    )
+    // Closing puts the studio back exactly as it was.
+    const closeButton = [...diagnosticsPanel.querySelectorAll('button')]
+      .find(button => button.textContent === '×')
+    assert.ok(closeButton !== undefined, 'the record has a close button')
+    closeButton.click()
+    assert.equal(
+      await waitFor(() => view.querySelector('[data-diagnostics-panel]') === null),
+      true,
+      'the record closes and leaves the studio behind it',
+    )
+    assert.equal(videoSubmissions.length, videoTasksAtOpen, 'opening the record never submits a render')
 
     // The theme toggle must clear a frame error surfaced by the tab, so go back
     // to the image mode and confirm the composer returns unchanged.

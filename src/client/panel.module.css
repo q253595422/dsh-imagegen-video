@@ -58,6 +58,10 @@
  *   72  chat-resizer      the column resize handle, above the takeover
  *   86  file-overlay      the full-screen file reader
  *   90  context-menu      canvas context menu and the update popover
+ *   92  diagnostics       the retained-attempt record, opened from the task
+ *                          tray: it is a studio-wide overlay, so it must cover
+ *                          everything anchored inside the studio, including
+ *                          the canvas context menu
  *  120  modal             the settings editor backdrop
  *  130  modal-backdrop    the template library backdrop
  *  131  menu-raised       the model picker panel
@@ -105,6 +109,7 @@
   /* canvas overlays above the scrim */
   --z-file-overlay: 86;
   --z-context-menu: 90;
+  --z-diagnostics: 92;
   --z-canvas-links: 0;
 
   /* modal surfaces */
@@ -249,9 +254,34 @@ html[data-dsh-imagegen-active] [data-dsh-imagegen-chat-resizer] {
   display: flex !important;
 }
 
-/* Hide only unrelated center-column plugin children. */
+/* Hide unrelated center-column plugin children on the `>` direct-child axis.
+   The keyed `main` anchor is deliberately let through: the Conversation lives
+   inside it, and the rule below then hides whichever entry is NOT the chat. */
 html[data-dsh-imagegen-active]:not([data-dsh-taskboard-active]):not([data-dsh-ssh-active]) [data-pane='conversation'] > :not([data-dsh-imagegen-view]):not([data-slot='conversation']):not([data-slot='main']):not([data-dsh-imagegen-chat-resizer]),
 html[data-dsh-imagegen-active]:not([data-dsh-taskboard-active]):not([data-dsh-ssh-active]) [class*='centerCol'] > :not([data-dsh-imagegen-view]):not([data-slot='conversation']):not([data-slot='main']):not([data-dsh-imagegen-chat-resizer]) {
+  display: none !important;
+}
+
+/* The keyed `main` slot is single-occupant: the shell renders EITHER the
+   Conversation OR a global panel (the plugin market page registers itself into
+   `main` with its own key). Letting the anchor through above keeps the
+   Conversation alive, but it also let the plugin page keep rendering inside the
+   anchor while the studio claimed the column — two live occupants of one cell,
+   which is why the reporter of #38 saw the studio "stuck behind the plugin".
+   An anchor is `display: contents` per contract, so hide its entry instead.
+
+   Addressing rules, learned the hard way in the jsdom suite:
+   - A dotted attribute VALUE inside :not() is escaped by the minifier
+     (`main\.conversation`), and one branch a parser rejects voids the ENTIRE
+     selector list. So the chat entry below is matched POSITIVELY instead.
+   - :has() inside a selector list has the same all-or-nothing effect, so it is
+     avoided here as well.
+
+   A slot entry renders straight into the anchor (renderOutletContent returns
+   the entry element itself), so the plugin page is a DIRECT child of the
+   anchor. Only the Conversation may stay: its entry is the phase-bearing root,
+   or the `main.conversation` anchor that wraps one. */
+html[data-dsh-imagegen-active]:not([data-dsh-taskboard-active]):not([data-dsh-ssh-active]) [data-slot='main'] > :not([data-dsh-imagegen-view]):not([data-phase]):not([data-slot='main.conversation']) {
   display: none !important;
 }
 
@@ -903,12 +933,153 @@ html[data-dsh-imagegen-active] .sidebarHistoryHost {
 .taskRows { min-height: 0; overflow-y: auto; }
 .taskTray[data-open='false'] .taskRows { display: none; }
 .taskRow { display: grid; grid-template-columns: auto minmax(0, 1fr) auto; gap: 7px; align-items: center; padding: 7px 10px; border-top: 1px solid var(--dsw-alias-border-l1); }
+/* The failure reason spans the row instead of being squeezed into a cell. */
+.taskRow[data-status='failed'] { grid-template-rows: auto auto; }
 .taskRow:first-of-type { border-top: 0; }
 .taskStatus { color: var(--dsw-alias-label-tertiary); font-size: 11px; white-space: nowrap; }
 .taskRow[data-status='running'] .taskStatus { color: var(--dsw-alias-brand-primary); }
 .taskRow[data-status='failed'] .taskStatus { color: var(--dsw-alias-label-error); }
 .taskPrompt { overflow: hidden; color: var(--dsw-alias-label-secondary); font-size: 11px; text-overflow: ellipsis; white-space: nowrap; }
 .taskRow button { padding: 2px 7px; border: 0; border-radius: 5px; color: var(--dsw-alias-label-secondary); background: var(--dsw-alias-bg-layer-2); cursor: pointer; font: inherit; font-size: 11px; }
+
+/* --- generation diagnostics (#38) ----------------------------------------- */
+/* The task row used to say only "失败", which is what the reporter of #38 was
+   left with: no reason, and nowhere to look. The message now rides under the
+   row, and the tray header opens the retained attempt record. */
+.taskError {
+  grid-column: 1 / -1;
+  margin: 6px 0 0;
+  padding: 6px 8px;
+  border-left: 2px solid var(--dsw-alias-label-error);
+  border-radius: 0 4px 4px 0;
+  color: var(--dsw-alias-label-secondary);
+  background: var(--dsw-alias-bg-layer-2);
+  font-size: 11px;
+  line-height: 1.5;
+  overflow-wrap: anywhere;
+}
+
+.taskTrayDiagnostics {
+  padding: 0 10px;
+  border: 0;
+  border-left: 1px solid var(--dsw-alias-border-l1);
+  color: var(--dsw-alias-label-tertiary);
+  background: transparent;
+  cursor: pointer;
+  font: inherit;
+  font-size: 11px;
+  font-weight: 500;
+  white-space: nowrap;
+}
+
+.taskTrayDiagnostics:hover { color: var(--dsw-alias-label-primary); background: var(--dsw-alias-bg-layer-2); }
+.taskTrayDiagnostics[aria-pressed='true'] { color: var(--dsw-alias-brand-primary); }
+
+/* The video studio's copy of the diagnostics entry. It sits on the tab's own
+   toolbar rather than the image studio's task tray, because the record has to
+   be reachable when a submit failed and therefore produced no task row. */
+.videoDiagnosticsRow {
+  display: flex;
+  justify-content: flex-end;
+  padding: 2px 10px 6px;
+}
+
+.diagnosticsPanel {
+  position: absolute;
+  z-index: var(--z-diagnostics);
+  inset: 12px;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  border: 1px solid var(--dsw-alias-border-l2);
+  border-radius: 9px;
+  background: var(--dsw-alias-bg-layer-1);
+  box-shadow: 0 12px 32px rgb(0 0 0 / 18%);
+}
+
+.diagnosticsHeader {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 9px 12px;
+  border-bottom: 1px solid var(--dsw-alias-border-l1);
+  color: var(--dsw-alias-label-primary);
+  font-size: 12px;
+}
+
+.diagnosticsHeader strong { font-size: 13px; }
+.diagnosticsHeader span { margin-left: 8px; color: var(--dsw-alias-label-tertiary); font-weight: 400; }
+.diagnosticsActions { display: flex; align-items: center; gap: 6px; }
+
+.diagnosticsActions button {
+  padding: 3px 9px;
+  border: 0;
+  border-radius: 5px;
+  color: var(--dsw-alias-label-secondary);
+  background: var(--dsw-alias-bg-layer-2);
+  cursor: pointer;
+  font: inherit;
+  font-size: 11px;
+}
+
+.diagnosticsActions button:hover:not(:disabled) { color: var(--dsw-alias-label-primary); }
+.diagnosticsActions button:disabled { opacity: .5; cursor: default; }
+
+.diagnosticsHint {
+  margin: 0;
+  padding: 7px 12px;
+  border-bottom: 1px solid var(--dsw-alias-border-l1);
+  color: var(--dsw-alias-label-tertiary);
+  font-size: 11px;
+  line-height: 1.5;
+}
+
+.diagnosticsEmpty { margin: 0; padding: 18px 12px; color: var(--dsw-alias-label-tertiary); font-size: 12px; line-height: 1.6; }
+.diagnosticsRows { min-height: 0; overflow-y: auto; padding: 6px; }
+
+.diagnosticsRow {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  margin-bottom: 6px;
+  padding: 8px 10px;
+  border: 1px solid var(--dsw-alias-border-l1);
+  border-radius: 7px;
+  background: var(--dsw-alias-bg-base);
+}
+
+.diagnosticsMeta { display: flex; flex-wrap: wrap; gap: 4px 10px; color: var(--dsw-alias-label-tertiary); font-size: 11px; }
+.diagnosticsPhase { color: var(--dsw-alias-brand-primary); font-weight: 600; }
+.diagnosticsMeta [data-status] { color: var(--dsw-alias-label-error); font-weight: 600; }
+.diagnosticsMeta [data-error-code] { color: var(--dsw-alias-label-error); font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
+
+.diagnosticsUrl {
+  padding: 4px 7px;
+  border-radius: 5px;
+  color: var(--dsw-alias-label-secondary);
+  background: var(--dsw-alias-bg-layer-2);
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 11px;
+  overflow-wrap: anywhere;
+}
+
+.diagnosticsMessage { margin: 0; color: var(--dsw-alias-label-secondary); font-size: 11px; line-height: 1.55; overflow-wrap: anywhere; }
+
+.diagnosticsDetail summary { color: var(--dsw-alias-label-tertiary); cursor: pointer; font-size: 11px; }
+.diagnosticsDetail pre {
+  max-height: 220px;
+  margin: 5px 0 0;
+  padding: 7px 9px;
+  overflow: auto;
+  border-radius: 5px;
+  color: var(--dsw-alias-label-secondary);
+  background: var(--dsw-alias-bg-layer-2);
+  font-size: 11px;
+  line-height: 1.5;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
 .taskRow button:hover { color: var(--dsw-alias-brand-primary); }
 
 .configGuide { position: fixed; inset: 0; z-index: var(--z-guide); display: grid; place-items: center; padding: 20px; background: rgb(0 0 0 / 35%); }

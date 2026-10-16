@@ -60,6 +60,40 @@ layer order is written down in one place.
   now show the failure and a retry, and a template favorite whose state could
   not be read shows an unknown marker instead of an unstarred star.
 
+### Upstream v1.6.9 folded in, and the video chain made equal to it
+
+The fork moved onto upstream's v1.6.9 work. The two histories share no ancestor
+(this fork's baseline is a squash of v1.6.8), so `git merge` is refused outright
+and the changes landed as a file-level port instead. Upstream's version string is
+deliberately **not** taken: this repository's own line is ahead of it.
+
+- **Diagnostics: every failed upstream attempt is now on the record.** A new
+  in-memory ring buffer (200 entries, cleared on restart, never written to disk)
+  keeps the *final* request URL, the HTTP status, the network code
+  (`ECONNREFUSED` / `ENOTFOUND` / `CERT_*`), the duration, the byte counts and the
+  raw upstream body. Credentials are redacted before storage — `Bearer` tokens,
+  keys in a query string and inline base64 all become placeholders — so the
+  copied report is safe to paste into a public issue. The panel offers copy-all
+  and states the failure instead of pretending there is nothing to show.
+- **A failed task explains itself in the task list**, instead of the word
+  "failed": the message now carries the request URL and the network code, which
+  is what settles the usual "the request never reached the gateway" report.
+- **The studio no longer hides behind the plugin-market page.** Both live in the
+  same `main` slot, so switching from the conversation to the studio left two
+  panels in the column. The keyed slot now yields for non-conversation content.
+- **The video chain records into the same buffer.** Upstream's #38 covered
+  images only, so a user whose images worked and whose videos did not had
+  nowhere to look — and `DiagnosticPhase` could not even name the video legs.
+  Video is submit → poll → download rather than one synchronous call, so each leg
+  is its own phase (`video-submit` / `video-poll` / `video-download`), and
+  "the render never started" is now distinguishable from "the status endpoint
+  stopped answering". Reference frames are recorded as a count, never as the
+  megabytes of base64 they are; a transient blip the poll loop retries is
+  deliberately not recorded, while an exhausted retry budget is, with the status
+  the endpoint kept answering with. The entry point rides the always-rendered
+  toolbar in both studios, because a submit that never reached the provider
+  leaves no task row to open it from.
+
 ### 1.7.4 — timing bugs the user actually hits
 
 - **One artifact the host refuses no longer loses the whole skill run.** A

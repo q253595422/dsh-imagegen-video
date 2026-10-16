@@ -6,12 +6,14 @@
  * proves nothing about the fix.
  *
  * Runs against a COPY of the repo (node_modules symlinked) so the working tree
- * is never mutated. Cases run through one of two runners:
+ * is never mutated. Cases run through one of three runners:
  *
  *   contracts -- scripts/verify-ui-contracts.mjs, which reads the sources and
  *                stylesheets directly, so it needs no build.
  *   smoke     -- scripts/smoke.mjs, which loads lib/client.js, so the copy is
  *                rebuilt after the mutation.
+ *   video     -- scripts/smoke-video.mjs, which drives the built host's video
+ *                engine against a local upstream; also needs the rebuild.
  */
 import { cpSync, symlinkSync, rmSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { execFileSync } from 'node:child_process'
@@ -302,7 +304,93 @@ const CASES = [
     to: '        if (files.length > 0) uploadFiles(files)',
     expect: /clears its file input/,
   },
+  {
+    // The z-index literal upstream shipped with the diagnostics panel. The
+    // scale check is what turns it red, which is the point of the scale.
+    name: 'the diagnostics panel brings back a literal layer number',
+    runner: 'contracts',
+    file: 'src/client/panel.module.css',
+    from: '.diagnosticsPanel {\n  position: absolute;\n  z-index: var(--z-diagnostics);',
+    to: '.diagnosticsPanel {\n  position: absolute;\n  z-index: 92;',
+    expect: /z-index literals are back/,
+  },
+  {
+    // Measured in a real browser, because whether a shell panel yields the
+    // column is decided by the cascade over a `display: contents` anchor --
+    // source-level reasoning cannot see it.
+    name: 'a shell panel no longer yields the keyed main slot',
+    runner: 'contracts',
+    file: 'src/client/panel.module.css',
+    from: "html[data-dsh-imagegen-active]:not([data-dsh-taskboard-active]):not([data-dsh-ssh-active]) [data-slot='main'] > :not([data-dsh-imagegen-view]):not([data-phase]):not([data-slot='main.conversation']) {\n  display: none !important;\n}",
+    to: '',
+    expect: /shell panel inside the keyed `main` slot is still rendered/,
+  },
+
+  // -------------------------------------------------- video diagnostics parity
+  {
+    // The parity claim is "the video chain records into the SAME buffer". Drop
+    // the recording and the video check has nothing to look at.
+    name: 'a failed video submit is no longer recorded',
+    runner: 'video',
+    file: 'src/video-engine.ts',
+    from: '    recordVideoFailure(attempt, failure, { requestExcerpt: excerpt })\n',
+    to: '',
+    expect: /refused video submit leaves a diagnostic entry/,
+  },
+  {
+    // Phase is the whole reason the video pipeline needs its own vocabulary:
+    // without it a poll failure is indistinguishable from a submit failure.
+    name: 'the video pipeline loses its own phases',
+    runner: 'video',
+    file: 'src/video-engine.ts',
+    from: "  const statusAttempt: VideoAttempt = {\n    ...attempt,\n    phase: 'video-poll',",
+    to: "  const statusAttempt: VideoAttempt = {\n    ...attempt,\n    phase: 'video-submit',",
+    expect: /phase says the render started/,
+  },
+  {
+    // A raw fetch rejection is transient inside the poll loop, so the loop
+    // judges it; if it stops recording once the retries run out, the "it just
+    // sat there" report has nothing behind it. The throw stays, so only the
+    // record disappears -- the case turns red on the diagnostic assertion, not
+    // on a hang.
+    name: 'an exhausted poll retry budget is no longer recorded',
+    runner: 'video',
+    file: 'src/video-engine.ts',
+    from: '        recordPollExhausted(statusAttempt, error, taskId, family, transientRetries)\n        throw error',
+    to: '        throw error',
+    expect: /exhausted poll retry budget leaves a diagnostic entry/,
+  },
+  {
+    // The poll loop never sees the response, only the error, so the wire code
+    // has to travel on the error. Without it the record says "the status
+    // endpoint failed" without saying WHAT it answered, which is the first
+    // thing anyone asks.
+    name: 'a spent poll budget forgets which status it kept getting',
+    runner: 'video',
+    file: 'src/video-engine.ts',
+    from: "      retryable ? 'video-status-transient' : 'video-status-failed',\n      retryable,\n      response.status,\n    )",
+    to: "      retryable ? 'video-status-transient' : 'video-status-failed',\n      retryable,\n    )",
+    expect: /status the endpoint kept answering with/,
+  },
+  {
+    // The parity claim fails in the direction that actually shipped upstream:
+    // the entry lives only where a TASK already exists. Drop the always-rendered
+    // toolbar row and the video studio no longer reaches the record at all --
+    // which is exactly the state a user with zero tasks is in.
+    name: 'the video studio stops offering the diagnostics record',
+    runner: 'smoke',
+    file: 'src/client/VideoPanel.tsx',
+    from: '      <div className={css.videoDiagnosticsRow}>\n        <DiagnosticsButton open={diagnosticsOpen} onToggle={() => { setDiagnosticsOpen(open => !open) }} />\n      </div>',
+    to: '',
+    expect: /renders exactly one diagnostics entry|opens the diagnostics record/,
+  },
 ]
+
+const RUNNERS = {
+  contracts: { script: 'scripts/verify-ui-contracts.mjs', build: false },
+  smoke: { script: 'scripts/smoke.mjs', build: true },
+  video: { script: 'scripts/smoke-video.mjs', build: true },
+}
 
 const results = []
 // The runner name is a CLI filter: the smoke cases each rebuild and run the
@@ -311,7 +399,8 @@ const results = []
 const only = process.argv[2]
 for (const testCase of CASES) {
   if (only !== undefined && only !== '' && testCase.runner !== only) continue
-  const script = testCase.runner === 'contracts' ? 'scripts/verify-ui-contracts.mjs' : 'scripts/smoke.mjs'
+  const runner = RUNNERS[testCase.runner]
+  const script = runner.script
   freshCopy()
   const baseline = run(script)
   if (!baseline.ok) {
@@ -320,7 +409,7 @@ for (const testCase of CASES) {
   }
   try {
     patch(testCase.file, testCase.from, testCase.to)
-    if (testCase.runner === 'smoke') build()
+    if (runner.build) build()
   } catch (error) {
     results.push({ name: testCase.name, verdict: 'HARNESS BROKEN', detail: String(error.message) })
     continue

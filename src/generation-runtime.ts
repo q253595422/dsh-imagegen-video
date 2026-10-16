@@ -88,7 +88,7 @@ export class ImageGenerationRuntime {
       throw new VideoGenError(`渠道「${channel.name}」未为模型「${request.model}」配置视频协议族；请在渠道的视频模型中改用受支持的视频模型`, 'video-unknown-model')
     }
     const result = await generateVideo(
-      { apiUrl: channel.apiUrl, apiKey: channel.apiKey, apiUrlFull: channel.apiUrlFull, protocol: channel.protocol } satisfies UpstreamConfig,
+      { apiUrl: channel.apiUrl, apiKey: channel.apiKey, apiUrlFull: channel.apiUrlFull, protocol: channel.protocol, channelName: channel.name } satisfies UpstreamConfig,
       { ...request, upstream },
       { ...signal === undefined ? {} : { signal }, family },
     )
@@ -143,7 +143,7 @@ export class ImageGenerationRuntime {
     }
     const result = channel.auth === 'subscription' && channel.subscription !== undefined
       ? { images: await this.generateSubscription(channel.subscription, request, signal) }
-      : await generateImage({ apiUrl: channel.apiUrl, apiKey: channel.apiKey, apiUrlFull: channel.apiUrlFull, protocol: channel.protocol } satisfies UpstreamConfig, request, { signal })
+      : await generateImage({ apiUrl: channel.apiUrl, apiKey: channel.apiKey, apiUrlFull: channel.apiUrlFull, protocol: channel.protocol, channelName: channel.name } satisfies UpstreamConfig, request, { signal })
     try {
       const history = await this.history.append({
         id: randomUUID(),
