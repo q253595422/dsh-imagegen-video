@@ -13,5 +13,17 @@ The upstream source this fork derives from is the v1.6.8 release source
 upstream is carried over unchanged except where the fork deliberately
 modified it; the fork's own changes are enumerated in CHANGELOG.md.
 
+The fork also incorporates upstream code from LATER releases, taken
+selectively and re-applied by hand rather than merged (the two histories
+share no common ancestor). Each such incorporation is recorded in
+CHANGELOG.md under the release that carries it; for example the diagnostic
+record added in this fork's v1.7.5 includes upstream's diagnostics store and
+the failure-recording call sites from upstream issue #38. Upstream copyright
+and the Apache-2.0 license above cover that code as well.
+
+In all cases the fork is an independent project: it does not track upstream's
+release line or version numbers, and upstream functionality is adopted only
+when it is wanted.
+
 Third-party components bundled or referenced by this project are listed
 in THIRD_PARTY_NOTICES.md, which is carried over from upstream.

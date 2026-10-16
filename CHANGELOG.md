@@ -60,12 +60,13 @@ layer order is written down in one place.
   now show the failure and a retry, and a template favorite whose state could
   not be read shows an unknown marker instead of an unstarred star.
 
-### Upstream v1.6.9 folded in, and the video chain made equal to it
+#### The record of a failed call, and the video chain made equal to it
 
-The fork moved onto upstream's v1.6.9 work. The two histories share no ancestor
-(this fork's baseline is a squash of v1.6.8), so `git merge` is refused outright
-and the changes landed as a file-level port instead. Upstream's version string is
-deliberately **not** taken: this repository's own line is ahead of it.
+Upstream's diagnostics work (#38) is part of this release. Their history and ours
+share no ancestor — this fork's baseline is a squash of v1.6.8 — so `git merge`
+is refused outright and the work landed as a file-level port rather than a merge.
+Attribution for their code is in [NOTICE](./NOTICE). The version line here is this
+repository's own and does not follow theirs.
 
 - **Diagnostics: every failed upstream attempt is now on the record.** A new
   in-memory ring buffer (200 entries, cleared on restart, never written to disk)
@@ -264,9 +265,11 @@ The fork's first published release. It ships as a **GitHub Release asset**
 (`q253595422-dsh-imagegen-video-1.7.0.tgz`), not as an npm package. Everything in
 "What the fork adds" below is in this release.
 
-- **Version line starts above upstream.** Upstream had already published v1.6.9
-  by the time this fork shipped, so publishing as 1.6.8 would have looked older
-  than what it derives from. The fork therefore starts at 1.7.0.
+- **The version line is this repository's own.** It starts at 1.7.0 rather than
+  continuing upstream's 1.6.x, because this fork is an independent project and
+  its releases are not upstream releases. (At the time, 1.6.8 would also have
+  looked like it *predated* the very baseline it derives from, since upstream's
+  own line had moved on.)
 - **No absolute paths ship in the tarball.** `lib/` is published (it is in
   `files`), and Rolldown stamps each module's id into a `//#region <id>` banner
   that survives into the bundle. The CSS Modules virtual id used to be the CSS
