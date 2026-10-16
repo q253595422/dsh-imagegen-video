@@ -10,11 +10,12 @@ detail is in `git log 9305f9f..HEAD`.
 
 ## Releases
 
-### 1.7.5 — every module reviewed, and a stacking scale that cannot drift
+### 1.7.5 — every UI module reviewed, and a failed call that can be explained
 
-A full pass over the plugin's UI, driven by real defects rather than taste. The
-headline is that the theme no longer leaks into component internals and the
-layer order is written down in one place.
+Two things: a full pass over the plugin's UI, driven by real defects rather than
+taste (the theme no longer leaks into component internals, and the layer order is
+written down in one place), and a failed call that can actually be explained —
+including on the video chain, which upstream's version of that work did not cover.
 
 - **The nav follows the host theme at runtime.** `GooeyNav` had its four colors
   baked in as literals and detected the surface only once, at mount. Switching
