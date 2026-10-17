@@ -8,7 +8,7 @@
 export const IMAGEGEN_SETTINGS_NAMESPACE = 'dsh-imagegen'
 
 /** Published package version shared by the host updater and the client UI. */
-export const PLUGIN_VERSION = '1.7.5'
+export const PLUGIN_VERSION = '1.7.6'
 
 /** Same-origin route family (loopback-only, mirroring the dsh-ssh fence). */
 export const SETTINGS_API = {
@@ -313,6 +313,27 @@ export const TEMPLATE_SOURCES: TemplateSourceMeta[] = [
     label: 'GPT Image 2 案例库',
     homepage: 'https://github.com/EvoLinkAI/awesome-gpt-image-2-prompts',
     description: 'EvoLink 整理的 GPT Image 2 电商、广告、人像、海报、角色与 UI 案例',
+    refreshable: false,
+  },
+  {
+    id: 'itgoyo',
+    label: 'Prompt 图集',
+    homepage: 'https://github.com/itgoyo/awesome-gpt-image2-prompt',
+    description: '612 组带示例图的 GPT-Image-2 提示词（itgoyo/awesome-gpt-image2-prompt，CC BY 4.0）',
+    refreshable: false,
+  },
+  {
+    id: 'songtianlun',
+    label: '多模态提示词',
+    homepage: 'https://github.com/songtianlun/awesome-prompts',
+    description: '按模态收录的生图 / 改图 / 生视频提示词（songtianlun/awesome-prompts，MIT）',
+    refreshable: false,
+  },
+  {
+    id: 'youart',
+    label: 'YouArt 2.5',
+    homepage: 'https://github.com/youart-open-source/awesome-gpt-image-2-5-prompts',
+    description: '逐条署名到原作者与原始帖子的 GPT Image 2.5 提示词（CC BY 4.0，无示例图）',
     refreshable: false,
   },
 ]

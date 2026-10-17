@@ -10,6 +10,67 @@ detail is in `git log 9305f9f..HEAD`.
 
 ## Releases
 
+### 1.7.6 — the template library grows to eight sources, and a parser bug that hid half of one
+
+The template library was smaller than it said it was. A snapshot keyed each case
+by its number alone, and the upstream reuses numbers across AND inside its
+category files, so roughly a thousand cases were overwritten without a single
+error. Fixing that, plus three newly found upstream collections that can be
+included on their licences, takes the library from 5 sources / 2462 cases to
+**8 sources / 3774 cases**.
+
+- **evolink: 462 → 967 cases.** `cases/character.md` and `cases/portrait.md`
+  both open at `### Case 1:` with images in different directories, and numbers
+  repeat inside one file too, so keying a case by its number discarded the rest
+  — about 1420 parseable prompts reduced to 462 with nothing to show for it. Ids
+  are now category-scoped (`portrait-53`) and de-duplicated per file: 967 cases,
+  zero duplicate ids. This is a repair, not an addition, which is why it is
+  called out separately.
+- **Three new sources, each pinned to an exact commit.** `itgoyo/awesome-gpt-image2-prompt`
+  (602 cases, CC BY 4.0), `songtianlun/awesome-prompts` (55, MIT) and
+  `youart-open-source/awesome-gpt-image-2-5-prompts` (150, layered licensing —
+  see THIRD_PARTY_NOTICES.md). `ITGOYO_COMMIT`, `SONGTIANLUN_COMMIT` and
+  `YOUART_COMMIT` fix the revision the build reads; the sources are deliberately
+  not refreshable at runtime, so what was reviewed is what ships.
+- **youart ships no images on purpose.** The corpus publishes none of its own;
+  every row credits the person who wrote the prompt and the post where it first
+  appeared. Those cards show the placeholder thumbnail and keep the full prompt,
+  title and author link.
+- **The source tab row scrolls.** Eight `nowrap` tabs in a plain flex box
+  neither wrapped nor scrolled, so every source past the right edge was
+  invisible, unclickable, and undiscoverable. The row now scrolls horizontally
+  and the tabs do not shrink (shrinking truncates the label and its count badge
+  instead). Verified in a real browser, not by reading the declarations.
+- **Favorites for evolink cases do not carry over.** Favorites are keyed
+  `sourceId:caseId`, and evolink's ids changed shape (`case-12` →
+  `portrait-12`), so a star put on an evolink case in 1.7.5 will not resolve.
+  No other source's ids changed. This is the unavoidable cost of fixing a
+  collision that was silently discarding cases.
+- **Six preview images from an unlicensed repository are gone.** `prompt-signal`
+  carried six `image` URLs pointing at `songguoxs/gpt4o-image-prompts`, which
+  declares no licence. The URLs are shipped data, so serving them is this
+  project's call rather than the aggregator's: the field is now empty and those
+  cards show the placeholder thumbnail. Their prompt text, title and link to the
+  original author's own post all stay — the prompt was never the aggregator's,
+  and the `githubUrl` attribution link is kept. Both the generator and the
+  contract check guard this, so a regeneration that forgets the filter fails.
+- **The installed archive is 4 MiB instead of 24 MiB.** `docs/images/` — the
+  README screenshots, including a 13 MiB demo GIF — is never read at runtime and
+  is rendered by GitHub from the repository. It is no longer in `files`, the way
+  `docs/videos/` already was not. The archive rule now runs as
+  `scripts/verify-pack.mjs` against a real `pnpm pack` in CI and in the negative
+  verification, instead of as inline shell in the workflow.
+- **"Detect models" no longer drops `nanobanana2` and `nanobanana2-lite`.**
+  Both ship in `DEFAULT_IMAGE_MODELS`, and `describeModel()` recognises them,
+  but `isLikelyImageModelId()` required a separator after the family keyword —
+  `nanobanana2` has none between `nanobanana` and `2`. Against a gateway whose
+  `/models` returns ids without capability metadata, the panel therefore listed
+  two models fewer than the catalog declares. The predicate now accepts an
+  optional digit run before the boundary (`flux2`, `wanx2` likewise);
+  `gpt-4o` and `text-embedding-3-small` are still rejected. The smoke suite's
+  detection check now serves both ids from its mock gateway, so reverting the
+  regex turns it red.
+
 ### 1.7.5 — every UI module reviewed, and a failed call that can be explained
 
 Two things: a full pass over the plugin's UI, driven by real defects rather than

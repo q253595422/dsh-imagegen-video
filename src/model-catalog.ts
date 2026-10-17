@@ -138,9 +138,16 @@ export function describeModel(model: string): ModelCatalogEntry {
 /** Conservative fallback for providers whose /models response only has ids.
  *  Metadata-aware filtering lives in prompt-enhancer.ts; this catches common
  *  image model naming conventions without treating every unknown model as an
- *  image model. */
+ *  image model.
+ *
+ *  The trailing `\d*` lets the keyword boundary accept the numeric suffix that
+ *  gateways append to a family name without a separator (`nanobanana2`,
+ *  `wanx2`). Without it this predicate rejects ids that describeModel() already
+ *  declares known — including the DEFAULT_IMAGE_MODELS entries `nanobanana2`
+ *  and `nanobanana2-lite` — so "detect models" silently returns a list shorter
+ *  than the catalog it is meant to expose. */
 export function isLikelyImageModelId(model: string): boolean {
-  return /(?:^|[-_.])(?:image|img|diffusion|flux|cogview|imagen|seedream|nanobanana|grok-imagine|dall-e|stable-diffusion|sdxl|pixart|kolors|ideogram|midjourney|recraft|hunyuan|jimeng|wanx|hidream|playground)(?:$|[-_.])/i.test(model.trim())
+  return /(?:^|[-_.])(?:image|img|diffusion|flux|cogview|imagen|seedream|nanobanana|grok-imagine|dall-e|stable-diffusion|sdxl|pixart|kolors|ideogram|midjourney|recraft|hunyuan|jimeng|wanx|hidream|playground)\d*(?:$|[-_.])/i.test(model.trim())
 }
 
 /** The family a model id routes its request through. */

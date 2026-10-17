@@ -101,11 +101,24 @@
   padding: 0 18px 10px;
   border-bottom: 1px solid var(--dsw-alias-border-l1);
   flex: none;
+  /*
+   * The registry grew past what fits one row, and this row used to clip:
+   * `nowrap` tabs in a plain flex box with no scroll, so every source after
+   * the last visible one became unreachable. A real tablist scrolls instead.
+   */
+  overflow-x: auto;
+  overflow-y: hidden;
+  scrollbar-width: none;
+}
+
+.sourceTabs::-webkit-scrollbar {
+  display: none;
 }
 
 .sourceTab {
   display: inline-flex;
   align-items: center;
+  flex: none;
   gap: 6px;
   height: 30px;
   padding: 0 14px;

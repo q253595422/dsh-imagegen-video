@@ -6,8 +6,8 @@
  *   node scripts/fetch-templates.mjs handraw         # one named source
  *   node scripts/fetch-templates.mjs <url> <file>    # ad-hoc vibeui/canghe JSON
  *
- * The three community libraries that do not publish one aggregate JSON file
- * are assembled from pinned upstream commits here. Their runtime sources are
+ * The community libraries that do not publish one aggregate JSON file are
+ * assembled from pinned upstream commits here. Their runtime sources are
  * deliberately non-refreshable; updating them is a plugin-release step.
  */
 import { mkdir, rm, writeFile } from 'node:fs/promises'
@@ -21,6 +21,9 @@ const FETCH_TIMEOUT_MS = 60_000
 const HANDRAW_COMMIT = '3737026e2e829540faf5c0627f37251be02b092d'
 const PROMPT_SIGNAL_COMMIT = 'ab00db4e4301f172e16ff178691e41d941fa1acc'
 const EVOLINK_COMMIT = 'e2a269ad1a055a0b4f6c1e170341c6c1aba30faa'
+const ITGOYO_COMMIT = '8e32c7fde7f702a4a7af6ab7daf54458c0e0ca2c'
+const SONGTIANLUN_COMMIT = 'a35ee281507a0af33f359f142b1eae159138da45'
+const YOUART_COMMIT = 'f7f6276ff3d82cea2d837b89cf2dd097dd9766ac'
 
 const CATEGORY_ZH = {
   'Architecture & Spaces': '建筑与空间',
@@ -78,6 +81,19 @@ const EVOLINK_CATEGORIES = {
   portrait: { key: 'Portrait & Photography', zh: '人像与摄影', file: 'portrait.md' },
   poster: { key: 'Poster & Illustration', zh: '海报与插画', file: 'poster.md' },
   ui: { key: 'UI & Social Media', zh: 'UI 与社媒', file: 'ui.md' },
+}
+
+/** youart groups its 150 prompts by these nine slugs. */
+const YOUART_CATEGORIES = {
+  'ad-creative': '广告创意',
+  'character-design': '角色设计',
+  'ecommerce-product': '电商与产品',
+  infographic: '信息图',
+  illustration: '插画',
+  portrait: '人像',
+  poster: '海报',
+  'typography-text': '文字排版',
+  'ui-mockup': 'UI 原型',
 }
 
 function imageFileOf(path) {
@@ -266,6 +282,39 @@ function promptSignalImage(value) {
   return ''
 }
 
+/**
+ * Repositories cited in the case metadata that grant no licence for their
+ * contents. An image URL that points into one of these is dropped: the URLs
+ * are in the shipped data, so keeping them is a redistribution question this
+ * project cannot answer on the upstream's behalf. The prompt text is NOT
+ * affected -- it is verbatim from the original authors' own posts, already
+ * credited by `sourceLabel`/`sourceUrl`, and the aggregator only supplied the
+ * preview image.
+ *
+ * Matched by parsed host + path, not by substring: the images live on
+ * `raw.githubusercontent.com`, which contains neither `github.com/...` nor
+ * anything else a naive pattern would catch, and a substring test would also
+ * hit an unrelated repo whose name merely starts with the same letters.
+ *
+ * Keep in sync with the "Unlicensed image URLs" section of
+ * THIRD_PARTY_NOTICES.md.
+ */
+const UNLICENSED_IMAGE_REPOS = [
+  { owner: 'songguoxs', repo: 'gpt4o-image-prompts' },
+]
+const IMAGE_CDN_HOSTS = ['raw.githubusercontent.com', 'github.com', 'camo.githubusercontent.com']
+
+function pointsIntoUnlicensedRepo(url) {
+  if (url === '') return false
+  let parsed
+  try { parsed = new URL(url) } catch { return false }
+  if (!IMAGE_CDN_HOSTS.includes(parsed.hostname.toLowerCase())) return false
+  const segments = parsed.pathname.split('/').filter(Boolean).map(segment => segment.toLowerCase())
+  return UNLICENSED_IMAGE_REPOS.some(
+    entry => segments[0] === entry.owner && segments[1] === entry.repo,
+  )
+}
+
 async function buildPromptSignal() {
   const base = `https://raw.githubusercontent.com/andy7076/image_prompt/${PROMPT_SIGNAL_COMMIT}/src`
   const files = [
@@ -300,6 +349,10 @@ async function buildPromptSignal() {
     const category = String(item.category ?? 'other')
     const sources = Array.isArray(item.sources) ? item.sources : []
     const githubUrl = sources.find(source => typeof source?.url === 'string' && /github\.com/i.test(source.url))?.url
+    const candidateImage = promptSignalImage(item.image ?? item.images?.[0]?.url)
+    // Attribution links stay; only the preview image goes. See
+    // UNLICENSED_IMAGE_REPOS for why the distinction matters.
+    const image = pointsIntoUnlicensedRepo(candidateImage) ? '' : candidateImage
     cases.push({
       id,
       title,
@@ -311,7 +364,7 @@ async function buildPromptSignal() {
       sourceLabel: String(item.author ?? item.sourceLabel ?? ''),
       sourceUrl: normalizeHttpUrl(item.source ?? sources[0]?.url),
       githubUrl: normalizeHttpUrl(githubUrl),
-      image: promptSignalImage(item.image ?? item.images?.[0]?.url),
+      image,
       featured: item.featured === true,
     })
   }
@@ -330,65 +383,217 @@ function evolinkImage(value) {
   return normalizeHttpUrl(raw)
 }
 
+/** Split one category markdown into its `### Case n:` blocks + trailing text. */
+function evolinkBlocks(markdown) {
+  const heading = /^### Case (\d+): (?:(?:\[([^\]]+)\]\(([^)]+)\))|(.+?))\s*$/gm
+  const matches = [...markdown.matchAll(heading)]
+  return matches.map((match, index) => ({
+    number: Number(match[1]),
+    rawTitle: String(match[2] ?? match[4] ?? '').trim(),
+    headingUrl: match[3],
+    section: markdown.slice(match.index, matches[index + 1]?.index ?? markdown.length),
+  }))
+}
+
+/** One case from one block; undefined when the block carries no usable prompt. */
+function evolinkCase(block, meta) {
+  const inlineTitle = /^\[([^\]]+)\]\(([^)]+)\)/.exec(block.rawTitle)
+  const title = inlineTitle?.[1]?.trim() ?? block.rawTitle
+  const prompt = (/\*\*Prompt(?:\*\*:|:\*\*)\s*```[^\n]*\n([\s\S]*?)\n```/i.exec(block.section)?.[1] ?? '').trim()
+  if (!Number.isInteger(block.number) || title === '' || prompt === '') return undefined
+  const sourceMatch = /\*\*Source\*\*:\s*\[([^\]]+)\]\(([^)]+)\)/i.exec(block.section)
+  const authorMatch = /\(by \[@([^\]]+)\]/i.exec(block.section) ?? /\*\*Source\*\*:\s*\[@([^\]]+)\]/i.exec(block.section)
+  const author = String(authorMatch?.[1] ?? '').trim()
+  const imageMatch = /<img\s+src="([^"]+)"/i.exec(block.section) ?? /!\[[^\]]*\]\(([^)]+)\)/.exec(block.section)
+  return {
+    id: `${meta.slug}-${block.number}`,
+    number: block.number,
+    title,
+    prompt,
+    category: meta.key,
+    categoryZh: meta.zh,
+    styles: [],
+    scenes: [],
+    sourceLabel: author === '' ? '' : `@${author}`,
+    sourceUrl: normalizeHttpUrl(block.headingUrl ?? inlineTitle?.[2] ?? sourceMatch?.[2]),
+    githubUrl: 'https://github.com/EvoLinkAI/awesome-gpt-image-2-prompts',
+    image: evolinkImage(imageMatch?.[1]),
+    featured: false,
+  }
+}
+
+/**
+ * Case numbers are not unique: `cases/character.md` and `cases/portrait.md`
+ * both begin at `### Case 1:`, their images live in different directories, and
+ * some files even repeat a number three times over unrelated cases. Keying a
+ * case by its number dropped most of the corpus (462 of 1420 survived), so the
+ * id is `slug-number`, suffixed only when a slug repeats a number. README.md
+ * mirrors the whole set and contributes just the numbers no category file
+ * carried, which is what `covered` tracks.
+ */
 async function buildEvolink() {
   const base = `https://raw.githubusercontent.com/EvoLinkAI/awesome-gpt-image-2-prompts/${EVOLINK_COMMIT}`
-  const files = [
-    ...Object.entries(EVOLINK_CATEGORIES).map(([slug, meta]) => ({ ...meta, slug, path: `cases/${meta.file}` })),
-    { key: 'Featured', zh: '精选案例', slug: 'featured', path: 'README.md' },
-  ]
-  const parsed = []
-  for (const meta of files) {
-    const markdown = await fetchText(`${base}/${meta.path}`)
-    const heading = /^### Case (\d+): (?:(?:\[([^\]]+)\]\(([^)]+)\))|(.+?))\s*$/gm
-    const matches = [...markdown.matchAll(heading)]
-    for (let index = 0; index < matches.length; index += 1) {
-      const match = matches[index]
-      const section = markdown.slice(match.index, matches[index + 1]?.index ?? markdown.length)
-      const number = Number(match[1])
-      const rawTitle = String(match[2] ?? match[4] ?? '').trim()
-      const inlineTitle = /^\[([^\]]+)\]\(([^)]+)\)/.exec(rawTitle)
-      const title = inlineTitle?.[1]?.trim() ?? rawTitle
-      const sourceMatch = /\*\*Source\*\*:\s*\[([^\]]+)\]\(([^)]+)\)/i.exec(section)
-      const sourceUrl = normalizeHttpUrl(match[3] ?? inlineTitle?.[2] ?? sourceMatch?.[2])
-      const authorMatch = /\(by \[@([^\]]+)\]/i.exec(section) ?? /\*\*Source\*\*:\s*\[@([^\]]+)\]/i.exec(section)
-      const author = String(authorMatch?.[1] ?? '').trim()
-      const imageMatch = /<img\s+src="([^"]+)"/i.exec(section) ?? /!\[[^\]]*\]\(([^)]+)\)/.exec(section)
-      const promptMatch = /\*\*Prompt(?:\*\*:|:\*\*)\s*```[^\n]*\n([\s\S]*?)\n```/i.exec(section)
-      const prompt = promptMatch?.[1]?.trim() ?? ''
-      if (!Number.isInteger(number) || title === '' || prompt === '') continue
-      parsed.push({
-        id: `case-${number}`,
-        number,
-        title,
-        prompt,
-        category: meta.key,
-        categoryZh: meta.zh,
-        styles: [],
-        scenes: [],
-        sourceLabel: author === '' ? '' : `@${author}`,
-        sourceUrl,
-        githubUrl: 'https://github.com/EvoLinkAI/awesome-gpt-image-2-prompts',
-        image: evolinkImage(imageMatch?.[1]),
-        featured: false,
-      })
+  const cases = []
+  const covered = new Set()
+  const usedIds = new Map()
+  const uniqueId = (id) => {
+    const seen = (usedIds.get(id) ?? 0) + 1
+    usedIds.set(id, seen)
+    return seen === 1 ? id : `${id}-${seen}`
+  }
+  for (const [slug, meta] of Object.entries(EVOLINK_CATEGORIES)) {
+    const markdown = await fetchText(`${base}/cases/${meta.file}`)
+    for (const block of evolinkBlocks(markdown)) {
+      const parsed = evolinkCase(block, { slug, key: meta.key, zh: meta.zh })
+      if (parsed === undefined) continue
+      covered.add(parsed.number)
+      cases.push({ ...parsed, id: uniqueId(parsed.id) })
     }
   }
+  const readme = await fetchText(`${base}/README.md`)
+  for (const block of evolinkBlocks(readme)) {
+    const parsed = evolinkCase(block, { slug: 'featured', key: 'Featured', zh: '精选案例' })
+    if (parsed === undefined || covered.has(parsed.number)) continue
+    cases.push({ ...parsed, id: uniqueId(parsed.id) })
+  }
+  cases.sort((a, b) => a.number - b.number || a.id.localeCompare(b.id))
+  return makeSnapshot(
+    'https://github.com/EvoLinkAI/awesome-gpt-image-2-prompts',
+    cases.map(({ number: _number, ...item }) => item),
+    `https://github.com/EvoLinkAI/awesome-gpt-image-2-prompts/tree/${EVOLINK_COMMIT}`,
+  )
+}
 
-  const byId = new Map()
-  for (const item of parsed) {
-    const current = byId.get(item.id)
-    if (current === undefined) {
-      byId.set(item.id, item)
-    } else if (item.prompt.length > current.prompt.length) {
-      byId.set(item.id, { ...item, image: item.image || current.image, sourceUrl: item.sourceUrl || current.sourceUrl })
-    } else if (item.image !== '' && current.image === '') {
-      byId.set(item.id, { ...current, image: item.image, sourceUrl: current.sourceUrl || item.sourceUrl })
-    }
+/** Localised `{ en, zh }` label; either side may be missing. */
+function bilingualLabel(value) {
+  if (typeof value === 'string') return value.trim()
+  if (value !== null && typeof value === 'object') {
+    const record = value
+    return String(record.zh ?? record.en ?? '').trim()
   }
-  const cases = [...byId.values()]
-    .sort((a, b) => a.number - b.number)
-    .map(({ number: _number, ...item }) => item)
-  return makeSnapshot('https://github.com/EvoLinkAI/awesome-gpt-image-2-prompts', cases, `https://github.com/EvoLinkAI/awesome-gpt-image-2-prompts/tree/${EVOLINK_COMMIT}`)
+  return ''
+}
+
+/**
+ * itgoyo publishes one README: each case is `### n. Title`, one or more
+ * `<img src="images/…">` previews, a `<details>` block whose first fenced
+ * block is the English prompt, and a `📎 Source:` line crediting the author.
+ * Images are served from the pinned commit so a later rewrite cannot rot them.
+ */
+async function buildItgoyo() {
+  const base = `https://raw.githubusercontent.com/itgoyo/awesome-gpt-image2-prompt/${ITGOYO_COMMIT}`
+  const markdown = await fetchText(`${base}/README.md`)
+  const cases = []
+  for (const block of markdown.split(/\n(?=### \d+\. )/).slice(1)) {
+    const heading = /^### (\d+)\.\s+(.+)$/m.exec(block)
+    if (heading === null) continue
+    const number = Number(heading[1])
+    const title = String(heading[2]).trim()
+    const prompt = (/\*\*🌐 English Prompt:\*\*\s*```[^\n]*\n([\s\S]*?)\n```/.exec(block)?.[1] ?? '').trim()
+    if (!Number.isInteger(number) || title === '' || prompt === '') continue
+    const preview = /<img\s+src="(images\/[^"]+)"/.exec(block)?.[1]
+    const source = /📎 \*\*Source:\*\*\s*\[([^\]]+)\]\(([^)]+)\)(?:\s*·\s*\[([^\]]+)\]\(([^)]+)\))?/.exec(block)
+    cases.push({
+      id: `t-${String(number).padStart(3, '0')}`,
+      title,
+      prompt,
+      category: 'Prompt Gallery',
+      categoryZh: '提示词图集',
+      styles: [],
+      scenes: [],
+      sourceLabel: String(source?.[1] ?? '').trim(),
+      sourceUrl: normalizeHttpUrl(source?.[4] ?? source?.[2]),
+      githubUrl: 'https://github.com/itgoyo/awesome-gpt-image2-prompt',
+      image: preview === undefined ? '' : `${base}/${preview}`,
+      featured: false,
+    })
+  }
+  return makeSnapshot('https://github.com/itgoyo/awesome-gpt-image2-prompt', cases, `https://github.com/itgoyo/awesome-gpt-image2-prompt/tree/${ITGOYO_COMMIT}`)
+}
+
+/** Resolve one songtianlun `images[].src`, which is repo-relative. */
+function songtianlunImage(value) {
+  const raw = String(value ?? '').trim()
+  if (raw === '') return ''
+  if (/^https?:\/\//i.test(raw)) return normalizeHttpUrl(raw)
+  if (raw.startsWith('/images/')) {
+    return `https://raw.githubusercontent.com/songtianlun/awesome-prompts/${SONGTIANLUN_COMMIT}/docs${raw}`
+  }
+  return ''
+}
+
+/**
+ * songtianlun publishes `docs/data/cases.json`: a bilingual corpus whose cases
+ * carry a modality (`text-to-image`, `image-editing`, `text-to-video`), so this
+ * is also the first source that feeds the video side of the studio.
+ */
+async function buildSongtianlun() {
+  const base = `https://raw.githubusercontent.com/songtianlun/awesome-prompts/${SONGTIANLUN_COMMIT}`
+  const payload = await fetchJson(`${base}/docs/data/cases.json`)
+  const labels = new Map(
+    (Array.isArray(payload.categories) ? payload.categories : []).map(entry => [String(entry.id), entry.label ?? {}]),
+  )
+  const cases = []
+  for (const raw of Array.isArray(payload.cases) ? payload.cases : []) {
+    if (raw === null || typeof raw !== 'object') continue
+    const id = String(raw.id ?? '').trim()
+    const title = bilingualLabel(raw.title)
+    const prompt = String(raw.prompt ?? '').trim()
+    if (id === '' || title === '' || prompt === '') continue
+    const category = String(raw.category ?? '')
+    const label = labels.get(category) ?? {}
+    const images = Array.isArray(raw.images) ? raw.images : []
+    const output = images.find(image => image?.role === 'output') ?? images[0]
+    cases.push({
+      id,
+      title,
+      prompt,
+      category: String(label.en ?? category),
+      categoryZh: String(label.zh ?? category),
+      styles: Array.isArray(raw.tags) ? raw.tags.map(String) : [],
+      scenes: [String(raw.modality ?? '')].filter(Boolean),
+      sourceLabel: '',
+      sourceUrl: '',
+      githubUrl: 'https://github.com/songtianlun/awesome-prompts',
+      image: songtianlunImage(output?.src),
+      featured: false,
+    })
+  }
+  return makeSnapshot('https://github.com/songtianlun/awesome-prompts', cases, `https://github.com/songtianlun/awesome-prompts/tree/${SONGTIANLUN_COMMIT}`)
+}
+
+/**
+ * youart publishes `data/prompts.json`: every prompt verbatim from the author
+ * who wrote it, with that author's post recorded. The corpus carries no images
+ * (only the upstream links), so those cards show the placeholder thumbnail.
+ */
+async function buildYouart() {
+  const base = `https://raw.githubusercontent.com/youart-open-source/awesome-gpt-image-2-5-prompts/${YOUART_COMMIT}`
+  const payload = await fetchJson(`${base}/data/prompts.json`)
+  const cases = []
+  for (const raw of Array.isArray(payload.prompts) ? payload.prompts : []) {
+    if (raw === null || typeof raw !== 'object') continue
+    const id = String(raw.slug ?? '').trim()
+    const title = String(raw.title ?? '').trim()
+    const prompt = String(raw.prompt ?? '').trim()
+    if (id === '' || title === '' || prompt === '') continue
+    const category = String(raw.category ?? '')
+    cases.push({
+      id,
+      title,
+      prompt,
+      category,
+      categoryZh: YOUART_CATEGORIES[category] ?? category,
+      styles: [],
+      scenes: [],
+      sourceLabel: String(raw.author ?? ''),
+      sourceUrl: normalizeHttpUrl(raw.sourceUrl),
+      githubUrl: 'https://github.com/youart-open-source/awesome-gpt-image-2-5-prompts',
+      image: '',
+      featured: false,
+    })
+  }
+  return makeSnapshot('https://github.com/youart-open-source/awesome-gpt-image-2-5-prompts', cases, `https://github.com/youart-open-source/awesome-gpt-image-2-5-prompts/tree/${YOUART_COMMIT}`)
 }
 
 async function writeSnapshot(name, out, snapshot) {
@@ -411,6 +616,9 @@ const SOURCES = {
   handraw: { build: buildHandraw, out: resolve(ROOT, 'src/templates/handraw-cases.json') },
   'prompt-signal': { build: buildPromptSignal, out: resolve(ROOT, 'src/templates/prompt-signal-cases.json') },
   evolink: { build: buildEvolink, out: resolve(ROOT, 'src/templates/evolink-cases.json') },
+  itgoyo: { build: buildItgoyo, out: resolve(ROOT, 'src/templates/itgoyo-cases.json') },
+  songtianlun: { build: buildSongtianlun, out: resolve(ROOT, 'src/templates/songtianlun-cases.json') },
+  youart: { build: buildYouart, out: resolve(ROOT, 'src/templates/youart-cases.json') },
 }
 
 const [argOne, argTwo] = process.argv.slice(2)

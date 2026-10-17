@@ -91,6 +91,22 @@ const SOURCE_DEFS: Record<string, TemplateSourceDef> = {
     refreshable: false,
     allowedImageHosts: ['raw.githubusercontent.com'],
   },
+  itgoyo: {
+    bundledPath: fileURLToPath(new URL('../src/templates/itgoyo-cases.json', import.meta.url)),
+    refreshable: false,
+    allowedImageHosts: ['raw.githubusercontent.com'],
+  },
+  songtianlun: {
+    bundledPath: fileURLToPath(new URL('../src/templates/songtianlun-cases.json', import.meta.url)),
+    refreshable: false,
+    allowedImageHosts: ['raw.githubusercontent.com', 'cdn.openai.com'],
+  },
+  // Its 150 cases carry no image of their own — only each author's post — so
+  // those cards show the placeholder thumbnail by design, not by failure.
+  youart: {
+    bundledPath: fileURLToPath(new URL('../src/templates/youart-cases.json', import.meta.url)),
+    refreshable: false,
+  },
 }
 
 /** Category label map mirrored from the upstream sites' site.js (zh names). */

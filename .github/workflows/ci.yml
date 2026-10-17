@@ -56,21 +56,11 @@ jobs:
 
       # The built output is what ships (`files` includes lib/, and main/exports
       # point into it), so the tarball is assembled and inspected here. This is
-      # the check that would have caught the demo videos riding along in docs/.
+      # the check that would have caught the demo videos riding along in docs/,
+      # and the README screenshots after them.
+      #
+      # The assertions live in scripts/verify-pack.mjs, not inline: the negative
+      # verification re-runs them against a mutated copy, and an assertion kept
+      # in two places drifts.
       - name: Pack and inspect the published archive
-        run: |
-          pnpm pack --pack-destination .
-          ARCHIVE=$(ls -1 *.tgz | head -n 1)
-          echo "archive: $ARCHIVE ($(du -h "$ARCHIVE" | cut -f1))"
-          echo '--- contents (top level) ---'
-          tar -tzf "$ARCHIVE" | cut -d/ -f2 | sort -u
-          # The runtime reads the bundled prompt snapshots relative to lib/, so a
-          # tarball without them installs a plugin whose template library is empty.
-          for required in package/lib/index.js package/src/templates/cases.json; do
-            tar -tzf "$ARCHIVE" | grep -qx "$required" || { echo "MISSING from archive: $required"; exit 1; }
-          done
-          # The demo recordings are not referenced by any shipped document and
-          # are ~37 MiB of the archive; they must not come back.
-          if tar -tzf "$ARCHIVE" | grep -q 'package/docs/videos/'; then
-            echo 'docs/videos/ must not be published'; exit 1
-          fi
+        run: node scripts/verify-pack.mjs

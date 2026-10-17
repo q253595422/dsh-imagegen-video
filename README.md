@@ -27,13 +27,13 @@
 本插件**不在 npm 上发布**，安装包以 GitHub Release 资产的形式分发：
 
 ```bash
-dsh plugin --profile web add https://github.com/q253595422/dsh-imagegen-video/releases/download/v1.7.5/q253595422-dsh-imagegen-video-1.7.5.tgz
+dsh plugin --profile web add https://github.com/q253595422/dsh-imagegen-video/releases/download/v1.7.6/q253595422-dsh-imagegen-video-1.7.6.tgz
 ```
 
 也可以先到 [Releases](https://github.com/q253595422/dsh-imagegen-video/releases) 页面下载 `.tgz`，再安装本地文件：
 
 ```bash
-dsh plugin --profile web add ./q253595422-dsh-imagegen-video-1.7.5.tgz
+dsh plugin --profile web add ./q253595422-dsh-imagegen-video-1.7.6.tgz
 ```
 
 > ⚠️ **不要与原版 `@dickpy/dsh-imagegen` 同时安装。** 两者注册的是同一套
@@ -47,7 +47,7 @@ dsh plugin --profile web add ./q253595422-dsh-imagegen-video-1.7.5.tgz
 <summary><b>其他安装方式、升级与回滚</b></summary>
 
 - **让 Agent 安装：**把上面的安装命令发给 DSH、Codex 或其他 coding agent。
-- **指定版本：**把 URL 里的 `v1.7.5` 与文件名里的版本号换成目标版本，或从 [GitHub Releases](https://github.com/q253595422/dsh-imagegen-video/releases) 下载对应版本的 tgz 后安装。
+- **指定版本：**把 URL 里的 `v1.7.6` 与文件名里的版本号换成目标版本，或从 [GitHub Releases](https://github.com/q253595422/dsh-imagegen-video/releases) 下载对应版本的 tgz 后安装。
 - **升级：**重复执行 `add` 命令指向新版本即可；插件也会在面板中提示新版本。更新后重启 `dsh web`。
 - 渠道配置、历史记录和画廊数据保存在 DSH 宿主侧，正常升级不会清空。
 
@@ -199,7 +199,7 @@ dsh plugin --profile web add ./q253595422-dsh-imagegen-video-1.7.5.tgz
 上游 v1.6.8 的全部改动逐条列在 [CHANGELOG.md](./CHANGELOG.md)。
 
 > **本仓库是独立项目，不跟随上游版本线。** 上游源码只在 fork 时一次性取用（基线
-> v1.6.8），此后本仓库按自己的节奏发版（当前 v1.7.5）。上游后续版本的功能会**按需**
+> v1.6.8），此后本仓库按自己的节奏发版（当前 v1.7.6）。上游后续版本的功能会**按需**
 > 吸收进来——例如失败可查的诊断日志（上游 #38）——吸收后即为本仓库自己代码的一部分，
 > 版本号仍是本仓库的。因为两边历史没有共同祖先，吸收是**逐文件移植**，不是 `git merge`。
 

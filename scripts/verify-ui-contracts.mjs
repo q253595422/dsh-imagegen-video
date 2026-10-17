@@ -140,6 +140,161 @@ if (tableMismatch.length > 0) {
 }
 console.log(`stacking table matches all ${rungValue.size} declarations`)
 
+// ------------------------------------------------- 4. the template source row
+// The registry holds eight sources plus favorites. Each tab is `nowrap`, and
+// a plain flex row neither wraps nor scrolls, so a tab past the right edge is
+// simply unreachable -- no scrollbar, no wrap, nothing to click. Both halves
+// are required: scroll on the row, and no shrink on the tabs, because a tab
+// allowed to shrink truncates its own label and its count badge instead.
+const templatesCss = read('templates.module.css')
+const ruleOf = (source, selector) => {
+  const at = source.indexOf(`${selector} {`)
+  if (at < 0) return ''
+  return source.slice(at, source.indexOf('}', at) + 1)
+}
+const tabRow = ruleOf(templatesCss, '.sourceTabs')
+const tabRule = ruleOf(templatesCss, '.sourceTab')
+if (!/overflow-x:\s*(auto|scroll)/.test(tabRow) || !/overflow-y:\s*hidden/.test(tabRow)) {
+  console.error('\nFAIL: the template source row can no longer scroll.')
+  console.error('Its tabs are `white-space: nowrap`, and a flex row that does not')
+  console.error('scroll clips everything past the right edge: with the sources that')
+  console.error('are registered now, the later tabs are unreachable -- they cannot be')
+  console.error('clicked, and nothing on screen says they exist.')
+  process.exit(1)
+}
+if (!/flex:\s*none/.test(tabRule)) {
+  console.error('\nFAIL: template source tabs are allowed to shrink.')
+  console.error('A shrunk tab truncates its own label and count badge rather than')
+  console.error('letting the row scroll, so the source stays unreadable.')
+  process.exit(1)
+}
+// The row has to be built FROM the registry, not from a hand-written list: a
+// source that is registered but has no tab is a library the user cannot open,
+// and the browser fixture below can only be as complete as this mapping.
+// The slice stops at the next sibling element: `TEMPLATE_SOURCES.map` appears
+// again further down the file (the favorites view groups by source), and a
+// slice running to EOF would match THAT call and pass no matter what the tab
+// row did -- a check that can never fail.
+const librarySource = readFileSync(new URL('TemplateLibrary.tsx', clientDir), 'utf8')
+const tablistAt = librarySource.indexOf('className={css.sourceTabs}')
+const tablistEnd = librarySource.indexOf('css.toolbar', tablistAt)
+const tabRowSource = tablistAt < 0 || tablistEnd < 0 ? '' : librarySource.slice(tablistAt, tablistEnd)
+if (!/TEMPLATE_SOURCES\.map\(/.test(tabRowSource)) {
+  console.error('\nFAIL: the source row no longer renders one tab per registered source.')
+  console.error('The registry is the list of libraries the user can open; a tab row built')
+  console.error('from anything else leaves registered sources unreachable.')
+  process.exit(1)
+}
+// Every registered source must actually be loadable, or its tab renders an
+// empty library. This is the seam the sources were added along.
+const protocolSource = readFileSync(new URL('protocol.ts', new URL('../src/', import.meta.url)), 'utf8')
+const storeSource = readFileSync(new URL('templates-store.ts', new URL('../src/', import.meta.url)), 'utf8')
+const registered = [...protocolSource.matchAll(/^\s{4}id:\s*'([a-z0-9-]+)',/gm)].map(match => match[1])
+// The label of each source, so the browser fixture below renders the REAL tab
+// labels instead of a hand-written list that would go stale the moment a source
+// is added -- a fixture stuck at eight tabs stops testing the ninth.
+const registeredLabels = [...protocolSource.matchAll(/^\s{4}id: '([a-z0-9-]+)',\n\s{4}label: '([^']+)',/gm)].map(match => [match[1], match[2]])
+if (registeredLabels.length !== registered.length) {
+  console.error('\nFAIL: a template source has no readable label, so the tab-row fixture cannot be built from the registry.')
+  process.exit(1)
+}
+// SOURCE_DEFS entries do not all lead with `bundledPath` (vibeui and canghe
+// start with `listUrl`), so match each top-level entry and then ask whether its
+// body declares one -- keying on the first line missed exactly those two.
+const hostDefBodies = new Map()
+for (const match of storeSource.matchAll(/^ {2}'?([a-z0-9-]+)'?:\s*\{\n([\s\S]*?)^ {2}\},/gm)) {
+  hostDefBodies.set(match[1], match[2])
+}
+const missing = registered.filter(id => !(hostDefBodies.get(id) ?? '').includes('bundledPath:'))
+if (registered.length === 0 || missing.length > 0) {
+  console.error(`\nFAIL: a registered template source has no host-side fetch definition: ${missing.join(', ')}`)
+  console.error('Its tab would render an empty library with no error to explain it.')
+  process.exit(1)
+}
+const snapshotFileOf = id => new URL(
+  `../src/templates/${id === 'vibeui' ? 'cases' : id === 'canghe' ? 'canghe-cases' : `${id}-cases`}.json`,
+  import.meta.url,
+)
+for (const id of registered) {
+  const snapshot = snapshotFileOf(id)
+  if (!existsSync(snapshot)) {
+    console.error(`\nFAIL: source "${id}" has no bundled snapshot at src/templates/.`)
+    console.error('A source ships its snapshot with the release; without one the tab is empty offline.')
+    process.exit(1)
+  }
+}
+
+// And the images must be servable by the gate that will actually serve them.
+// This is deliberately read out of SOURCE_DEFS rather than repeated here: a
+// copy of the host list would agree with itself forever while the real gate
+// said something else, which is exactly how a source ships cards whose images
+// can never load. A bare file name needs `imageBaseUrl`; an absolute URL needs
+// its hostname in `allowedImageHosts`.
+const hostProblem = []
+for (const id of registered) {
+  const body = hostDefBodies.get(id) ?? ''
+  const allowed = [...(/allowedImageHosts:\s*\[([^\]]*)\]/.exec(body)?.[1] ?? '').matchAll(/'([^']+)'/g)].map(match => match[1])
+  const hasBase = /imageBaseUrl:/.test(body)
+  const snapshot = JSON.parse(readFileSync(snapshotFileOf(id), 'utf8'))
+  for (const entry of snapshot.cases ?? []) {
+    const image = typeof entry.image === 'string' ? entry.image.trim() : ''
+    if (image === '') continue
+    if (!/^https?:\/\//i.test(image)) {
+      if (!hasBase) hostProblem.push(`${id}/${entry.id}: bare file name "${image}" but the source declares no imageBaseUrl`)
+      continue
+    }
+    let hostname
+    try { hostname = new URL(image).hostname.toLowerCase() } catch { hostProblem.push(`${id}/${entry.id}: unparseable image URL ${image}`); continue }
+    if (!allowed.includes(hostname)) {
+      hostProblem.push(`${id}/${entry.id}: image host ${hostname} is not in allowedImageHosts [${allowed.join(', ')}]`)
+    }
+  }
+}
+if (hostProblem.length > 0) {
+  console.error('\nFAIL: a bundled snapshot carries images its source will refuse to serve.')
+  console.error('readTemplateImage drops any reference whose host is not allowed, so these')
+  console.error('cards render a broken thumbnail no matter how good the network is:')
+  for (const entry of hostProblem.slice(0, 12)) console.error(`  - ${entry}`)
+  if (hostProblem.length > 12) console.error(`  … and ${hostProblem.length - 12} more`)
+  process.exit(1)
+}
+
+// A repository that declares no licence cannot have its images redistributed by
+// pointing shipped data at them. `songguoxs/gpt4o-image-prompts` is the one case
+// of this: six prompt-signal cases once carried its preview URLs. The prompt text
+// in those cases is the original authors' own and stays; the image reference is
+// cleared by `scripts/fetch-templates.mjs` and must not come back through a
+// regeneration that forgets the filter.
+//
+// Checked against the shipped snapshot, not against the fetch script, because a
+// filter that exists but was not applied is the exact failure being guarded.
+const UNLICENSED_IMAGE_OWNERS = new Set(['songguoxs'])
+const unlicensedImages = []
+for (const id of registered) {
+  const snapshot = JSON.parse(readFileSync(snapshotFileOf(id), 'utf8'))
+  for (const entry of snapshot.cases ?? []) {
+    const image = typeof entry.image === 'string' ? entry.image : ''
+    if (!/^https?:\/\//i.test(image)) continue
+    let url
+    try { url = new URL(image) } catch { continue }
+    const segments = url.pathname.split('/').filter(Boolean).map(segment => segment.toLowerCase())
+    // raw.githubusercontent.com/<owner>/<repo>/<ref>/... and github.com/<owner>/<repo>/...
+    if (segments.length >= 2 && UNLICENSED_IMAGE_OWNERS.has(segments[0])) {
+      unlicensedImages.push(`${id}/${entry.id}: ${image}`)
+    }
+  }
+}
+if (unlicensedImages.length > 0) {
+  console.error('\nFAIL: a shipped snapshot points an image at a repository that grants no licence.')
+  console.error('Those URLs are part of the distributed data, which makes them this project\'s')
+  console.error('redistribution question, not the upstream aggregator\'s. The prompt text and the')
+  console.error('author link stay; the preview image has to be cleared:')
+  for (const entry of unlicensedImages.slice(0, 8)) console.error(`  - ${entry}`)
+  if (unlicensedImages.length > 8) console.error(`  … and ${unlicensedImages.length - 8} more`)
+  process.exit(1)
+}
+console.log(`template source row: ${registered.length} sources, scrollable, every snapshot image inside its source's allowlist`)
+
 // The orderings that must hold, written as requirements rather than as numbers.
 // This guards the failure that actually happened: a rewrite that renumbers "by
 // role" looks tidy and silently re-stacks the UI. The select menu fell from
@@ -321,6 +476,7 @@ const server = (await import('node:http')).createServer((req, res) => {
   if (req.url?.includes('toolbar=1') === true) res.end(toolbarPage)
   else if (req.url?.includes('stack=1') === true) res.end(stackPage)
   else if (req.url?.includes('mainslot=1') === true) res.end(mainSlotPage)
+  else if (req.url?.includes('sourcetabs=1') === true) res.end(sourceTabsPage)
   else res.end(page)
 })
 await new Promise(r => server.listen(0, '127.0.0.1', r))
@@ -606,6 +762,43 @@ const stackPage = `<!doctype html><html><head><style>
   </div>
 </body></html>`
 
+// --- the source row has to stay reachable as the registry grows -------------
+// Every tab is `white-space: nowrap`. A plain flex row neither wraps nor
+// scrolls, so once the registered sources exceed the width the last tabs are
+// simply gone: not scrollable, not wrapped, not clickable, and nothing on
+// screen says they exist. The source-level check above reads the declaration;
+// only the browser can say whether the LAST tab is actually reachable, so this
+// page renders the real stylesheet at a deliberately narrow width and asks.
+const templatesModuleCss = read('templates.module.css')
+// The tab list is generated from the registry and the FAVORITES tab is the one
+// marked; it is the last tab the component renders, so it is the one a clipped
+// row loses first.
+const tabMarkup = [
+  ...registeredLabels.map(([, label]) => `<button class="sourceTab" role="tab">${label}<span class="sourceTabCount">123</span></button>`),
+  '<button class="sourceTab" role="tab" id="last">★ 收藏</button>',
+].join('\n      ')
+const sourceTabsPage = `<!doctype html><html><head><style>
+  body { margin: 0;
+    --dsw-alias-border-l1: #d9dade;
+    --dsw-alias-bg-layer-1: #ffffff;
+    --dsw-alias-bg-layer-2: #f2f3f5;
+    --dsw-alias-label-primary: #17171c;
+    --dsw-alias-label-secondary: #5b5e6b;
+    --dsw-alias-label-tertiary: #7f8287;
+    --dsw-alias-brand-primary: #17171c;
+    --dsw-alias-interactive-bg-hover: #f0f1f3;
+  }
+  /* Narrow enough that the registered tab labels cannot all fit on one line. */
+  #host { width: 420px; padding: 12px 0; }
+  ${templatesModuleCss}
+</style></head><body>
+  <div id="host">
+    <div class="sourceTabs" id="tabs" role="tablist">
+      ${tabMarkup}
+    </div>
+  </div>
+</body></html>`
+
 // --- the keyed `main` slot is single-occupant (#38) -------------------------
 // The plugin market page and the Conversation both register into the shell's
 // keyed `main` slot. The studio takeover rule hid UNRELATED entries on the
@@ -816,9 +1009,105 @@ if (slot.studio === 'none') {
 }
 console.log('main slot: the shell panel yields the column while the conversation stays')
 
+// --- the source row has to stay reachable as the registry grows -------------
+// The contract check above reads the declarations; a declaration is not the
+// same thing as a row a user can reach. This one only the browser can settle,
+// because what used to be wrong was invisible in the source: `nowrap` tabs in a
+// plain flex box are all laid out (so every width measures fine) and the ones
+// past the edge are simply never painted. Rendered at 420px -- narrow enough
+// that the eight registered labels cannot fit -- the page is asked what a user
+// would ask: turn the wheel over the row, then look at the last tab.
+const tabsTarget = await (await fetch(`http://127.0.0.1:${CDP_PORT}/json/new?${encodeURIComponent(`http://127.0.0.1:${port}/?sourcetabs=1`)}`, { method: 'PUT' })).json()
+const ws5 = new WebSocket(tabsTarget.webSocketDebuggerUrl)
+await new Promise(r => { ws5.onopen = r })
+let id5 = 0
+const send5 = (method, params) => new Promise(resolve => {
+  const myId = ++id5
+  const onMessage = e => { const m = JSON.parse(e.data); if (m.id === myId) { ws5.removeEventListener('message', onMessage); resolve(m) } }
+  ws5.addEventListener('message', onMessage)
+  ws5.send(JSON.stringify({ id: myId, method, params }))
+})
+const evaluate5 = async expression => {
+  const res = await send5('Runtime.evaluate', { expression, returnByValue: true, awaitPromise: true })
+  if (res.result?.exceptionDetails !== undefined) {
+    throw new Error(`page threw: ${JSON.stringify(res.result.exceptionDetails.exception?.description ?? res.result.exceptionDetails)}`)
+  }
+  return res.result.result.value
+}
+await send5('Runtime.enable', {})
+await new Promise(r => setTimeout(r, 300))
+
+// What a user can see of the LAST tab is the question, so it is measured by
+// hit-testing at the tab's own centre -- the coordinate a click would land on.
+// Its rect alone would not do: an element scrolled out of a clipping box still
+// reports a rect, just at coordinates the row does not occupy.
+const tabRowState = () => evaluate5(`(() => {
+  const row = document.getElementById('tabs')
+  const last = document.getElementById('last')
+  const band = row.getBoundingClientRect()
+  const box = last.getBoundingClientRect()
+  const x = Math.round(box.left + box.width / 2)
+  const y = Math.round(box.top + box.height / 2)
+  const hit = document.elementFromPoint(x, y)
+  return {
+    scrollLeft: Math.round(row.scrollLeft),
+    maxScroll: Math.round(row.scrollWidth - row.clientWidth),
+    overflowX: getComputedStyle(row).overflowX,
+    lastVisible: x >= band.left && x <= band.right && (hit === last || last.contains(hit)),
+    lastFullyInsideRow: box.left >= band.left - 0.5 && box.right <= band.right + 0.5,
+    verticallyClipped: row.scrollHeight > row.clientHeight + 1,
+    // Where to aim the wheel: inside the row, wherever the row is.
+    wheelAt: [Math.round(band.left + band.width / 2), Math.round(band.top + band.height / 2)],
+  }
+})()`)
+
+const beforeTabs = await tabRowState()
+let afterTabs = beforeTabs
+let previousLeft = -1
+for (let i = 0; i < 12; i++) {
+  previousLeft = afterTabs.scrollLeft
+  await send5('Input.dispatchMouseEvent', {
+    type: 'mouseWheel',
+    x: beforeTabs.wheelAt[0], y: beforeTabs.wheelAt[1],
+    deltaX: 300, deltaY: 0,
+  })
+  await new Promise(r => setTimeout(r, 90))
+  afterTabs = await tabRowState()
+  if (afterTabs.scrollLeft === previousLeft) break
+}
+console.log(`source row at 420px: overflow-x=${afterTabs.overflowX}, content overflows by ${beforeTabs.maxScroll}px, wheel scrolled it ${beforeTabs.scrollLeft} -> ${afterTabs.scrollLeft}px`)
+
+if (beforeTabs.maxScroll <= 0) {
+  console.error('\nFAIL: the eight source labels fit inside 420px, so this fixture proves nothing.')
+  console.error('Widen the registry in the fixture or narrow the host; the point of the check')
+  console.error('is the row that overflows.')
+  process.exit(1)
+}
+if (afterTabs.scrollLeft <= beforeTabs.scrollLeft) {
+  console.error(`\nFAIL: a wheel over the source row does not move it (scrollLeft stayed ${beforeTabs.scrollLeft}).`)
+  console.error('The tabs past the edge are then unreachable: the row clips instead of')
+  console.error('scrolling, so every source after the last visible one is invisible and')
+  console.error('unclickable, with nothing on screen saying it exists.')
+  process.exit(1)
+}
+if (afterTabs.lastVisible !== true || afterTabs.lastFullyInsideRow !== true) {
+  console.error(`\nFAIL: the last template source tab cannot be brought into view (scrollLeft=${afterTabs.scrollLeft} of ${afterTabs.maxScroll}).`)
+  console.error('It has to end up inside the row after scrolling to the end, because a')
+  console.error('source the user cannot reach is a source that does not exist.')
+  process.exit(1)
+}
+if (afterTabs.verticallyClipped) {
+  console.error('\nFAIL: the source row is clipping its tabs vertically.')
+  console.error('`overflow-y: hidden` is there to keep a scrollbar off the tab strip,')
+  console.error('not to cut the tabs themselves.')
+  process.exit(1)
+}
+console.log('source row: the last tab scrolls into view and hit-tests to itself')
+
 ws4.close()
 ws3.close()
 ws2.close()
+ws5.close()
 ws.close(); browser.kill(); server.close()
 rmSync(themeModuleDir, { recursive: true, force: true })
 console.log('\nUI CONTRACTS VERIFIED')

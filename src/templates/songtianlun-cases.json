@@ -1,0 +1,1093 @@
+{
+  "repository": "https://github.com/songtianlun/awesome-prompts",
+  "sourceUrl": "https://github.com/songtianlun/awesome-prompts/tree/a35ee281507a0af33f359f142b1eae159138da45",
+  "fetchedAt": "2026-10-16T16:25:23.207Z",
+  "totalCases": 55,
+  "categories": [
+    "Typography",
+    "3D and figurines",
+    "Photography",
+    "Product shots",
+    "Style transfer",
+    "Infographics",
+    "Image editing",
+    "Portraits",
+    "Video",
+    "Education",
+    "Illustration",
+    "Logos",
+    "Comics",
+    "Fashion",
+    "Advertising",
+    "UI"
+  ],
+  "cases": [
+    {
+      "id": "nb2-magazine-cover",
+      "title": "杂志封面文字",
+      "prompt": "A photo of a glossy magazine cover, the minimal blue cover has the large bold words Nano Banana. The text is in a serif font and fills the view. No other text. In front of the text there is a portrait of a person in a sleek and minimal dress. She is playfully holding the number 2, which is the focal point. Put the issue number and \"Feb 2026\" date in the corner along with a barcode. The magazine is on a shelf against an orange plastered wall, within a designer store.",
+      "category": "Typography",
+      "categoryZh": "文字排版",
+      "styles": [
+        "text-rendering",
+        "editorial",
+        "product"
+      ],
+      "scenes": [
+        "text-to-image"
+      ],
+      "sourceLabel": "",
+      "sourceUrl": "",
+      "githubUrl": "https://github.com/songtianlun/awesome-prompts",
+      "image": "https://raw.githubusercontent.com/songtianlun/awesome-prompts/a35ee281507a0af33f359f142b1eae159138da45/docs/images/cases/nb2-magazine-cover-output.webp",
+      "featured": false
+    },
+    {
+      "id": "nbpro-london-isometric",
+      "title": "伦敦等距天气微缩",
+      "prompt": "Present a clear, 45° top-down isometric miniature 3D cartoon scene of London, featuring its most iconic landmarks and architectural elements. Use soft, refined textures with realistic PBR materials and gentle, lifelike lighting and shadows. Integrate the current weather conditions directly into the city environment to create an immersive atmospheric mood. Use a clean, minimalistic composition with a soft, solid-colored background. At the top-center, place the title \"London\" in large bold text, a prominent weather icon beneath it, then the date (small text) and temperature (medium text). All text must be centered with consistent spacing, and may subtly overlap the tops of the buildings.",
+      "category": "3D and figurines",
+      "categoryZh": "3D / 手办",
+      "styles": [
+        "3d",
+        "infographic",
+        "search-grounding",
+        "text-rendering"
+      ],
+      "scenes": [
+        "text-to-image"
+      ],
+      "sourceLabel": "",
+      "sourceUrl": "",
+      "githubUrl": "https://github.com/songtianlun/awesome-prompts",
+      "image": "https://raw.githubusercontent.com/songtianlun/awesome-prompts/a35ee281507a0af33f359f142b1eae159138da45/docs/images/cases/nbpro-london-isometric-output.webp",
+      "featured": false
+    },
+    {
+      "id": "nb2-quetzal-wallpaper",
+      "title": "检索接地的绿咬鹃壁纸",
+      "prompt": "Use image search to find accurate images of a resplendent quetzal bird. Create a beautiful 3:2 wallpaper of this bird, with a natural top to bottom gradient and minimal composition.",
+      "category": "Photography",
+      "categoryZh": "摄影",
+      "styles": [
+        "search-grounding",
+        "wildlife"
+      ],
+      "scenes": [
+        "text-to-image"
+      ],
+      "sourceLabel": "",
+      "sourceUrl": "",
+      "githubUrl": "https://github.com/songtianlun/awesome-prompts",
+      "image": "https://raw.githubusercontent.com/songtianlun/awesome-prompts/a35ee281507a0af33f359f142b1eae159138da45/docs/images/cases/nb2-quetzal-wallpaper-output.webp",
+      "featured": false
+    },
+    {
+      "id": "nbpro-banana-perfume",
+      "title": "标志贴合香水瓶",
+      "prompt": "Put this logo on a high-end ad for a banana scented perfume. The logo is perfectly integrated into the bottle.",
+      "category": "Product shots",
+      "categoryZh": "产品摄影",
+      "styles": [
+        "product",
+        "logo",
+        "advertising"
+      ],
+      "scenes": [
+        "image-editing"
+      ],
+      "sourceLabel": "",
+      "sourceUrl": "",
+      "githubUrl": "https://github.com/songtianlun/awesome-prompts",
+      "image": "https://raw.githubusercontent.com/songtianlun/awesome-prompts/a35ee281507a0af33f359f142b1eae159138da45/docs/images/cases/nbpro-banana-perfume-output.webp",
+      "featured": false
+    },
+    {
+      "id": "nbpro-cafe-mixed-media",
+      "title": "同一咖啡馆的三种画法",
+      "prompt": "A photo of an everyday scene at a busy cafe serving breakfast. In the foreground is an anime man with blue hair, one of the people is a pencil sketch, another is a claymation person",
+      "category": "Style transfer",
+      "categoryZh": "风格迁移",
+      "styles": [
+        "style-transfer",
+        "photography"
+      ],
+      "scenes": [
+        "text-to-image"
+      ],
+      "sourceLabel": "",
+      "sourceUrl": "",
+      "githubUrl": "https://github.com/songtianlun/awesome-prompts",
+      "image": "https://raw.githubusercontent.com/songtianlun/awesome-prompts/a35ee281507a0af33f359f142b1eae159138da45/docs/images/cases/nbpro-cafe-mixed-media-output.webp",
+      "featured": false
+    },
+    {
+      "id": "nbpro-launch-article",
+      "title": "先检索再拍杂志内页",
+      "prompt": "Use search to find how the Gemini 3 Flash launch has been received. Use this information to write a short article about it (with headings). Return a photo of the article as it appeared in a design focused glossy magazine. It is a photo of a single folded over page, showing the article about Gemini 3 Flash. One hero photo. Headline in serif.",
+      "category": "Typography",
+      "categoryZh": "文字排版",
+      "styles": [
+        "search-grounding",
+        "text-rendering",
+        "editorial"
+      ],
+      "scenes": [
+        "text-to-image"
+      ],
+      "sourceLabel": "",
+      "sourceUrl": "",
+      "githubUrl": "https://github.com/songtianlun/awesome-prompts",
+      "image": "https://raw.githubusercontent.com/songtianlun/awesome-prompts/a35ee281507a0af33f359f142b1eae159138da45/docs/images/cases/nbpro-launch-article-output.webp",
+      "featured": false
+    },
+    {
+      "id": "nbpro-dog-icon",
+      "title": "可触摸的 3D 小狗图标",
+      "prompt": "An icon representing a cute dog. The background is white. Make the icons in a colorful and tactile 3D style. No text.",
+      "category": "3D and figurines",
+      "categoryZh": "3D / 手办",
+      "styles": [
+        "3d",
+        "icon"
+      ],
+      "scenes": [
+        "text-to-image"
+      ],
+      "sourceLabel": "",
+      "sourceUrl": "",
+      "githubUrl": "https://github.com/songtianlun/awesome-prompts",
+      "image": "https://raw.githubusercontent.com/songtianlun/awesome-prompts/a35ee281507a0af33f359f142b1eae159138da45/docs/images/cases/nbpro-dog-icon-output.webp",
+      "featured": false
+    },
+    {
+      "id": "nb2-isometric-garden",
+      "title": "等距花园照片",
+      "prompt": "Make a photo that is perfectly isometric. It is not a miniature, it is a captured photo that just happened to be perfectly isometric. It is a photo of a beautiful modern garden. There's a large 2 shaped pool and the words: Nano Banana 2.",
+      "category": "Photography",
+      "categoryZh": "摄影",
+      "styles": [
+        "text-rendering",
+        "photography"
+      ],
+      "scenes": [
+        "text-to-image"
+      ],
+      "sourceLabel": "",
+      "sourceUrl": "",
+      "githubUrl": "https://github.com/songtianlun/awesome-prompts",
+      "image": "https://raw.githubusercontent.com/songtianlun/awesome-prompts/a35ee281507a0af33f359f142b1eae159138da45/docs/images/cases/nb2-isometric-garden-output.webp",
+      "featured": false
+    },
+    {
+      "id": "nb21-photosynthesis",
+      "title": "把光合作用做成食谱",
+      "prompt": "Create a vibrant infographic that explains photosynthesis as if it were a recipe for a plant's favorite food. Show the \"ingredients\" (sunlight, water, CO2) and the \"finished dish\" (sugar/energy). The style should be like a page from a colorful kids' cookbook, suitable for a 4th grader.",
+      "category": "Infographics",
+      "categoryZh": "信息图",
+      "styles": [
+        "infographic",
+        "education",
+        "text-rendering"
+      ],
+      "scenes": [
+        "text-to-image"
+      ],
+      "sourceLabel": "",
+      "sourceUrl": "",
+      "githubUrl": "https://github.com/songtianlun/awesome-prompts",
+      "image": "https://raw.githubusercontent.com/songtianlun/awesome-prompts/a35ee281507a0af33f359f142b1eae159138da45/docs/images/cases/nb21-photosynthesis-output.webp",
+      "featured": false
+    },
+    {
+      "id": "nb21-photosynthesis-es",
+      "title": "把信息图译成西班牙语",
+      "prompt": "Update this infographic to be in Spanish. Do not change any other elements of the image.",
+      "category": "Image editing",
+      "categoryZh": "图像编辑",
+      "styles": [
+        "localization",
+        "editing",
+        "text-rendering"
+      ],
+      "scenes": [
+        "image-editing"
+      ],
+      "sourceLabel": "",
+      "sourceUrl": "",
+      "githubUrl": "https://github.com/songtianlun/awesome-prompts",
+      "image": "https://raw.githubusercontent.com/songtianlun/awesome-prompts/a35ee281507a0af33f359f142b1eae159138da45/docs/images/cases/nb21-photosynthesis-es-output.webp",
+      "featured": false
+    },
+    {
+      "id": "nb21-office-faces",
+      "title": "办公室搞怪合影",
+      "prompt": "An office group photo of these people, they are making funny faces.",
+      "category": "Portraits",
+      "categoryZh": "人像",
+      "styles": [
+        "reference-image",
+        "portrait"
+      ],
+      "scenes": [
+        "image-editing"
+      ],
+      "sourceLabel": "",
+      "sourceUrl": "",
+      "githubUrl": "https://github.com/songtianlun/awesome-prompts",
+      "image": "https://raw.githubusercontent.com/songtianlun/awesome-prompts/a35ee281507a0af33f359f142b1eae159138da45/docs/images/cases/nb21-office-faces-output.webp",
+      "featured": false
+    },
+    {
+      "id": "nb21-sf-weather",
+      "title": "旧金山五日穿衣图",
+      "prompt": "Visualize the current weather forecast for the next 5 days in San Francisco as a clean, modern weather chart. Add a visual on what I should wear each day",
+      "category": "Infographics",
+      "categoryZh": "信息图",
+      "styles": [
+        "search-grounding",
+        "infographic"
+      ],
+      "scenes": [
+        "text-to-image"
+      ],
+      "sourceLabel": "",
+      "sourceUrl": "",
+      "githubUrl": "https://github.com/songtianlun/awesome-prompts",
+      "image": "https://raw.githubusercontent.com/songtianlun/awesome-prompts/a35ee281507a0af33f359f142b1eae159138da45/docs/images/cases/nb21-sf-weather-output.webp",
+      "featured": false
+    },
+    {
+      "id": "nb21-video-poster",
+      "title": "由视频生成海报",
+      "prompt": "Generate a poster image that captures the key themes of this video.",
+      "category": "Video",
+      "categoryZh": "视频",
+      "styles": [
+        "video",
+        "poster"
+      ],
+      "scenes": [
+        "video-to-image"
+      ],
+      "sourceLabel": "",
+      "sourceUrl": "",
+      "githubUrl": "https://github.com/songtianlun/awesome-prompts",
+      "image": "https://raw.githubusercontent.com/songtianlun/awesome-prompts/a35ee281507a0af33f359f142b1eae159138da45/docs/images/cases/nb21-video-poster-output.webp",
+      "featured": false
+    },
+    {
+      "id": "nb21-butterfly-sketch",
+      "title": "达芬奇式蝴蝶解剖",
+      "prompt": "Da Vinci style anatomical sketch of a dissected Monarch butterfly. Detailed drawings of the head, wings, and legs on textured parchment with notes in English.",
+      "category": "Education",
+      "categoryZh": "教学图解",
+      "styles": [
+        "education",
+        "illustration",
+        "text-rendering"
+      ],
+      "scenes": [
+        "text-to-image"
+      ],
+      "sourceLabel": "",
+      "sourceUrl": "",
+      "githubUrl": "https://github.com/songtianlun/awesome-prompts",
+      "image": "https://raw.githubusercontent.com/songtianlun/awesome-prompts/a35ee281507a0af33f359f142b1eae159138da45/docs/images/cases/nb21-butterfly-sketch-output.webp",
+      "featured": false
+    },
+    {
+      "id": "nb21-red-panda-sticker",
+      "title": "可爱小熊猫贴纸",
+      "prompt": "A kawaii-style sticker of a happy red panda wearing a tiny bamboo hat. It's munching on a green bamboo leaf. The design features bold, clean outlines, simple cel-shading, and a vibrant color palette. The background must be white.",
+      "category": "Illustration",
+      "categoryZh": "插画",
+      "styles": [
+        "illustration",
+        "sticker"
+      ],
+      "scenes": [
+        "text-to-image"
+      ],
+      "sourceLabel": "",
+      "sourceUrl": "",
+      "githubUrl": "https://github.com/songtianlun/awesome-prompts",
+      "image": "https://raw.githubusercontent.com/songtianlun/awesome-prompts/a35ee281507a0af33f359f142b1eae159138da45/docs/images/cases/nb21-red-panda-sticker-output.webp",
+      "featured": false
+    },
+    {
+      "id": "nb21-daily-grind-logo",
+      "title": "The Daily Grind 标志",
+      "prompt": "Create a modern, minimalist logo for a coffee shop called 'The Daily Grind'. The text should be in a clean, bold, sans-serif font. The color scheme is black and white. Put the logo in a circle. Use a coffee bean in a clever way.",
+      "category": "Logos",
+      "categoryZh": "标志",
+      "styles": [
+        "logo",
+        "text-rendering"
+      ],
+      "scenes": [
+        "text-to-image"
+      ],
+      "sourceLabel": "",
+      "sourceUrl": "",
+      "githubUrl": "https://github.com/songtianlun/awesome-prompts",
+      "image": "https://raw.githubusercontent.com/songtianlun/awesome-prompts/a35ee281507a0af33f359f142b1eae159138da45/docs/images/cases/nb21-daily-grind-logo-output.webp",
+      "featured": false
+    },
+    {
+      "id": "nb21-ceramic-mug",
+      "title": "三点布光的哑光黑杯",
+      "prompt": "A high-resolution, studio-lit product photograph of a minimalist ceramic coffee mug in matte black, presented on a polished concrete surface. The lighting is a three-point softbox setup designed to create soft, diffused highlights and eliminate harsh shadows. The camera angle is a slightly elevated 45-degree shot to showcase its clean lines. Ultra-realistic, with sharp focus on the steam rising from the coffee. Square image.",
+      "category": "Product shots",
+      "categoryZh": "产品摄影",
+      "styles": [
+        "product",
+        "photography"
+      ],
+      "scenes": [
+        "text-to-image"
+      ],
+      "sourceLabel": "",
+      "sourceUrl": "",
+      "githubUrl": "https://github.com/songtianlun/awesome-prompts",
+      "image": "https://raw.githubusercontent.com/songtianlun/awesome-prompts/a35ee281507a0af33f359f142b1eae159138da45/docs/images/cases/nb21-ceramic-mug-output.webp",
+      "featured": false
+    },
+    {
+      "id": "nb21-maple-leaf",
+      "title": "枫叶与留白",
+      "prompt": "A minimalist composition featuring a single, delicate red maple leaf positioned in the bottom-right of the frame. The background is a vast, empty off-white canvas, creating significant negative space for text. Soft, diffused lighting from the top left. Square image.",
+      "category": "Photography",
+      "categoryZh": "摄影",
+      "styles": [
+        "photography",
+        "minimal"
+      ],
+      "scenes": [
+        "text-to-image"
+      ],
+      "sourceLabel": "",
+      "sourceUrl": "",
+      "githubUrl": "https://github.com/songtianlun/awesome-prompts",
+      "image": "https://raw.githubusercontent.com/songtianlun/awesome-prompts/a35ee281507a0af33f359f142b1eae159138da45/docs/images/cases/nb21-maple-leaf-output.webp",
+      "featured": false
+    },
+    {
+      "id": "nb21-noir-comic",
+      "title": "三格黑色漫画",
+      "prompt": "Make a 3 panel comic in a gritty, noir art style with high-contrast black and white inks. Put the character in a humurous scene.",
+      "category": "Comics",
+      "categoryZh": "连环画",
+      "styles": [
+        "comic",
+        "reference-image"
+      ],
+      "scenes": [
+        "image-editing"
+      ],
+      "sourceLabel": "",
+      "sourceUrl": "",
+      "githubUrl": "https://github.com/songtianlun/awesome-prompts",
+      "image": "https://raw.githubusercontent.com/songtianlun/awesome-prompts/a35ee281507a0af33f359f142b1eae159138da45/docs/images/cases/nb21-noir-comic-output.webp",
+      "featured": false
+    },
+    {
+      "id": "nb21-arsenal-score",
+      "title": "检索接地的比赛图",
+      "prompt": "Make a simple but stylish graphic of last night's Arsenal game in the Champion's League",
+      "category": "Infographics",
+      "categoryZh": "信息图",
+      "styles": [
+        "search-grounding",
+        "infographic",
+        "text-rendering"
+      ],
+      "scenes": [
+        "text-to-image"
+      ],
+      "sourceLabel": "",
+      "sourceUrl": "",
+      "githubUrl": "https://github.com/songtianlun/awesome-prompts",
+      "image": "https://raw.githubusercontent.com/songtianlun/awesome-prompts/a35ee281507a0af33f359f142b1eae159138da45/docs/images/cases/nb21-arsenal-score-output.webp",
+      "featured": false
+    },
+    {
+      "id": "nb21-cat-wizard-hat",
+      "title": "给猫加上针织巫师帽",
+      "prompt": "Using the provided image of my cat, please add a small, knitted wizard hat on its head. Make it look like it's sitting comfortably and not falling off.",
+      "category": "Image editing",
+      "categoryZh": "图像编辑",
+      "styles": [
+        "editing",
+        "reference-image"
+      ],
+      "scenes": [
+        "image-editing"
+      ],
+      "sourceLabel": "",
+      "sourceUrl": "",
+      "githubUrl": "https://github.com/songtianlun/awesome-prompts",
+      "image": "https://raw.githubusercontent.com/songtianlun/awesome-prompts/a35ee281507a0af33f359f142b1eae159138da45/docs/images/cases/nb21-cat-wizard-hat-output.webp",
+      "featured": false
+    },
+    {
+      "id": "nb21-chesterfield-sofa",
+      "title": "只换掉沙发",
+      "prompt": "Using the provided image of a living room, change only the blue sofa to be a vintage, brown leather chesterfield sofa. Keep the rest of the room, including the pillows on the sofa and the lighting, unchanged.",
+      "category": "Image editing",
+      "categoryZh": "图像编辑",
+      "styles": [
+        "editing",
+        "product"
+      ],
+      "scenes": [
+        "image-editing"
+      ],
+      "sourceLabel": "",
+      "sourceUrl": "",
+      "githubUrl": "https://github.com/songtianlun/awesome-prompts",
+      "image": "https://raw.githubusercontent.com/songtianlun/awesome-prompts/a35ee281507a0af33f359f142b1eae159138da45/docs/images/cases/nb21-chesterfield-sofa-output.webp",
+      "featured": false
+    },
+    {
+      "id": "nb21-vangogh-street",
+      "title": "夜街变成星月夜",
+      "prompt": "Transform the provided photograph of a modern city street at night into the artistic style of Vincent van Gogh's 'Starry Night'. Preserve the original composition of buildings and cars, but render all elements with swirling, impasto brushstrokes and a dramatic palette of deep blues and bright yellows.",
+      "category": "Style transfer",
+      "categoryZh": "风格迁移",
+      "styles": [
+        "style-transfer",
+        "editing"
+      ],
+      "scenes": [
+        "image-editing"
+      ],
+      "sourceLabel": "",
+      "sourceUrl": "",
+      "githubUrl": "https://github.com/songtianlun/awesome-prompts",
+      "image": "https://raw.githubusercontent.com/songtianlun/awesome-prompts/a35ee281507a0af33f359f142b1eae159138da45/docs/images/cases/nb21-vangogh-street-output.webp",
+      "featured": false
+    },
+    {
+      "id": "nb21-floral-tryon",
+      "title": "让模特穿上碎花裙",
+      "prompt": "Create a professional e-commerce fashion photo. Take the blue floral dress from the first image and let the woman from the second image wear it. Generate a realistic, full-body shot of the woman wearing the dress, with the lighting and shadows adjusted to match the outdoor environment.",
+      "category": "Fashion",
+      "categoryZh": "时尚",
+      "styles": [
+        "fashion",
+        "reference-image",
+        "product"
+      ],
+      "scenes": [
+        "image-editing"
+      ],
+      "sourceLabel": "",
+      "sourceUrl": "",
+      "githubUrl": "https://github.com/songtianlun/awesome-prompts",
+      "image": "https://raw.githubusercontent.com/songtianlun/awesome-prompts/a35ee281507a0af33f359f142b1eae159138da45/docs/images/cases/nb21-floral-tryon-output.webp",
+      "featured": false
+    },
+    {
+      "id": "nb21-logo-on-shirt",
+      "title": "把标志印到 T 恤上",
+      "prompt": "Take the first image of the woman with brown hair, blue eyes, and a neutral expression. Add the logo from the second image onto her black t-shirt. Ensure the woman's face and features remain completely unchanged. The logo should look like it's naturally printed on the fabric, following the folds of the shirt.",
+      "category": "Image editing",
+      "categoryZh": "图像编辑",
+      "styles": [
+        "editing",
+        "logo",
+        "fashion"
+      ],
+      "scenes": [
+        "image-editing"
+      ],
+      "sourceLabel": "",
+      "sourceUrl": "",
+      "githubUrl": "https://github.com/songtianlun/awesome-prompts",
+      "image": "https://raw.githubusercontent.com/songtianlun/awesome-prompts/a35ee281507a0af33f359f142b1eae159138da45/docs/images/cases/nb21-logo-on-shirt-output.webp",
+      "featured": false
+    },
+    {
+      "id": "nb21-car-sketch",
+      "title": "铅笔跑车变成展厅照片",
+      "prompt": "Turn this rough pencil sketch of a futuristic car into a polished photo of the finished concept car in a showroom. Keep the sleek lines and low profile from the sketch but add metallic blue paint and neon rim lighting.",
+      "category": "Image editing",
+      "categoryZh": "图像编辑",
+      "styles": [
+        "editing",
+        "product",
+        "3d"
+      ],
+      "scenes": [
+        "image-editing"
+      ],
+      "sourceLabel": "",
+      "sourceUrl": "",
+      "githubUrl": "https://github.com/songtianlun/awesome-prompts",
+      "image": "https://raw.githubusercontent.com/songtianlun/awesome-prompts/a35ee281507a0af33f359f142b1eae159138da45/docs/images/cases/nb21-car-sketch-output.webp",
+      "featured": false
+    },
+    {
+      "id": "nb21-profile-right",
+      "title": "同一人，右侧面",
+      "prompt": "A studio portrait of this man against white, in profile looking right",
+      "category": "Portraits",
+      "categoryZh": "人像",
+      "styles": [
+        "portrait",
+        "reference-image"
+      ],
+      "scenes": [
+        "image-editing"
+      ],
+      "sourceLabel": "",
+      "sourceUrl": "",
+      "githubUrl": "https://github.com/songtianlun/awesome-prompts",
+      "image": "https://raw.githubusercontent.com/songtianlun/awesome-prompts/a35ee281507a0af33f359f142b1eae159138da45/docs/images/cases/nb21-profile-right-output.webp",
+      "featured": false
+    },
+    {
+      "id": "gpt2-coffee-infographic",
+      "title": "全自动咖啡机流程",
+      "prompt": "Create a detailed Infographic of the functioning and flow of an automatic coffee machine like a Jura. \nFrom bean basket, to grinding, to scale, water tank, boiler, etc. \nI'd like to understand technically and visually the flow.",
+      "category": "Infographics",
+      "categoryZh": "信息图",
+      "styles": [
+        "infographic",
+        "product",
+        "education"
+      ],
+      "scenes": [
+        "text-to-image"
+      ],
+      "sourceLabel": "",
+      "sourceUrl": "",
+      "githubUrl": "https://github.com/songtianlun/awesome-prompts",
+      "image": "https://raw.githubusercontent.com/songtianlun/awesome-prompts/a35ee281507a0af33f359f142b1eae159138da45/docs/images/cases/gpt2-coffee-infographic-output.webp",
+      "featured": false
+    },
+    {
+      "id": "gpt2-coffee-spanish",
+      "title": "翻译咖啡机图解",
+      "prompt": "Translate the text in the infographic to Spanish. Do not change any other aspect of the image.",
+      "category": "Image editing",
+      "categoryZh": "图像编辑",
+      "styles": [
+        "localization",
+        "editing",
+        "text-rendering"
+      ],
+      "scenes": [
+        "image-editing"
+      ],
+      "sourceLabel": "",
+      "sourceUrl": "",
+      "githubUrl": "https://github.com/songtianlun/awesome-prompts",
+      "image": "https://raw.githubusercontent.com/songtianlun/awesome-prompts/a35ee281507a0af33f359f142b1eae159138da45/docs/images/cases/gpt2-coffee-spanish-output.webp",
+      "featured": false
+    },
+    {
+      "id": "gpt2-sailor-portrait",
+      "title": "船上未摆拍的水手",
+      "prompt": "Create a photorealistic candid photograph of an elderly sailor standing on a small fishing boat. \nHe has weathered skin with visible wrinkles, pores, and sun texture, and a few faded traditional sailor tattoos on his arms. \nHe is calmly adjusting a net while his dog sits nearby on the deck. Shot like a 35mm film photograph, medium close-up at eye level, using a 50mm lens. \nSoft coastal daylight, shallow depth of field, subtle film grain, natural color balance. \nThe image should feel honest and unposed, with real skin texture, worn materials, and everyday detail. No glamorization, no heavy retouching.",
+      "category": "Portraits",
+      "categoryZh": "人像",
+      "styles": [
+        "portrait",
+        "photoreal"
+      ],
+      "scenes": [
+        "text-to-image"
+      ],
+      "sourceLabel": "",
+      "sourceUrl": "",
+      "githubUrl": "https://github.com/songtianlun/awesome-prompts",
+      "image": "https://raw.githubusercontent.com/songtianlun/awesome-prompts/a35ee281507a0af33f359f142b1eae159138da45/docs/images/cases/gpt2-sailor-portrait-output.webp",
+      "featured": false
+    },
+    {
+      "id": "gpt2-woodstock",
+      "title": "1969 年 8 月 16 日的贝塞尔",
+      "prompt": "Create a realistic outdoor crowd scene in Bethel, New York on August 16, 1969.\nPhotorealistic, period-accurate clothing, staging, and environment.",
+      "category": "Photography",
+      "categoryZh": "摄影",
+      "styles": [
+        "photoreal",
+        "world-knowledge"
+      ],
+      "scenes": [
+        "text-to-image"
+      ],
+      "sourceLabel": "",
+      "sourceUrl": "",
+      "githubUrl": "https://github.com/songtianlun/awesome-prompts",
+      "image": "https://raw.githubusercontent.com/songtianlun/awesome-prompts/a35ee281507a0af33f359f142b1eae159138da45/docs/images/cases/gpt2-woodstock-output.webp",
+      "featured": false
+    },
+    {
+      "id": "gpt2-field-flour-logo",
+      "title": "Field & Flour 烘焙标志",
+      "prompt": "Create an original, non-infringing logo for a company called Field & Flour, a local bakery. \nThe logo should feel warm, simple, and timeless. Use clean, vector-like shapes, a strong silhouette, and balanced negative space. \nFavor simplicity over detail so it reads clearly at small and large sizes. Flat design, minimal strokes, no gradients unless essential. \nFully transparent background. Deliver a single centered logo with generous padding, clean alpha edges, and no solid backdrop, scenery, checkerboard, or watermark.",
+      "category": "Logos",
+      "categoryZh": "标志",
+      "styles": [
+        "logo",
+        "text-rendering"
+      ],
+      "scenes": [
+        "text-to-image"
+      ],
+      "sourceLabel": "",
+      "sourceUrl": "",
+      "githubUrl": "https://github.com/songtianlun/awesome-prompts",
+      "image": "https://raw.githubusercontent.com/songtianlun/awesome-prompts/a35ee281507a0af33f359f142b1eae159138da45/docs/images/cases/gpt2-field-flour-logo-output.webp",
+      "featured": false
+    },
+    {
+      "id": "gpt2-thread-ad",
+      "title": "Thread 街头服饰广告",
+      "prompt": "Give me a cool in culture ad / fashion shot for a brand called Thread. \nIt's a hip young street brand. The ad shows a group of friends hanging out together with the tagline \"Yours to Create.\"\nMake it feel like a polished campaign image for a youth streetwear audience: stylish, contemporary, energetic, and tasteful.\nUse clean composition, strong color direction, natural poses, and premium fashion photography cues.\nRender the tagline exactly once, clearly and legibly, integrated into the ad layout.\nNo extra text, no watermarks, no unrelated logos.",
+      "category": "Advertising",
+      "categoryZh": "广告",
+      "styles": [
+        "advertising",
+        "fashion",
+        "text-rendering"
+      ],
+      "scenes": [
+        "text-to-image"
+      ],
+      "sourceLabel": "",
+      "sourceUrl": "",
+      "githubUrl": "https://github.com/songtianlun/awesome-prompts",
+      "image": "https://raw.githubusercontent.com/songtianlun/awesome-prompts/a35ee281507a0af33f359f142b1eae159138da45/docs/images/cases/gpt2-thread-ad-output.webp",
+      "featured": false
+    },
+    {
+      "id": "gpt2-pet-comic",
+      "title": "四格宠物短漫画",
+      "prompt": "Create a short vertical comic-style reel with 4 equal-sized panels.\nPanel 1: The owner leaves through the front door. The pet is framed in the window behind them, small against the glass, eyes wide, paws pressed high, the house suddenly quiet.\nPanel 2: The door clicks shut. Silence breaks. The pet slowly turns toward the empty house, posture shifting, eyes sharp with possibility.\nPanel 3: The house transformed. The pet sprawls across the couch like it owns the place, crumbs nearby, sunlight cutting across the room like a spotlight.\nPanel 4: The door opens. The pet is seated perfectly by the entrance, alert and composed, as if nothing happened.",
+      "category": "Comics",
+      "categoryZh": "连环画",
+      "styles": [
+        "comic",
+        "storyboard"
+      ],
+      "scenes": [
+        "text-to-image"
+      ],
+      "sourceLabel": "",
+      "sourceUrl": "",
+      "githubUrl": "https://github.com/songtianlun/awesome-prompts",
+      "image": "https://raw.githubusercontent.com/songtianlun/awesome-prompts/a35ee281507a0af33f359f142b1eae159138da45/docs/images/cases/gpt2-pet-comic-output.webp",
+      "featured": false
+    },
+    {
+      "id": "gpt2-farmers-ui",
+      "title": "手机里的农贸市场应用",
+      "prompt": "Create a realistic mobile app UI mockup for a local farmers market. \nShow today’s market with a simple header, a short list of vendors with small photos and categories, a small “Today’s specials” section, and basic information for location and hours. \nDesign it to be practical, and easy to use. White background, subtle natural accent colors, clear typography, and minimal decoration. \nIt should look like a real, well-designed, beautiful app for a small local market. \nPlace the UI mockup in an iPhone frame.",
+      "category": "UI",
+      "categoryZh": "界面",
+      "styles": [
+        "ui",
+        "product"
+      ],
+      "scenes": [
+        "text-to-image"
+      ],
+      "sourceLabel": "",
+      "sourceUrl": "",
+      "githubUrl": "https://github.com/songtianlun/awesome-prompts",
+      "image": "https://raw.githubusercontent.com/songtianlun/awesome-prompts/a35ee281507a0af33f359f142b1eae159138da45/docs/images/cases/gpt2-farmers-ui-output.webp",
+      "featured": false
+    },
+    {
+      "id": "gpt2-cellular-respiration",
+      "title": "细胞呼吸讲义",
+      "prompt": "Create a simple biology diagram titled \"Cellular Respiration at a Glance\" for high school students.\n\nShow how glucose turns into energy inside a cell. Include glycolysis, the Krebs cycle, and the electron transport chain.\nUse arrows to connect the steps, and label the main molecules: glucose, pyruvate, ATP, NADH, FADH2, CO2, O2, and H2O.\nMake it look like a clean classroom handout or slide, with a white background, simple icons, clear labels, and easy-to-read text.\n\nAvoid tiny text, extra decoration, or anything that makes the diagram hard to understand.",
+      "category": "Education",
+      "categoryZh": "教学图解",
+      "styles": [
+        "education",
+        "infographic",
+        "text-rendering"
+      ],
+      "scenes": [
+        "text-to-image"
+      ],
+      "sourceLabel": "",
+      "sourceUrl": "",
+      "githubUrl": "https://github.com/songtianlun/awesome-prompts",
+      "image": "https://raw.githubusercontent.com/songtianlun/awesome-prompts/a35ee281507a0af33f359f142b1eae159138da45/docs/images/cases/gpt2-cellular-respiration-output.webp",
+      "featured": false
+    },
+    {
+      "id": "gpt2-market-slide",
+      "title": "A 轮市场规模幻灯片",
+      "prompt": "Create one pitch-deck slide titled **\"Market Opportunity\"** that feels like a real Series A fundraising slide from a YC-backed startup.\n\nUse a clean white background, modern sans-serif typography like Inter, and a crisp, minimal layout. The slide should include:\n\n* A TAM/SAM/SOM concentric-circle diagram in muted blues and grays\n* Specific, believable market sizing numbers:\n\n  * **TAM:** $42B\n  * **SAM:** $8.7B\n  * **SOM:** $340M\n* A clean bar chart below showing market growth from **2021 to 2026**, with a subtle upward trend\n* Small footnotes: **\"AGI Research, 2024\"** and **\"Internal analysis\"**\n* A company logo placeholder in the bottom-right corner\n\nThe design should look like it belongs in a deck that actually raised money: highly readable text, clear data hierarchy, polished spacing, and professional startup-style visual language.\n\nAvoid clip art, stock photography, gradients, shadows, decorative elements, or anything that feels generic or overdesigned.",
+      "category": "Infographics",
+      "categoryZh": "信息图",
+      "styles": [
+        "infographic",
+        "ui",
+        "text-rendering"
+      ],
+      "scenes": [
+        "text-to-image"
+      ],
+      "sourceLabel": "",
+      "sourceUrl": "",
+      "githubUrl": "https://github.com/songtianlun/awesome-prompts",
+      "image": "https://raw.githubusercontent.com/songtianlun/awesome-prompts/a35ee281507a0af33f359f142b1eae159138da45/docs/images/cases/gpt2-market-slide-output.webp",
+      "featured": false
+    },
+    {
+      "id": "gpt2-pixel-motorcycle",
+      "title": "像素风格，新主体",
+      "prompt": "Use the same style from the input image and generate a man riding a motorcycle on a white background.",
+      "category": "Style transfer",
+      "categoryZh": "风格迁移",
+      "styles": [
+        "style-transfer",
+        "editing"
+      ],
+      "scenes": [
+        "image-editing"
+      ],
+      "sourceLabel": "",
+      "sourceUrl": "",
+      "githubUrl": "https://github.com/songtianlun/awesome-prompts",
+      "image": "https://raw.githubusercontent.com/songtianlun/awesome-prompts/a35ee281507a0af33f359f142b1eae159138da45/docs/images/cases/gpt2-pixel-motorcycle-output.webp",
+      "featured": false
+    },
+    {
+      "id": "gpt2-virtual-tryon",
+      "title": "锁住人，只换衣服",
+      "prompt": "Edit the image to dress the woman using the provided clothing images. Do not change her face, facial features, skin tone, body shape, pose, or identity in any way. Preserve her exact likeness, expression, hairstyle, and proportions. Replace only the clothing, fitting the garments naturally to her existing pose and body geometry with realistic fabric behavior. Match lighting, shadows, and color temperature to the original photo so the outfit integrates photorealistically, without looking pasted on. Do not change the background, camera angle, framing, or image quality, and do not add accessories, text, logos, or watermarks.",
+      "category": "Fashion",
+      "categoryZh": "时尚",
+      "styles": [
+        "fashion",
+        "editing",
+        "reference-image"
+      ],
+      "scenes": [
+        "image-editing"
+      ],
+      "sourceLabel": "",
+      "sourceUrl": "",
+      "githubUrl": "https://github.com/songtianlun/awesome-prompts",
+      "image": "https://raw.githubusercontent.com/songtianlun/awesome-prompts/a35ee281507a0af33f359f142b1eae159138da45/docs/images/cases/gpt2-virtual-tryon-output.webp",
+      "featured": false
+    },
+    {
+      "id": "gpt2-sketch-valley",
+      "title": "素描变成照片",
+      "prompt": "Turn this drawing into a photorealistic image.\nPreserve the exact layout, proportions, and perspective.\nChoose realistic materials and lighting consistent with the sketch intent.\nDo not add new elements or text.",
+      "category": "Image editing",
+      "categoryZh": "图像编辑",
+      "styles": [
+        "editing",
+        "photoreal"
+      ],
+      "scenes": [
+        "image-editing"
+      ],
+      "sourceLabel": "",
+      "sourceUrl": "",
+      "githubUrl": "https://github.com/songtianlun/awesome-prompts",
+      "image": "https://raw.githubusercontent.com/songtianlun/awesome-prompts/a35ee281507a0af33f359f142b1eae159138da45/docs/images/cases/gpt2-sketch-valley-output.webp",
+      "featured": false
+    },
+    {
+      "id": "gpt2-shampoo-cutout",
+      "title": "把产品抠到透明底",
+      "prompt": "Extract the product from the input image and isolate it on a fully transparent background.\nOutput: centered product, crisp silhouette, no halos/fringing.\nPreserve product geometry and label legibility exactly.\nAdd only light polishing. Do not add a solid backdrop, checkerboard, scenery, or shadow.\nDo not restyle the product; remove the background and preserve clean alpha transparency.",
+      "category": "Product shots",
+      "categoryZh": "产品摄影",
+      "styles": [
+        "product",
+        "editing"
+      ],
+      "scenes": [
+        "image-editing"
+      ],
+      "sourceLabel": "",
+      "sourceUrl": "",
+      "githubUrl": "https://github.com/songtianlun/awesome-prompts",
+      "image": "https://raw.githubusercontent.com/songtianlun/awesome-prompts/a35ee281507a0af33f359f142b1eae159138da45/docs/images/cases/gpt2-shampoo-cutout-output.webp",
+      "featured": false
+    },
+    {
+      "id": "gpt2-shampoo-billboard",
+      "title": "日落广告牌上的原句",
+      "prompt": "Create a realistic billboard mockup of the shampoo on a highway scene during sunset.\nBillboard text (EXACT, verbatim, no extra characters):\n\"Fresh and clean\"\nTypography: bold sans-serif, high contrast, centered, clean kerning.\nEnsure text appears once and is perfectly legible.\nNo watermarks, no logos.",
+      "category": "Advertising",
+      "categoryZh": "广告",
+      "styles": [
+        "advertising",
+        "text-rendering",
+        "product"
+      ],
+      "scenes": [
+        "image-editing"
+      ],
+      "sourceLabel": "",
+      "sourceUrl": "",
+      "githubUrl": "https://github.com/songtianlun/awesome-prompts",
+      "image": "https://raw.githubusercontent.com/songtianlun/awesome-prompts/a35ee281507a0af33f359f142b1eae159138da45/docs/images/cases/gpt2-shampoo-billboard-output.webp",
+      "featured": false
+    },
+    {
+      "id": "gpt2-billboard-winter",
+      "title": "同一块广告牌，冬夜",
+      "prompt": "Make it look like a winter evening with snowfall.",
+      "category": "Image editing",
+      "categoryZh": "图像编辑",
+      "styles": [
+        "editing",
+        "lighting"
+      ],
+      "scenes": [
+        "image-editing"
+      ],
+      "sourceLabel": "",
+      "sourceUrl": "",
+      "githubUrl": "https://github.com/songtianlun/awesome-prompts",
+      "image": "https://raw.githubusercontent.com/songtianlun/awesome-prompts/a35ee281507a0af33f359f142b1eae159138da45/docs/images/cases/gpt2-billboard-winter-output.webp",
+      "featured": false
+    },
+    {
+      "id": "gpt2-remove-flower",
+      "title": "去掉花，其余不动",
+      "prompt": "Remove the flower from man's hand. Do not change anything else.",
+      "category": "Image editing",
+      "categoryZh": "图像编辑",
+      "styles": [
+        "editing"
+      ],
+      "scenes": [
+        "image-editing"
+      ],
+      "sourceLabel": "",
+      "sourceUrl": "",
+      "githubUrl": "https://github.com/songtianlun/awesome-prompts",
+      "image": "https://raw.githubusercontent.com/songtianlun/awesome-prompts/a35ee281507a0af33f359f142b1eae159138da45/docs/images/cases/gpt2-remove-flower-output.webp",
+      "featured": false
+    },
+    {
+      "id": "gpt2-yosemite-bear",
+      "title": "把她放进优胜美地营地",
+      "prompt": "Generate a highly realistic action scene where this person is running away from a large, realistic brown bear attacking a campsite. The image should look like a real photograph someone could have taken, not an overly enhanced or cinematic movie-poster image.\nShe is centered in the image but looking away from the camera, wearing outdoorsy camping attire, with dirt on her face and tears in her clothing. She is clearly afraid but focused on escaping, running away from the bear as it destroys the campsite behind her.\nThe campsite is in Yosemite National Park, with believable natural details. The time of day is dusk, with natural lighting and realistic colors. Everything should feel grounded, authentic, and unstyled, as if captured in a real moment. Avoid cinematic lighting, dramatic color grading, or stylized composition.",
+      "category": "Photography",
+      "categoryZh": "摄影",
+      "styles": [
+        "photoreal",
+        "reference-image",
+        "portrait"
+      ],
+      "scenes": [
+        "image-editing"
+      ],
+      "sourceLabel": "",
+      "sourceUrl": "",
+      "githubUrl": "https://github.com/songtianlun/awesome-prompts",
+      "image": "https://raw.githubusercontent.com/songtianlun/awesome-prompts/a35ee281507a0af33f359f142b1eae159138da45/docs/images/cases/gpt2-yosemite-bear-output.webp",
+      "featured": false
+    },
+    {
+      "id": "gpt2-dog-composite",
+      "title": "把狗放进她的照片",
+      "prompt": "Place the dog from the second image into the setting of image 1, right next to the woman, use the same style of lighting, composition and background. Do not change anything else.",
+      "category": "Image editing",
+      "categoryZh": "图像编辑",
+      "styles": [
+        "editing",
+        "reference-image"
+      ],
+      "scenes": [
+        "image-editing"
+      ],
+      "sourceLabel": "",
+      "sourceUrl": "",
+      "githubUrl": "https://github.com/songtianlun/awesome-prompts",
+      "image": "https://raw.githubusercontent.com/songtianlun/awesome-prompts/a35ee281507a0af33f359f142b1eae159138da45/docs/images/cases/gpt2-dog-composite-output.webp",
+      "featured": false
+    },
+    {
+      "id": "gpt2-kitchen-chairs",
+      "title": "只换掉白色椅子",
+      "prompt": "In this room photo, replace ONLY white with chairs made of wood.\nPreserve camera angle, room lighting, floor shadows, and surrounding objects.\nKeep all other aspects of the image unchanged.\nPhotorealistic contact shadows and fabric texture.",
+      "category": "Image editing",
+      "categoryZh": "图像编辑",
+      "styles": [
+        "editing",
+        "product"
+      ],
+      "scenes": [
+        "image-editing"
+      ],
+      "sourceLabel": "",
+      "sourceUrl": "",
+      "githubUrl": "https://github.com/songtianlun/awesome-prompts",
+      "image": "https://raw.githubusercontent.com/songtianlun/awesome-prompts/a35ee281507a0af33f359f142b1eae159138da45/docs/images/cases/gpt2-kitchen-chairs-output.webp",
+      "featured": false
+    },
+    {
+      "id": "gpt2-christmas-card",
+      "title": "只有一句话的节日卡",
+      "prompt": "Create a Christmas holiday card illustration.\n\nScene:\na cozy Christmas scene with an old teddy bear sitting inside a keepsake box, slightly worn fur, soft stitching repairs, placed near a window with falling snow outside. The scene suggests the child has grown up, but the memories remain.\n\nMood:\nWarm, nostalgic, gentle, emotional.\n\nStyle:\nPremium holiday card photography, soft cinematic lighting, realistic textures, shallow depth of field, tasteful bokeh lights, high print-quality composition.\n\nConstraints:\n- Original artwork only\n- No trademarks\n- No watermarks\n- No logos\n\nInclude ONLY this card text (verbatim):\n\"Merry Christmas — some memories never fade.\"",
+      "category": "Product shots",
+      "categoryZh": "产品摄影",
+      "styles": [
+        "product",
+        "text-rendering",
+        "photography"
+      ],
+      "scenes": [
+        "text-to-image"
+      ],
+      "sourceLabel": "",
+      "sourceUrl": "",
+      "githubUrl": "https://github.com/songtianlun/awesome-prompts",
+      "image": "https://raw.githubusercontent.com/songtianlun/awesome-prompts/a35ee281507a0af33f359f142b1eae159138da45/docs/images/cases/gpt2-christmas-card-output.webp",
+      "featured": false
+    },
+    {
+      "id": "gpt2-toy-airplane",
+      "title": "吸塑包装的玩具飞机",
+      "prompt": "Create a collectible action figure of a vintage-style toy propeller airplane with rounded wings, a front-mounted spinning propeller, slightly worn paint edges, classic childhood proportions, designed as a nostalgic holiday collectible, in blister packaging.\n\nConcept:\nA nostalgic holiday collectible inspired by the simple toy airplanes children used to play with during winter holidays.\nEvokes warmth, imagination, and childhood wonder.\n\nStyle:\nPremium toy photography, realistic plastic and painted metal textures, studio lighting, shallow depth of field, sharp label printing, high-end retail presentation.\n\nConstraints:\n- Original design only\n- No trademarks\n- No watermarks\n- No logos\n\nInclude ONLY this packaging text (verbatim):\n\"Christmas Memories Edition\"",
+      "category": "3D and figurines",
+      "categoryZh": "3D / 手办",
+      "styles": [
+        "3d",
+        "product",
+        "text-rendering"
+      ],
+      "scenes": [
+        "text-to-image"
+      ],
+      "sourceLabel": "",
+      "sourceUrl": "",
+      "githubUrl": "https://github.com/songtianlun/awesome-prompts",
+      "image": "https://raw.githubusercontent.com/songtianlun/awesome-prompts/a35ee281507a0af33f359f142b1eae159138da45/docs/images/cases/gpt2-toy-airplane-output.webp",
+      "featured": false
+    },
+    {
+      "id": "gpt2-forest-hero",
+      "title": "森林主角的定妆",
+      "prompt": "Create a children’s book illustration introducing a main character.\n\nCharacter:\nA young, storybook-style hero inspired by a little forest outlaw, wearing a simple green hooded tunic, soft brown boots, and a small belt pouch. The character has a kind expression, gentle eyes, and a brave but warm demeanor. Carries a small wooden bow used only for helping, never harming.\n\nTheme:\nThe character protects and rescues small forest animals like squirrels, birds, and rabbits.\n\nStyle:\nChildren’s book illustration, hand-painted watercolor look, soft outlines, warm earthy colors, whimsical and friendly. Proportions suitable for picture books (slightly oversized head, expressive face).\n\nConstraints:\n- Original character (no copyrighted characters)\n- No text\n- No watermarks\n- Plain forest background to clearly showcase the character",
+      "category": "Illustration",
+      "categoryZh": "插画",
+      "styles": [
+        "illustration",
+        "character"
+      ],
+      "scenes": [
+        "text-to-image"
+      ],
+      "sourceLabel": "",
+      "sourceUrl": "",
+      "githubUrl": "https://github.com/songtianlun/awesome-prompts",
+      "image": "https://raw.githubusercontent.com/songtianlun/awesome-prompts/a35ee281507a0af33f359f142b1eae159138da45/docs/images/cases/gpt2-forest-hero-output.webp",
+      "featured": false
+    },
+    {
+      "id": "gpt2-forest-sequel",
+      "title": "同一个英雄，下一页",
+      "prompt": "Continue the children’s book story using the same character.\n\nScene:\nThe same young forest hero is gently helping a frightened squirrel out of a fallen tree after a winter storm. The character kneels beside the squirrel, offering reassurance.\n\nCharacter Consistency:\n- Same green hooded tunic\n- Same facial features, proportions, and color palette\n- Same gentle, heroic personality\n\nStyle:\nChildren’s book watercolor illustration, soft lighting, snowy forest environment, warm and comforting mood.\n\nConstraints:\n- Do not redesign the character\n- No text\n- No watermarks",
+      "category": "Illustration",
+      "categoryZh": "插画",
+      "styles": [
+        "illustration",
+        "character",
+        "editing"
+      ],
+      "scenes": [
+        "image-editing"
+      ],
+      "sourceLabel": "",
+      "sourceUrl": "",
+      "githubUrl": "https://github.com/songtianlun/awesome-prompts",
+      "image": "https://raw.githubusercontent.com/songtianlun/awesome-prompts/a35ee281507a0af33f359f142b1eae159138da45/docs/images/cases/gpt2-forest-sequel-output.webp",
+      "featured": false
+    },
+    {
+      "id": "sora2-turn-and-smile",
+      "title": "她转身、微笑、离开",
+      "prompt": "She turns around and smiles, then slowly walks out of the frame.",
+      "category": "Video",
+      "categoryZh": "视频",
+      "styles": [
+        "video",
+        "reference-image"
+      ],
+      "scenes": [
+        "text-to-video"
+      ],
+      "sourceLabel": "",
+      "sourceUrl": "",
+      "githubUrl": "https://github.com/songtianlun/awesome-prompts",
+      "image": "https://cdn.openai.com/API/docs/images/sora/sora_woman_skyline_video.gif",
+      "featured": false
+    },
+    {
+      "id": "sora2-fridge-monster",
+      "title": "怪物从冰箱里出来",
+      "prompt": "The fridge door opens. A cute, chubby purple monster comes out of it.",
+      "category": "Video",
+      "categoryZh": "视频",
+      "styles": [
+        "video",
+        "reference-image"
+      ],
+      "scenes": [
+        "text-to-video"
+      ],
+      "sourceLabel": "",
+      "sourceUrl": "",
+      "githubUrl": "https://github.com/songtianlun/awesome-prompts",
+      "image": "https://cdn.openai.com/API/docs/images/sora/sora_monster_original.gif",
+      "featured": false
+    },
+    {
+      "id": "sora2-monster-orange",
+      "title": "给怪物换颜色",
+      "prompt": "Change the color of the monster to orange",
+      "category": "Video",
+      "categoryZh": "视频",
+      "styles": [
+        "video",
+        "editing"
+      ],
+      "scenes": [
+        "text-to-video"
+      ],
+      "sourceLabel": "",
+      "sourceUrl": "",
+      "githubUrl": "https://github.com/songtianlun/awesome-prompts",
+      "image": "https://cdn.openai.com/API/docs/images/sora/sora_monster_orange.gif",
+      "featured": false
+    },
+    {
+      "id": "sora2-second-monster",
+      "title": "第二只怪物跟着出来",
+      "prompt": "A second monster comes out right after",
+      "category": "Video",
+      "categoryZh": "视频",
+      "styles": [
+        "video",
+        "editing"
+      ],
+      "scenes": [
+        "text-to-video"
+      ],
+      "sourceLabel": "",
+      "sourceUrl": "",
+      "githubUrl": "https://github.com/songtianlun/awesome-prompts",
+      "image": "https://cdn.openai.com/API/docs/images/sora/sora_monster_2monsters.gif",
+      "featured": false
+    }
+  ]
+}

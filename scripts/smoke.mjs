@@ -316,6 +316,12 @@ const upstream = createServer(async (req, res) => {
       { id: 'chat-only-model', capabilities: { image_generation: false } },
       { id: 'gpt-image-legacy', capabilities: { image_generation: false } },
       { id: 'gpt-image-2' },
+      // No separator between the family name and the version: the shipped
+      // defaults use this shape (`nanobanana2`, `nanobanana2-lite`), so the
+      // id-only fallback has to accept it or "detect models" drops models the
+      // catalog itself declares known.
+      { id: 'nanobanana2' },
+      { id: 'nanobanana2-lite' },
     ] }))
     return
   }
@@ -1871,7 +1877,11 @@ await check('C4b task polling stays lightweight and hydrates completed results o
 await check('C5 image model discovery and configured-model allow-list work', async () => {
   const discovered = await post('/api/dsh-imagegen/image-models', {})
   assert.equal(discovered.body.ok, true)
-  assert.deepEqual(discovered.body.models, ['glm-image', 'gpt-image-2', 'grok-imagine-image'])
+  // `nanobanana2` / `nanobanana2-lite` are shipped defaults whose family name
+  // carries a numeric suffix with no separator; they must survive detection.
+  // `gpt-4o`, `text-embedding-3-small` and the capability-flagged
+  // `chat-only-model` / `gpt-image-legacy` must not appear.
+  assert.deepEqual(discovered.body.models, ['glm-image', 'gpt-image-2', 'grok-imagine-image', 'nanobanana2', 'nanobanana2-lite'])
   const chatDiscovered = await post('/api/dsh-imagegen/image-models', {
     apiUrl: `http://127.0.0.1:${upstreamPort}/v1/chat/completions`,
     apiKey: 'sk-test',
@@ -1879,14 +1889,14 @@ await check('C5 image model discovery and configured-model allow-list work', asy
     protocol: 'auto',
   })
   assert.equal(chatDiscovered.body.ok, true)
-  assert.deepEqual(chatDiscovered.body.models, ['glm-image', 'gpt-image-2', 'grok-imagine-image'])
+  assert.deepEqual(chatDiscovered.body.models, ['glm-image', 'gpt-image-2', 'grok-imagine-image', 'nanobanana2', 'nanobanana2-lite'])
   const fallbackDiscovered = await post('/api/dsh-imagegen/image-models', {
     apiUrl: `http://127.0.0.1:${upstreamPort}`,
     apiKey: 'sk-test',
     protocol: 'auto',
   })
   assert.equal(fallbackDiscovered.body.ok, true, JSON.stringify(fallbackDiscovered.body))
-  assert.deepEqual(fallbackDiscovered.body.models, ['glm-image', 'gpt-image-2', 'grok-imagine-image'])
+  assert.deepEqual(fallbackDiscovered.body.models, ['glm-image', 'gpt-image-2', 'grok-imagine-image', 'nanobanana2', 'nanobanana2-lite'])
   const presets = await post('/api/dsh-imagegen/presets', {})
   assert.equal(presets.body.ok, true)
   assert.deepEqual(presets.body.presets.find(preset => preset.id === 'openai-official').models, [{ alias: 'gpt-image-2.5', id: 'gpt-image-2.5' }, { alias: 'gpt-image-2', id: 'gpt-image-2' }])
@@ -1985,14 +1995,67 @@ await check('C6c2 bundled community template snapshots expose stable ids and ima
   const expected = {
     handraw: { total: 441, first: 's-001' },
     'prompt-signal': { total: 577, first: 'raw-subway' },
-    evolink: { total: 462, first: 'case-1' },
+    // evolink used to hold 462: its case numbers repeat across — and inside —
+    // the upstream category files, so keying by number alone discarded most of
+    // the corpus. The ids are now category-scoped, and the snapshot carries
+    // every case whose prompt parsed.
+    evolink: { total: 967, first: 'ecommerce-1' },
+    itgoyo: { total: 602, first: 't-001' },
+    songtianlun: { total: 55, first: 'nb2-magazine-cover' },
+    // youart publishes no images of its own — only each author's post — so its
+    // cards are prompt-only by design and this source is exempt from the image
+    // assertion below.
+    youart: { total: 150, first: '16-panel-female-dance-pose-sheet' },
   }
   for (const [sourceId, meta] of Object.entries(expected)) {
     const list = await host.listTemplates(sourceId)
     assert.equal(list.sourceId, sourceId)
     assert.equal(list.total, meta.total)
     assert.equal(list.cases[0].id, meta.first)
+    if (sourceId === 'youart') {
+      assert.equal(list.cases[0].image, '', 'youart cases carry no image by design')
+      assert.match(list.cases[0].sourceUrl, /^https:\/\/x\.com\//, 'the author post is the attribution')
+      continue
+    }
     assert.match(list.cases[0].image, /^https:\/\//)
+  }
+})
+
+await check('C6c3 every bundled snapshot keeps its ids unique', async () => {
+  // A snapshot whose ids collide silently loses cases: templates-store keys
+  // favourites by `source:id`, and the gallery keys cards by id, so duplicates
+  // render as one card and overwrite each other's favourite. The host half of
+  // this contract lives in verify-ui-contracts.mjs, where it can read the real
+  // `allowedImageHosts` out of SOURCE_DEFS instead of a copy of that list.
+  //
+  // Two image shapes are legal and they are served differently: a bare file
+  // name goes through the source's `imageBaseUrl` (vibeui / canghe), anything
+  // else must be an absolute http(s) URL with no credentials. youart is absent
+  // because it publishes no images at all.
+  for (const sourceId of ['vibeui', 'canghe', 'handraw', 'prompt-signal', 'evolink', 'itgoyo', 'songtianlun']) {
+    const list = await host.listTemplates(sourceId)
+    assert.ok(list.total > 0, `${sourceId} must not be empty`)
+    const ids = list.cases.map(entry => entry.id)
+    assert.equal(new Set(ids).size, ids.length, `${sourceId} has duplicate case ids`)
+    for (const entry of list.cases) {
+      if (entry.image === '') continue
+      const bareName = /^[\w.-]+\.(jpg|jpeg|png|webp|gif)$/i.test(entry.image)
+      // Parsed, not pattern-matched: jsdelivr's pinned URLs carry an `@commit`
+      // in the path, so treating a bare `@` as userinfo rejected the handraw
+      // snapshot outright. What actually matters is that the URL has no
+      // credentials, which only the parser can tell.
+      let absolute = false
+      if (/^https?:\/\//i.test(entry.image)) {
+        try {
+          const url = new URL(entry.image)
+          absolute = url.username === '' && url.password === '' && url.hostname !== ''
+        } catch { absolute = false }
+      }
+      assert.ok(
+        bareName || absolute,
+        `${sourceId} case ${entry.id} carries an image reference this store cannot serve: ${entry.image}`,
+      )
+    }
   }
 })
 

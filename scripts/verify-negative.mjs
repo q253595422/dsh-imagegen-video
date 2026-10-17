@@ -22,13 +22,27 @@ import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
 const SRC = dirname(dirname(fileURLToPath(import.meta.url)))
-const COPY = join(tmpdir(), 'dsh-neg-verify')
+// Per-process, because a FIXED name is shared state: two runs (a leftover one
+// and a new one, or `contracts` and `smoke` side by side) then mutate the same
+// copy of the repo, and `rmSync` even races on it (ENOTEMPTY). That produced a
+// bogus "1/7 defects turn the check red" -- a fake failure caused by the
+// harness stepping on itself, which is just as misleading as a fake pass.
+const COPY = join(tmpdir(), `dsh-neg-verify-${process.pid}`)
 
 function freshCopy () {
   rmSync(COPY, { recursive: true, force: true })
   mkdirSync(COPY, { recursive: true })
   for (const entry of ['src', 'scripts', 'lib', 'package.json', 'tsdown.config.ts']) {
     cpSync(join(SRC, entry), join(COPY, entry), { recursive: true })
+  }
+  // The `pack` runner inspects a real archive, so the copy needs the directories
+  // that the archive rule is about. Reproducing the 57 MiB of real assets would
+  // make every pack case pay for the copy; a one-byte stand-in is enough to make
+  // "this directory was published" a fact rather than an absence. Without these
+  // the check would pass because there was nothing to publish -- a false green.
+  for (const [dir, file] of [['docs/images', 'demo.png'], ['docs/videos', 'demo.mp4']]) {
+    mkdirSync(join(COPY, dir), { recursive: true })
+    writeFileSync(join(COPY, dir, file), 'x')
   }
   symlinkSync(join(SRC, 'node_modules'), join(COPY, 'node_modules'))
 }
@@ -384,12 +398,135 @@ const CASES = [
     to: '',
     expect: /renders exactly one diagnostics entry|opens the diagnostics record/,
   },
+  {
+    // The source row grew past one line. Put back the plain flex box and every
+    // tab past the right edge becomes unreachable -- the defect is invisible in
+    // a screenshot of the first few tabs, which is why it needs a guard.
+    name: 'the template source row stops scrolling and clips its later tabs',
+    runner: 'contracts',
+    file: 'src/client/templates.module.css',
+    from: '  overflow-x: auto;\n  overflow-y: hidden;\n  scrollbar-width: none;\n}',
+    to: '  overflow: hidden;\n  scrollbar-width: none;\n}',
+    expect: /source row can no longer scroll/,
+  },
+  {
+    // The other half of the same fix: shrinking tabs does not bring the row
+    // back into view, it just truncates the labels that are visible.
+    name: 'template source tabs are allowed to shrink again',
+    runner: 'contracts',
+    file: 'src/client/templates.module.css',
+    from: '.sourceTab {\n  display: inline-flex;\n  align-items: center;\n  flex: none;',
+    to: '.sourceTab {\n  display: inline-flex;\n  align-items: center;',
+    expect: /allowed to shrink/,
+  },
+  {
+    // The half of the row defect that the DECLARATION checks above cannot see:
+    // `overflow-x: auto` is still there, `flex: none` is still there, and the
+    // row still scrolls -- it just got a height smaller than its own tabs, so
+    // `overflow-y: hidden` slices the labels in half. Only a rendered box
+    // reports that, and a sliced tab is no more usable than a missing one.
+    name: 'the template source row is shorter than the tabs it holds',
+    runner: 'contracts',
+    file: 'src/client/templates.module.css',
+    from: '  display: flex;\n  align-items: center;\n  gap: 6px;\n  padding: 0 18px 10px;\n  border-bottom: 1px solid var(--dsw-alias-border-l1);\n  flex: none;',
+    to: '  display: flex;\n  align-items: center;\n  gap: 6px;\n  height: 22px;\n  padding: 0 18px 10px;\n  border-bottom: 1px solid var(--dsw-alias-border-l1);\n  flex: none;',
+    expect: /clipping its tabs vertically/,
+  },
+  {
+    // A registered source with no tab of its own: the library is shipped and
+    // loadable, and no control anywhere opens it. The row has to be generated
+    // from the registry for that not to happen.
+    name: 'the source row stops being generated from the registry',
+    runner: 'contracts',
+    file: 'src/client/TemplateLibrary.tsx',
+    from: '{TEMPLATE_SOURCES.map((source, index) => (',
+    to: '{TEMPLATE_SOURCES.filter(source => source.id !== \'youart\').map((source, index) => (',
+    expect: /no longer renders one tab per registered source/,
+  },
+  {
+    // A source registered on the client with no host-side fetch definition is a
+    // tab that opens onto an empty library. Remove one definition and the seam
+    // between the two registries is unguarded again.
+    name: 'a registered template source loses its host-side fetch definition',
+    runner: 'contracts',
+    file: 'src/templates-store.ts',
+    from: "  itgoyo: {\n    bundledPath: fileURLToPath(new URL('../src/templates/itgoyo-cases.json', import.meta.url)),",
+    to: "  itgoyoDisabled: {\n    bundledPath: fileURLToPath(new URL('../src/templates/itgoyo-cases.json', import.meta.url)),",
+    expect: /no host-side fetch definition/,
+  },
+  {
+    // The bug this whole round started from: keying an evolink case by its bare
+    // number. Its numbers repeat across category files (character.md and
+    // portrait.md both open at Case 1), so two different cases collapse onto one
+    // id -- and since templates-store keys favourites by `source:id` and the
+    // gallery keys cards by id, the library silently loses cases while every
+    // other check stays green. Reproduced here as the collision it produced.
+    name: 'evolink loses cases to colliding ids again',
+    runner: 'smoke',
+    file: 'src/templates/evolink-cases.json',
+    from: '"id": "portrait-2",',
+    to: '"id": "ecommerce-2",',
+    expect: /every bundled snapshot keeps its ids unique/,
+  },
+  {
+    // "Detect models" silently listed two models fewer than the catalog: the
+    // predicate demanded a separator after the family keyword, so `nanobanana2`
+    // (a shipped default) failed its own family test and was dropped. Both ids
+    // are served by the mock gateway now, so putting the strict boundary back
+    // has to turn C5 red -- the deepEqual there compares the whole list.
+    name: 'model detection drops ids whose family carries a numeric suffix',
+    runner: 'smoke',
+    file: 'src/model-catalog.ts',
+    from: 'hunyuan|jimeng|wanx|hidream|playground)\\d*(?:$|[-_.])/i',
+    to: 'hunyuan|jimeng|wanx|hidream|playground)(?:$|[-_.])/i',
+    expect: /C5 image model discovery/,
+  },
+  {
+    // The gate that decides whether a snapshot's images can ever load. Narrow a
+    // source's allowlist and its snapshot's images become unservable -- the
+    // check has to read the real SOURCE_DEFS to notice, so it lives with the
+    // other source invariants.
+    name: 'a snapshot points at an image host its source does not allow',
+    runner: 'contracts',
+    file: 'src/templates-store.ts',
+    from: "    allowedImageHosts: ['raw.githubusercontent.com', 'cdn.openai.com'],",
+    to: "    allowedImageHosts: ['raw.githubusercontent.com'],",
+    expect: /carries images its source will refuse to serve/,
+  },
+  {
+    // A shipped snapshot pointing an image at a repository that grants no
+    // licence. Regenerating prompt-signal without the filter puts exactly these
+    // six references back, which is why the check reads the snapshot rather
+    // than trusting that the filter exists in the fetch script.
+    name: 'a snapshot points an image at a repository that grants no licence',
+    runner: 'contracts',
+    file: 'src/templates/prompt-signal-cases.json',
+    from: '"githubUrl": "https://github.com/songguoxs/gpt4o-image-prompts/blob/master/README.md#prompt-1131",\n      "image": "",',
+    to: '"githubUrl": "https://github.com/songguoxs/gpt4o-image-prompts/blob/master/README.md#prompt-1131",\n      "image": "https://raw.githubusercontent.com/songguoxs/gpt4o-image-prompts/master/images/1131.jpeg",',
+    expect: /grants no licence/,
+  },
+  {
+    // docs/images is ~20 MiB of README screenshots that nothing reads at
+    // runtime. It belongs in the repository (GitHub renders it from there) and
+    // not in the installed archive -- the same rule docs/videos already has, and
+    // CI is where it is enforced. This case runs the real check out of the
+    // workflow file rather than restating it, so the two cannot drift.
+    name: 'the published archive carries the README screenshots again',
+    runner: 'pack',
+    file: 'package.json',
+    from: '  "files": [\n    "lib",\n    "src/templates",\n    "cordis.patch.yml",\n    "docs/releases",',
+    to: '  "files": [\n    "lib",\n    "src/templates",\n    "cordis.patch.yml",\n    "docs/images",\n    "docs/releases",',
+    expect: /docs\/images\/ -- README screenshots/,
+  },
 ]
 
 const RUNNERS = {
   contracts: { script: 'scripts/verify-ui-contracts.mjs', build: false },
   smoke: { script: 'scripts/smoke.mjs', build: true },
   video: { script: 'scripts/smoke-video.mjs', build: true },
+  // The archive rule, run against a real `pnpm pack`. No rebuild: the archive
+  // contents depend on package.json and the tree, not on the built output.
+  pack: { script: 'scripts/verify-pack.mjs', build: false },
 }
 
 const results = []
