@@ -316,6 +316,12 @@ const upstream = createServer(async (req, res) => {
       { id: 'chat-only-model', capabilities: { image_generation: false } },
       { id: 'gpt-image-legacy', capabilities: { image_generation: false } },
       { id: 'gpt-image-2' },
+      // No separator between the family name and the version: the shipped
+      // defaults use this shape (`nanobanana2`, `nanobanana2-lite`), so the
+      // id-only fallback has to accept it or "detect models" drops models the
+      // catalog itself declares known.
+      { id: 'nanobanana2' },
+      { id: 'nanobanana2-lite' },
     ] }))
     return
   }
@@ -1871,7 +1877,11 @@ await check('C4b task polling stays lightweight and hydrates completed results o
 await check('C5 image model discovery and configured-model allow-list work', async () => {
   const discovered = await post('/api/dsh-imagegen/image-models', {})
   assert.equal(discovered.body.ok, true)
-  assert.deepEqual(discovered.body.models, ['glm-image', 'gpt-image-2', 'grok-imagine-image'])
+  // `nanobanana2` / `nanobanana2-lite` are shipped defaults whose family name
+  // carries a numeric suffix with no separator; they must survive detection.
+  // `gpt-4o`, `text-embedding-3-small` and the capability-flagged
+  // `chat-only-model` / `gpt-image-legacy` must not appear.
+  assert.deepEqual(discovered.body.models, ['glm-image', 'gpt-image-2', 'grok-imagine-image', 'nanobanana2', 'nanobanana2-lite'])
   const chatDiscovered = await post('/api/dsh-imagegen/image-models', {
     apiUrl: `http://127.0.0.1:${upstreamPort}/v1/chat/completions`,
     apiKey: 'sk-test',
@@ -1879,14 +1889,14 @@ await check('C5 image model discovery and configured-model allow-list work', asy
     protocol: 'auto',
   })
   assert.equal(chatDiscovered.body.ok, true)
-  assert.deepEqual(chatDiscovered.body.models, ['glm-image', 'gpt-image-2', 'grok-imagine-image'])
+  assert.deepEqual(chatDiscovered.body.models, ['glm-image', 'gpt-image-2', 'grok-imagine-image', 'nanobanana2', 'nanobanana2-lite'])
   const fallbackDiscovered = await post('/api/dsh-imagegen/image-models', {
     apiUrl: `http://127.0.0.1:${upstreamPort}`,
     apiKey: 'sk-test',
     protocol: 'auto',
   })
   assert.equal(fallbackDiscovered.body.ok, true, JSON.stringify(fallbackDiscovered.body))
-  assert.deepEqual(fallbackDiscovered.body.models, ['glm-image', 'gpt-image-2', 'grok-imagine-image'])
+  assert.deepEqual(fallbackDiscovered.body.models, ['glm-image', 'gpt-image-2', 'grok-imagine-image', 'nanobanana2', 'nanobanana2-lite'])
   const presets = await post('/api/dsh-imagegen/presets', {})
   assert.equal(presets.body.ok, true)
   assert.deepEqual(presets.body.presets.find(preset => preset.id === 'openai-official').models, [{ alias: 'gpt-image-2.5', id: 'gpt-image-2.5' }, { alias: 'gpt-image-2', id: 'gpt-image-2' }])
