@@ -69,7 +69,7 @@ if (guessedPorts.length > 0) {
   console.error('Use launchChrome() from scripts/lib/headless-chrome.mjs instead.')
   process.exit(1)
 }
-console.log(`browser launches: ${launcherUsers.length} scripts, none guesses a DevTools port`)
+console.log(`DevTools port: ${launcherUsers.length} scripts scanned, none guesses one`)
 
 if (CHROME === null) skipWithoutChrome('the UI contract guards did NOT run.')
 
