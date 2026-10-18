@@ -30,7 +30,7 @@
 | <a href="https://github.com/jev-chat/jev-chat-jarvis"><img src="docs/images/sponsor-jevchat.png" width="170" alt="jev-chat" /></a> | **[jev-chat](https://github.com/jev-chat/jev-chat-jarvis)** — 聊天辅助决策工具：回复前先读懂对方意图与当下风险，再给出可一键填入的草稿，发不发由你。Android · Windows · macOS · iOS，MIT。<br><br>官网 `chatjevs.com` |
 | <a href="https://mrday.one/"><img src="docs/images/sponsor-mrdayone.png" width="170" alt="Mr. Day One" /></a> | **[Mr. Day One](https://mrday.one/)** — AI 原生编辑器，把仓库、终端和诊断信息接进同一条智能体回路：改代码、跑测试、读报错、再复审结果。<br><br>`https://mrday.one` |
 | <a href="https://harnesscatalog.com/"><img src="docs/images/sponsor-harnesscatalog.png" width="170" alt="Harness Catalog" /></a> | **[Harness Catalog](https://harnesscatalog.com/)** — DeepSeek Harness 插件目录：逐个评测、给出真实安装命令，并说明什么场景该用它。本项目已收录其中。<br><br>[dsh-imagegen-video 条目](https://harnesscatalog.com/plugins/dsh-imagegen-video/) |
-| <a href="http://82.157.4.13/"><img src="docs/images/sponsor-leon.png" width="170" alt="莱昂 LEON" /></a> | **[莱昂 LEON](http://82.157.4.13/)** — AI 电商操盘手 × GEO 顾问：把电商一线经验蒸馏成可审计的方法论与 AI 工作流，提供 GEO 品牌托管、电商方法论体系搭建与多智能体工作流定制。<br><br>`http://82.157.4.13/` |
+| <a href="http://82.157.4.13/"><img src="docs/images/sponsor-leon.png" width="170" alt="莱昂 LEON" /></a> | **[莱昂 LEON](http://82.157.4.13/)** — AI 电商操盘手 × GEO 顾问：把电商一线经验蒸馏成可审计的方法论与 AI 工作流，提供 GEO 品牌托管、电商方法论体系搭建与多智能体工作流定制。<br><br>点击名称或徽章访问站点 |
 
 > **以上是赞助位，不是中立推荐。** 七项均由第三方独立维护：两家 API 网关的
 > 可用模型、价格、限流与稳定性，桌面客户端、移动应用与编辑器的兼容性、稳定性
