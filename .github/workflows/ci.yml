@@ -30,7 +30,11 @@ jobs:
 
       - uses: actions/setup-node@v5
         with:
-          node-version: 22
+          # 24 for the same reason release.yml uses it: the OIDC-capable npm CLI
+          # that trusted publishing needs requires node ^24.15.0, and CI has to
+          # exercise the toolchain the release will run. A green CI on a
+          # different major version is a green light for a different program.
+          node-version: 24
           cache: pnpm
 
       - run: pnpm install --frozen-lockfile

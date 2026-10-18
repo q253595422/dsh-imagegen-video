@@ -10,11 +10,19 @@ import { activeImageGenLanguage } from './helpers.ts'
 export class ImageGenApiError extends Error {
   /** Stable wire code from the host. */
   readonly code: string
+  /**
+   * The rest of the route's envelope. Kept because some failures are actionable
+   * only with a field the message alone drops — `update-manual-required` carries
+   * the archive URL the user has to install by hand, and a message string is not
+   * somewhere to put it without making the copy unreadable.
+   */
+  readonly details: Record<string, unknown>
 
-  constructor(message: string, code = 'generate-failed') {
+  constructor(message: string, code = 'generate-failed', details: Record<string, unknown> = {}) {
     super(message)
     this.name = 'ImageGenApiError'
     this.code = code
+    this.details = details
   }
 }
 
@@ -31,9 +39,11 @@ async function readEnvelope<T>(response: Response): Promise<T> {
   }
   const record = body as { ok?: unknown; message?: unknown; code?: unknown }
   if (record.ok !== true) {
+    const { ok: _ok, message: _message, code: _code, ...details } = body as Record<string, unknown>
     throw new ImageGenApiError(
       typeof record.message === 'string' ? record.message : `HTTP ${response.status}`,
       typeof record.code === 'string' ? record.code : 'generate-failed',
+      details,
     )
   }
   return body as T
@@ -250,11 +260,11 @@ export class ImageGenApi {
     return body.entries
   }
 
-  /** List the host-persisted gallery (newest first). */
-  async galleryList(): Promise<HistoryEntry[]> {
+  /** List the host-persisted gallery (newest first) plus its trash. */
+  async galleryList(): Promise<{ entries: HistoryEntry[]; trash: HistoryEntry[] }> {
     const response = await fetch(GALLERY_API.list, { method: 'POST' })
-    const body = await readEnvelope<{ ok: true; entries: HistoryEntry[] }>(response)
-    return body.entries
+    const body = await readEnvelope<{ ok: true; entries: HistoryEntry[]; trash?: HistoryEntry[] }>(response)
+    return { entries: body.entries, trash: body.trash ?? [] }
   }
 
   /** Append one image to the gallery. The host assigns the id and skips the
@@ -269,27 +279,46 @@ export class ImageGenApi {
     return { entries: body.entries, added: body.added }
   }
 
-  /** Remove one gallery entry by id. */
-  async galleryRemove(id: string): Promise<HistoryEntry[]> {
+  /** Move one gallery entry to the trash (soft delete: its files stay). */
+  async galleryRemove(id: string): Promise<{ entries: HistoryEntry[]; trash: HistoryEntry[] }> {
     const response = await fetch(GALLERY_API.remove, {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
       body: JSON.stringify({ id }),
     })
-    const body = await readEnvelope<{ ok: true; entries: HistoryEntry[] }>(response)
-    return body.entries
+    const body = await readEnvelope<{ ok: true; entries: HistoryEntry[]; trash?: HistoryEntry[] }>(response)
+    return { entries: body.entries, trash: body.trash ?? [] }
   }
 
-  /** Clear the entire gallery. */
-  async galleryClear(): Promise<HistoryEntry[]> {
+  /** Bring one trashed entry back into the gallery. */
+  async galleryRestore(id: string): Promise<{ entries: HistoryEntry[]; trash: HistoryEntry[] }> {
+    const response = await fetch(GALLERY_API.restore, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ id }),
+    })
+    const body = await readEnvelope<{ ok: true; entries: HistoryEntry[]; trash?: HistoryEntry[] }>(response)
+    return { entries: body.entries, trash: body.trash ?? [] }
+  }
+
+  /** Empty the trash: permanently deletes the files of every trashed entry. */
+  async galleryPurge(): Promise<{ entries: HistoryEntry[]; trash: HistoryEntry[] }> {
+    const response = await fetch(GALLERY_API.purge, { method: 'POST' })
+    const body = await readEnvelope<{ ok: true; entries: HistoryEntry[]; trash?: HistoryEntry[] }>(response)
+    return { entries: body.entries, trash: body.trash ?? [] }
+  }
+
+  /** Move every gallery entry to the trash (recoverable for the retention window). */
+  async galleryClear(): Promise<{ entries: HistoryEntry[]; trash: HistoryEntry[] }> {
     const response = await fetch(GALLERY_API.clear, { method: 'POST' })
-    const body = await readEnvelope<{ ok: true; entries: HistoryEntry[] }>(response)
-    return body.entries
+    const body = await readEnvelope<{ ok: true; entries: HistoryEntry[]; trash?: HistoryEntry[] }>(response)
+    return { entries: body.entries, trash: body.trash ?? [] }
   }
 
-  async gallerySetTags(id: string, tags: string[]): Promise<HistoryEntry[]> {
+  async gallerySetTags(id: string, tags: string[]): Promise<{ entries: HistoryEntry[]; trash: HistoryEntry[] }> {
     const response = await fetch(GALLERY_API.tags, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ id, tags }) })
-    return (await readEnvelope<{ ok: true; entries: HistoryEntry[] }>(response)).entries
+    const body = await readEnvelope<{ ok: true; entries: HistoryEntry[]; trash?: HistoryEntry[] }>(response)
+    return { entries: body.entries, trash: body.trash ?? [] }
   }
 
   async canvasList(): Promise<CanvasSummary[]> {

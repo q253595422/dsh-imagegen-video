@@ -113,9 +113,31 @@ await check('G1-G3 a favorited clip is copied, served, and cleaned up', async ()
   assert.equal(reloaded.length, 1)
   assert.equal(reloaded[0].mode, 'video')
 
-  // Removing the gallery entry cleans up the copied clip.
+  // Deleting is a SOFT delete: the shelf entry leaves, the bytes stay so the
+  // trash window can restore them. Asserting deletion directly (as this check
+  // used to) would now pass for the wrong reason on a hard delete and fail for
+  // the wrong reason on the correct behaviour.
   await host.removeGallery('fav-1')
-  assert.equal(existsSync(join(root, 'dsh-imagegen', 'gallery', 'videos', name)), false, 'removing the favorite deletes its clip')
+  assert.equal((await host.listGallery()).length, 0, 'a soft-deleted favorite leaves the shelf')
+  const trash = await host.listGalleryTrash()
+  assert.equal(trash.length, 1, 'the deleted entry is in the trash')
+  assert.equal(trash[0].id, 'fav-1')
+  assert.ok(typeof trash[0].deletedAt === 'number', 'the trash entry records when it was deleted')
+  assert.equal(existsSync(join(root, 'dsh-imagegen', 'gallery', 'videos', name)), true, 'a soft delete keeps the clip bytes')
+
+  // Restoring puts it back and the clip is still readable — the whole point of
+  // not unlinking on delete.
+  await host.restoreGallery('fav-1')
+  assert.equal((await host.listGallery()).length, 1, 'a restored entry returns to the shelf')
+  assert.equal((await host.listGalleryTrash()).length, 0, 'the trash is empty after a restore')
+  const afterRestore = await host.readGalleryVideo(name)
+  assert.ok(afterRestore !== undefined, 'the restored entry can still serve its clip')
+
+  // Only an explicit purge reclaims the bytes.
+  await host.removeGallery('fav-1')
+  await host.purgeGallery()
+  assert.equal(existsSync(join(root, 'dsh-imagegen', 'gallery', 'videos', name)), false, 'purging the trash deletes the clip')
+  assert.equal((await host.listGalleryTrash()).length, 0, 'the trash is empty after a purge')
 
   // An image-only gallery entry still round-trips (no regression).
   await host.appendGallery({

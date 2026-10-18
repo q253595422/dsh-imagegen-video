@@ -83,6 +83,145 @@ function patch (relative, from, to) {
 }
 
 const CASES = [
+  // ------------------------------------------------ the poster recipe guard
+  {
+    // Accepting the recipe without validating it is the dangerous direction: a
+    // stored recipe drives a canvas the host paints, and an unvalidated one can
+    // point anywhere. Drop the guard and C10c4's two refusals must go green.
+    name: 'a poster recipe is stored without being validated',
+    runner: 'smoke',
+    file: 'src/canvas-store.ts',
+    from: "    if (state.poster !== undefined && !isPosterDocument(state.poster)) return false",
+    to: '    // guard removed',
+    expect: /recipe without layers must be refused|pointing off-host must be refused/,
+  },
+  {
+    // The sweep only ever looked at `metadata.asset`, so a poster's background
+    // and logo layers -- which live in `metadata.poster` and are re-read by the
+    // editor -- counted as garbage. Any canvas deletion then deleted the base
+    // image behind every poster. This restores exactly that reachability set.
+    name: 'the asset sweep ignores the files a poster recipe still points at',
+    runner: 'smoke',
+    file: 'src/canvas-store.ts',
+    from: "        const poster = metadata?.poster\n        if (isPosterDocument(poster)) {\n          referenced.add(poster.background.assetId)\n          for (const layer of poster.layers) {\n            if (layer.type === 'image') referenced.add(layer.asset.assetId)\n          }\n        }",
+    to: '        void 0',
+    expect: /poster background was deleted by the sweep/,
+  },
+  // --------------------------------------------------- the gallery trash window
+  {
+    // A hard delete is the regression this round removed: the entry leaves the
+    // shelf AND the bytes go, so there is nothing left to restore. This keeps
+    // the `deletedAt` flag exactly as shipped and only re-adds the unlink, so
+    // the failure lands on the byte assertion — the precise symptom a user hits
+    // (a "restore" that hands back a dead URL).
+    name: 'deleting a gallery entry destroys its bytes again',
+    runner: 'canvas-video',
+    file: 'src/gallery-store.ts',
+    from: "    const target = entries.find(entry => entry.id === id)\n    if (target !== undefined && isLiveEntry(target)) target.deletedAt = Date.now()\n    await writeIndex(entries)\n    return entries.map(toWire)",
+    to: "    const target = entries.find(entry => entry.id === id)\n    if (target !== undefined && isLiveEntry(target)) target.deletedAt = Date.now()\n    if (target !== undefined) await removeEntryFiles(target)\n    await writeIndex(entries)\n    return entries.map(toWire)",
+    expect: /soft delete keeps the clip bytes/,
+  },
+  // ------------------------------------------------------ the update chain
+  {
+    // Writing the wrong profile into the CLI call is what made the Desktop
+    // update fail with pnpm's own message: a profile the CLI is not allowed to
+    // touch. Spawning instead of refusing must be caught by name.
+    name: 'the updater spawns the locked desktop profile anyway',
+    runner: 'smoke',
+    file: 'src/updater.ts',
+    from: "  if (profile.toLowerCase() === DESKTOP_PROFILE) {\n    throw new ManualUpdateRequiredError(profile, tarballUrl)",
+    to: "  if (profile.toLowerCase() === DESKTOP_PROFILE && false) {\n    throw new ManualUpdateRequiredError(profile, tarballUrl)",
+    // The refusal is an `assert.rejects`, so a spawn instead of a throw surfaces
+    // as "Missing expected rejection" — that message IS the defect firing, and
+    // the two wire-contract strings are listed for the variants that throw a
+    // different error instead of none.
+    expect: /Missing expected rejection|locked profile has its own wire code|never spawned/,
+  },
+  // ------------------------------------------------------- the shortcut legend
+  {
+    // Every binding existed before the legend; none was discoverable. Drop the
+    // `?` branch and the shortcut whose whole point is "you can always get back
+    // to the list" is gone — the check must say so by name.
+    name: 'the ? key stops opening the shortcut legend',
+    runner: 'smoke',
+    file: 'src/client/CanvasWorkspace.tsx',
+    from: "      } else if (event.key === '?' || (event.key === 'F1')) {",
+    to: "      } else if (event.key === 'F1' && shortcutHelpOpen) {",
+    expect: /\? opens the legend too|\? is claimed by the legend/,
+  },
+  {
+    // The undo tooltip is the only place a user learns the key without opening
+    // the legend. Drop the bridge back to the action label and the tooltip
+    // collapses to a bare verb.
+    name: 'the dock stops naming the key on its own controls',
+    runner: 'smoke',
+    file: 'src/client/CanvasWorkspace.tsx',
+    from: "  const keys = shortcutKeysFor(key)\n  return keys === '' ? text : `${text} (${keys})`",
+    to: "  const keys = ''\n  return keys === '' ? text : `${text} (${keys})`",
+    expect: /the undo control names its key/,
+  },
+  // ------------------------------------------------- one browser launcher only
+  {
+    // The flake this removes is invisible in a single run: two guards picking
+    // ports out of overlapping random ranges only collide when they run at the
+    // same time, and the loser asserts against whichever page answered. Put the
+    // guess back and the browser guard has to say so by name.
+    name: 'a browser guard hand-picks its DevTools port again',
+    runner: 'contracts',
+    file: 'scripts/verify-video-layout.mjs',
+    from: 'const launched = await launchChrome({ chrome: CHROME, name: \'dsh-imagegen-layout\' })',
+    to: 'const launched = await launchChrome({ chrome: CHROME, name: \'dsh-imagegen-layout\', args: [\'--remote-debugging-port=9500\'] })',
+    expect: /hand-picks its DevTools port/,
+  },
+  // The legend has two separate ways to become unreadable, and the browser
+  // check measures both, so both are injected here: a removed single-column
+  // breakpoint, and a removed height cap (the body then grows past the viewport
+  // instead of scrolling inside it).
+  {
+    name: 'the shortcut legend stops collapsing to one column on a phone',
+    runner: 'contracts',
+    file: 'src/client/shortcut-help.module.css',
+    from: '@media (max-width: 560px) {\n  .body { grid-template-columns: minmax(0, 1fr); }\n}',
+    to: '@media (max-width: 560px) {\n  .body { grid-template-columns: repeat(2, minmax(0, 1fr)); }\n}',
+    expect: /keeps two columns/,
+  },
+  {
+    name: 'the shortcut legend grows past the viewport instead of scrolling',
+    runner: 'contracts',
+    file: 'src/client/shortcut-help.module.css',
+    from: '  max-height: calc(100dvh - 40px);\n',
+    to: '',
+    expect: /taller than the viewport/,
+  },
+  // The trash is where soft delete either pays off or does not. Three ways it
+  // can silently stop working, each invisible to every other check: the restore
+  // button loses the entry id it was rendering, the panel prints the count a
+  // second time inside the section (so the heading reads as duplicated copy),
+  // and the purge confirmation loses the number the user is agreeing to.
+  {
+    name: 'the trash restore button stops carrying its entry id',
+    runner: 'smoke',
+    file: 'src/client/ImageGenPanel.tsx',
+    from: 'data-gallery-restore={entry.id}',
+    to: 'data-gallery-restore="gallery-trashed"',
+    expect: /carries its own id, not a repeated one/,
+  },
+  {
+    name: 'the open trash repeats the count heading it sits under',
+    runner: 'smoke',
+    file: 'src/client/ImageGenPanel.tsx',
+    from: "                <section className={css.gallerySelectionBar} data-gallery-trash=\"\" aria-label={tt('gallery.trash')}>\n                  <div style={{ display: 'flex', flexDirection: 'column', gap: 6, flex: '1 1 auto', minWidth: 0, maxHeight: 180, overflowY: 'auto' }}>",
+    to: "                <section className={css.gallerySelectionBar} data-gallery-trash=\"\" aria-label={tt('gallery.trash')}>\n                  <strong>{tt('gallery.trashCount', { count: galleryTrash.length })}</strong>\n                  <div style={{ display: 'flex', flexDirection: 'column', gap: 6, flex: '1 1 auto', minWidth: 0, maxHeight: 180, overflowY: 'auto' }}>",
+    expect: /does not repeat the count heading/,
+  },
+  {
+    name: 'the trash purge confirmation forgets how many entries will go',
+    runner: 'smoke',
+    file: 'src/client/ImageGenPanel.tsx',
+    from: "if (!window.confirm(tt('gallery.purgeConfirm', { count: galleryTrash.length }))) return",
+    to: "if (!window.confirm(tt('gallery.purge'))) return",
+    expect: /states how many entries will go/,
+  },
   // ------------------------------------------------------ three UI contracts
   {
     name: 'the subscription is wired but never observes',
@@ -524,9 +663,35 @@ const RUNNERS = {
   contracts: { script: 'scripts/verify-ui-contracts.mjs', build: false },
   smoke: { script: 'scripts/smoke.mjs', build: true },
   video: { script: 'scripts/smoke-video.mjs', build: true },
+  // The gallery/store half of the video chain: smoke-canvas-video drives the
+  // real store in a temp home, which smoke-video does not touch at all.
+  'canvas-video': { script: 'scripts/smoke-canvas-video.mjs', build: true },
   // The archive rule, run against a real `pnpm pack`. No rebuild: the archive
   // contents depend on package.json and the tree, not on the built output.
   pack: { script: 'scripts/verify-pack.mjs', build: false },
+}
+
+// ---------------------------------------------------------------- chain guard
+//
+// A runner that no command invokes is a case nobody ever runs. Adding the
+// `canvas-video` group above and forgetting `test:negative` is exactly how the
+// gallery soft-delete case silently stopped being part of the gate: the case
+// was green when invoked by hand and never invoked by `pnpm test:negative`.
+// Checked here rather than in a case, because a case can only fail after the
+// runner it belongs to has been selected -- and a runner nobody selects never
+// runs its own guard.
+{
+  const chain = JSON.parse(readFileSync(join(SRC, 'package.json'), 'utf8')).scripts['test:negative'] ?? ''
+  const invoked = new Set([...chain.matchAll(/verify-negative\.mjs\s+([\w-]+)/g)].map(match => match[1]))
+  const missing = Object.keys(RUNNERS).filter(name => !invoked.has(name))
+  const unknown = CASES.filter(testCase => RUNNERS[testCase.runner] === undefined)
+  if (missing.length > 0 || unknown.length > 0) {
+    console.log('negative verification is not wired up\n' + '='.repeat(64))
+    for (const name of missing) console.log(`FAIL  runner "${name}" has cases but \`test:negative\` never runs it`)
+    for (const testCase of unknown) console.log(`FAIL  case "${testCase.name}" names an undefined runner "${testCase.runner}"`)
+    console.log('='.repeat(64))
+    process.exit(1)
+  }
 }
 
 const results = []
@@ -534,8 +699,13 @@ const results = []
 // full jsdom suite, so all of them in one process exceeds the command timeout.
 // `node dsh-neg-verify.mjs smoke` and `... contracts` each stay inside it.
 const only = process.argv[2]
+// A second, free-form filter on the case name. Every smoke case pays a rebuild
+// plus the whole suite (about a minute), so adding one case to that group has to
+// be verifiable without re-running its neighbours.
+const nameFilter = process.argv[3]
 for (const testCase of CASES) {
   if (only !== undefined && only !== '' && testCase.runner !== only) continue
+  if (nameFilter !== undefined && nameFilter !== '' && !testCase.name.includes(nameFilter)) continue
   const runner = RUNNERS[testCase.runner]
   const script = runner.script
   freshCopy()

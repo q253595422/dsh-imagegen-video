@@ -1,0 +1,75 @@
+/**
+ * Poster editor dialog. Ported from upstream v1.7.0 `poster-editor.module.css`;
+ * the only substantive change is that every literal colour is now a `--dsw-*`
+ * theme token, because DSH themes by alias and switches theme on a running page
+ * (a `prefers-color-scheme` media query would follow the OS, not the host).
+ */
+
+.backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: var(--z-modal-backdrop);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 16px;
+  background: var(--dsw-alias-bg-mask-1);
+  color: var(--dsw-alias-label-primary);
+  font-family: var(--dsw-font-family, system-ui, sans-serif);
+  font-size: 14px;
+  line-height: 1.5;
+}
+
+.dialog {
+  display: flex;
+  flex-direction: column;
+  width: min(1160px, 100%);
+  max-height: calc(100dvh - 32px);
+  border: 1px solid var(--dsw-alias-border-l1);
+  border-radius: 16px;
+  background: var(--dsw-alias-bg-layer-1);
+  box-shadow: 0 24px 60px rgb(15 23 42 / 28%);
+  overflow: hidden;
+  outline: none;
+}
+.dialog * { box-sizing: border-box; }
+.dialog button, .dialog input, .dialog textarea, .dialog select { font: inherit; color: inherit; }
+.dialog button { border: 1px solid var(--dsw-alias-border-l1); background: var(--dsw-alias-bg-layer-2); border-radius: 8px; padding: 7px 12px; cursor: pointer; }
+.dialog button:hover:not(:disabled) { background: var(--dsw-alias-interactive-bg-hover); }
+.dialog button:disabled { opacity: .45; cursor: default; }
+.dialog button:focus-visible, .dialog input:focus-visible, .dialog textarea:focus-visible, .dialog select:focus-visible { outline: 2px solid var(--dsw-alias-brand-primary); outline-offset: 2px; }
+.header { display: flex; align-items: center; justify-content: space-between; padding: 16px 20px; border-bottom: 1px solid var(--dsw-alias-border-l1); }
+.header strong { font-size: 18px; }
+.header small { display: block; color: var(--dsw-alias-label-secondary); margin-top: 4px; }
+.header button { font-size: 22px; line-height: 1; }
+.toolbar { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; padding: 12px 20px; }
+.toolbar span { margin-left: auto; color: var(--dsw-alias-label-secondary); font-size: 12px; }
+.body { display: grid; grid-template-columns: minmax(0, 1fr) 260px; min-height: 0; flex: 1; overflow: auto; }
+.preview { background: var(--dsw-alias-bg-layer-2); padding: 24px; display: flex; flex-direction: column; align-items: center; min-width: 0; justify-content: flex-start; }
+/* The checkerboard means "transparent", so it has to follow the theme rather
+   than stay a light-mode grey. */
+.stage { position: relative; flex: 0 0 auto; max-width: 100%; overflow: hidden; box-shadow: 0 2px 16px rgb(15 23 42 / 16%); background: repeating-conic-gradient(color-mix(in srgb, var(--dsw-alias-label-primary) 12%, transparent) 0% 25%, transparent 0% 50%) 0/16px 16px; }
+.stage canvas { display: block; width: 100%; height: 100%; }
+.stage .layerHandle { position: absolute; border: 1px dashed transparent; padding: 0; border-radius: 0; background: transparent; touch-action: none; cursor: move; min-width: 0; min-height: 0; }
+/* The outer ring is drawn in the inverse ink so the handle stays readable on
+   top of arbitrary artwork in either theme. */
+.stage .layerHandle:hover:not(:disabled), .stage .layerHandle[data-selected] { border-color: var(--dsw-alias-brand-primary); background: color-mix(in srgb, var(--dsw-alias-brand-primary) 6%, transparent); outline: 1px solid color-mix(in srgb, var(--dsw-alias-label-inverse, #fff) 55%, transparent); }
+.inspector { padding: 16px; border-left: 1px solid var(--dsw-alias-border-l1); overflow: auto; }
+.inspector small, .inspector p { color: var(--dsw-alias-label-secondary); font-size: 12px; }
+.layerList { display: flex; flex-direction: column; gap: 5px; max-height: 130px; overflow: auto; margin: 10px 0; }
+.layerList button { text-align: left; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; flex-shrink: 0; }
+.layerList button[data-active] { border-color: var(--dsw-alias-brand-primary); background: color-mix(in srgb, var(--dsw-alias-brand-primary) 12%, transparent); }
+.controls { border: 0; padding: 0; margin: 12px 0 0; display: flex; flex-direction: column; gap: 10px; min-width: 0; }
+.controls label { display: flex; flex-direction: column; gap: 4px; font-size: 12px; min-width: 0; flex: 1; }
+.controls input:not([type=checkbox]), .controls select, .controls textarea { width: 100%; border: 1px solid var(--dsw-alias-border-l1); border-radius: 6px; background: var(--dsw-alias-bg-layer-1); color: var(--dsw-alias-label-primary); padding: 6px 8px; }
+.controls textarea { min-height: 84px; resize: vertical; }
+.controls input[type=color] { height: 34px; padding: 3px; }
+.controls .check { flex-direction: row; align-items: center; }
+.row { display: flex; gap: 8px; }
+.row button { flex: 1; font-size: 12px; padding: 6px; }
+.error { color: var(--dsw-alias-label-error); margin: 8px 20px; overflow-wrap: anywhere; }
+.footer { display: flex; align-items: center; justify-content: flex-end; gap: 8px; padding: 14px 20px; border-top: 1px solid var(--dsw-alias-border-l1); flex-wrap: wrap; }
+.footer small, .footer span { margin-right: auto; color: var(--dsw-alias-label-secondary); font-size: 12px; }
+.footer .primary { background: var(--dsw-alias-brand-primary); border-color: var(--dsw-alias-brand-primary); color: var(--dsw-alias-bg-base); }
+.footer .primary:hover:not(:disabled) { background: color-mix(in srgb, var(--dsw-alias-brand-primary) 86%, transparent); }
+@media (max-width: 680px) { .backdrop { padding: 6px; } .dialog { max-height: calc(100dvh - 12px); } .body { grid-template-columns: 1fr; } .preview { padding: 12px; } .inspector { border-left: 0; border-top: 1px solid var(--dsw-alias-border-l1); } .header, .toolbar, .footer { padding: 10px 12px; } }

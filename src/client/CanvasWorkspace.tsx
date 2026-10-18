@@ -9,7 +9,7 @@ import { useCallback, useEffect, useMemo, useRef, useState, type ChangeEvent, ty
 import { createPortal } from 'react-dom'
 import {
   Bold, BookOpen, ChevronDown, Copy, Download, Eraser, FileText as FileTextIcon, FolderX, Hand, Image as ImageIcon,
-  Layers, Map as MapIcon, Maximize, Maximize2, MousePointer2, Palette, Pencil, Plus, Redo2, Scissors, SendHorizonal, Sparkles, Star,
+  Keyboard, Layers, Map as MapIcon, Maximize, Maximize2, MousePointer2, Palette, Pencil, Plus, Redo2, Scissors, SendHorizonal, Sparkles, Star,
   SquareDashedMousePointer, Trash2, Type, Undo2, Upload, Wand2, Wallpaper, X,
 } from 'lucide-react'
 import type { CanvasAnnotation, CanvasAssetRef, CanvasConnection, CanvasDocument, CanvasFileKind, CanvasLayerInfo, CanvasLayerPlanItem, CanvasNode, CanvasRect, CanvasVideoRef, CanvasSkillConfigApplyResult, CanvasSkillConfigField, CanvasSkillConfigSaveResult, CanvasSkillConfigStep, CanvasSkillConfigView, CanvasSkillDescriptor, CanvasSkillLibrary, CanvasSkillOutput, CanvasSkillRunRequest, CanvasSkillTask, CanvasSketchStroke, GenerateRequest, GenerationTask, HistoryEntry, VideoGenerateRequest, VideoTaskSummary, VideoMode, VideoResolution } from '../protocol.ts'
@@ -21,6 +21,8 @@ import { ImageGenApiError, type ImageGenApi } from './api.ts'
 import { errorMessage, tt } from './helpers.ts'
 import type { ImageGenKey } from './locales.ts'
 import { autoRemoveBackground, canvasToDataUrl, compositeAnnotatedResult, containRect, cropRaster, drawAnnotation, loadRaster, rectBetween, transparencyRatio } from './image-ops.ts'
+import { PosterEditor } from './PosterEditor.tsx'
+import { ShortcutHelp, shortcutKeysFor } from './ShortcutHelp.tsx'
 import { TemplateLibrary } from './TemplateLibrary.tsx'
 import { ModelPicker, resolveModelChoice, type ModelPickerValue } from './ModelPicker.tsx'
 import type { ImageModelGroup } from './settings-scope.ts'
@@ -596,7 +598,7 @@ function rasterizeSketch(strokes: CanvasSketchStroke[], boardWidth: number, boar
   return { dataUrl: canvas.toDataURL('image/png'), width: canvas.width, height: canvas.height }
 }
 
-type ToolbarIconName = 'new' | 'select' | 'pan' | 'image' | 'text' | 'file' | 'sketch' | 'eraser' | 'trash' | 'undo' | 'redo' | 'fit' | 'minimap' | 'background' | 'template' | 'download' | 'duplicate' | 'sparkle' | 'send' | 'close' | 'deleteProject' | 'annotate' | 'removeBg' | 'layers' | 'bold' | 'color' | 'skill' | 'upload' | 'expand' | 'favorite' | 'favoriteFilled'
+type ToolbarIconName = 'new' | 'select' | 'pan' | 'image' | 'text' | 'file' | 'sketch' | 'eraser' | 'trash' | 'undo' | 'redo' | 'fit' | 'minimap' | 'background' | 'template' | 'download' | 'duplicate' | 'sparkle' | 'send' | 'close' | 'deleteProject' | 'annotate' | 'removeBg' | 'layers' | 'bold' | 'color' | 'skill' | 'upload' | 'expand' | 'favorite' | 'favoriteFilled' | 'help'
 
 /** Lucide icons (stroke matches the DSH line style); one shared component so
  *  every dock/toolbar icon comes from the same well-drawn set. */
@@ -634,6 +636,10 @@ function ToolbarIcon({ name, size = 16 }: { name: ToolbarIconName; size?: number
     case 'expand': return <Maximize2 {...common} />
     case 'favorite': return <Star {...common} />
     case 'favoriteFilled': return <Star {...common} fill="currentColor" />
+    // A keyboard, not a question mark: the button opens a key list, and
+    // "help" as a bare `?` reads as unknown/unimplemented in a dock that is
+    // otherwise all verbs.
+    case 'help': return <Keyboard {...common} />
   }
 }
 
@@ -647,6 +653,22 @@ const BLOCKED_UPLOAD_EXTENSIONS = new Set([
 
 /** Cap mirroring MAX_CANVAS_FILE_BYTES on the host. */
 const MAX_UPLOAD_BYTES = 50 * 1024 * 1024
+
+/**
+ * A control's label with the key that does the same thing appended, e.g.
+ * `撤销 (Ctrl/⌘+Z)`.
+ *
+ * The dock is where a user looks for undo, and a tooltip that names the key is
+ * how they find out the key exists without opening the legend. Actions with no
+ * binding come back unchanged rather than with empty brackets.
+ * @param key - the action's translation key.
+ * @returns the label for `aria-label` / `title`.
+ */
+function labelWithKeys(key: ImageGenKey): string {
+  const text = tt(key)
+  const keys = shortcutKeysFor(key)
+  return keys === '' ? text : `${text} (${keys})`
+}
 
 /**
  * Modal picker for the canvas skill catalog. Built-in actions come first, then
@@ -1350,6 +1372,12 @@ export function CanvasWorkspace(props: CanvasWorkspaceProps): React.JSX.Element 
   const [ctrlPressed, setCtrlPressed] = useState(false)
   const [viewportSize, setViewportSize] = useState({ width: 0, height: 0 })
   /**
+   * The shortcut legend. Every binding below was already implemented and none of
+   * them was discoverable, so the legend has to be reachable from the dock and
+   * from `?` — one of those two is what a user actually reaches for.
+   */
+  const [shortcutHelpOpen, setShortcutHelpOpen] = useState(false)
+  /**
    * The latest `active` for the window-level listeners below.
    *
    * They are registered once, but the flag they must consult changes: reading
@@ -1371,6 +1399,17 @@ export function CanvasWorkspace(props: CanvasWorkspaceProps): React.JSX.Element 
   const [nodeAddMenu, setNodeAddMenu] = useState<{ nodeId: string; nodeType: CanvasNode['type']; screen: Point } | null>(null)
   const [minimapOpen, setMinimapOpen] = useState(true)
   const [pickerOpen, setPickerOpen] = useState(false)
+  /**
+   * Which image node the poster overlay editor is open on. Carries the canvas id
+   * as well, so a canvas switch closes the editor instead of leaving it editing
+   * a node that belongs to another document.
+   */
+  const [posterTarget, setPosterTarget] = useState<{ canvasId: string; nodeId: string } | null>(null)
+  // Read by the key and paste handlers, which are registered once and would
+  // otherwise capture the first render's `null` and keep acting on the canvas
+  // underneath the open editor.
+  const posterOpenRef = useRef(false)
+  posterOpenRef.current = posterTarget !== null
   const [videoPickerOpen, setVideoPickerOpen] = useState(false)
   const [backgroundMenu, setBackgroundMenu] = useState<Point | null>(null)
   const [imageMenu, setImageMenu] = useState<Point | null>(null)
@@ -3792,6 +3831,10 @@ export function CanvasWorkspace(props: CanvasWorkspaceProps): React.JSX.Element 
     const isActivatableTarget = (target: EventTarget | null): boolean => matchesSelector(target, 'button, [role="button"], [role="menuitem"], [role="radio"], [role="option"], a[href], summary, label')
 
     const onKeyDown = (event: KeyboardEvent): void => {
+      // The poster editor is a modal over the canvas: Ctrl+Z there must undo a
+      // poster layer, not a canvas node (and Delete must not remove a node while
+      // the caret sits in the poster's text field).
+      if (posterOpenRef.current) return
       // The panel container is hidden by a stylesheet rule rather than being
       // unmounted, so this listener stays live while the user is in the chat
       // beside it. Claiming Ctrl+A / Ctrl+Z / Delete there would eat the
@@ -3807,6 +3850,10 @@ export function CanvasWorkspace(props: CanvasWorkspaceProps): React.JSX.Element 
       if (event.key === 'Escape') {
         setContextMenu(null); setCreateMenu(null); setBackgroundMenu(null); setImageMenu(null); setNodeAddMenu(null)
         setColorPickerNodeId(null)
+        // The legend is the topmost surface whenever it is open, so Esc closes it
+        // before anything behind it (the selection it would otherwise clear is
+        // what the user expects to survive).
+        if (shortcutHelpOpen) { setShortcutHelpOpen(false); return }
         // Esc leaves the 标注 tool first, then clears the selection.
         if (annotateNodeId !== null) { setAnnotateNodeId(null); setAnnotationDraft(null); return }
         // The in-canvas overlays come next, topmost first. They are rendered by
@@ -3844,6 +3891,12 @@ export function CanvasWorkspace(props: CanvasWorkspaceProps): React.JSX.Element 
       if (mod && event.key.toLowerCase() === 'z') {
         event.preventDefault()
         if (event.shiftKey) redo(); else undo()
+      } else if (event.key === '?' || (event.key === 'F1')) {
+        // `?` is Shift+/ on most layouts, so the key itself is already the
+        // right test. Neither Shift+/ nor F1 is a canvas gesture, so this
+        // claims a key nothing else wanted.
+        event.preventDefault()
+        setShortcutHelpOpen(open => !open)
       } else if (mod && event.key.toLowerCase() === 'y') {
         event.preventDefault(); redo()
       } else if (mod && event.key.toLowerCase() === 'c') {
@@ -3866,6 +3919,7 @@ export function CanvasWorkspace(props: CanvasWorkspaceProps): React.JSX.Element 
     }
     const onBlur = (): void => { setSpacePressed(false); setCtrlPressed(false) }
     const onPaste = (event: ClipboardEvent): void => {
+      if (posterOpenRef.current) return
       // Same rule as the keyboard handler: a hidden canvas must not consume a
       // paste aimed at the chat.
       if (!activeRef.current) return
@@ -3892,7 +3946,7 @@ export function CanvasWorkspace(props: CanvasWorkspaceProps): React.JSX.Element 
       window.removeEventListener('blur', onBlur)
       window.removeEventListener('paste', onPaste)
     }
-  }, [addAssets, annotateNodeId, api, canvasCenter, copySelection, deleteNode, deleteSelection, duplicateSelection, pasteClipboard, pickerOpen, polishNode, redo, skillLibraryOpen, skillMenu, undo, videoPreviewNodeId, pendingSkill])
+  }, [addAssets, annotateNodeId, api, canvasCenter, copySelection, deleteNode, deleteSelection, duplicateSelection, pasteClipboard, pickerOpen, polishNode, redo, shortcutHelpOpen, skillLibraryOpen, skillMenu, undo, videoPreviewNodeId, pendingSkill])
 
   // ------------------------------------------------------ viewport events
 
@@ -4733,6 +4787,7 @@ export function CanvasWorkspace(props: CanvasWorkspaceProps): React.JSX.Element 
         {node.type === 'image' && hasImage ? <>
           <IconButton name="annotate" label={tt('canvas.annotate')} active={annotating} onClick={() => toggleAnnotate(node)} />
           <IconButton name="removeBg" label={tt('canvas.removeBackground')} disabled={busyLabel !== undefined} onClick={() => { void removeNodeBackground(node) }} />
+          <IconButton name="text" label={tt('poster.title')} disabled={busyLabel !== undefined} onClick={() => { if (document !== null) setPosterTarget({ canvasId: document.id, nodeId: node.id }) }} />
           <IconButton name="layers" label={tt('canvas.splitLayers')} disabled={busyLabel !== undefined} onClick={() => { void splitLayers(node) }} />
           <span className={css.toolbarDivider} aria-hidden="true" />
           <ModelPicker
@@ -5086,6 +5141,7 @@ export function CanvasWorkspace(props: CanvasWorkspaceProps): React.JSX.Element 
         const node = nodeById.get(contextMenu.nodeId)
         if (node !== undefined && node.type === 'image' && (assetOf(node)?.url.length ?? 0) > 0) {
           items.push({ label: tt('canvas.preview.expand'), icon: 'expand', action: () => openImageNode(node) })
+          items.push({ label: tt('poster.title'), icon: 'text', action: () => { if (document !== null) setPosterTarget({ canvasId: document.id, nodeId: node.id }) } })
           items.push({ label: tt('canvas.download'), icon: 'download', action: () => downloadNode(node) })
         }
         if (node !== undefined && node.type === 'file' && (assetOf(node)?.url.length ?? 0) > 0) {
@@ -5322,15 +5378,18 @@ export function CanvasWorkspace(props: CanvasWorkspaceProps): React.JSX.Element 
             onMouseLeave={scheduleMenuClose}
           />
         </div>
+        <div className={css.dockItem} data-dock-item="" data-label={tt('canvas.shortcuts.button')}>
+          <IconButton name="help" size={18} label={tt('canvas.shortcuts.button')} active={shortcutHelpOpen} onClick={() => setShortcutHelpOpen(open => !open)} />
+        </div>
         <div className={css.dockItem} data-dock-item="" data-label={tt('canvas.undo')}>
-          <IconButton name="undo" size={18} label={tt('canvas.undo')} disabled={pastRef.current.length === 0} onClick={undo} />
+          <IconButton name="undo" size={18} label={labelWithKeys('canvas.undo')} disabled={pastRef.current.length === 0} onClick={undo} />
         </div>
         <div className={css.dockItem} data-dock-item="" data-label={tt('canvas.redo')}>
-          <IconButton name="redo" size={18} label={tt('canvas.redo')} disabled={futureRef.current.length === 0} onClick={redo} />
+          <IconButton name="redo" size={18} label={labelWithKeys('canvas.redo')} disabled={futureRef.current.length === 0} onClick={redo} />
         </div>
         <span className={css.dockDivider} aria-hidden="true" />
         <div className={css.dockItem} data-dock-item="" data-label={tt('canvas.delete')}>
-          <IconButton name="trash" size={18} label={tt('canvas.delete')} disabled={selectedIds.size === 0 && selectedConnectionId === null} onClick={deleteSelection} />
+          <IconButton name="trash" size={18} label={labelWithKeys('canvas.delete')} disabled={selectedIds.size === 0 && selectedConnectionId === null} onClick={deleteSelection} />
         </div>
       </div>
     </div>
@@ -5559,6 +5618,37 @@ export function CanvasWorkspace(props: CanvasWorkspaceProps): React.JSX.Element 
     </div> : null}
     {notice !== null ? <div className={css.errorToast} data-variant="notice" role="status" data-canvas-no-zoom=""><span>{notice}</span><button type="button" aria-label={tt('canvas.dismiss')} onClick={() => setNotice(null)}><ToolbarIcon name="close" /></button></div> : null}
 
+    {posterTarget !== null && document?.id === posterTarget.canvasId ? (() => {
+      const source = document.nodes.find(node => node.id === posterTarget.nodeId)
+      const asset = source === undefined ? undefined : usableAsset(source)
+      if (source === undefined || asset === undefined) return null
+      return <PosterEditor
+        api={api}
+        asset={asset}
+        recipe={nodeMetadata(source).poster}
+        onClose={() => setPosterTarget(null)}
+        onSave={async (poster, dataUrl) => {
+          const canvasId = posterTarget.canvasId
+          const uploaded = await api.canvasUpload(dataUrl, poster.width, poster.height, { origin: 'upload', originId: `poster-${source.id}` })
+          // The upload is async, so the user may have switched canvases or
+          // deleted the source node while it ran. Adding the result anyway would
+          // attach a poster to a node that no longer exists.
+          if (documentRef.current?.id !== canvasId || !documentRef.current.nodes.some(node => node.id === source.id)) throw new Error(tt('poster.sourceChanged'))
+          const resultId = newId('node')
+          const dimensions = sizeForAsset(uploaded)
+          const result: CanvasNode = {
+            id: resultId, type: 'image', title: tt('poster.resultTitle'),
+            x: source.x + source.width + NODE_GAP, y: source.y,
+            ...dimensions,
+            metadata: { asset: uploaded, status: 'success', sourceNodeId: source.id, poster },
+          }
+          mutate(previous => ({ ...previous, nodes: [...previous.nodes, result], connections: [...previous.connections, { id: newId('edge'), fromNodeId: source.id, toNodeId: resultId }] }))
+          setSelectedIds(new Set([resultId]))
+          setNotice(tt('poster.saved'))
+        }}
+      />
+    })() : null}
+
     {pickerOpen ? <ImagePicker
       api={api}
       history={history}
@@ -5593,6 +5683,7 @@ export function CanvasWorkspace(props: CanvasWorkspaceProps): React.JSX.Element 
       onAddClip={clip => { addClipNode(clip) }}
       onAddAsset={asset => { placeNewNode(createFileNode(asset)); setVideoPickerOpen(false) }}
     /> : null}
+    {shortcutHelpOpen ? <ShortcutHelp onClose={() => setShortcutHelpOpen(false)} /> : null}
   </section>
 }
 

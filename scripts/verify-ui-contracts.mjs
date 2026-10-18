@@ -24,33 +24,54 @@
  * browser guards here — a missing tool is not a failing contract.
  */
 
-import { readFileSync, existsSync, globSync, readdirSync, mkdirSync, rmSync } from 'node:fs'
-import { spawn, spawnSync } from 'node:child_process'
+import { readFileSync, existsSync, readdirSync, mkdirSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
+import { spawnSync } from 'node:child_process'
 import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
-
-function findChrome () {
-  const explicit = process.argv[2] ?? process.env.CHROME_HEADLESS_SHELL
-  if (explicit !== undefined && explicit !== '') return existsSync(explicit) ? explicit : null
-  const candidates = [
-    ...globSync('/tmp/chromium/chrome-headless-shell/*/*/chrome-headless-shell').sort().reverse(),
-    '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome',
-    '/Applications/Chromium.app/Contents/MacOS/Chromium',
-    ...globSync(`${process.env.HOME ?? ''}/.cache/puppeteer/**/chrome-headless-shell`).sort().reverse(),
-  ]
-  return candidates.find(candidate => existsSync(candidate)) ?? null
-}
+import { findChrome, launchChrome, skipWithoutChrome } from './lib/headless-chrome.mjs'
 
 const CHROME = findChrome()
-if (CHROME === null) {
-  console.error('\n' + '='.repeat(72))
-  console.error('SKIP: no headless Chromium found -- the UI contract guards did NOT run.')
-  console.error('This is a MISSING TOOL, not a regression. Install chrome-headless-shell,')
-  console.error('or point CHROME_HEADLESS_SHELL at a Chromium binary, to gate on these.')
-  console.error('='.repeat(72) + '\n')
-  process.exit(0)
+
+// ------------------------------------------------- 0. one way to start a browser
+// Every browser guard must read the DevTools port the browser PUBLISHED, never
+// guess one. A guessed port is indistinguishable from a correct one until two
+// runs overlap: the loser either finds no listener or — worse — is answered by
+// the other run's browser and asserts against a blank page, which reports as an
+// unrelated contract going green or an opaque "CDP down".
+//
+// This is a source invariant, and it is checked BEFORE the tool gate on purpose:
+// it needs no browser, so a machine without Chromium still enforces it.
+const SCRIPT_DIR = new URL('.', import.meta.url)
+// Three files are not browser guards and must not be read as one: the launcher
+// itself (it is where the published-port form lives), this guard (it carries the
+// pattern below) and the negative-verification harness (it carries the DEFECTIVE
+// literal as a mutation payload). Scanning any of them would make this check fail
+// on a clean tree.
+const NOT_A_GUARD = new Set(['headless-chrome.mjs', 'verify-negative.mjs', 'verify-ui-contracts.mjs'])
+const launcherUsers = readdirSync(SCRIPT_DIR).filter(name => name.endsWith('.mjs') && !NOT_A_GUARD.has(name))
+// Built by concatenation so this pattern cannot match its own source text: a
+// literal here would be the first thing the scan reports.
+const PORT_FLAG = `--remote-debugging-${'port'}=`
+const guessedPorts = []
+for (const name of launcherUsers) {
+  const source = readFileSync(new URL(name, SCRIPT_DIR), 'utf8')
+  // `=0` means "publish the port"; anything else is a guess. Written out rather
+  // than pattern-matched so the offending value stays visible in the report.
+  const guess = new RegExp(`${PORT_FLAG}(?!0\\b)([^\\s'"\`]+)`).exec(source)
+  if (guess !== null) guessedPorts.push(`${name}: ${PORT_FLAG}${guess[1]}`)
 }
+if (guessedPorts.length > 0) {
+  console.error('\nFAIL: a browser guard hand-picks its DevTools port.')
+  console.error(guessedPorts.map(entry => `  ${entry}`).join('\n'))
+  console.error('Concurrent runs then read each other\'s browser (or find none), and')
+  console.error('the failure shows up as an unrelated contract, not as this one.')
+  console.error('Use launchChrome() from scripts/lib/headless-chrome.mjs instead.')
+  process.exit(1)
+}
+console.log(`browser launches: ${launcherUsers.length} scripts, none guesses a DevTools port`)
+
+if (CHROME === null) skipWithoutChrome('the UI contract guards did NOT run.')
 
 const clientDir = new URL('../src/client/', import.meta.url)
 const read = name => readFileSync(new URL(name, clientDir), 'utf8')
@@ -477,26 +498,18 @@ const server = (await import('node:http')).createServer((req, res) => {
   else if (req.url?.includes('stack=1') === true) res.end(stackPage)
   else if (req.url?.includes('mainslot=1') === true) res.end(mainSlotPage)
   else if (req.url?.includes('sourcetabs=1') === true) res.end(sourceTabsPage)
+  else if (req.url?.includes('shortcuts=1') === true) res.end(shortcutPage)
   else res.end(page)
 })
 await new Promise(r => server.listen(0, '127.0.0.1', r))
 const port = server.address().port
 
-const CDP_PORT = 9900 + Math.floor(Math.random() * 300)
-const browser = spawn(CHROME, ['--headless', '--disable-gpu', '--no-sandbox', `--remote-debugging-port=${CDP_PORT}`,
-  `--user-data-dir=${tmpdir()}/dsh-ui-contracts-${process.pid}`, 'about:blank'], { stdio: 'ignore' })
-const waitCdp = async () => {
-  for (let i = 0; i < 60; i++) {
-    // Deliberately swallowed: this is a readiness poll, and "connection
-    // refused" is the expected answer until Chromium has finished booting.
-    // The loop's own deadline is the real failure path (it throws below).
-    try { const r = await fetch(`http://127.0.0.1:${CDP_PORT}/json/version`); if (r.ok) return } catch {}
-    await new Promise(r => setTimeout(r, 250))
-  }
-  throw new Error('CDP down')
-}
-await waitCdp()
-const target = await (await fetch(`http://127.0.0.1:${CDP_PORT}/json/new?${encodeURIComponent(`http://127.0.0.1:${port}/`)}`, { method: 'PUT' })).json()
+// The browser picks its own DevTools port and publishes it in the profile it
+// was given — the hand-rolled random range this used to guess at is what made
+// two concurrent runs read each other's blank target.
+const launched = await launchChrome({ chrome: CHROME, name: 'dsh-ui-contracts' })
+const browser = launched.browser
+const target = await (await fetch(`http://127.0.0.1:${launched.port}/json/new?${encodeURIComponent(`http://127.0.0.1:${port}/`)}`, { method: 'PUT' })).json()
 const ws = new WebSocket(target.webSocketDebuggerUrl)
 await new Promise(r => { ws.onopen = r })
 let id = 0
@@ -799,6 +812,69 @@ const sourceTabsPage = `<!doctype html><html><head><style>
   </div>
 </body></html>`
 
+// --- the shortcut legend fits the canvas it opens over ----------------------
+// The panel is a two-column grid of key chips: the chips are `nowrap` and the
+// label column is `text-align: right` with `min-width: 0`. Two things can go
+// wrong that no source check can see. A row can overflow its column when the
+// key half and the label half together exceed it (the chips never wrap inside
+// one kbd, so the row grows), and the dialog can be taller than the viewport
+// when there are more groups than fit -- which is what `max-height` plus the
+// scrolling body is for. Both are measured here at a canvas-sized viewport and
+// at a phone width, where the grid must collapse to one column.
+const shortcutCss = read('shortcut-help.module.css')
+// Rendered from the same shape the component renders: every group gets rows of
+// chips and a label, using the real stylesheet and the real longest copy. The
+// longest label in the data table is `focusNode`, which is why it is used for
+// the row that decides the measurement.
+const longestLabel = '在节点之间移动焦点，节点工具条随之出现'
+// Repeated to far more rows than any viewport can hold. With only the real
+// twelve -- or even three copies of them -- the dialog fits whether or not it
+// caps its height, so the "grows past the viewport" case could not be told
+// apart from the fixed one: it reported FALSE GREEN twice. The copy and the
+// stylesheet are the real ones; only the amount is raised until the overflow is
+// unambiguous (8 copies x 12 rows = 48 rows per column).
+const repeat = (rows, times) => Array.from({ length: times }, () => rows).flat()
+const shortcutGroups = [
+  { title: '视图', rows: repeat([['Ctrl/⌘|Space', '按住并拖拽平移画布'], ['中键', '中键拖拽平移画布'], ['滚轮', '以指针为中心缩放'], ['Ctrl/⌘|A', '选中全部节点']], 8) },
+  { title: '选择', rows: repeat([['Ctrl/⌘|A', '选中全部节点'], ['Shift', '拖拽出框选'], ['Esc', '退出当前工具或清空选择'], ['Ctrl/⌘|Z', '撤销']], 8) },
+  { title: '编辑', rows: repeat([['Ctrl/⌘|Z', '撤销'], ['Ctrl/⌘|Shift|Z', '重做'], ['Delete', '删除选中节点'], ['Tab', longestLabel]], 8) },
+  { title: '节点', rows: repeat([['双击', '在空白处新建节点'], ['Tab', longestLabel], ['?', '打开这张快捷键表'], ['Ctrl/⌘|D', '原地复制一份']], 8) },
+]
+const shortcutMarkup = shortcutGroups.map(group => `<section class="group">
+    <h4>${group.title}</h4>
+    ${group.rows.map(([keys, label]) => `<div class="row">
+      <span class="keys">${keys.split('|').map(key => `<kbd>${key}</kbd>`).join('')}</span>
+      <span class="label">${label}</span>
+    </div>`).join('\n    ')}
+  </section>`).join('\n  ')
+const shortcutPage = `<!doctype html><html><head><style>
+  body { margin: 0;
+    --dsw-alias-border-l1: #d9dade;
+    --dsw-alias-bg-layer-1: #ffffff;
+    --dsw-alias-bg-layer-2: #f2f3f5;
+    --dsw-alias-bg-mask-1: rgb(15 17 21 / 45%);
+    --dsw-alias-label-primary: #17171c;
+    --dsw-alias-label-secondary: #5b5e6b;
+    --dsw-alias-label-tertiary: #7f8287;
+    --dsw-alias-brand-primary: #17171c;
+    --dsw-alias-interactive-bg-hover: #f0f1f3;
+    --dsw-font-family: system-ui, sans-serif;
+    --dsw-font-mono: ui-monospace, Menlo, monospace;
+    --z-modal-backdrop: 130;
+  }
+  ${shortcutCss}
+</style></head><body>
+  <div class="backdrop" id="backdrop">
+    <div class="dialog" id="dialog" role="dialog">
+      <header class="header"><strong>键盘快捷键</strong><button type="button">×</button></header>
+      <div class="body" id="body">
+  ${shortcutMarkup}
+      </div>
+      <div class="footer">在画布上按 ? 随时打开这张表。</div>
+    </div>
+  </div>
+</body></html>`
+
 // --- the keyed `main` slot is single-occupant (#38) -------------------------
 // The plugin market page and the Conversation both register into the shell's
 // keyed `main` slot. The studio takeover rule hid UNRELATED entries on the
@@ -826,7 +902,7 @@ const mainSlotPage = `<!doctype html><html><head><style>
   </div>
 </body></html>`
 // Serve it from the same server by swapping the body through a query flag.
-const toolbarTarget = await (await fetch(`http://127.0.0.1:${CDP_PORT}/json/new?${encodeURIComponent(`http://127.0.0.1:${port}/?toolbar=1`)}`, { method: 'PUT' })).json()
+const toolbarTarget = await (await fetch(`http://127.0.0.1:${launched.port}/json/new?${encodeURIComponent(`http://127.0.0.1:${port}/?toolbar=1`)}`, { method: 'PUT' })).json()
 const ws2 = new WebSocket(toolbarTarget.webSocketDebuggerUrl)
 await new Promise(r => { ws2.onopen = r })
 let id2 = 0
@@ -898,7 +974,7 @@ console.log('node toolbar: out of the tab order while hidden, revealed once the 
 // elementFromPoint at the point they overlap names the winner by paint order.
 // The picker backdrop is rendered FIRST here; at HEAD (both 60) the notice would
 // win, and the fix is what makes the backdrop win regardless of order.
-const stackTarget = await (await fetch(`http://127.0.0.1:${CDP_PORT}/json/new?${encodeURIComponent(`http://127.0.0.1:${port}/?stack=1`)}`, { method: 'PUT' })).json()
+const stackTarget = await (await fetch(`http://127.0.0.1:${launched.port}/json/new?${encodeURIComponent(`http://127.0.0.1:${port}/?stack=1`)}`, { method: 'PUT' })).json()
 const ws3 = new WebSocket(stackTarget.webSocketDebuggerUrl)
 await new Promise(r => { ws3.onopen = r })
 let id3 = 0
@@ -958,7 +1034,7 @@ console.log('stacking: the picker backdrop covers the notice regardless of rende
 // The activation attribute is set HERE (the shell sets it when the entry is
 // clicked), and the assertion reads COMPUTED display: only the cascade proves
 // the market page is gone, because the element is still mounted either way.
-const mainTarget = await (await fetch(`http://127.0.0.1:${CDP_PORT}/json/new?${encodeURIComponent(`http://127.0.0.1:${port}/?mainslot=1`)}`, { method: 'PUT' })).json()
+const mainTarget = await (await fetch(`http://127.0.0.1:${launched.port}/json/new?${encodeURIComponent(`http://127.0.0.1:${port}/?mainslot=1`)}`, { method: 'PUT' })).json()
 const ws4 = new WebSocket(mainTarget.webSocketDebuggerUrl)
 await new Promise(r => { ws4.onopen = r })
 let id4 = 0
@@ -1017,7 +1093,7 @@ console.log('main slot: the shell panel yields the column while the conversation
 // past the edge are simply never painted. Rendered at 420px -- narrow enough
 // that the eight registered labels cannot fit -- the page is asked what a user
 // would ask: turn the wheel over the row, then look at the last tab.
-const tabsTarget = await (await fetch(`http://127.0.0.1:${CDP_PORT}/json/new?${encodeURIComponent(`http://127.0.0.1:${port}/?sourcetabs=1`)}`, { method: 'PUT' })).json()
+const tabsTarget = await (await fetch(`http://127.0.0.1:${launched.port}/json/new?${encodeURIComponent(`http://127.0.0.1:${port}/?sourcetabs=1`)}`, { method: 'PUT' })).json()
 const ws5 = new WebSocket(tabsTarget.webSocketDebuggerUrl)
 await new Promise(r => { ws5.onopen = r })
 let id5 = 0
@@ -1104,10 +1180,112 @@ if (afterTabs.verticallyClipped) {
 }
 console.log('source row: the last tab scrolls into view and hit-tests to itself')
 
+// --- the shortcut legend fits the canvas it opens over ----------------------
+const shortcutTarget = await (await fetch(`http://127.0.0.1:${launched.port}/json/new?${encodeURIComponent(`http://127.0.0.1:${port}/?shortcuts=1`)}`, { method: 'PUT' })).json()
+const ws6 = new WebSocket(shortcutTarget.webSocketDebuggerUrl)
+await new Promise(r => { ws6.onopen = r })
+let id6 = 0
+const send6 = (method, params) => new Promise(resolve => {
+  const myId = ++id6
+  const onMessage = e => { const m = JSON.parse(e.data); if (m.id === myId) { ws6.removeEventListener('message', onMessage); resolve(m) } }
+  ws6.addEventListener('message', onMessage)
+  ws6.send(JSON.stringify({ id: myId, method, params }))
+})
+const evaluate6 = async expression => {
+  const res = await send6('Runtime.evaluate', { expression, returnByValue: true, awaitPromise: true })
+  if (res.result?.exceptionDetails !== undefined) {
+    throw new Error(`page threw: ${JSON.stringify(res.result.exceptionDetails.exception?.description ?? res.result.exceptionDetails)}`)
+  }
+  return res.result.result.value
+}
+await send6('Runtime.enable', {})
+
+// Measured as a user would see it: the dialog's own box against the viewport,
+// and each row's content against the column that holds it. `scrollWidth` on the
+// row is the honest signal for a chip that has been pushed out -- the elements
+// all report a rect whether or not the column clips them.
+const measureLegend = () => evaluate6(`(() => {
+  const dialog = document.getElementById('dialog')
+  const body = document.getElementById('body')
+  const box = dialog.getBoundingClientRect()
+  const rows = [...document.querySelectorAll('.row')]
+  const overflowing = rows.filter(row => row.scrollWidth > row.clientWidth + 1).length
+  // A label that has been pushed past its column's right edge is unreadable
+  // even when the row itself does not scroll: text-align:right puts the tail of
+  // a long label under the chips.
+  const pushed = rows.filter(row => {
+    const label = row.querySelector('.label')
+    const keys = row.querySelector('.keys')
+    const column = row.getBoundingClientRect()
+    const tail = label.getBoundingClientRect()
+    return tail.right > column.right + 1 || tail.left < keys.getBoundingClientRect().right - 1
+  }).length
+  return {
+    viewport: [window.innerWidth, window.innerHeight],
+    dialogTop: Math.round(box.top),
+    dialogBottom: Math.round(box.bottom),
+    fitsVertically: box.top >= -0.5 && box.bottom <= window.innerHeight + 0.5,
+    bodyScrolls: getComputedStyle(body).overflowY,
+    bodyScrollable: body.scrollHeight > body.clientHeight + 1,
+    columns: getComputedStyle(body).gridTemplateColumns,
+    rows: rows.length,
+    overflowing,
+    pushed,
+  }
+})()`)
+
+await send6('Emulation.setDeviceMetricsOverride', { width: 1280, height: 800, deviceScaleFactor: 1, mobile: false })
+await new Promise(r => setTimeout(r, 250))
+const wideLegend = await measureLegend()
+// Not `mobile: true`: without a `<meta name="viewport">` in the fixture the
+// mobile override lays the page out at the 980px default and the breakpoint
+// below 560px never fires -- which would make this check pass by measuring a
+// width the user never sees. The narrow case here is a layout question, so it
+// is asked as a CSS viewport width.
+await send6('Emulation.setDeviceMetricsOverride', { width: 390, height: 844, deviceScaleFactor: 1, mobile: false })
+await new Promise(r => setTimeout(r, 250))
+const narrowLegend = await measureLegend()
+await send6('Emulation.clearDeviceMetricsOverride', {})
+console.log(`shortcut legend: ${wideLegend.rows} rows, ${wideLegend.viewport.join('x')} -> single column ${narrowLegend.viewport.join('x')}`)
+
+if (wideLegend.fitsVertically !== true) {
+  console.error(`\nFAIL: the shortcut legend is taller than the viewport it opens in (top=${wideLegend.dialogTop}, bottom=${wideLegend.dialogBottom}).`)
+  console.error('The dialog caps itself at the viewport and scrolls its body; if that cap')
+  console.error('is gone the bottom groups -- and the close button\'s context -- are off')
+  console.error('screen with no way to reach them.')
+  process.exit(1)
+}
+if (wideLegend.overflowing > 0) {
+  console.error(`\nFAIL: ${wideLegend.overflowing} shortcut rows overflow their column.`)
+  console.error('A row wider than its grid column pushes the label out of the dialog,')
+  console.error('so the key and the thing it does are no longer readable together.')
+  process.exit(1)
+}
+if (wideLegend.pushed > 0) {
+  console.error(`\nFAIL: ${wideLegend.pushed} shortcut labels collide with their key chips.`)
+  console.error('The label column is text-align: right; without room it runs under the')
+  console.error('chips and the row reads as one run-on string.')
+  process.exit(1)
+}
+// One column below 560px: two columns of key chips at 390px wrap into noise.
+const narrowTracks = narrowLegend.columns.split(' ').filter(part => part.trim() !== '')
+if (narrowTracks.length !== 1) {
+  console.error(`\nFAIL: the legend keeps two columns at ${narrowLegend.viewport[0]}px (grid-template-columns: ${narrowLegend.columns}).`)
+  console.error('At phone width the two tracks leave too little room per row, which is')
+  console.error('what the single-column breakpoint is for.')
+  process.exit(1)
+}
+if (narrowLegend.overflowing > 0 || narrowLegend.pushed > 0) {
+  console.error(`\nFAIL: the legend breaks at ${narrowLegend.viewport.join('x')} (${narrowLegend.overflowing} overflowing rows, ${narrowLegend.pushed} pushed labels).`)
+  process.exit(1)
+}
+console.log('shortcut legend: fits the viewport at desktop width, single column on a phone')
+
+ws6.close()
 ws4.close()
 ws3.close()
 ws2.close()
 ws5.close()
-ws.close(); browser.kill(); server.close()
+ws.close(); launched.close(); server.close()
 rmSync(themeModuleDir, { recursive: true, force: true })
 console.log('\nUI CONTRACTS VERIFIED')

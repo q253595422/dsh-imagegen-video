@@ -4,6 +4,7 @@ import { promises as fs } from 'node:fs'
 import { createHash, randomUUID } from 'node:crypto'
 import path from 'node:path'
 import type { CanvasAssetRef, CanvasDocument, CanvasFileKind, CanvasNode, CanvasSummary, CanvasVideoRef } from './protocol.ts'
+import { isPosterDocument } from './poster.ts'
 import { imageDataRoot } from './image-storage-path.ts'
 
 /** Cap on one canvas file asset (arbitrary types travel as raw bytes). */
@@ -333,6 +334,10 @@ function isNode(value: unknown): value is CanvasNode {
   if (metadata !== undefined && (metadata === null || typeof metadata !== 'object')) return false
   const state = (metadata ?? {}) as Record<string, unknown>
   if (node.type === 'image') {
+    // A malformed recipe must not be accepted quietly: the editor re-renders
+    // from it, and a half-valid document would either throw on open or silently
+    // drop the user's layers. Rejecting here makes the save fail loudly instead.
+    if (state.poster !== undefined && !isPosterDocument(state.poster)) return false
     if (state.asset !== undefined && !isAssetRef(state.asset)) return false
     return state.status === undefined || state.status === 'idle' || state.status === 'generating' || state.status === 'success' || state.status === 'error'
   }
@@ -627,8 +632,22 @@ export class CanvasStore {
       const document = coerceDocument(raw)
       if (document === undefined) return
       for (const node of document.nodes) {
-        const asset = (node.metadata as { asset?: unknown } | undefined)?.asset
+        const metadata = node.metadata as { asset?: unknown; poster?: unknown } | undefined
+        const asset = metadata?.asset
         if (isAssetRef(asset) && asset.assetId !== '') referenced.add(asset.assetId)
+        // A poster node's own asset is the FLATTENED composite. The recipe behind
+        // it still points at the original background and at every logo layer,
+        // and the editor re-renders from those -- so they are live references
+        // even though no node carries them. Missing them here deleted the base
+        // image the first time ANY canvas was removed, and the poster then
+        // re-opened as a blank stage with the user's layers hanging over it.
+        const poster = metadata?.poster
+        if (isPosterDocument(poster)) {
+          referenced.add(poster.background.assetId)
+          for (const layer of poster.layers) {
+            if (layer.type === 'image') referenced.add(layer.asset.assetId)
+          }
+        }
       }
       // The canvas background image is a *URL*, not an asset id, so it has to be
       // read back out of the served path; missing this would delete the

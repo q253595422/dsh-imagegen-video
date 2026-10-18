@@ -23,14 +23,14 @@ import { normalizeImageModels } from './image-models.ts'
 import { ImageGenerationRuntime, type ChannelsView } from './generation-runtime.ts'
 import { appendHistory, clearHistory, listHistory, readHistoryImage, removeHistory } from './history-store.ts'
 import { clearVideoHistory, listVideoHistory, readVideoFile, removeVideoHistory } from './video-store.ts'
-import { appendGallery, appendGalleryVideo, clearGallery, listGallery, readGalleryImage, readGalleryVideo, removeGallery, updateGalleryTags } from './gallery-store.ts'
+import { appendGallery, appendGalleryVideo, clearGallery, listGallery, listGalleryTrash, purgeGallery, readGalleryImage, readGalleryVideo, removeGallery, restoreGallery, updateGalleryTags } from './gallery-store.ts'
 import { baseMime, canvasStore, CanvasConflictError, MAX_CANVAS_FILE_BYTES, mimeFromFileName, safeFileName, type CanvasFileInput, type CanvasImageInput, type CanvasStore } from './canvas-store.ts'
 import { buildFilePreview } from './file-preview.ts'
 import { imageDataRoot } from './image-storage-path.ts'
 import { listTemplates, readTemplateImage, refreshTemplates, sampleTemplates } from './templates-store.ts'
 import { addTemplateFavorite, listTemplateFavorites, removeTemplateFavorite } from './template-favorites.ts'
 import { testStorage, type StorageSyncConfig } from './storage-sync.ts'
-import { checkForUpdate, CURRENT_VERSION, installUpdate } from './updater.ts'
+import { checkForUpdate, CURRENT_VERSION, installUpdate, ManualUpdateRequiredError } from './updater.ts'
 import { IMAGE_PRESETS } from './presets.ts'
 import { clearDiagnostics, listDiagnostics } from './diagnostics-store.ts'
 import { AGENT_IMAGE_API, CANVAS_API, CANVAS_SKILL_API, CONVERSATION_IMAGE_API, DATA_FOLDER_API, DEFAULT_TEMPLATE_SOURCE_ID, DIAGNOSTICS_API, GALLERY_API, GENERATE_API, HISTORY_API, IMAGEGEN_SETTINGS_NAMESPACE, IMAGE_MODEL_API, PRESETS_API, PROMPT_ENHANCE_API, SETTINGS_API, STORAGE_API, SUBSCRIPTION_API, SUBSCRIPTION_PROVIDERS, TASK_API, TEMPLATE_FAVORITES_API, TEMPLATES_API, UPDATE_API, USAGE_API, VIDEO_API, isChannelProtocolPreference, isTemplateSourceId, type CanvasAssetRef, type CanvasDocument, type CanvasSkillCatalog, type CanvasSkillConfigApplyRequest, type CanvasSkillConfigApplyResult, type CanvasSkillConfigSaveRequest, type CanvasSkillConfigSaveResult, type CanvasSkillInstallRequest, type CanvasSkillInstallResult, type CanvasSkillLibrary, type CanvasSkillRemoveResult, type CanvasSkillRunRequest, type CanvasSkillTask, type GeneratedImage, type GenerateRequest, type HistoryEntry, type HistoryEntryInput, type ModelMapping, type PresetProviderView, type TemplateFavorite, type TemplateListResult, type TemplateRefreshResult, type TemplateSample, type CanvasVideoTaskMeta, type VideoGenerateRequest, type VideoHistoryEntry } from './protocol.ts'
@@ -156,8 +156,16 @@ export interface ImageGenRoutesDeps {
   /** Overrideable gallery backend, primarily for host integration tests. */
   gallery?: {
     list: () => Promise<HistoryEntry[]>
+    /** Soft-deleted entries, for the client's trash section. Optional so a
+     *  harness written before the trash existed keeps compiling. */
+    listTrash?: () => Promise<HistoryEntry[]>
     append: (entry: HistoryEntryInput) => Promise<{ entries: HistoryEntry[]; added: boolean }>
+    /** Soft delete: returns the full list (live + trash); the route splits it. */
     remove: (id: string) => Promise<HistoryEntry[]>
+    /** Undo a soft delete. */
+    restore?: (id: string) => Promise<HistoryEntry[]>
+    /** Permanently delete every trashed entry and its files. */
+    purge?: () => Promise<HistoryEntry[]>
     clear: () => Promise<HistoryEntry[]>
     updateTags?: (id: string, tags: string[]) => Promise<HistoryEntry[]>
     readImage: (file: string) => Promise<{ data: Buffer; mime: string } | undefined>
@@ -646,8 +654,11 @@ export function makeRoutes(deps: ImageGenRoutesDeps): WebRoute[] {
   }
   const gallery: NonNullable<ImageGenRoutesDeps['gallery']> = deps.gallery ?? {
     list: listGallery,
+    listTrash: listGalleryTrash,
     append: appendGallery,
     remove: removeGallery,
+    restore: restoreGallery,
+    purge: purgeGallery,
     clear: clearGallery,
     updateTags: updateGalleryTags,
     readImage: readGalleryImage,
@@ -673,6 +684,13 @@ export function makeRoutes(deps: ImageGenRoutesDeps): WebRoute[] {
     readFile: readVideoFile,
   }
   const resolvePrompt = deps.resolvePrompt ?? (() => ({ apiUrl: '', apiKey: '', model: '' }))
+  // Every gallery mutation answers with the same pair: what the user may see on
+  // the shelf, and what sits in the trash. The stores return one combined list
+  // (a soft delete only flips a flag), so the split lives here, once.
+  const splitGallery = (entries: HistoryEntry[]): { entries: HistoryEntry[]; trash: HistoryEntry[] } => ({
+    entries: entries.filter(entry => entry.deletedAt === undefined),
+    trash: entries.filter(entry => entry.deletedAt !== undefined),
+  })
   // Shared by the two clip-serving prefix routes (video store + gallery).
   const serveClip = async (
     req: IncomingMessage,
@@ -1117,6 +1135,21 @@ export function makeRoutes(deps: ImageGenRoutesDeps): WebRoute[] {
           await installUpdate(version)
           writeJson(res, 200, { ok: true, currentVersion: CURRENT_VERSION, updatedVersion: version, restartRequired: true })
         } catch (error) {
+          // DSH Desktop locks its profile away from the CLI, so "update online"
+          // cannot work there. That is not a failure to retry — it is a
+          // different route to the same file, and the response has to carry the
+          // archive URL so the panel can offer it instead of "update failed".
+          if (error instanceof ManualUpdateRequiredError) {
+            writeJson(res, 200, {
+              ok: false,
+              code: error.code,
+              message: error.message,
+              profile: error.profile,
+              tarballUrl: error.tarballUrl,
+              updatedVersion: version,
+            })
+            return
+          }
           writeJson(res, 200, { ok: false, code: 'update-failed', message: messageOf(error) })
         }
       },
@@ -1274,7 +1307,11 @@ export function makeRoutes(deps: ImageGenRoutesDeps): WebRoute[] {
       handler: async (req, res) => {
         if (!guard(req, res, 'POST')) return
         try {
-          writeJson(res, 200, { ok: true, entries: await gallery.list() })
+          const [entries, trash] = await Promise.all([
+            gallery.list(),
+            gallery.listTrash === undefined ? Promise.resolve([]) : gallery.listTrash(),
+          ])
+          writeJson(res, 200, { ok: true, entries, trash })
         } catch (error) {
           writeJson(res, 200, { ok: false, code: 'gallery-failed', message: messageOf(error) })
         }
@@ -1319,7 +1356,43 @@ export function makeRoutes(deps: ImageGenRoutesDeps): WebRoute[] {
           return
         }
         try {
-          writeJson(res, 200, { ok: true, entries: await gallery.remove(id) })
+          writeJson(res, 200, { ok: true, ...splitGallery(await gallery.remove(id)) })
+        } catch (error) {
+          writeJson(res, 200, { ok: false, code: 'gallery-failed', message: messageOf(error) })
+        }
+      },
+    },
+    // ------------------------------------------------- gallery restore
+    {
+      kind: 'exact',
+      path: GALLERY_API.restore,
+      handler: async (req, res) => {
+        if (!guard(req, res, 'POST')) return
+        const body = await readJsonBody(req)
+        const id = body !== undefined && typeof body.id === 'string' ? body.id : ''
+        if (id === '' || gallery.restore === undefined) {
+          writeJson(res, 200, { ok: false, code: 'bad-request', message: 'gallery id is required' })
+          return
+        }
+        try {
+          writeJson(res, 200, { ok: true, ...splitGallery(await gallery.restore(id)) })
+        } catch (error) {
+          writeJson(res, 200, { ok: false, code: 'gallery-failed', message: messageOf(error) })
+        }
+      },
+    },
+    // -------------------------------------------------- gallery purge
+    {
+      kind: 'exact',
+      path: GALLERY_API.purge,
+      handler: async (req, res) => {
+        if (!guard(req, res, 'POST')) return
+        if (gallery.purge === undefined) {
+          writeJson(res, 200, { ok: false, code: 'gallery-failed', message: '宿主不支持清空回收站' })
+          return
+        }
+        try {
+          writeJson(res, 200, { ok: true, ...splitGallery(await gallery.purge()) })
         } catch (error) {
           writeJson(res, 200, { ok: false, code: 'gallery-failed', message: messageOf(error) })
         }
@@ -1338,7 +1411,7 @@ export function makeRoutes(deps: ImageGenRoutesDeps): WebRoute[] {
           writeJson(res, 200, { ok: false, code: 'bad-request', message: 'gallery id and tags are required' })
           return
         }
-        try { writeJson(res, 200, { ok: true, entries: await gallery.updateTags(id, tags) }) } catch (error) { writeJson(res, 200, { ok: false, code: 'gallery-failed', message: messageOf(error) }) }
+        try { writeJson(res, 200, { ok: true, ...splitGallery(await gallery.updateTags(id, tags)) }) } catch (error) { writeJson(res, 200, { ok: false, code: 'gallery-failed', message: messageOf(error) }) }
       },
     },
     // ---------------------------------------------------- gallery clear
@@ -1348,7 +1421,7 @@ export function makeRoutes(deps: ImageGenRoutesDeps): WebRoute[] {
       handler: async (req, res) => {
         if (!guard(req, res, 'POST')) return
         try {
-          writeJson(res, 200, { ok: true, entries: await gallery.clear() })
+          writeJson(res, 200, { ok: true, ...splitGallery(await gallery.clear()) })
         } catch (error) {
           writeJson(res, 200, { ok: false, code: 'gallery-failed', message: messageOf(error) })
         }

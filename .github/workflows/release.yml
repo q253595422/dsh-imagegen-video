@@ -1,0 +1,322 @@
+name: Release
+
+# Why this workflow exists: every archive published so far was assembled by a
+# human on their own machine. The 1.7.6 tag is 03:26 in the git log, the
+# tarball in the Release was cut from whatever `pnpm pack` produced locally,
+# and nothing in the repository can prove the two are the same commit, the same
+# build, or even a passing test run. This workflow makes the release the output
+# of a machine that ran the gates, packed the archive, hashed it, and shipped
+# exactly those bytes.
+#
+# Order matters and is deliberate:
+#   install -> typecheck -> build -> ffmpeg -> test -> verify archive contents
+#   -> pack -> SHA256SUMS -> tag -> GitHub Release -> (optional) npm.
+# Any failing step stops the run: a half-verified release is worse than none.
+
+on:
+  push:
+    branches: [main]
+    # Only a version bump (or a change to this file) is a release event. Docs
+    # commits keep their normal CI run and do not create a Release.
+    paths:
+      - package.json
+      - .github/workflows/release.yml
+  workflow_dispatch:
+
+# Nothing here is inherited: contents is read-only by default and each job
+# widens it only where it must. A workflow token that cannot write by default
+# is the cheapest protection against a compromised step.
+permissions:
+  contents: read
+
+# Two releases for the same ref must not interleave. Unlike CI, an in-flight
+# release is never cancelled by a newer push -- cancel-in-progress would kill a
+# run in the middle of `gh release create`.
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  release:
+    name: Validate, package and release
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    # A dispatch from a branch or tag other than main has no version to trust.
+    if: github.ref == 'refs/heads/main'
+    permissions:
+      # `contents: write` is needed for exactly three things: pushing the tag,
+      # creating the Release, and uploading/replacing its assets.
+      contents: write
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          # Full history so the tag check below can see existing tags.
+          fetch-depth: 0
+          fetch-tags: true
+          # `git push` of the tag at the end of this job uses this token.
+          persist-credentials: true
+
+      # pnpm MUST be installed before setup-node: `cache: pnpm` asks
+      # `pnpm store path` for the cache directory, and setup-node fails with
+      # "Unable to locate executable file: pnpm" if pnpm is not on PATH yet.
+      # This is the same pairing and the same pinned version as ci.yml, so the
+      # release resolves the lockfile with the toolchain that tested it.
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 12.11.2
+
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 24
+          cache: pnpm
+
+      - name: Install locked dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Typecheck
+        run: pnpm run typecheck
+
+      - name: Build
+        run: pnpm run build
+
+      # The compose suite shells out to the real encoder. Without ffmpeg it
+      # skips and still exits 0, which is not a verification -- so the release
+      # image provides the tool, exactly like ci.yml does.
+      - name: Install ffmpeg
+        run: sudo apt-get update && sudo apt-get install -y ffmpeg
+
+      - name: Test suites
+        run: pnpm test
+
+      # Same assertions CI runs (lib/index.js and the template snapshots are
+      # present; no docs/images, no docs/videos). Kept in scripts/verify-pack.mjs
+      # so the negative runner and this workflow cannot drift apart.
+      - name: Verify the archive contents
+        run: node scripts/verify-pack.mjs
+
+      - name: Pack and hash
+        run: |
+          set -euo pipefail
+          mkdir -p dist
+          # `--ignore-scripts` skips `prepare` on purpose: the build already ran
+          # above and the test suites loaded exactly that lib/. Rebuilding here
+          # would open a window where the shipped bytes are not the tested
+          # bytes. verify-pack.mjs packs the same way, so both see one build.
+          pnpm pack --pack-destination dist --ignore-scripts
+          cd dist
+          sha256sum ./*.tgz > SHA256SUMS
+          echo "--- SHA256SUMS ---"
+          cat SHA256SUMS
+
+      # Hand the verified bytes to the npm job instead of letting it pack again:
+      # a second pack could produce a different archive than the one whose
+      # checksum the Release advertises.
+      - name: Upload the verified package
+        uses: actions/upload-artifact@v4
+        with:
+          name: npm-package
+          path: |
+            dist/*.tgz
+            dist/SHA256SUMS
+          if-no-files-found: error
+          retention-days: 7
+
+      - name: Tag the commit
+        id: tag
+        run: |
+          set -euo pipefail
+          version=$(node -p "require('./package.json').version")
+          tag="v${version}"
+          echo "tag=$tag" >> "$GITHUB_OUTPUT"
+
+          if git rev-parse -q --verify "refs/tags/$tag" >/dev/null; then
+            existing=$(git rev-list -n1 "$tag")
+            echo "Tag $tag already exists at $existing."
+            # A re-run of the same commit is the ordinary case: the Release
+            # exists, its assets are replaced by the next step, nothing is
+            # duplicated. This is what makes "Re-run jobs" safe.
+            #
+            # A tag that names some OTHER commit is different -- the archive
+            # about to be uploaded was built from $GITHUB_SHA, so replacing the
+            # assets quietly changes what vX.Y.Z has always meant for anyone who
+            # already downloaded it. The tag is never moved (it is the release's
+            # identity), and the mismatch is surfaced as a warning rather than
+            # swallowed. If that is not what a re-run should do, bump `version`
+            # instead of reusing a released one.
+            if [ "$existing" != "$GITHUB_SHA" ]; then
+              echo "::warning::Tag $tag points at $existing, but this build is from $GITHUB_SHA. The tag will not be moved; the Release assets will be replaced with this commit's archive."
+            else
+              echo "Tag $tag matches this commit; the existing Release will have its assets replaced."
+            fi
+          else
+            git tag "$tag" "$GITHUB_SHA"
+            git push origin "refs/tags/$tag"
+          fi
+
+      - name: Publish the GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ steps.tag.outputs.tag }}
+        run: |
+          set -euo pipefail
+          notes="docs/releases/${TAG}.md"
+          notes_args=(--generate-notes)
+          if [ -f "$notes" ]; then
+            notes_args=(--notes-file "$notes")
+          else
+            # The repository's convention is one notes file per release. A
+            # missing one is a documentation gap, not a reason to block a
+            # verified build -- GitHub generates the changelog instead.
+            echo "::warning::$notes is missing; falling back to auto-generated release notes."
+          fi
+
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            # Re-running a release must be idempotent: same tag, replaced assets,
+            # no duplicate Release and no error.
+            echo "Release $TAG already exists; replacing its assets."
+            gh release upload "$TAG" dist/*.tgz dist/SHA256SUMS --clobber
+          else
+            gh release create "$TAG" dist/*.tgz dist/SHA256SUMS \
+              --verify-tag \
+              --title "$TAG" \
+              "${notes_args[@]}"
+          fi
+
+          gh release view "$TAG" --json tagName,assets \
+            --jq '"release " + .tagName + ": " + ([.assets[].name] | join(", "))'
+
+  publish-npm:
+    name: Publish to npm
+    needs: release
+    # ---------------------------------------------------------------------
+    # THE PUBLISH SWITCH.
+    #
+    # npm trusted publishing is configured on npmjs.com, not in this file: the
+    # package needs a trusted publisher entry naming this repository and the
+    # file `release.yml`, and npm refuses an OIDC publish without it. That
+    # setup has not been done yet, so this job is gated on a repository
+    # variable rather than on a secret invented here.
+    #
+    #   Settings -> Secrets and variables -> Actions -> Variables
+    #   NPM_PUBLISH = "true"   (exact string, case-insensitive)
+    #
+    # While the variable is unset or anything else, the job is SKIPPED -- a
+    # skipped job is not a failed job, so the run stays green and the GitHub
+    # Release still ships. This is the whole point: a missing npm credential
+    # must not turn a valid release red and train everyone to ignore CI.
+    #
+    # Flip it to "true" only after:
+    #   1. https://www.npmjs.com/package/@q253595422/dsh-imagegen-video/access
+    #      has a Trusted Publisher for q253595422/dsh-imagegen-video, workflow
+    #      file `release.yml` (exact filename, case-sensitive), and
+    #   2. one dry run has shown the version gate below behaving (E404 on an
+    #      unpublished version, success on a published one).
+    #
+    # No token is used anywhere in this job: npm detects the OIDC environment
+    # and exchanges the GitHub identity token for a short-lived publish
+    # credential, and provenance is attached automatically (public repo,
+    # public package, OIDC publish).
+    # ---------------------------------------------------------------------
+    if: vars.NPM_PUBLISH == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - uses: actions/checkout@v5
+
+      # No `registry-url` here on purpose. setup-node writes
+      # `//registry.npmjs.org/:_authToken=${NODE_AUTH_TOKEN}` into .npmrc, and
+      # npm aborts with "Failed to replace env in config" when that variable is
+      # absent -- which it must be for trusted publishing. The registry is named
+      # explicitly on every npm command below instead.
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 24
+
+      # Trusted publishing needs npm >= 11.5.1. Pinning the CLI makes the
+      # behaviour of this job independent of whatever npm ships in the image.
+      - name: Install an OIDC-capable npm CLI
+        run: npm install --global npm@12.2.0
+      - run: npm --version
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: npm-package
+          path: dist
+
+      - name: Verify the downloaded checksum
+        working-directory: dist
+        run: sha256sum --check SHA256SUMS
+
+      - name: Publish with trusted publishing
+        shell: bash
+        run: |
+          set -euo pipefail
+          package=$(node -p "require('./package.json').name")
+          version=$(node -p "require('./package.json').version")
+          registry=https://registry.npmjs.org
+          probe="$RUNNER_TEMP/npm-probe.log"
+          packageProbe="$RUNNER_TEMP/npm-package-probe.log"
+
+          # Trusted publishing is configured ON A PACKAGE, in its npmjs.com
+          # settings. A package that has never been published therefore has
+          # nowhere to hang that configuration, and no OIDC exchange can create
+          # it -- so a first publish MUST be done by hand, once. Minting a
+          # granular token here to automate that would defeat the reason this
+          # job is token-free.
+          #
+          # This is checked separately because npm answers both "no such
+          # version" and "no such package" with E404, and the two need opposite
+          # responses: the first is a normal publish, the second is a setup step
+          # whose error message reads like an auth failure.
+          if ! npm view "$package" version --json --registry="$registry" >"$packageProbe" 2>&1; then
+            if grep -q 'E404' "$packageProbe"; then
+              echo "::error::$package is not on the registry yet, so it has no trusted publisher to publish against. Run \`npm publish --access public\` once from a machine logged in to npm, then re-run this job."
+              exit 1
+            fi
+            cat "$packageProbe"
+            echo "::error::could not read $package from the registry; refusing to publish."
+            exit 1
+          fi
+
+          # Only a CONFIRMED missing version allows a publish. The probe runs
+          # for every run so that re-running a release never fails with
+          # "cannot publish over previously published version", and any other
+          # error (auth, network, registry outage) stops the job instead of
+          # being mistaken for "not published yet".
+          if npm view "$package@$version" version --json --registry="$registry" >"$probe" 2>&1; then
+            echo "$package@$version is already published; nothing to do."
+          elif grep -q 'E404' "$probe"; then
+            cat "$probe"
+            packages=(dist/*.tgz)
+            if [ "${#packages[@]}" -ne 1 ]; then
+              echo "::error::expected exactly one tarball in dist/, found ${#packages[@]}"
+              exit 1
+            fi
+            echo "Publishing ${packages[0]} -> $package@$version"
+            npm publish "./${packages[0]}" \
+              --access public \
+              --tag latest \
+              --ignore-scripts \
+              --registry="$registry"
+          else
+            cat "$probe"
+            echo "::error::could not determine whether $package@$version exists; refusing to publish."
+            exit 1
+          fi
+
+          # The registry read path lags a successful write by a few seconds.
+          # Only the verification is retried; the publish itself never repeats.
+          for attempt in 1 2 3 4 5 6 7 8 9 10; do
+            if npm view "$package@$version" version --prefer-online --registry="$registry"; then
+              npm view "$package" dist-tags --json --prefer-online --registry="$registry"
+              echo "Verified on the registry: $package@$version"
+              exit 0
+            fi
+            echo "not visible yet (attempt $attempt); waiting 6s"
+            sleep 6
+          done
+          echo "::error::$package@$version was not visible on the registry after ~60s."
+          exit 1

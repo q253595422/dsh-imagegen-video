@@ -702,6 +702,37 @@ html[data-dsh-imagegen-active] .sidebarHistoryHost {
   color: var(--dsw-alias-label-error);
 }
 
+/* The manual-install block: a command the user has to copy verbatim, so it
+   reads as code (selectable, monospaced, wrapping rather than scrolling) and the
+   copy button sits below it instead of competing with the text for width. */
+.updateManual {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin: 8px 14px 0;
+  padding: 8px 10px;
+  border-radius: 8px;
+  border: 1px solid var(--dsw-alias-border-l1);
+  background: var(--dsw-alias-bg-layer-2);
+}
+
+.updateManualLabel {
+  color: var(--dsw-alias-label-secondary);
+  font-size: 11.5px;
+  font-weight: 600;
+}
+
+.updateManualCode {
+  font-family: var(--dsw-font-mono, ui-monospace, SFMono-Regular, Menlo, monospace);
+  font-size: 11.5px;
+  line-height: 1.5;
+  color: var(--dsw-alias-label-primary);
+  overflow-wrap: anywhere;
+  /* The command is meant to be selected and copied by hand when the clipboard
+     API is unavailable (it needs a secure context), so keep it selectable. */
+  user-select: text;
+}
+
 .updateNotes {
   min-height: 0;
   overflow-y: auto;

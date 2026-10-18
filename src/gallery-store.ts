@@ -4,6 +4,14 @@
  * size cap — every entry is an explicit user choice. Appends are deduplicated
  * by image content so adding the same generated image twice is a no-op.
  *
+ * Removal is a SOFT delete: the entry is flagged with `deletedAt` and moved to
+ * the trash for `GALLERY_TRASH_RETENTION_MS`, while its files stay exactly
+ * where they are. History rows, canvas nodes and open lightboxes hold URLs that
+ * point straight at those files — unlinking them on delete would turn every
+ * existing reference into a broken image, and restoring would hand back an
+ * empty card. `restoreGallery` clears the flag; `purgeGallery` (and the
+ * retention sweep) is the only thing that actually unlinks.
+ *
  * Framework-free (node:fs + node:crypto only) so the route layer can drive it
  * directly.
  */
@@ -23,6 +31,9 @@ function galleryDir(): string { return path.join(imageDataRoot(), 'gallery') }
 function indexPath(): string { return path.join(galleryDir(), 'index.json') }
 function imagesDir(): string { return path.join(galleryDir(), 'images') }
 function videosDir(): string { return path.join(galleryDir(), 'videos') }
+
+/** How long a soft-deleted entry stays recoverable. */
+export const GALLERY_TRASH_RETENTION_MS = 30 * 24 * 60 * 60 * 1000
 
 /** One gallery entry carries the same wire shape as a history entry. */
 export interface GalleryAppendResult {
@@ -76,6 +87,10 @@ interface StoredEntry {
   slotKey?: string
   slotLabel?: string
   canvas?: HistoryEntryInput['canvas']
+  /** Set when the entry sits in the trash (soft delete). Absent = live.
+   *  Written by newer hosts only, so a manifest from an older version simply
+   *  reads back as all-live — no migration step is needed. */
+  deletedAt?: number
 }
 
 /** One favorited clip's on-disk record. */
@@ -181,6 +196,7 @@ function isStoredEntry(value: unknown): value is StoredEntry {
   return typeof entry.id === 'string'
     && typeof entry.createdAt === 'number'
     && (entry.mode === 'text' || entry.mode === 'edit' || entry.mode === 'video')
+    && (entry.deletedAt === undefined || typeof entry.deletedAt === 'number')
     && (entry.workflow === undefined || entry.workflow === 'ecommerce')
     && (entry.projectId === undefined || typeof entry.projectId === 'string')
     && (entry.projectName === undefined || typeof entry.projectName === 'string')
@@ -232,6 +248,7 @@ function toWire(entry: StoredEntry): HistoryEntry {
     ...entry.slotKey === undefined ? {} : { slotKey: entry.slotKey },
     ...entry.slotLabel === undefined ? {} : { slotLabel: entry.slotLabel },
     ...entry.canvas === undefined ? {} : { canvas: entry.canvas },
+    ...entry.deletedAt === undefined ? {} : { deletedAt: entry.deletedAt },
     ...entry.video === undefined ? {} : {
       video: {
         url: `${GALLERY_VIDEO_FILE_ROUTE}/${entry.video.file}`,
@@ -242,10 +259,48 @@ function toWire(entry: StoredEntry): HistoryEntry {
   }
 }
 
-/** List the persisted gallery, newest first, as wire entries. */
-export async function listGallery(): Promise<HistoryEntry[]> {
+/** Whether an entry is still part of the visible gallery (not in the trash). */
+function isLiveEntry(entry: StoredEntry): boolean {
+  return entry.deletedAt === undefined
+}
+
+/**
+ * Unlink every trashed entry that is past the retention window.
+ *
+ * Called from inside `mutateGallery` only: it reads and rewrites the shared
+ * index, so it must already hold the mutation queue. A fresh process gets its
+ * cleanup for free on the first store call (list counts), which is the lazy
+ * "next start" behaviour — no timer, nothing to shut down.
+ */
+async function purgeExpiredLocked(): Promise<void> {
   const entries = await readIndex()
-  return entries.map(toWire)
+  const now = Date.now()
+  const expired = entries.filter(entry => entry.deletedAt !== undefined && now - entry.deletedAt >= GALLERY_TRASH_RETENTION_MS)
+  if (expired.length === 0) return
+  for (const entry of expired) await removeEntryFiles(entry)
+  const expiredIds = new Set(expired.map(entry => entry.id))
+  await writeIndex(entries.filter(entry => !expiredIds.has(entry.id)))
+}
+
+/** List the persisted gallery (live entries only), newest first, as wire entries. */
+export async function listGallery(): Promise<HistoryEntry[]> {
+  return mutateGallery(async () => {
+    await purgeExpiredLocked()
+    const entries = await readIndex()
+    return entries.filter(isLiveEntry).map(toWire)
+  })
+}
+
+/** List the trash (soft-deleted entries), newest deletion first. */
+export async function listGalleryTrash(): Promise<HistoryEntry[]> {
+  return mutateGallery(async () => {
+    await purgeExpiredLocked()
+    const entries = await readIndex()
+    return entries
+      .filter(entry => !isLiveEntry(entry))
+      .sort((left, right) => (right.deletedAt ?? 0) - (left.deletedAt ?? 0))
+      .map(toWire)
+  })
 }
 
 /** Append one image to the gallery. Deduplicates by first-image content —
@@ -253,11 +308,14 @@ export async function listGallery(): Promise<HistoryEntry[]> {
  *  list unchanged. No size cap: every entry is an explicit user choice. */
 export async function appendGallery(input: HistoryEntryInput): Promise<GalleryAppendResult> {
   return mutateGallery(async () => {
+    await purgeExpiredLocked()
     await ensureDirs()
     const hash = fingerprint(input)
     if (hash !== undefined) {
       const existing = await readIndex()
-      if (existing.some(entry => entry.hash === hash)) {
+      // Trashed entries do not block a re-add: the user removed that copy, so
+      // adding the same image again must produce a visible entry.
+      if (existing.some(entry => entry.hash === hash && isLiveEntry(entry))) {
         return { entries: existing.map(toWire), added: false }
       }
     }
@@ -307,13 +365,56 @@ export async function appendGallery(input: HistoryEntryInput): Promise<GalleryAp
   })
 }
 
-/** Remove one entry (and its image files). */
+/**
+ * Move one entry to the trash (soft delete).
+ *
+ * The files are deliberately NOT unlinked: they stay readable through the
+ * existing image/clip routes for the whole retention window, so `restore`
+ * returns the real picture and every URL already held elsewhere keeps working.
+ * Returns the full list (live + trash) — the route layer splits it.
+ */
 export async function removeGallery(id: string): Promise<HistoryEntry[]> {
   return mutateGallery(async () => {
-    const previous = await readIndex()
-    const target = previous.find(entry => entry.id === id)
-    if (target !== undefined) await removeEntryFiles(target)
-    const kept = previous.filter(entry => entry.id !== id)
+    await purgeExpiredLocked()
+    const entries = await readIndex()
+    const target = entries.find(entry => entry.id === id)
+    if (target !== undefined && isLiveEntry(target)) target.deletedAt = Date.now()
+    await writeIndex(entries)
+    return entries.map(toWire)
+  })
+}
+
+/**
+ * Bring one trashed entry back into the gallery.
+ *
+ * Only the flag changes: tags, channel snapshot, canvas lineage and the
+ * original `createdAt` were never touched, so the entry returns to its old
+ * position in every sort.
+ */
+export async function restoreGallery(id: string): Promise<HistoryEntry[]> {
+  return mutateGallery(async () => {
+    await purgeExpiredLocked()
+    const entries = await readIndex()
+    const target = entries.find(entry => entry.id === id)
+    if (target !== undefined) delete target.deletedAt
+    await writeIndex(entries)
+    return entries.map(toWire)
+  })
+}
+
+/**
+ * Empty the trash: permanently delete every trashed entry and its files.
+ *
+ * This is the only unconditional unlink in the store — it backs the explicit
+ * "empty trash" action, which the client guards with a confirmation.
+ */
+export async function purgeGallery(): Promise<HistoryEntry[]> {
+  return mutateGallery(async () => {
+    await purgeExpiredLocked()
+    const entries = await readIndex()
+    const trashed = entries.filter(entry => !isLiveEntry(entry))
+    for (const entry of trashed) await removeEntryFiles(entry)
+    const kept = entries.filter(isLiveEntry)
     await writeIndex(kept)
     return kept.map(toWire)
   })
@@ -322,6 +423,7 @@ export async function removeGallery(id: string): Promise<HistoryEntry[]> {
 /** Replace the user-managed labels for one gallery entry. */
 export async function updateGalleryTags(id: string, tags: string[]): Promise<HistoryEntry[]> {
   return mutateGallery(async () => {
+    await purgeExpiredLocked()
     const normalized = [...new Set(tags.map(tag => tag.trim()).filter(Boolean))].slice(0, 20)
     const entries = await readIndex()
     const target = entries.find(entry => entry.id === id)
@@ -331,13 +433,21 @@ export async function updateGalleryTags(id: string, tags: string[]): Promise<His
   })
 }
 
-/** Remove every entry (and all image files). */
+/**
+ * Move every live entry to the trash.
+ *
+ * "Clear the gallery" used to unlink everything on the spot; under soft delete
+ * it is the bulk form of `removeGallery`, so the whole cleared gallery is
+ * recoverable for the retention window and only `purgeGallery` really deletes.
+ */
 export async function clearGallery(): Promise<HistoryEntry[]> {
   return mutateGallery(async () => {
-    const previous = await readIndex()
-    for (const entry of previous) await removeEntryFiles(entry)
-    await writeIndex([])
-    return []
+    await purgeExpiredLocked()
+    const entries = await readIndex()
+    const now = Date.now()
+    for (const entry of entries) if (isLiveEntry(entry)) entry.deletedAt = now
+    await writeIndex(entries)
+    return entries.map(toWire)
   })
 }
 
@@ -366,6 +476,7 @@ export async function appendGalleryVideo(input: {
   channel?: string
 }): Promise<GalleryAppendResult> {
   return mutateGallery(async () => {
+    await purgeExpiredLocked()
     await ensureDirs()
     const file = `${safeId(input.id)}-0.${videoExtensionOf(input.mime)}`
     const target = path.join(videosDir(), file)

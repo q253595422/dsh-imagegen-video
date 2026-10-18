@@ -8,7 +8,7 @@
 export const IMAGEGEN_SETTINGS_NAMESPACE = 'dsh-imagegen'
 
 /** Published package version shared by the host updater and the client UI. */
-export const PLUGIN_VERSION = '1.7.6'
+export const PLUGIN_VERSION = '1.7.7'
 
 /** Same-origin route family (loopback-only, mirroring the dsh-ssh fence). */
 export const SETTINGS_API = {
@@ -187,11 +187,18 @@ export const HISTORY_API = {
  * Same-origin route family for the user-curated gallery (favorites). Entries
  * reuse the history wire shape and persist under ~/.dsh/dsh-imagegen/gallery/;
  * unlike history there is no size cap 鈥?the user adds images on purpose.
+ *
+ * Every response that can change the trash carries it as a second field next
+ * to `entries`: the same two lists are always what the client renders.
  */
 export const GALLERY_API = {
   list: '/api/dsh-imagegen/gallery/list',
   append: '/api/dsh-imagegen/gallery/append',
   remove: '/api/dsh-imagegen/gallery/remove',
+  /** Bring one soft-deleted entry back out of the trash. */
+  restore: '/api/dsh-imagegen/gallery/restore',
+  /** Permanently delete every trashed entry and its files. */
+  purge: '/api/dsh-imagegen/gallery/purge',
   clear: '/api/dsh-imagegen/gallery/clear',
   tags: '/api/dsh-imagegen/gallery/tags',
   image: '/api/dsh-imagegen/gallery/image',
@@ -1157,7 +1164,20 @@ export interface CanvasVideoRef {
   sourceUrl?: string
 }
 
+/**
+ * Re-exported so the host half and the client bundle agree on one poster
+ * recipe shape without the client importing a second module by path.
+ */
+export type { PosterDocument, PosterImageLayer, PosterLayer, PosterTextLayer } from './poster.ts'
+
 export interface CanvasNodeMetadata {
+  /**
+   * Image nodes: the editable overlay recipe behind the flattened asset. The
+   * asset stays the rendered image, so every existing reader (node body,
+   * download, generation reference) keeps working and only the editor reads
+   * this field.
+   */
+  poster?: import('./poster.ts').PosterDocument
   /** Image nodes: the rendered asset. */
   asset?: CanvasAssetRef
   /**
@@ -1553,6 +1573,13 @@ export interface HistoryEntry extends EcommerceTaskMeta {
    * an empty `images` list.
    */
   video?: GalleryVideoRef
+  /**
+   * When set, the entry sits in the gallery's trash: removal is a soft delete
+   * that keeps the files readable for 30 days, and this timestamp is what the
+   * restore window and the lazy sweep are measured against. Absent = live, so
+   * a manifest written by an older host reads back unchanged.
+   */
+  deletedAt?: number
 }
 
 /** A clip referenced by a gallery entry. */

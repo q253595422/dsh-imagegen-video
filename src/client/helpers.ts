@@ -61,3 +61,16 @@ export function errorMessage(error: unknown): string {
   if (error instanceof Error) return error.message
   return String(error)
 }
+
+/**
+ * The one-line install command shown when the host cannot run the update
+ * itself (DSH Desktop locks its profile away from the CLI).
+ *
+ * Built as `dsh plugin --profile <p> add <archive>` rather than as a bare
+ * package name because this fork is distributed as a GitHub Release asset, and
+ * the command has to be executable after a plain copy — quoting the URL, since
+ * a shell would otherwise treat `?` and `&` in a redirect URL as syntax.
+ */
+export function manualInstallCommand(tarballUrl: string, profile = 'desktop'): string {
+  return `dsh plugin --profile ${profile} add "${tarballUrl}"`
+}

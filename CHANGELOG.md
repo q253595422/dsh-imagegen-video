@@ -10,6 +10,93 @@ detail is in `git log 9305f9f..HEAD`.
 
 ## Releases
 
+### 1.7.7 — deleting becomes undoable, the poster editor arrives, and the update chain stops lying
+
+Three user-visible failures and one piece of upstream functionality, plus the
+release process itself moving onto a machine that runs the gates.
+
+- **Deleting a gallery entry no longer destroys its bytes.** Removal was an
+  unlink, so every history row and canvas node still holding that URL turned
+  into a broken image, and there was no way back. It is now a soft delete: the
+  entry is flagged `deletedAt` and listed as trash, the files stay put, and only
+  `purgeGallery` (or the retention sweep) unlinks. The retention window is
+  `GALLERY_TRASH_RETENTION_MS` = 30 days, enforced lazily inside `mutateGallery`
+  — no timer, nothing to shut down, and a process that is never opened again
+  still gets its cleanup on the first store call of the next one. Re-adding an
+  image whose old copy is in the trash produces a visible entry, not a silent
+  no-op. The panel's trash section was also covered by nothing: the fixture fed
+  it rows and no check ever looked at them, so the toggle, the per-row restore id
+  and the purge confirmation's count could all have broken silently. Each has a
+  check now, and the section stopped printing its own count heading directly
+  under the toggle that already says it.
+- **The poster editor is ported from upstream v1.7.0.** Text and logo layers are
+  composited over an image node locally with Canvas 2D — no model call, no
+  quota. Saving uploads the flattened bitmap as a new image node and stores the
+  recipe in that node's `metadata.poster` (the new node is wired to its source),
+  so reopening the result restores every layer instead of flattening the work
+  into a picture. The source image is never rewritten. `Ctrl+Z`/`Delete` inside
+  the modal act on poster layers and never on the canvas beneath it.
+  The asset sweep counts those recipe references too: a poster node only stores
+  the flattened composite in `metadata.asset`, while its background and logo
+  layers live in `metadata.poster` and are re-read by the editor. Collecting
+  only `metadata.asset` meant the first canvas a user deleted removed the base
+  image behind every poster they had made, and reopening one drew the layers
+  over an empty stage.
+- **The update chain reports what actually happened.** `profileFromProcess`
+  resolves the profile from `DSH_PROFILE`, then `--profile`, then a
+  `profiles/<name>` path segment in argv, and only then falls back to `web`. The
+  Electron host passes the profile as a bare *path* and sets neither of the
+  other two, so the flag-only reading targeted the wrong profile for every
+  Desktop user — even a successful update left the running host on the old
+  plugin. DSH Desktop's profile is locked by the CLI — spawning it anyway
+  produced a bare "update failed" with no cause, the dead end in upstream issue
+  #41 — so that profile now throws `ManualUpdateRequiredError`
+  (`update-manual-required`) carrying the archive URL, and the panel shows a
+  copyable install command instead of a scary error. A failed spawn keeps the
+  last three lines of the CLI's stderr (`STDERR_LIMIT` 4 000 chars) so a pnpm
+  store mismatch or a locked directory is readable.
+- **The canvas has a keyboard shortcut legend.** `?` or `F1` opens it, the dock
+  gained an entry, `Esc` closes it above every other overlay, and the controls
+  that have a shortcut now name it in their own tooltip ("撤销 (Ctrl+Z)"). The
+  bindings live in one data table (`CANVAS_SHORTCUTS`) shared with the check that
+  compares them against the key handler, so the legend cannot drift from the code
+  it documents. `canvas.undo` / `canvas.redo` lost their hardcoded `(Ctrl+Z)`
+  suffix in all three languages — the key text is derived from the table now.
+  The layout is measured in a real browser at 1280×800 and 390px: the dialog
+  has to fit the viewport (its body scrolls instead), no row may overflow its
+  grid column, and the two-column grid has to collapse to one on a phone.
+- **A malformed poster recipe is refused on the way in and on the way out.**
+  `isPosterDocument()` is strict (`version === 1`, integer sides within 4096, a
+  64-hex `assetId` with an image extension, `url` on the same-origin asset route,
+  `type` not `kind`, unique ids, `#rrggbb` colours), and `isNode()` calls it, so
+  a canvas save carrying a half-valid recipe fails loudly instead of throwing
+  when the editor is reopened. A route-level test round-trips a valid one and
+  refuses two corrupt shapes.
+- **The browser suites stop fighting over a debugging port.** They guessed
+  `9900 + random(300)`, and two runs (or a leftover browser) could land on the
+  same port — the intermittent `Error: CDP down` that made `verify-ui-contracts`
+  report 27/28. `scripts/lib/headless-chrome.mjs` launches with
+  `--remote-debugging-port=0` and reads the port Chromium actually published
+  from `DevToolsActivePort`, checks `exitCode`, keeps stderr for the error, and
+  uses a fresh profile directory per launch. All three guards share it, and
+  `verify-ui-contracts` now scans the other guards' sources for a guessed port,
+  so nobody can reintroduce one without a red check.
+- **The release is built by CI, not by hand.** `.github/workflows/release.yml`
+  runs typecheck → build → ffmpeg → tests → verify-pack → `pnpm pack` →
+  `SHA256SUMS` → tag → GitHub Release, and the tarball the Release advertises is
+  the one the tests ran against (`--ignore-scripts` on the pack, so nothing
+  rebuilds into different bytes). Re-running is idempotent: same tag, replaced
+  assets, no duplicate Release. It never moves an existing tag. npm publishing is
+  a separate job gated on a repository variable, and it probes for the package
+  before the version — npm answers both "no such package" and "no such version"
+  with E404, and only the second one is a normal publish.
+- **`test:negative` was not running every case it defines.** The `canvas-video`
+  runner was added for the gallery soft-delete case but never appended to the
+  `test:negative` chain, so the case passed when invoked by hand and was absent
+  from the gate. The chain now includes it, and `verify-negative.mjs` refuses to
+  run at all if any defined runner is missing from that command — a guard on the
+  gate, since a case can only fail after its runner has been selected.
+
 ### 1.7.6 — the template library grows to eight sources, and a parser bug that hid half of one
 
 The template library was smaller than it said it was. A snapshot keyed each case

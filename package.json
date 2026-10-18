@@ -1,7 +1,7 @@
 {
   "name": "@q253595422/dsh-imagegen-video",
   "description": "AI image AND video generation plugin for the dsh web GUI, forked from @dickpy/dsh-imagegen. Images: text-to-image and image-to-image through configurable provider channels (gpt-image-2 / grok-imagine-image / nanobanana series / seedream-5.0-pro / dall-e-3, with native xAI Grok Imagine, Google Nano Banana and ByteDance Seedream request shaping), per-channel model catalogs, a three-column studio beside the native conversation, an infinite canvas with node-graph workflows (annotation boxes with attached prompt cards, local background removal, AI layer split, per-node model choice, file nodes with any-file upload, and a canvas skill system covering skill-driven next steps on every node: text polish, image description, content extraction, and long-running headless-agent pipelines such as image-to-editable-ppt, with a local skill library that installs and removes skills from URLs or uploaded archives), an ecommerce product-set mode and a prompt template library. Video (added by this fork): text-to-video, image-to-video, first/last-keyframe and multi-reference modes with per-channel video model catalogs, an async submit/poll/download pipeline, a clip history merged into the sidebar, favorited clips in the asset library, host-side Agent video tools, video nodes on the infinite canvas with the same controls as image nodes, and clip stitching of two or more canvas video nodes into one MP4 with the local ffmpeg in canvas reading order.",
-  "version": "1.7.6",
+  "version": "1.7.7",
   "type": "module",
   "main": "lib/index.js",
   "exports": {
@@ -94,6 +94,9 @@
     "access": "public",
     "registry": "https://registry.npmjs.org"
   },
+  "engines": {
+    "node": ">=20"
+  },
   "repository": {
     "type": "git",
     "url": "git+https://github.com/q253595422/dsh-imagegen-video.git"
@@ -114,6 +117,6 @@
     "test:compose": "node scripts/smoke-compose.mjs",
     "test:picker": "node scripts/smoke-video-picker.mjs",
     "test:defect-b": "node scripts/verify-b-defect.mjs",
-    "test:negative": "node scripts/verify-negative.mjs contracts && node scripts/verify-negative.mjs smoke && node scripts/verify-negative.mjs video && node scripts/verify-negative.mjs pack"
+    "test:negative": "node scripts/verify-negative.mjs contracts && node scripts/verify-negative.mjs smoke && node scripts/verify-negative.mjs video && node scripts/verify-negative.mjs canvas-video && node scripts/verify-negative.mjs pack"
   }
 }

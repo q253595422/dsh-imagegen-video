@@ -195,6 +195,22 @@ await check('A3 updater parses stable Releases and caches checks', async () => {
   assert.equal(host.compareVersions('v1.0.3', '1.0.2') > 0, true)
   assert.equal(host.compareVersions('1.0.2', '1.0.2'), 0)
   assert.equal(host.profileFromProcess(['node', 'dsh', '--profile', 'desktop'], {}), 'desktop')
+  // DSH Desktop passes the profile as a bare path among its argv entries and
+  // sets no flag at all. Reading only `--profile` resolved every Desktop host to
+  // `web`, so an update ran against a profile the user was not running.
+  const desktopHostArgv = [
+    '/Applications/DeepSeek Harness.app/Contents/MacOS/DeepSeek Harness',
+    '--expose-internals',
+    '/Applications/DeepSeek Harness.app/Contents/Resources/app.asar/dsh/node_modules/@deepseek-ai/dsh-desktop-host/lib/index.js',
+    '/Applications/DeepSeek Harness.app/Contents/Resources/app.asar/dsh',
+    '/Users/someone/.dsh/profiles/desktop',
+    '/Applications/DeepSeek Harness.app/Contents/Resources/runtime/primary-runtime',
+  ]
+  assert.equal(host.profileFromProcess(desktopHostArgv, {}), 'desktop', 'the Desktop host profile is read from its path argument')
+  assert.equal(host.profileFromProcess(['node', 'dsh', 'web'], {}), 'web', 'a bare web run still resolves to web')
+  assert.equal(host.profileFromProcess(['node', 'dsh'], {}), 'web', 'an unidentifiable host keeps the historical default')
+  // A path that merely CONTAINS "profiles" must not match; only a real segment does.
+  assert.equal(host.profileFromProcess(['node', 'dsh', '/tmp/profiles-backup/x'], {}), 'web')
   host.clearUpdateCache()
   let calls = 0
   const fetchRelease = async () => {
@@ -268,17 +284,34 @@ await check('A3b update install refuses what it cannot verify, and never guesses
   assert.equal(host.isInstallableTarballUrl('https://github.com.evil.example/a.tgz'), false)
   assert.equal(host.isInstallableTarballUrl('not a url'), false)
 
-  // The happy path hands the archive URL to `dsh plugin add`, and the profile
-  // comes from the running process instead of being hardcoded.
+  // `desktop` is the profile DSH Desktop boots, and the CLI refuses to manage
+  // it (`profile "desktop" is managed exclusively by the Electron application`).
+  // Spawning it anyway is what produced a bare "update failed" with no cause, so
+  // the host now refuses BEFORE spawning and hands the caller the archive URL.
   host.clearUpdateCache()
-  await host.installUpdate('9.9.9', spawnFn, argv, {}, releaseWith([
-    { name: 'q253595422-dsh-imagegen-video-9.9.9.tgz', browser_download_url: 'https://github.com/q253595422/dsh-imagegen-video/releases/download/v9.9.9/q253595422-dsh-imagegen-video-9.9.9.tgz' },
+  const archive = 'https://github.com/q253595422/dsh-imagegen-video/releases/download/v9.9.9/q253595422-dsh-imagegen-video-9.9.9.tgz'
+  await assert.rejects(
+    () => host.installUpdate('9.9.9', spawnFn, argv, {}, releaseWith([
+      { name: 'q253595422-dsh-imagegen-video-9.9.9.tgz', browser_download_url: archive },
+    ])),
+    (error) => {
+      assert.equal(error.code, 'update-manual-required', 'the locked profile has its own wire code')
+      assert.equal(error.tarballUrl, archive, 'the caller gets the URL it has to install by hand')
+      assert.match(error.message, /Electron/)
+      return true
+    },
+  )
+  assert.equal(spawnCalls.length, 0, 'a locked profile is never spawned')
+
+  // The happy path: a CLI-managed profile boots, and the profile comes from the
+  // running process instead of being hardcoded.
+  const webArgv = ['node', 'dsh', '--profile', 'web']
+  host.clearUpdateCache()
+  await host.installUpdate('9.9.9', spawnFn, webArgv, {}, releaseWith([
+    { name: 'q253595422-dsh-imagegen-video-9.9.9.tgz', browser_download_url: archive },
   ]))
   assert.equal(spawnCalls.length, 1)
-  assert.deepEqual(spawnCalls[0][1], [
-    'plugin', '--profile', 'desktop', 'add',
-    'https://github.com/q253595422/dsh-imagegen-video/releases/download/v9.9.9/q253595422-dsh-imagegen-video-9.9.9.tgz',
-  ])
+  assert.deepEqual(spawnCalls[0][1], ['plugin', '--profile', 'web', 'add', archive])
   host.clearUpdateCache()
 })
 
@@ -2457,6 +2490,131 @@ await check('C10c3 a video node round-trips through canvas save (every CanvasNod
   )
 })
 
+await check('C10c4 a poster recipe round-trips, and a broken one is refused', async () => {
+  // The poster editor (ported from upstream v1.7.0) writes its layer recipe into
+  // `metadata.poster`. The recipe is host-validated rather than trusted, because
+  // it comes back from the browser and drives a canvas the host then paints.
+  // Without this check the guard's two directions are unproven: a valid recipe
+  // could be rejected (posters never save) and an invalid one accepted (a
+  // document that fails to render, or renders something the user never drew).
+  const created = await post('/api/dsh-imagegen/canvas/create', { title: 'poster recipe' })
+  const document = created.body.document
+  // The recipe may only point at immutable host canvas assets: a content-hashed
+  // id, the host's own asset URL, a whitelisted image MIME. That rule is why a
+  // recipe can be replayed later without the image changing under it.
+  const assetId = `${'a'.repeat(64)}.png`
+  const asset = { assetId, url: `/api/dsh-imagegen/canvas/asset/${assetId}`, mime: 'image/png', width: 1200, height: 1600, bytes: 2048 }
+  const poster = {
+    version: 1,
+    width: 1200,
+    height: 1600,
+    background: asset,
+    layers: [
+      {
+        id: 'layer-text', type: 'text', x: 80, y: 120, width: 900,
+        text: '秋季新品', fontSize: 128, fontFamily: 'sans-serif', color: '#111111', bold: true, align: 'left',
+      },
+      { id: 'layer-logo', type: 'image', x: 980, y: 60, width: 160, height: 160, asset },
+    ],
+  }
+  const node = { id: 'node-poster', type: 'image', title: '海报成品', x: 40, y: 40, width: 300, height: 400, metadata: { status: 'success', asset, poster } }
+
+  const saved = await post('/api/dsh-imagegen/canvas/save', {
+    document: { ...document, nodes: [...document.nodes, node] },
+    expectedRevision: document.revision,
+  })
+  assert.equal(saved.body.ok, true, `a canvas with a poster recipe must save: ${JSON.stringify(saved.body)}`)
+  const stored = saved.body.document.nodes.find(candidate => candidate.id === 'node-poster')
+  assert.equal(stored.metadata.poster.layers.length, 2, 'both layers survive the round trip')
+  assert.equal(stored.metadata.poster.layers[0].type, 'text')
+  assert.equal(stored.metadata.poster.width, 1200)
+
+  const reopened = await post('/api/dsh-imagegen/canvas/read', { id: document.id })
+  assert.equal(reopened.body.document.nodes.find(candidate => candidate.id === 'node-poster').metadata.poster.layers.length, 2,
+    'the recipe is intact when the canvas is read back')
+
+  // Two refusals, both of which would otherwise corrupt a stored poster: a
+  // recipe with no layers array (the renderer iterates it), and one pointing at
+  // a remote URL instead of a host asset (it would break the moment the remote
+  // file moves, and the host never agreed to fetch it).
+  const broken = await post('/api/dsh-imagegen/canvas/save', {
+    document: {
+      ...reopened.body.document,
+      nodes: [{ ...node, metadata: { ...node.metadata, poster: { version: 1, width: 1200, height: 1600, background: asset } } }],
+    },
+    expectedRevision: reopened.body.document.revision,
+  })
+  assert.equal(broken.body.ok, false, `a recipe without layers must be refused: ${JSON.stringify(broken.body)}`)
+  const remote = await post('/api/dsh-imagegen/canvas/save', {
+    document: {
+      ...reopened.body.document,
+      nodes: [{
+        ...node,
+        metadata: {
+          ...node.metadata,
+          poster: { ...poster, background: { ...asset, url: 'https://example.com/elsewhere.png' } },
+        },
+      }],
+    },
+    expectedRevision: reopened.body.document.revision,
+  })
+  assert.equal(remote.body.ok, false, `a recipe pointing off-host must be refused: ${JSON.stringify(remote.body)}`)
+})
+
+await check('C10c5 deleting a canvas keeps the assets a poster recipe still points at', async () => {
+  // `sweepAssets` collects references from the node graph, and a poster node
+  // only *carries* the flattened composite in `metadata.asset`. Its background
+  // and its logo layers live in `metadata.poster`, which no node points at
+  // directly -- yet the editor re-renders from exactly those files. Without
+  // counting them, the first canvas a user deletes wipes the base image behind
+  // every poster they made, and re-opening one shows an empty stage with the
+  // layers floating on it. The sweep itself must keep working: an asset nothing
+  // references still has to go.
+  const upload = async (bytes, width, height) => {
+    const uploaded = await post('/api/dsh-imagegen/canvas/asset/upload', {
+      dataUrl: `data:image/png;base64,${bytes.toString('base64')}`, width, height, origin: 'upload',
+    })
+    assert.equal(uploaded.body.ok, true, JSON.stringify(uploaded.body))
+    return uploaded.body.asset
+  }
+  const background = await upload(pngBytes, 640, 640)
+  const logo = await upload(Buffer.concat([pngBytes, Buffer.from('a logo, hashed apart')]), 96, 96)
+  const composite = await upload(Buffer.concat([pngBytes, Buffer.from('the flattened poster')]), 640, 640)
+  const orphan = await upload(Buffer.concat([pngBytes, Buffer.from('nothing points here')]), 32, 32)
+
+  const created = await post('/api/dsh-imagegen/canvas/create', { title: 'poster assets' })
+  const document = created.body.document
+  const poster = {
+    version: 1, width: 640, height: 640, background,
+    layers: [{ id: 'layer-logo', type: 'image', asset: logo, x: 16, y: 16, width: 96, height: 96 }],
+  }
+  const saved = await post('/api/dsh-imagegen/canvas/save', {
+    document: {
+      ...document,
+      nodes: [{
+        id: 'node-poster-assets', type: 'image', title: '海报成品', x: 0, y: 0, width: 640, height: 640,
+        metadata: { asset: composite, status: 'success', poster },
+      }],
+    },
+    expectedRevision: document.revision,
+  })
+  assert.equal(saved.body.ok, true, `the poster canvas must save: ${JSON.stringify(saved.body)}`)
+
+  // Any canvas deletion runs the sweep; use a throwaway page so the poster
+  // canvas above is the only thing holding those references.
+  const doomed = await post('/api/dsh-imagegen/canvas/create', { title: 'doomed canvas' })
+  const removed = await post('/api/dsh-imagegen/canvas/remove', { id: doomed.body.document.id })
+  assert.equal(removed.body.ok, true, JSON.stringify(removed.body))
+
+  const served = async asset => (await fetch(`http://127.0.0.1:${port}${asset.url}`)).status
+  assert.equal(await served(background), 200, 'the poster background was deleted by the sweep')
+  assert.equal(await served(logo), 200, 'the poster logo layer was deleted by the sweep')
+  assert.equal(await served(composite), 200, 'the flattened composite was deleted by the sweep')
+  assert.equal(await served(orphan), 404, 'an asset nothing references is still collected')
+
+  await post('/api/dsh-imagegen/canvas/remove', { id: document.id })
+})
+
 await check('C10c2 canvas favorites persist across saves and project lists', async () => {
   const created = await post('/api/dsh-imagegen/canvas/create', { title: 'favorite canvas' })
   const document = created.body.document
@@ -3945,12 +4103,19 @@ await check('E1 client apply mounts the sidebar entry and studio (jsdom)', async
   const jsdomWindow = dom.window
   const jsdomDocument = jsdomWindow.document
   let confirmationCalls = 0
+  // The copy is recorded, not just counted: a confirmation that names the wrong
+  // number ("delete 0 assets") is a real defect that a call count cannot see.
+  // `confirmationAnswer` is what the stub returns, so a check that needs the
+  // action to actually run can opt in for one click.
+  const confirmationMessages = []
+  let confirmationAnswer = false
   let nativeNewSessionCalls = 0
   const nativeNewSession = jsdomDocument.querySelector('.newSession')
   nativeNewSession.addEventListener('click', () => { nativeNewSessionCalls += 1 })
-  jsdomWindow.confirm = () => {
+  jsdomWindow.confirm = (message) => {
     confirmationCalls += 1
-    return false
+    confirmationMessages.push(String(message ?? ''))
+    return confirmationAnswer
   }
   // jsdom has no ResizeObserver; the canvas measures its viewport with one.
   jsdomWindow.ResizeObserver = class {
@@ -4089,6 +4254,8 @@ await check('E1 client apply mounts the sidebar entry and studio (jsdom)', async
   const canvasTasks = []
   /** Documents the workspace persisted through /canvas/save. */
   const canvasSaves = []
+  /** Every gallery mutation the panel issued, in order (see the gallery stubs). */
+  const galleryMutations = []
   /** Video tasks the panel sees when polling, and submissions it makes. */
   const videoTasks = []
   const videoSubmissions = []
@@ -4377,6 +4544,35 @@ await check('E1 client apply mounts the sidebar entry and studio (jsdom)', async
               video: { url: '/api/dsh-imagegen/gallery/video-file/gallery-clip-0.mp4', mime: 'video/mp4', duration: 5 },
             },
           ],
+          // Two soft-deleted entries. Two, not one, because the restore check
+          // below brings one back and the trash section unmounts when the last
+          // entry leaves it -- with a single fixture the purge button would have
+          // been gone by the time the purge check looked for it, which reads as
+          // "purge is not rendered" rather than as a fixture that ran out.
+          trash: [
+            { id: 'gallery-trashed', createdAt: 2, deletedAt: 9, mode: 'text', model: 'gpt-image-2', prompt: 'trashed prompt', size: '1:1', quality: '2k', detail: '', n: 1, images: [{ url: '/api/dsh-imagegen/gallery/image/trashed.png', mime: 'image/png' }] },
+            { id: 'gallery-trashed-2', createdAt: 1, deletedAt: 4, mode: 'text', model: 'gpt-image-2', prompt: 'older trashed prompt', size: '1:1', quality: '2k', detail: '', n: 1, images: [{ url: '/api/dsh-imagegen/gallery/image/trashed2.png', mime: 'image/png' }] },
+          ],
+        }),
+      }
+    }
+    // Every gallery mutation answers with the same { entries, trash } pair. The
+    // stubs used to be absent, so a client calling one of these threw, the
+    // caller's catch swallowed it, and the test stayed green while the UI showed
+    // nothing — a silent hole rather than a failure.
+    if (path.endsWith('/gallery/remove') || path.endsWith('/gallery/restore') || path.endsWith('/gallery/purge') || path.endsWith('/gallery/clear') || path.endsWith('/gallery/tags')) {
+      galleryMutations.push({ path: path.split('/').pop(), body: init?.body ?? null })
+      const trashed = { id: 'gallery-trashed', createdAt: 2, deletedAt: 9, mode: 'text', model: 'gpt-image-2', prompt: 'trashed prompt', size: '1:1', quality: '2k', detail: '', n: 1, images: [{ url: '/api/dsh-imagegen/gallery/image/trashed.png', mime: 'image/png' }] }
+      // The sibling stays in the trash after the other one is restored, so the
+      // purge check still has a rendered section to find its button in.
+      const sibling = { id: 'gallery-trashed-2', createdAt: 1, deletedAt: 4, mode: 'text', model: 'gpt-image-2', prompt: 'older trashed prompt', size: '1:1', quality: '2k', detail: '', n: 1, images: [{ url: '/api/dsh-imagegen/gallery/image/trashed2.png', mime: 'image/png' }] }
+      const purged = path.endsWith('/gallery/purge')
+      return {
+        ok: true,
+        json: async () => ({
+          ok: true,
+          entries: path.endsWith('/gallery/restore') ? [trashed, { id: 'gallery-one', createdAt: 3, mode: 'text', model: 'gpt-image-2', prompt: 'gallery prompt', size: '1:1', quality: '2k', detail: '', n: 1, images: [{ url: '/api/dsh-imagegen/gallery/image/gallery.png', mime: 'image/png' }] }] : [],
+          trash: purged ? [] : path.endsWith('/gallery/restore') ? [sibling] : [trashed, sibling],
         }),
       }
     }
@@ -5071,6 +5267,52 @@ await check('E1 client apply mounts the sidebar entry and studio (jsdom)', async
     view.querySelector('[data-gallery-clear]')?.dispatchEvent(new jsdomWindow.MouseEvent('click', { bubbles: true }))
     await new Promise(resolve => setTimeout(resolve, 20))
     assert.equal(confirmationCalls, 2, 'gallery clear asks for confirmation')
+
+    // ------------------------------------------------------------ the trash
+    // Soft delete is only worth anything if the user can GET an entry back, and
+    // the trash fixture above was there while nothing asserted on it: the panel
+    // could have stopped rendering the toggle, dropped the restore button, or
+    // sent the wrong id and every existing check would still have been green.
+    // `window.confirm` is stubbed to accept, so the purge below actually runs.
+    const trashToggle = view.querySelector('[data-gallery-trash-toggle]')
+    assert.ok(trashToggle !== null, 'the trash toggle appears once an entry is in the trash')
+    assert.equal(trashToggle.getAttribute('aria-expanded'), 'false', 'the trash starts collapsed')
+    trashToggle.dispatchEvent(new jsdomWindow.MouseEvent('click', { bubbles: true }))
+    await new Promise(resolve => setTimeout(resolve, 20))
+    assert.equal(view.querySelector('[data-gallery-trash-toggle]')?.getAttribute('aria-expanded'), 'true', 'the toggle reports the trash as open')
+    const trashSection = view.querySelector('[data-gallery-trash]')
+    assert.ok(trashSection !== null, 'opening the toggle renders the trash section')
+    // The heading is the toggle itself; the section must not print the count a
+    // second time inside its body.
+    assert.equal(trashSection.querySelectorAll('strong').length, 0, 'the open trash does not repeat the count heading it already sits under')
+    assert.equal(trashSection.textContent?.includes('trashed prompt'), true, 'the trash row names the deleted entry')
+    assert.ok(trashSection.textContent?.includes('删除于'), 'the trash row says when it was deleted')
+
+    const restoreButton = trashSection.querySelector('[data-gallery-restore="gallery-trashed"]')
+    assert.ok(restoreButton !== null, 'the trash row offers a restore button for its own id')
+    // A hardcoded id would pass the lookup above whenever it happens to name the
+    // first fixture entry, so the second row is checked too: every row must
+    // carry its OWN id, not one id repeated.
+    assert.ok(trashSection.querySelector('[data-gallery-restore="gallery-trashed-2"]') !== null, 'a second trashed row carries its own id, not a repeated one')
+    restoreButton.dispatchEvent(new jsdomWindow.MouseEvent('click', { bubbles: true }))
+    await new Promise(resolve => setTimeout(resolve, 30))
+    const restoredCall = galleryMutations.filter(entry => entry.path === 'restore').pop()
+    assert.ok(restoredCall !== undefined, 'restore reached the host')
+    assert.equal(JSON.parse(restoredCall.body).id, 'gallery-trashed', 'restore names the trashed entry')
+
+    // Purge is the one action that really unlinks, so it must ask first -- and
+    // the confirmation text has to carry the count the user is agreeing to.
+    // The stub has to say yes for the route to be reached at all; it is reset
+    // immediately after so the rest of the suite keeps the declining default.
+    const purgeButton = view.querySelector('[data-gallery-purge]')
+    assert.ok(purgeButton !== null, 'the trash offers emptying it')
+    confirmationAnswer = true
+    purgeButton.dispatchEvent(new jsdomWindow.MouseEvent('click', { bubbles: true }))
+    await new Promise(resolve => setTimeout(resolve, 30))
+    confirmationAnswer = false
+    assert.equal(confirmationCalls, 3, 'emptying the trash asks for confirmation')
+    assert.equal(confirmationMessages.at(-1)?.includes('1'), true, 'the purge confirmation states how many entries will go')
+    assert.ok(galleryMutations.some(entry => entry.path === 'purge'), 'purge reached the host')
     // The configuration entry registers exactly one Settings navigation section.
     const sectionRegistrations = registered.filter(item => item.name === 'settings.section')
     assert.equal(sectionRegistrations.length, 1)
@@ -6182,6 +6424,40 @@ await check('E1 client apply mounts the sidebar entry and studio (jsdom)', async
     await waitForSelector(view, '[data-video-preview]')
     jsdomWindow.dispatchEvent(new jsdomWindow.KeyboardEvent('keydown', { key: 'Escape', bubbles: true }))
     assert.ok(await waitUntil(() => view.querySelector('[data-video-preview]') === null), 'Escape closes the in-canvas video preview')
+
+    // (6) The keyboard map has to be REACHABLE. Every binding existed before
+    // this round; none of them was discoverable anywhere in the UI, which is
+    // why the legend exists at all. Four things must hold, and each one fails
+    // independently: the dock opens it, `?` opens it, Esc closes it, and the
+    // dock's own undo tooltip names the key.
+    const helpButton = view.querySelector('[data-canvas-workspace] [role="toolbar"] button[aria-label="快捷键"]')
+    assert.ok(helpButton !== null, 'the dock carries a shortcut entry')
+    helpButton.dispatchEvent(new jsdomWindow.MouseEvent('click', { bubbles: true }))
+    assert.ok(await waitUntil(() => view.querySelector('[data-shortcut-help]') !== null), 'the dock entry opens the legend')
+    const legend = view.querySelector('[data-shortcut-help]')
+    assert.ok(legend.querySelectorAll('kbd').length >= 20, 'the legend lists the real bindings, not a placeholder')
+    assert.ok(
+      (legend.textContent ?? '').includes('Ctrl/⌘+Z') === false,
+      'modifier combinations render as separate key chips, not one fused token',
+    )
+    jsdomWindow.dispatchEvent(new jsdomWindow.KeyboardEvent('keydown', { key: 'Escape', bubbles: true }))
+    assert.ok(await waitUntil(() => view.querySelector('[data-shortcut-help]') === null), 'Escape closes the legend')
+
+    const questionProbe = new jsdomWindow.KeyboardEvent('keydown', { key: '?', bubbles: true, cancelable: true })
+    // Re-queried, not the `viewportEl` captured before step (4): that block
+    // remounts the canvas, so the old node is detached and its events never
+    // reach the window listener -- the probe would fail for a reason unrelated
+    // to the binding it is testing.
+    const liveViewport = view.querySelector('[class*="viewport"]')
+    assert.ok(liveViewport !== null, 'the canvas viewport is mounted after the remount')
+    liveViewport.dispatchEvent(questionProbe)
+    assert.ok(await waitUntil(() => view.querySelector('[data-shortcut-help]') !== null), '? opens the legend too')
+    assert.equal(questionProbe.defaultPrevented, true, '? is claimed by the legend, not typed into the page')
+    jsdomWindow.dispatchEvent(new jsdomWindow.KeyboardEvent('keydown', { key: 'Escape', bubbles: true }))
+    assert.ok(await waitUntil(() => view.querySelector('[data-shortcut-help]') === null), 'Escape closes the one ? opened')
+
+    const undoLabel = view.querySelector('[data-canvas-workspace] [role="toolbar"] button[aria-label^="撤销"]')?.getAttribute('aria-label') ?? ''
+    assert.ok(undoLabel.includes('Ctrl/⌘+Z'), `the undo control names its key (got "${undoLabel}")`)
 
     // (5) The image picker must clear its file input, so re-picking the same
     // file after a failure still fires `change`. A stale value makes the retry

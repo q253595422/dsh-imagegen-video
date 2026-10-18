@@ -15,7 +15,8 @@ import type { SessionId } from '@deepseek-ai/dsh-api-remotes/client'
 import type { ISessions } from '@deepseek-ai/dsh-api-session-controller/client'
 import type { ImageAttachmentRef } from '@deepseek-ai/dsh-attachment'
 import type { ImageGenApi } from './api.ts'
-import { errorMessage, tt } from './helpers.ts'
+import { ImageGenApiError } from './api.ts'
+import { errorMessage, manualInstallCommand, tt } from './helpers.ts'
 import { renderMarkdown } from './markdown.tsx'
 import { openImageGenConfig } from './config-entry.tsx'
 import { TemplateLibrary } from './TemplateLibrary.tsx'
@@ -816,6 +817,9 @@ export function ImageGenPanel(props: {
   /** The clip currently open in the video tab (mirrors viewingHistoryId). */
   const [viewingVideoId, setViewingVideoId] = useState<string | null>(null)
   const [gallery, setGallery] = useState<HistoryEntry[]>([])
+  /** Soft-deleted entries: hidden from the shelf, restorable for 30 days. */
+  const [galleryTrash, setGalleryTrash] = useState<HistoryEntry[]>([])
+  const [galleryTrashOpen, setGalleryTrashOpen] = useState(false)
   const [galleryViewingId, setGalleryViewingId] = useState<string | null>(null)
   const [galleryAdding, setGalleryAdding] = useState(false)
   const [galleryMessage, setGalleryMessage] = useState<string | null>(null)
@@ -846,6 +850,13 @@ export function ImageGenPanel(props: {
   const [updating, setUpdating] = useState(false)
   const [updateMessage, setUpdateMessage] = useState<string | null>(null)
   const [updateResult, setUpdateResult] = useState<'success' | 'failed' | null>(null)
+  /**
+   * Set when the host says the CLI cannot install this update (DSH Desktop owns
+   * its profile). The popover then shows the command instead of "try again",
+   * because retrying the same button can never work.
+   */
+  const [manualCommand, setManualCommand] = useState<string | null>(null)
+  const [manualCopied, setManualCopied] = useState(false)
   const [updateOpen, setUpdateOpen] = useState(false)
   const updateAreaRef = useRef<HTMLSpanElement>(null)
   const [libraryOpen, setLibraryOpen] = useState(false)
@@ -1103,7 +1114,7 @@ export function ImageGenPanel(props: {
       .then(entries => { setHistory(entries) })
       .catch(caught => { setHistoryLoadError(errorMessage(caught)) })
     api.galleryList()
-      .then(entries => { setGallery(entries) })
+      .then(result => { setGallery(result.entries); setGalleryTrash(result.trash) })
       .catch(caught => { setGalleryLoadError(errorMessage(caught)) })
     // Clips are listed from the same place they are shown: the unified sidebar,
     // so a clip-listing failure lands on the sidebar's error line too.
@@ -1339,12 +1350,28 @@ export function ImageGenPanel(props: {
     setUpdating(true)
     setUpdateMessage(null)
     setUpdateResult(null)
+    setManualCommand(null)
+    setManualCopied(false)
     try {
       const result = await api.updateApply(update.latestVersion)
       setUpdateMessage(tt('update.success', { version: result.updatedVersion }))
       setUpdateResult('success')
-    } catch {
-      setUpdateMessage(tt('update.failed'))
+    } catch (error) {
+      // `update-manual-required` is not a transient failure: the host already
+      // decided the CLI cannot touch this profile. Showing "update failed; try
+      // again" there is what made the Desktop button a dead end.
+      const tarballUrl = error instanceof ImageGenApiError && typeof error.details.tarballUrl === 'string' ? error.details.tarballUrl : undefined
+      if (error instanceof ImageGenApiError && error.code === 'update-manual-required' && tarballUrl !== undefined) {
+        setManualCommand(manualInstallCommand(tarballUrl))
+        setUpdateMessage(tt('update.manualRequired'))
+      } else {
+        // Not the locked-profile case, so the failure is real (pnpm store
+        // mismatch, unreachable registry, network). The host now puts the CLI's
+        // own stderr in the message; dropping it here is what made every cause
+        // look identical to the user.
+        const reason = errorMessage(error)
+        setUpdateMessage(reason === '' ? tt('update.failed') : `${tt('update.failed')} — ${reason}`)
+      }
       setUpdateResult('failed')
     } finally {
       setUpdating(false)
@@ -1858,7 +1885,9 @@ export function ImageGenPanel(props: {
   const favoriteVideoEntry = useCallback(async (entry: VideoHistoryEntry): Promise<void> => {
     try {
       await api.galleryAppendVideo({ entryId: entry.id })
-      setGallery(await api.galleryList())
+      const listed = await api.galleryList()
+      setGallery(listed.entries)
+      setGalleryTrash(listed.trash)
     } catch (caught) {
       setError(errorMessage(caught))
     }
@@ -2161,24 +2190,52 @@ export function ImageGenPanel(props: {
     }
   }
 
-  /** Remove one gallery entry. */
+  /** Move one gallery entry to the trash (the host keeps its files). */
   const deleteGalleryEntry = async (id: string): Promise<void> => {
     setGallery(gallery.filter(entry => entry.id !== id))
     if (galleryViewingId === id) setGalleryViewingId(null)
     try {
-      setGallery(await api.galleryRemove(id))
+      const result = await api.galleryRemove(id)
+      setGallery(result.entries)
+      setGalleryTrash(result.trash)
     } catch {
       // Keep the optimistic local removal.
     }
   }
 
-  /** Remove every gallery entry. */
+  /** Bring one trashed entry back; tags and timestamps were never touched. */
+  const restoreGalleryEntry = async (id: string): Promise<void> => {
+    try {
+      const result = await api.galleryRestore(id)
+      setGallery(result.entries)
+      setGalleryTrash(result.trash)
+      setGalleryMessage(tt('gallery.restored'))
+      window.setTimeout(() => { setGalleryMessage(null) }, 2200)
+    } catch (caught) { setError(errorMessage(caught)) }
+  }
+
+  /** Empty the trash. The only place that really unlinks files, hence the
+   *  confirmation; the count is the only thing the user can judge by. */
+  const purgeGalleryTrash = async (): Promise<void> => {
+    if (galleryTrash.length === 0) return
+    if (!window.confirm(tt('gallery.purgeConfirm', { count: galleryTrash.length }))) return
+    try {
+      const result = await api.galleryPurge()
+      setGallery(result.entries)
+      setGalleryTrash(result.trash)
+    } catch (caught) { setError(errorMessage(caught)) }
+  }
+
+  /** Move every gallery entry to the trash (recoverable for the retention
+   *  window — the copy says so, since the action used to be irreversible). */
   const clearGalleryAll = async (): Promise<void> => {
     if (!window.confirm(tt('gallery.clearConfirm'))) return
     setGallery([])
     setGalleryViewingId(null)
     try {
-      setGallery(await api.galleryClear())
+      const result = await api.galleryClear()
+      setGallery(result.entries)
+      setGalleryTrash(result.trash)
     } catch {
       // Keep the cleared local state.
     }
@@ -2191,7 +2248,7 @@ export function ImageGenPanel(props: {
       let next = gallery
       for (const id of selectedGalleryIds) {
         const existing = next.find(entry => entry.id === id)?.tags ?? []
-        next = await api.gallerySetTags(id, [...existing, ...tags])
+        next = (await api.gallerySetTags(id, [...existing, ...tags])).entries
       }
       setGallery(next)
       setGalleryTagInput('')
@@ -2206,7 +2263,9 @@ export function ImageGenPanel(props: {
   const saveGalleryTags = async (id: string): Promise<void> => {
     const tags = galleryTagEditInput.split(',').map(tag => tag.trim()).filter(Boolean)
     try {
-      setGallery(await api.gallerySetTags(id, tags))
+      const result = await api.gallerySetTags(id, tags)
+      setGallery(result.entries)
+      setGalleryTrash(result.trash)
       setEditingGalleryTagsId(null)
       setGalleryTagEditInput('')
     } catch (caught) { setError(errorMessage(caught)) }
@@ -2677,6 +2736,21 @@ export function ImageGenPanel(props: {
                     <button type="button" className={css.updateClose} aria-label={tt('update.close')} title={tt('update.close')} onClick={() => { setUpdateOpen(false) }}>×</button>
                   </header>
                   {updateMessage !== null ? <div className={css.updateStatus} data-kind={updateResult === 'failed' ? 'failed' : 'ok'}>{updateMessage}</div> : null}
+                  {manualCommand !== null ? (
+                    <div className={css.updateManual} data-update-manual="">
+                      <label className={css.updateManualLabel} htmlFor="dsh-imagegen-update-command">{tt('update.manualCommand')}</label>
+                      <code className={css.updateManualCode} id="dsh-imagegen-update-command" data-update-command="">{manualCommand}</code>
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        onClick={() => {
+                          void navigator.clipboard.writeText(manualCommand).then(() => { setManualCopied(true) })
+                        }}
+                      >
+                        {manualCopied ? tt('update.manualCopied') : tt('update.manualCopy')}
+                      </Button>
+                    </div>
+                  ) : null}
                   <div className={css.updateNotes}>
                     {update.releaseNotes !== undefined && update.releaseNotes.trim() !== '' ? renderMarkdown(update.releaseNotes) : <p>{tt('update.noNotes')}</p>}
                   </div>
@@ -3379,6 +3453,19 @@ export function ImageGenPanel(props: {
                     <option value="oldest">{tt('gallery.oldest')}</option>
                   </Select>
                   <button type="button" className={css.galleryClear} data-gallery-open-folder="" title={tt('gallery.openFolderHint')} onClick={() => { void api.openDataFolder() }}>{tt('gallery.openFolder')}</button>
+                  {galleryTrash.length > 0 ? (
+                    <button
+                      type="button"
+                      className={css.galleryClear}
+                      data-gallery-trash-toggle=""
+                      data-active={galleryTrashOpen ? '' : undefined}
+                      aria-expanded={galleryTrashOpen}
+                      title={tt('gallery.trashHint')}
+                      onClick={() => { setGalleryTrashOpen(open => !open) }}
+                    >
+                      {tt('gallery.trashCount', { count: galleryTrash.length })}
+                    </button>
+                  ) : null}
                   {gallery.length > 0 ? <button type="button" className={css.galleryClear} data-gallery-clear="" onClick={() => { void clearGalleryAll() }}>{tt('gallery.clear')}</button> : null}
                 </div>
               </header>
@@ -3390,6 +3477,34 @@ export function ImageGenPanel(props: {
                   <button type="button" className={css.galleryBulkButton} onClick={downloadGalleryImages}>{tt('gallery.downloadSelected')}</button>
                   <button type="button" className={css.galleryBulkButton} onClick={exportGalleryJson}>{tt('gallery.exportJson')}</button>
                   <button type="button" className={css.gallerySelectionClear} onClick={clearGallerySelection}>{tt('gallery.selectionClear')}</button>
+                </section>
+              ) : null}
+              {galleryTrashOpen && galleryTrash.length > 0 ? (
+                // The trash is a plain section of rows, not a card grid: a
+                // trashed entry is something to restore or drop, never to
+                // preview, add to the canvas or tag.
+                <section className={css.gallerySelectionBar} data-gallery-trash="" aria-label={tt('gallery.trash')}>
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: 6, flex: '1 1 auto', minWidth: 0, maxHeight: 180, overflowY: 'auto' }}>
+                    {galleryTrash.map(entry => (
+                      <div key={entry.id} data-gallery-trash-row={entry.id} style={{ display: 'flex', alignItems: 'center', gap: 8, minWidth: 0 }}>
+                        <span style={{ flex: '1 1 auto', minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={entry.prompt}>
+                          {entry.prompt || tt('gallery.untitled')}
+                        </span>
+                        <small style={{ flex: 'none', color: 'var(--dsw-alias-label-tertiary)' }}>
+                          {tt('gallery.deletedAt', { time: formatTime(entry.deletedAt ?? entry.createdAt) })}
+                        </small>
+                        <button
+                          type="button"
+                          className={css.galleryBulkButton}
+                          data-gallery-restore={entry.id}
+                          onClick={() => { void restoreGalleryEntry(entry.id) }}
+                        >
+                          {tt('gallery.restore')}
+                        </button>
+                      </div>
+                    ))}
+                  </div>
+                  <button type="button" className={css.galleryBulkButton} data-gallery-purge="" onClick={() => { void purgeGalleryTrash() }}>{tt('gallery.purge')}</button>
                 </section>
               ) : null}
               {filteredGallery.length === 0 && galleryLoadError !== null ? (

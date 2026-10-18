@@ -24,12 +24,12 @@
  */
 
 import { createServer } from 'node:http'
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, accessSync, constants, globSync } from 'node:fs'
-import { spawn, spawnSync } from 'node:child_process'
-import { createServer as createProbeServer } from 'node:net'
+import { existsSync, mkdirSync, readFileSync, accessSync, constants } from 'node:fs'
+import { spawnSync } from 'node:child_process'
 import { homedir, tmpdir } from 'node:os'
 import path from 'node:path'
 import assert from 'node:assert/strict'
+import { findChrome, launchChrome } from './lib/headless-chrome.mjs'
 
 /**
  * Tool discovery, not hardcoded personal paths. This script ships publicly, so
@@ -56,38 +56,6 @@ function findFfmpeg () {
   // with a minimal PATH that excludes user bin directories, so a bare name would
   // resolve differently inside the plugin and outside it.
   return candidates.find(usable) ?? null
-}
-
-/** Bundled shells newest-first (the agent tooling's usual location), then real browsers. */
-function findChrome () {
-  const explicit = process.argv[2] ?? process.env.CHROME_HEADLESS_SHELL
-  if (explicit !== undefined && explicit !== '') return existsSync(explicit) ? explicit : null
-  const candidates = [
-    // Both spellings of the temp root: on macOS `os.tmpdir()` is the per-user
-    // /var/folders/... directory, while the tooling that downloads a bundled
-    // shell usually unpacks it under the literal /tmp. Checking only one of
-    // them silently misses the shell on one of the two platforms.
-    ...globSync('/tmp/chromium/chrome-headless-shell/*/*/chrome-headless-shell').sort().reverse(),
-    ...globSync(`${tmpdir()}/chromium/chrome-headless-shell/*/*/chrome-headless-shell`).sort().reverse(),
-    '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome',
-    '/Applications/Chromium.app/Contents/MacOS/Chromium',
-    ...globSync(`${process.env.HOME ?? ''}/.cache/puppeteer/**/chrome-headless-shell`).sort().reverse(),
-  ]
-  return candidates.find(candidate => existsSync(candidate)) ?? null
-}
-
-/** Ask the OS for a free port: a fixed one collides with a leftover browser. */
-function freePort () {
-  return new Promise((resolve, reject) => {
-    const probe = createProbeServer()
-    probe.unref()
-    probe.on('error', reject)
-    probe.listen(0, '127.0.0.1', () => {
-      const address = probe.address()
-      const port = typeof address === 'object' && address !== null ? address.port : 0
-      probe.close(() => resolve(port))
-    })
-  })
 }
 
 const FFMPEG = findFfmpeg()
@@ -154,7 +122,6 @@ const server = createServer((req, res) => {
 })
 await new Promise(r => server.listen(0, '127.0.0.1', r))
 const port = server.address().port
-const cdpPort = await freePort()
 
 // The page runs the exact grab algorithm from CanvasWorkspace.grabVideoFrame.
 const pageHtml = `<!doctype html><html><body><script>
@@ -188,44 +155,13 @@ window.grab = async (url) => {
 </script></body></html>`
 const PAGE = pageHtml
 
-// A FRESH profile directory per run. A fixed path is what made this script fail
-// the second time it ran: the leftover profile (and its stale
-// `DevToolsActivePort`) is reused by the new Chrome, which then never listens on
-// the port we asked for, and the failure surfaces only as "CDP did not come up"
-// with no hint that a two-day-old directory was the cause.
-const PROFILE_DIR = mkdtempSync(path.join(tmpdir(), 'framegrab-profile-'))
+// A fresh profile per launch is not tidiness: Chrome reuses a leftover `DevToolsActivePort`
+// from an old profile and then listens on a port nobody is polling. The port itself is
+// assigned BY the browser and read back from that file, so a parallel run cannot steal it.
+const launched = await launchChrome({ chrome: CHROME, name: 'framegrab' })
+const browser = launched.browser
 
-const browser = spawn(CHROME, [
-  '--headless', '--disable-gpu', '--no-sandbox', '--remote-debugging-port=' + String(cdpPort),
-  `--user-data-dir=${PROFILE_DIR}`, 'about:blank',
-], { stdio: ['ignore', 'ignore', 'pipe'] })
-// Keep Chrome's own stderr so a launch failure can be reported instead of
-// guessed at. Capped: a healthy browser still writes a lot of noise.
-let browserLog = ''
-browser.stderr?.on('data', (chunk) => {
-  if (browserLog.length < 4_000) browserLog += String(chunk)
-})
-
-const cleanupProfile = () => { try { rmSync(PROFILE_DIR, { recursive: true, force: true }) } catch {} }
-
-const waitForCdp = async () => {
-  for (let i = 0; i < 60; i++) {
-    // A browser that already exited will never open the port; waiting the full
-    // 15s only delays the diagnosis.
-    if (browser.exitCode !== null) break
-    try {
-      const r = await fetch(`http://127.0.0.1:${cdpPort}/json/version`)
-      if (r.ok) return await r.json()
-    } catch {}
-    await new Promise(r => setTimeout(r, 250))
-  }
-  browser.kill()
-  cleanupProfile()
-  throw new Error(`CDP did not come up (chrome exitCode=${String(browser.exitCode)})\n${browserLog.trim() || '(no browser output)'}`)
-}
-const version = await waitForCdp()
-
-const target = await (await fetch(`http://127.0.0.1:${cdpPort}/json/new?${encodeURIComponent(`http://127.0.0.1:${port}/`)}`, { method: 'PUT' })).json()
+const target = await (await fetch(`http://127.0.0.1:${launched.port}/json/new?${encodeURIComponent(`http://127.0.0.1:${port}/`)}`, { method: 'PUT' })).json()
 const ws = new WebSocket(target.webSocketDebuggerUrl)
 await new Promise(r => { ws.onopen = r })
 let id = 0
@@ -245,8 +181,7 @@ const result = await send('Runtime.evaluate', {
   awaitPromise: true, returnByValue: true,
 })
 ws.close()
-browser.kill()
-cleanupProfile()
+launched.close()
 server.close()
 
 // Runtime.evaluate nests its payload: { id, result: { result: { value } } }.
