@@ -90,6 +90,17 @@ release process itself moving onto a machine that runs the gates.
   a separate job gated on a repository variable, and it probes for the package
   before the version — npm answers both "no such package" and "no such version"
   with E404, and only the second one is a normal publish.
+- **The browser launcher had never been committed.** `.gitignore` carried an
+  unanchored `lib/`, which matches `scripts/lib/` as well as the build output,
+  so `scripts/lib/headless-chrome.mjs` was excluded from the repository from the
+  day it was written. Three guard scripts import it: a clean clone died with
+  `ERR_MODULE_NOT_FOUND` before any suite could run, while the author's tree
+  stayed green because the file existed on exactly one disk. The first release
+  workflow is what surfaced it — `pnpm test` failed before `verify-pack` ran and
+  no tag was created. `.gitignore` now anchors the rule to `/lib/`, and
+  `scripts/verify-tracked.mjs` runs as the first step of `pnpm test`: every
+  relative import under `src/` and `scripts/` must name a file git tracks, and
+  no source file may be sitting in the tree untracked.
 - **`test:negative` was not running every case it defines.** The `canvas-video`
   runner was added for the gallery soft-delete case but never appended to the
   `test:negative` chain, so the case passed when invoked by hand and was absent
