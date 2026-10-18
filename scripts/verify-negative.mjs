@@ -32,7 +32,12 @@ const COPY = join(tmpdir(), `dsh-neg-verify-${process.pid}`)
 function freshCopy (needsGit = false) {
   rmSync(COPY, { recursive: true, force: true })
   mkdirSync(COPY, { recursive: true })
-  for (const entry of ['src', 'scripts', 'lib', 'package.json', 'tsdown.config.ts', '.gitignore']) {
+  // `.github` is here because `verify-pack.mjs` reads the publish job out of
+  // `release.yml` to check the read-back window. A copy without it makes that
+  // check throw ENOENT -- the harness reporting its own incompleteness as if
+  // it were the injected defect, which reads as "0/N defects turn the check
+  // red" and hides whether the mutation works at all.
+  for (const entry of ['src', 'scripts', 'lib', 'package.json', 'tsdown.config.ts', '.gitignore', '.github']) {
     cpSync(join(SRC, entry), join(COPY, entry), { recursive: true })
   }
   // `verify-pack.mjs` reads the packed manifest and requires every entry point
@@ -726,6 +731,19 @@ const CASES = [
     from: '  "files": [\n    "lib",\n    "src/templates",\n    "cordis.patch.yml",\n    "docs/releases",',
     to: '  "files": [\n    "src/templates",\n    "cordis.patch.yml",\n    "docs/releases",',
     expect: /exports\["\.\/client"\] -> lib\/client\.js \(not in the archive\)/,
+  },
+  {
+    // The publish job proves a publish worked by reading the version back. On
+    // 2026-10-18 that read lagged the write by 3m16s, so the shipped 60-second
+    // window failed a run whose publish had actually succeeded -- the worst
+    // shape of a false failure, because it points at credentials. Restoring
+    // the short window restores the defect.
+    name: 'the publish job gives the registry read less time than it takes',
+    runner: 'pack',
+    file: '.github/workflows/release.yml',
+    from: 'for attempt in $(seq 1 30); do',
+    to: 'for attempt in $(seq 1 6); do',
+    expect: /the publish visibility window is 60s \(6 x 10s\)/,
   },
   {
     // `lightningcss` returns CSS-module exports from a native hash map, so the

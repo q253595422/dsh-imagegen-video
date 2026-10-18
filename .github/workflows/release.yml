@@ -288,6 +288,7 @@ jobs:
           # being mistaken for "not published yet".
           if npm view "$package@$version" version --json --registry="$registry" >"$probe" 2>&1; then
             echo "$package@$version is already published; nothing to do."
+            we_published=false
           elif grep -q 'E404' "$probe"; then
             cat "$probe"
             # `packages=(dist/*.tgz)` is NOT a reliable count. With no match,
@@ -311,22 +312,38 @@ jobs:
               --tag latest \
               --ignore-scripts \
               --registry="$registry"
+            # Reaching this line means npm exited 0. Recorded here rather than
+            # inferred from a later read, because the later read is exactly the
+            # thing that lags.
+            we_published=true
           else
             cat "$probe"
             echo "::error::could not determine whether $package@$version exists; refusing to publish."
             exit 1
           fi
 
-          # The registry read path lags a successful write by a few seconds.
-          # Only the verification is retried; the publish itself never repeats.
-          for attempt in 1 2 3 4 5 6 7 8 9 10; do
+          # The registry read path lags a successful write. Only the
+          # verification is retried; the publish itself never repeats.
+          #
+          # Measured, not guessed: the 1.7.8 publish returned `+ pkg@1.7.8`
+          # with a provenance statement at 08:17:45Z, and the version did not
+          # become readable until 08:21:01Z -- 3m16s. A 60s window therefore
+          # reported a *successful* publish as a failure. The window is 5m,
+          # and when it still runs out the message says the publish succeeded
+          # and only the read lagged, so nobody is sent looking for an auth
+          # problem that is not there.
+          for attempt in $(seq 1 30); do
             if npm view "$package@$version" version --prefer-online --registry="$registry"; then
               npm view "$package" dist-tags --json --prefer-online --registry="$registry"
               echo "Verified on the registry: $package@$version"
               exit 0
             fi
-            echo "not visible yet (attempt $attempt); waiting 6s"
-            sleep 6
+            echo "not visible yet (attempt $attempt/30); waiting 10s"
+            sleep 10
           done
-          echo "::error::$package@$version was not visible on the registry after ~60s."
+          if [ "${we_published:-false}" = "true" ]; then
+            echo "::error::$package@$version was published and npm exited 0, but it is still not readable after ~5m. This is a registry read lag, not an auth failure -- check https://www.npmjs.com/package/$package/v/$version before changing anything here."
+          else
+            echo "::error::$package@$version was not visible on the registry after ~5m, and this run did not publish it."
+          fi
           exit 1

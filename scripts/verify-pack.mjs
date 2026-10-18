@@ -157,6 +157,42 @@ console.log(`pack: ${archiveName} (${sizeMiB} MiB) -- ${entries.size} entries, t
 console.log('pack: required entries present; every declared entry point resolves')
 console.log('pack: no docs/videos, no docs/images')
 
+// ---------------------------------------------------------------- publish lag
+// The publish job verifies the version it just pushed by reading it back. That
+// read lags the write by MINUTES, not seconds -- measured on this repository:
+// the 1.7.8 publish returned `+ pkg@1.7.8` with a provenance statement at
+// 08:17:45Z and the version was not readable until 08:21:01Z, so the original
+// 60-second window turned a successful publish into a red run. The guard here
+// is the window itself: it has to outlast the lag we actually observed.
+//
+// This is a source invariant, not a runtime one, which is why it lives here
+// rather than in a browser check: nothing at install time can observe it, and
+// the cost of getting it wrong is a false failure that sends someone hunting
+// for a credential problem.
+const workflow = readFileSync(join(ROOT, '.github/workflows/release.yml'), 'utf8')
+const windowLoop = /for attempt in \$\(seq 1 (\d+)\); do[\s\S]{0,400}?not visible yet \(attempt \$attempt\/\d+\); waiting (\d+)s/.exec(workflow)
+if (!windowLoop) {
+  fail([
+    '',
+    'FAIL: the npm publish job no longer has a bounded visibility loop.',
+    'It must retry the read-back and print the attempt count; without both, a',
+    'read lag is indistinguishable from a version that never published.',
+  ])
+}
+const [, attempts, interval] = windowLoop
+const windowSeconds = Number(attempts) * Number(interval)
+// 3m16s was observed once. Anything under four minutes would have failed that
+// same day, so the floor is the observation plus headroom, not a round number.
+if (windowSeconds < 240) {
+  fail([
+    '',
+    `FAIL: the publish visibility window is ${windowSeconds}s (${attempts} x ${interval}s).`,
+    'The registry read path lagged a successful publish by 3m16s on 2026-10-18.',
+    'A shorter window reports a publish that worked as a failed one.',
+  ])
+}
+console.log(`pack: publish visibility window is ${windowSeconds}s, past the 3m16s read lag measured on 1.7.8`)
+
 // Leave no archive behind in the working tree: the caller only wanted the
 // inspection, and a stray .tgz is what made older checks pick the wrong file.
 if (process.env.DSH_KEEP_ARCHIVE !== '1') rmSync(archivePath, { force: true })
