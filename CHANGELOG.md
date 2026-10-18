@@ -10,6 +10,61 @@ detail is in `git log 9305f9f..HEAD`.
 
 ## Releases
 
+### 1.8.0 — multi-reference editing, a template drawer, and honest wait states
+
+Four capabilities absorbed from upstream v1.8.0–v1.8.3, each ported file by file
+against our own tree (the two histories share no ancestor). Everything below is
+now this repository's code; the version number is ours.
+
+- **Image editing takes up to five reference images.** The first stays in
+  `image` and the rest travel in `images`, so a single-reference provider still
+  sees exactly one image and every existing request shape is unchanged. The
+  engine half of this was already present and byte-identical to upstream; what
+  was missing was the panel: the form held one `refImage`, so the protocol could
+  never be reached from the UI. It now holds a list, with multi-select, drag,
+  paste, per-image removal, a preview with arrow-key paging, and the documented
+  limits (5 images, 10 MiB each, 16 MiB total) enforced in one place
+  (`reference-images.ts`) rather than in each entry point.
+  A model whose adapter takes only one reference is refused **before** submit
+  with the count it does support, instead of sending a request the upstream
+  would silently trim; in compare mode the strictest target wins.
+- **The template library is a drawer, not a centred modal.** It docks to the
+  right edge at ~75% of the workspace, remembers its width in `localStorage`,
+  can be dragged from its left edge or expanded to the full workspace, goes
+  full-width on phones, searches across every library, and keeps the last 24
+  used templates for one-click reuse. A picked prompt can replace the composer
+  text or be appended to it. Two things upstream dropped were kept on purpose:
+  `favorites: null` still means "not loaded yet" (so a failed read shows an
+  unknown star and a retry, not a wall of un-favourited cards), and the shared
+  roving-tabindex helper still walks the source tabs.
+- **Waiting looks like waiting.** A bounded SVG dot field (475 dots, 130 in the
+  compact variant) driven purely by CSS `animation-delay` — no timers, no React
+  updates — replaces the single spinner. In a multi-model comparison each card
+  gets its own field and its **own** elapsed time from that task's `startedAt`,
+  so four models no longer share one misleading clock. Failures and cancellations
+  stop only their own card; `prefers-reduced-motion` drops the animation.
+- **Results are no longer cropped.** The result grid switched from `cover` to
+  `contain` with a zero-basis flex so a tall or wide image fits the space it has
+  instead of having its edges cut off. The ecommerce cards keep their `cover`
+  override — that rule is what stops a product shot from being letterboxed.
+
+Two deliberate departures from upstream:
+
+- **Desktop updates still explain themselves.** Upstream v1.8.2 restores
+  in-panel updates when the host exposes an install hook, and otherwise shows a
+  bare hint. We took the first half — `updateInstallTarget()` reports
+  `cli` / `host` / `host-managed`, and the `host` path installs the exact Release
+  tarball through the host and then verifies `application`, exit code, bundle
+  name and version, falling back to the installed manifest when an older host
+  omits the version (an unverifiable install is a failure, never a success) —
+  but kept `ManualUpdateRequiredError` for the managed case, because our panel
+  renders a copyable command from `details.tarballUrl` and a one-line hint would
+  lose that.
+- **One primary label in the template detail view.** Upstream renames the button
+  to "Replace" once the composer holds text. Ours says "Use this prompt" in both
+  cases and adds a separate "Add" button only when there is something to append
+  to, so the primary action never changes meaning under the user.
+
 ### 1.7.8 — the manifest stops claiming a package the host already provides
 
 One packaging correction, no behaviour change.

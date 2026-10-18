@@ -20,11 +20,14 @@ import { errorMessage, manualInstallCommand, tt } from './helpers.ts'
 import { renderMarkdown } from './markdown.tsx'
 import { openImageGenConfig } from './config-entry.tsx'
 import { TemplateLibrary } from './TemplateLibrary.tsx'
+import { ReferenceImages } from './ReferenceImages.tsx'
+import { editReferenceLimit, useEditReferences } from './reference-images.ts'
 import { GooeyNav } from './GooeyNav.tsx'
 import { InspirationGallery } from './InspirationGallery.tsx'
 import { CanvasWorkspace } from './CanvasWorkspace.tsx'
 import { ModelPicker, resolveModelChoice, type ModelPickerValue } from './ModelPicker.tsx'
 import { DiagnosticsButton, DiagnosticsPanel } from './DiagnosticsPanel.tsx'
+import { GenerationLoading } from './GenerationLoading.tsx'
 import { useImageGenLanguageTick } from './use-language.ts'
 import type { EcommerceRefRole, GenerateMode, GenerateRequest, GeneratedImage, GenerationTask, GenerationTaskStatus, GenerationTaskSummary, HistoryEntry, HistoryImageRef, ProductSetDraft, ProductSetSlot, UpdateInfo, VideoHistoryEntry, VideoTaskSummary } from '../protocol.ts'
 import { AGENT_IMAGE_API, SUBSCRIPTION_API, SUBSCRIPTION_PROVIDERS, type SubscriptionProvider } from '../protocol.ts'
@@ -200,6 +203,14 @@ function useSecretSet(scope: ImageGenScope, field: string): boolean {
   const [isSet, setIsSet] = useState(scope.getSecretSetSnapshot(field))
   useEffect(() => scope.subscribeSecretSets(() => { setIsSet(scope.getSecretSetSnapshot(field)) }), [field, scope])
   return isSet
+}
+
+/** Seconds one comparison task has been running, from its own start time.
+ *  A comparison board shows several tasks at once, so a single shared timer
+ *  would report the wrong duration for every card but the first. */
+function taskElapsedSeconds(task: GenerationTask): number {
+  const startedAt = task.startedAt ?? task.createdAt
+  return Math.max(1, Math.round((Date.now() - startedAt) / 1000))
 }
 
 /** Tick a seconds counter while `running`. */
@@ -800,13 +811,16 @@ export function ImageGenPanel(props: {
   const [compareEnabled, setCompareEnabled] = useState(false)
   /** Compare selections are `${channelId}\0${model}` so duplicate aliases stay distinct. */
   const [compareModels, setCompareModels] = useState<string[]>([])
-  const [refImage, setRefImage] = useState<{ dataUrl: string; name: string } | null>(null)
   const [images, setImages] = useState<GeneratedImage[]>([])
   const [addingToConversation, setAddingToConversation] = useState<number | string | null>(null)
   const [galleryConversationAddingId, setGalleryConversationAddingId] = useState<string | null>(null)
   const [historyConversationAddingId, setHistoryConversationAddingId] = useState<string | null>(null)
   const [conversationMessage, setConversationMessage] = useState<string | null>(null)
   const [error, setError] = useState<string | null>(null)
+  /** Session-only edit references: the first one is the primary `image`, the
+   *  rest travel as `images` (see GenerateRequest). Declared after `setError`
+   *  because the hook reports validation warnings through it. */
+  const refs = useEditReferences(setError)
   // Submission is brief; actual generation stays visible until the host
   // queue reports that every queued/running task has finished.
   const [submitting, setSubmitting] = useState(false)
@@ -928,7 +942,13 @@ export function ImageGenPanel(props: {
         .filter(group => group.models.length > 0)
     : modelGroups
   const modeModels = [...new Set(modeGroups.flatMap(group => group.models))]
-  const fileInput = useRef<HTMLInputElement>(null)
+  /** Current adapter's reference capacity. A one-image model with several
+   *  thumbnails loaded would otherwise fail only at submit time, so the panel
+   *  warns as soon as the mismatch exists. */
+  const editReferenceCapacity = editReferenceLimit(model, (config?.channels ?? []).find(channel => channel.id === modelChannelId))
+  const editLimitNotice = tab === 'edit' && refs.images.length > editReferenceCapacity
+    ? tt('edit.modelLimit', { count: editReferenceCapacity })
+    : null
   const previewStage = useRef<HTMLDivElement>(null)
   // The three overlays that claim `role="dialog"`; see useDialogFocus.
   const previewDialogRef = useRef<HTMLDivElement>(null)
@@ -1450,23 +1470,12 @@ export function ImageGenPanel(props: {
     }
   }
 
-  /** Read an uploaded reference image into a data URL. */
-  const acceptFile = (file: File | undefined): void => {
-    if (file === undefined) return
-    if (!file.type.startsWith('image/')) {
-      setError(tt('edit.uploadHint'))
-      return
-    }
-    if (file.size > REF_IMAGE_MAX_BYTES) {
-      setError(tt('edit.uploadHint'))
-      return
-    }
-    const reader = new FileReader()
-    reader.onload = () => {
-      if (typeof reader.result === 'string') setRefImage({ dataUrl: reader.result, name: file.name })
-    }
-    reader.onerror = () => { setError(tt('edit.uploadHint')) }
-    reader.readAsDataURL(file)
+  /** Read uploaded reference images into session-only data URLs. Validation
+   *  (type, 10 MiB each, 16 MiB total, 5 images) lives in useEditReferences so
+   *  the panel, the drop zone and paste all enforce the same limits. */
+  const acceptFiles = (files: Iterable<File> | ArrayLike<File> | undefined): void => {
+    if (files === undefined) return
+    refs.add(files)
   }
 
   /** Read uploaded product assets into session-only data-URL chips. Product
@@ -1518,10 +1527,11 @@ export function ImageGenPanel(props: {
       setError(tt('prompt.required'))
       return
     }
-    if (tab === 'edit' && refImage === null) {
+    if (tab === 'edit' && refs.images.length === 0) {
       setError(tt('edit.required'))
       return
     }
+    const primary = refs.images[0]
     const baseRequest: Omit<GenerateRequest, 'model' | 'channelId'> = {
       mode: tab === 'edit' ? 'edit' : 'text',
       prompt: promptText,
@@ -1529,8 +1539,9 @@ export function ImageGenPanel(props: {
       quality,
       n: count,
       detail,
-      ...tab === 'edit' && refImage !== null ? { image: refImage.dataUrl } : {},
-      ...tab === 'edit' && refImage !== null ? { refName: refImage.name } : {},
+      ...tab === 'edit' && primary !== undefined ? { image: primary.dataUrl } : {},
+      ...tab === 'edit' && refs.images.length > 1 ? { images: refs.images.slice(1).map(image => image.dataUrl) } : {},
+      ...tab === 'edit' && refs.images.length > 0 ? { refName: refs.images.map(image => image.name).join('、') } : {},
     }
     setError(null)
     setSubmitting(true)
@@ -1544,6 +1555,17 @@ export function ImageGenPanel(props: {
       if (!targetChoices.every(choice => channelReady(choice.channelId))) {
         openSettingsGuide('generation')
         return
+      }
+      // A model whose adapter takes one reference cannot silently drop the
+      // extras: say which limit applies instead of sending a request the
+      // upstream will ignore. In compare mode the strictest target wins.
+      if (tab === 'edit' && refs.images.length > 0) {
+        const limit = Math.min(...targetChoices.map(choice =>
+          editReferenceLimit(choice.model, (config?.channels ?? []).find(channel => channel.id === choice.channelId))))
+        if (refs.images.length > limit) {
+          setError(tt('edit.modelLimit', { count: limit }))
+          return
+        }
       }
       const comparisonId = targetChoices.length > 1 ? newComparisonId() : undefined
       const comparisonFields = comparisonId === undefined ? {} : { comparisonId, comparisonModels: targetChoices.map(choice => choice.model) }
@@ -1623,7 +1645,7 @@ export function ImageGenPanel(props: {
     setEcommerceRestored(null)
     setEcommerceAnchor(null)
     setEcommerceAssets([])
-    setRefImage(null)
+    refs.clear()
     setError(null)
   }
 
@@ -1925,7 +1947,7 @@ export function ImageGenPanel(props: {
   const startNewCreation = (): void => {
     openTab('text')
     setPrompt('')
-    setRefImage(null)
+    refs.clear()
     setImages([])
     setPreview(null)
     setPreviewScale(1)
@@ -1976,7 +1998,7 @@ export function ImageGenPanel(props: {
       size,
       quality,
       detail,
-      ...refImage !== null ? { refName: refImage.name } : {},
+      ...refs.images.length > 0 ? { refName: refs.images.map(image => image.name).join('、') } : {},
     }
     setGalleryAdding(true)
     try {
@@ -2467,9 +2489,12 @@ export function ImageGenPanel(props: {
   const addPreviewToEdit = (): void => {
     if (previewImage === null || preview === null) return
     openTab('edit')
-    setRefImage({
+    // Replacing rather than appending: "use this result as the edit source"
+    // must not silently accumulate earlier references behind the user's back.
+    refs.replace({
       dataUrl: srcOf(previewImage),
       name: `dsh-image-${preview.index + 1}.${extensionOf(previewImage.mime)}`,
+      bytes: Math.ceil(srcOf(previewImage).length * 3 / 4),
     })
     if (prompt.trim() === '' && previewImage.revisedPrompt !== undefined) setPrompt(previewImage.revisedPrompt)
     setError(null)
@@ -3138,47 +3163,13 @@ export function ImageGenPanel(props: {
 
             {isGeneration && tab === 'edit' ? (
               <section className={css.card}>
-                {refImage === null
-                  ? (
-                    <button
-                      type="button"
-                      className={css.uploadBox}
-                      onClick={() => { fileInput.current?.click() }}
-                      onDragOver={(event) => { event.preventDefault() }}
-                      onDrop={(event) => {
-                        event.preventDefault()
-                        acceptFile(event.dataTransfer.files?.[0])
-                      }}
-                    >
-                      <span className={css.uploadIcon}>
-                        <svg viewBox="0 0 16 16" width="18" height="18" fill="none" stroke="currentColor" strokeWidth="1.3" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M8 10.5V3"/><path d="M5 5.5l3-3 3 3"/><path d="M2.5 9v3.5h11V9"/></svg>
-                      </span>
-                      <span>{tt('edit.upload')}</span>
-                      <span className={css.uploadHint}>{tt('edit.uploadHint')}</span>
-                    </button>
-                  )
-                  : (
-                    <div className={css.reference}>
-                      <img className={css.referenceImage} src={refImage.dataUrl} alt={refImage.name} />
-                      <div className={css.referenceActions}>
-                        <Button variant="outline" size="sm" onClick={() => { fileInput.current?.click() }}>
-                          {tt('edit.change')}
-                        </Button>
-                        <Button variant="outline" size="sm" onClick={() => { setRefImage(null) }}>
-                          {tt('edit.remove')}
-                        </Button>
-                      </div>
-                    </div>
-                  )}
-                <input
-                  ref={fileInput}
-                  type="file"
-                  accept="image/png,image/jpeg,image/webp,image/gif"
-                  className={css.hiddenFile}
-                  onChange={(event) => {
-                    acceptFile(event.target.files?.[0])
-                    event.target.value = ''
-                  }}
+                <ReferenceImages
+                  images={refs.images}
+                  reading={refs.reading}
+                  onAdd={files => { refs.add(files) }}
+                  onRemove={refs.remove}
+                  onClear={refs.clear}
+                  notice={editLimitNotice}
                 />
               </section>
             ) : null}
@@ -3745,7 +3736,7 @@ export function ImageGenPanel(props: {
                   const taskImages = task.result?.images ?? []
                   const image = taskImages[0]
                   return (
-                    <article key={task.id}>
+                    <article key={task.id} data-comparison-task={task.id} data-task-status={task.status}>
                       <strong>{task.request.model}</strong>
                       {image !== undefined ? (
                         <button
@@ -3756,6 +3747,14 @@ export function ImageGenPanel(props: {
                         >
                           <img src={srcOf(image)} alt={task.request.model} />
                         </button>
+                      ) : task.status === 'queued' || task.status === 'running' ? (
+                        // Each model waits on its own task, so the elapsed time is
+                        // that task's real start, never the board's shared timer.
+                        <GenerationLoading
+                          compact
+                          title={task.status === 'queued' ? tt('canvas.queued') : tt('canvas.generating')}
+                          hint={tt('canvas.elapsed', { seconds: taskElapsedSeconds(task) })}
+                        />
                       ) : <span>{tt(`tasks.${task.status}` as never)}</span>}
                     </article>
                   )
@@ -3765,19 +3764,16 @@ export function ImageGenPanel(props: {
           ) : null}
           {generating && comparison === null && isGeneration ? (
             <div className={css.canvasState} data-generation-state={activeTask?.status ?? 'submitting'} role="status">
-              <span className={css.bigSpinner} />
-              <span className={css.canvasStateTitle}>
-                {submitting && activeTask === undefined
+              <GenerationLoading
+                title={submitting && activeTask === undefined
                   ? tt('canvas.submitting')
                   : activeTask?.status === 'queued'
                     ? tt('canvas.queued')
                     : tt('canvas.generating')}
-              </span>
-              <span className={css.canvasStateHint}>
-                {activeTask?.status === 'queued'
+                hint={activeTask?.status === 'queued'
                   ? tt('canvas.queueHint', { count: activeTasks.length })
                   : tt('canvas.elapsed', { seconds: elapsed })}
-              </span>
+              />
             </div>
           ) : null}
 
@@ -3922,6 +3918,8 @@ export function ImageGenPanel(props: {
       {libraryOpen ? (
         <TemplateLibrary
           api={api}
+          currentPrompt={prompt}
+          hasExistingPrompt={prompt.trim() !== ''}
           onClose={() => { setLibraryOpen(false) }}
           onUse={(text) => {
             openTab('text')

@@ -2712,14 +2712,17 @@ html[data-dsh-imagegen-chat-collapsed] [data-dsh-imagegen-chat-resizer] {
 
 .image {
   display: block;
-  flex: 1;
+  flex: 1 1 0;
+  min-width: 0;
   min-height: 0;
   width: 100%;
-  object-fit: cover;
+  height: 100%;
+  object-fit: contain;
   background: var(--dsw-alias-bg-base);
 }
 
 .imageCaption {
+  flex: none;
   padding: 7px 10px;
   font-size: 11px;
   line-height: 1.5;
@@ -3230,10 +3233,14 @@ html[data-dsh-imagegen-chat-collapsed] [data-dsh-imagegen-chat-resizer] {
 .galleryTagFilter:hover, .galleryTagFilter[data-active] { color: var(--dsw-alias-brand-primary); background: color-mix(in srgb, var(--dsw-alias-brand-primary) 10%, transparent); }
 .galleryFilterNote { margin: 20px 4px 0; color: var(--dsw-alias-label-quaternary); font-size: 11px; line-height: 1.5; }
 .galleryWorkspace { position: absolute; inset: 0; display: flex; width: 100%; height: 100%; min-width: 0; min-height: 0; flex-direction: column; overflow: hidden; padding: 22px 24px 26px; box-sizing: border-box; }
-.galleryToolbar { display: flex; align-items: center; justify-content: space-between; gap: 16px; flex: none; min-width: 0; margin-bottom: 18px; }
+.galleryToolbar { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 12px 16px; flex: none; min-width: 0; margin-bottom: 18px; }
+.galleryToolbar > div:first-child { flex: none; }
 .galleryHeading { display: inline; margin: 0; color: var(--dsw-alias-label-primary); font-size: 20px; font-weight: 700; }
 .galleryCount { margin-left: 8px; color: var(--dsw-alias-label-tertiary); font-size: 13px; }
-.galleryToolbarActions { display: flex; align-items: center; gap: 10px; min-width: 0; flex-wrap: wrap; }
+.galleryToolbarActions { display: flex; flex: 1 1 720px; align-items: center; justify-content: flex-end; gap: 10px; min-width: 0; max-width: 100%; flex-wrap: wrap; }
+.galleryToolbarActions > * { flex-shrink: 0; }
+.galleryToolbarActions .gallerySearch { flex: 0 1 170px; max-width: 100%; }
+.galleryToolbarActions .gallerySort { width: auto; min-width: 96px; min-height: 30px; }
 .gallerySelectMode, .galleryBulkButton, .gallerySelectionClear { min-height: 30px; padding: 0 10px; border: 1px solid var(--dsw-alias-border-l1); border-radius: 7px; color: var(--dsw-alias-label-secondary); background: var(--dsw-alias-bg-layer-1); cursor: pointer; font: inherit; font-size: 12px; }
 .gallerySelectMode:hover, .gallerySelectMode[data-active], .galleryBulkButton:hover:not(:disabled) { color: var(--dsw-alias-brand-primary); border-color: color-mix(in srgb, var(--dsw-alias-brand-primary) 38%, var(--dsw-alias-border-l1)); background: color-mix(in srgb, var(--dsw-alias-brand-primary) 11%, transparent); }
 .galleryBulkButton:disabled { cursor: not-allowed; opacity: .45; }
@@ -3262,12 +3269,15 @@ html[data-dsh-imagegen-chat-collapsed] [data-dsh-imagegen-chat-resizer] {
 .comparisonBoard > header strong { color: var(--dsw-alias-label-primary); font-size: 13px; }
 .comparisonBoard > header span { color: var(--dsw-alias-label-tertiary); font-size: 11px; }
 .comparisonBoard > header button { min-height: 28px; padding: 0 9px; border: 1px solid var(--dsw-alias-border-l1); border-radius: 5px; color: var(--dsw-alias-label-secondary); background: var(--dsw-alias-bg-layer-2); cursor: pointer; font: inherit; font-size: 11px; }
-.comparisonGrid { display: grid; flex: 1; min-height: 0; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); grid-template-rows: minmax(0, 1fr); gap: 12px; overflow: auto; padding: 12px; }
+.comparisonGrid { display: grid; flex: 1; min-height: 0; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); grid-template-rows: minmax(200px, 1fr); grid-auto-rows: minmax(200px, 1fr); gap: 12px; overflow: auto; padding: 12px; }
 .comparisonGrid article { display: flex; height: 100%; min-width: 0; min-height: 0; flex-direction: column; gap: 7px; }
 .comparisonGrid article > strong { color: var(--dsw-alias-label-primary); font-size: 12px; }
 .comparisonImageButton { display: flex; width: 100%; min-height: 0; flex: 1; padding: 0; overflow: hidden; border: 0; cursor: zoom-in; background: var(--dsw-alias-bg-base); }
 .comparisonImageButton:focus-visible { outline: 2px solid var(--dsw-alias-brand-primary); outline-offset: -2px; }
 .comparisonGrid article > span { display: grid; flex: 1; min-height: 0; place-items: center; color: var(--dsw-alias-label-tertiary); background: var(--dsw-alias-bg-layer-2); font-size: 12px; }
+/* A queued/running card keeps a visible stage for the dot wave even when the
+   board holds many models and the grid rows get squeezed. */
+.comparisonPending { display: flex; flex: 1; min-height: 160px; }
 .comparisonGrid img { display: block; width: 100%; height: 100%; min-height: 0; max-height: none; flex: 1; object-fit: contain; background: var(--dsw-alias-bg-base); }
 .comparisonFullscreen { position: fixed; z-index: var(--z-fullscreen); inset: 0; overflow: auto; padding: 54px 24px 24px; background: rgb(0 0 0 / 92%); }
 .comparisonFullscreenGrid { display: grid; min-height: 100%; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); align-items: start; gap: 18px; }
@@ -3338,7 +3348,7 @@ html[data-dsh-imagegen-chat-collapsed] [data-dsh-imagegen-chat-resizer] {
   .config[data-gallery='true'] { flex: none; }
   .canvas { min-height: 560px; }
   .galleryToolbar { align-items: flex-start; flex-direction: column; }
-  .galleryToolbarActions { width: 100%; flex-wrap: wrap; }
+  .galleryToolbarActions { width: 100%; flex-wrap: wrap; justify-content: flex-start; }
   .galleryMasonry { grid-template-columns: 1fr; }
 }
 

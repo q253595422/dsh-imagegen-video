@@ -8,7 +8,7 @@
 export const IMAGEGEN_SETTINGS_NAMESPACE = 'dsh-imagegen'
 
 /** Published package version shared by the host updater and the client UI. */
-export const PLUGIN_VERSION = '1.7.8'
+export const PLUGIN_VERSION = '1.8.0'
 
 /** Same-origin route family (loopback-only, mirroring the dsh-ssh fence). */
 export const SETTINGS_API = {
@@ -1529,6 +1529,15 @@ export interface UpdateInfo {
    * this URL. Absent when the release carries no archive.
    */
   tarballUrl?: string
+  /**
+   * How this host can install the update. `host` means the launcher performs the
+   * install itself; `host-managed` means only the user can (the CLI refuses that
+   * profile); `cli` is the historical `dsh plugin add` path. Absent from hosts
+   * that predate the host install hook.
+   */
+  installMode?: 'cli' | 'host' | 'host-managed'
+  /** Profile the update would be installed into, as the host resolved it. */
+  profile?: string
 }
 
 /** One history image reference as the browser consumes it (a served URL). */

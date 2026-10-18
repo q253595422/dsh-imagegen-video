@@ -1,11 +1,18 @@
 /** GitHub Release discovery and explicit, user-triggered plugin updates. */
 
 import { spawn, type ChildProcess } from 'node:child_process'
-import { PLUGIN_VERSION } from './protocol.ts'
+import { readFile } from 'node:fs/promises'
+import { join } from 'node:path'
+import { PLUGIN_VERSION, type UpdateInfo } from './protocol.ts'
+import { redactDiagnosticText } from './diagnostics-store.ts'
+export type { UpdateInfo } from './protocol.ts'
 
 /** Keep this in sync with package.json for each published release. */
 export const CURRENT_VERSION = PLUGIN_VERSION
 export const RELEASES_URL = 'https://api.github.com/repos/q253595422/dsh-imagegen-video/releases/latest'
+
+/** The one bundle this updater is allowed to report as installed. */
+export const PACKAGE_NAME = '@q253595422/dsh-imagegen-video'
 
 /**
  * Time budget for the release check, measured from the user's point of view:
@@ -28,22 +35,6 @@ const CACHE_TTL_MS = 15 * 60_000
  * update from parking a megabyte in the response.
  */
 const STDERR_LIMIT = 4_000
-
-export interface UpdateInfo {
-  currentVersion: string
-  latestVersion: string
-  updateAvailable: boolean
-  releaseUrl: string
-  publishedAt?: string
-  /** Markdown release body shown in the update popover. */
-  releaseNotes?: string
-  /**
-   * Download URL of the release's installable archive. This fork ships as a
-   * GitHub Release asset, not as an npm package, so installing an update means
-   * handing `dsh plugin add` this URL — there is no registry spec to resolve.
-   */
-  tarballUrl?: string
-}
 
 interface GitHubRelease {
   tag_name?: unknown
@@ -178,6 +169,50 @@ export async function checkForUpdate(fetchFn: typeof fetch = fetch, now = Date.n
 export const DESKTOP_PROFILE = 'desktop'
 
 /**
+ * What a newer launcher can report back after installing a bundle. Every field
+ * is optional: the host owns the package manager, so older launchers simply
+ * omit what they cannot tell us, and the caller verifies what it can.
+ */
+export interface HostUpdateResult {
+  /** `applied` / `restart-required` mean the bundle is on disk; anything else is not. */
+  application?: string
+  /** Package name the host actually installed. */
+  bundle?: string
+  /** Version the host reports as installed. Older launchers omit it. */
+  version?: string
+  error?: { code?: string; diagnostic?: string }
+  packageResult?: { exitCode?: number; output?: string; logPath?: string }
+}
+
+/**
+ * Launcher-owned facts the host entry can supply. Absent on every launcher that
+ * predates the install hook, which is why nothing here is required: without
+ * `installBundle` the updater keeps its own argv/env probing and its CLI path.
+ */
+export interface UpdateHostContext {
+  profile?: string
+  /** Absolute profile directory, used to read the installed manifest when the
+   *  host result omits the version. */
+  profileDir?: string
+  /** The live host owns package-manager selection, locking and activation. The
+   *  result is `unknown` on purpose: it arrives from the launcher, so every field
+   *  is validated before it is believed. */
+  installBundle?: (tarballUrl: string, options?: { saveExact?: boolean }) => Promise<unknown>
+}
+
+/** How an update can be installed for the profile this process runs under. */
+export interface UpdateInstallTarget {
+  profile: string
+  /**
+   * `host` — the launcher installs the bundle itself;
+   * `host-managed` — a Desktop profile with no install hook, so only the user
+   * can install it (the CLI refuses the profile);
+   * `cli` — spawn `dsh plugin add`.
+   */
+  installMode: 'cli' | 'host' | 'host-managed'
+}
+
+/**
  * Resolve the profile that launched the current DSH process.
  *
  * The Electron host passes the profile as a bare *path* among its argv entries
@@ -223,6 +258,26 @@ export class ManualUpdateRequiredError extends Error {
 }
 
 /**
+ * Decide how this profile can be updated.
+ *
+ * Host capability comes first: when the launcher exposes `installBundle` it owns
+ * the package manager and the update runs through it, even on Desktop. Only a
+ * Desktop profile *without* that hook falls back to `host-managed` — the CLI
+ * refuses the profile outright, so the user has to install the archive by hand.
+ * Everything else keeps the historical `dsh plugin add` path.
+ */
+export function updateInstallTarget(
+  argv: readonly string[] = process.argv,
+  env: NodeJS.ProcessEnv = process.env,
+  host: UpdateHostContext = {},
+): UpdateInstallTarget {
+  const hostProfile = host.profile?.trim()
+  const profile = hostProfile !== undefined && /^[a-zA-Z0-9_-]+$/.test(hostProfile) ? hostProfile : profileFromProcess(argv, env)
+  if (typeof host.installBundle === 'function') return { profile, installMode: 'host' }
+  return { profile, installMode: profile.toLowerCase() === DESKTOP_PROFILE ? 'host-managed' : 'cli' }
+}
+
+/**
  * Run the same official command documented for plugin installation, but point
  * it at this fork's release archive.
  *
@@ -230,6 +285,10 @@ export class ManualUpdateRequiredError extends Error {
  * a GitHub Release asset and is not on npm, so a registry spec would resolve to
  * nothing. The route has just fetched the latest release, so resolving the URL
  * through `checkForUpdate` is a cache hit, not a second request.
+ *
+ * `host` is the launcher's install hook when it has one; without it the update
+ * either spawns the CLI or refuses a Desktop profile with
+ * `ManualUpdateRequiredError`.
  */
 export async function installUpdate(
   version: string,
@@ -237,6 +296,7 @@ export async function installUpdate(
   argv: readonly string[] = process.argv,
   env: NodeJS.ProcessEnv = process.env,
   fetchFn: typeof fetch = fetch,
+  host: UpdateHostContext = {},
 ): Promise<void> {
   if (!/^\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?$/.test(version)) {
     throw new Error('invalid update version')
@@ -249,12 +309,16 @@ export async function installUpdate(
   if (!isInstallableTarballUrl(tarballUrl)) {
     throw new Error(`release ${release.latestVersion} points at an untrusted download host`)
   }
-  const profile = profileFromProcess(argv, env)
+  const { profile, installMode } = updateInstallTarget(argv, env, host)
+  if (installMode === 'host') {
+    await installThroughHost(version, profile, tarballUrl, host)
+    return
+  }
   // DSH Desktop's profile is locked by the CLI, with exit code 1 and one line on
   // stderr. Spawning it anyway produced a bare "update failed" with no cause —
   // the exact dead end upstream issue #41 describes. Fail here instead, with a
   // routable reason and the URL the user can install by hand.
-  if (profile.toLowerCase() === DESKTOP_PROFILE) {
+  if (installMode === 'host-managed') {
     throw new ManualUpdateRequiredError(profile, tarballUrl)
   }
   const command = process.platform === 'win32' ? 'dsh.cmd' : 'dsh'
@@ -281,6 +345,75 @@ export async function installUpdate(
       reject(new Error(reason === '' ? base : `${base}: ${reason}`))
     })
   })
+}
+
+/**
+ * Install the release archive through the launcher's own package manager.
+ *
+ * The host reports what it did, but nothing here trusts that report: an update
+ * that silently installed a different bundle or version would leave the running
+ * plugin claiming to be current while the disk says otherwise, so every field
+ * that can be checked is checked, and an unverifiable result is a failure rather
+ * than a success. Older launchers omit `version`; their installed manifest is
+ * read instead, and when neither is available the update fails.
+ */
+async function installThroughHost(
+  version: string,
+  profile: string,
+  tarballUrl: string,
+  host: UpdateHostContext,
+): Promise<void> {
+  const install = host.installBundle
+  if (install === undefined) throw new Error('DSH does not provide a plugin install hook')
+  const fail = (message: string): Error => {
+    const tail = redactDiagnosticText(message.replace(/\x1b\[[0-9;]*m/g, ''), STDERR_LIMIT)
+    return new Error(`DSH could not install the update for profile "${profile}": ${tail}`)
+  }
+  let result: HostUpdateResult
+  try {
+    const raw: unknown = await install(tarballUrl, { saveExact: true })
+    if (raw === null || typeof raw !== 'object') throw new Error('DSH returned an invalid installation result')
+    result = raw as HostUpdateResult
+  } catch (caught) {
+    throw fail(caught instanceof Error ? caught.message : String(caught))
+  }
+  const output = typeof result.packageResult?.output === 'string' ? result.packageResult.output.trim() : ''
+  const detail = [
+    result.error?.code === undefined ? '' : `(${result.error.code})`,
+    result.error?.diagnostic ?? '',
+    output === '' ? '' : output.split('\n').slice(-3).join(' | '),
+    result.packageResult?.logPath === undefined ? '' : `diagnostics: ${result.packageResult.logPath}`,
+  ].filter(part => part !== '').join(' ')
+  if (result.error !== undefined) throw fail(`DSH reported ${result.error.code ?? 'an error'}${detail === '' ? '' : `: ${detail}`}`)
+  if (result.application !== 'applied' && result.application !== 'restart-required') {
+    throw fail(`DSH reported application "${result.application ?? 'unknown'}"${detail === '' ? '' : `: ${detail}`}`)
+  }
+  const exitCode = result.packageResult?.exitCode
+  if (exitCode !== undefined && exitCode !== 0) throw fail(`the package manager exited with code ${exitCode}${detail === '' ? '' : `: ${detail}`}`)
+  if (result.bundle !== undefined && result.bundle !== PACKAGE_NAME) {
+    throw fail(`DSH installed an unexpected bundle "${result.bundle}"`)
+  }
+  let installedVersion = typeof result.version === 'string' ? result.version : undefined
+  if (installedVersion === undefined && host.profileDir !== undefined) {
+    installedVersion = await installedManifestVersion(host.profileDir)
+  }
+  if (installedVersion !== version) {
+    throw fail(`DSH installed version ${installedVersion ?? 'unknown'}; expected ${version}`)
+  }
+}
+
+/** Read the version this plugin's own manifest records in a profile, if any. */
+async function installedManifestVersion(profileDir: string): Promise<string | undefined> {
+  const manifestPath = join(profileDir, 'node_modules', '@q253595422', 'dsh-imagegen-video', 'package.json')
+  try {
+    const manifest = JSON.parse(await readFile(manifestPath, 'utf8')) as { name?: unknown; version?: unknown }
+    if (manifest.name !== PACKAGE_NAME || typeof manifest.version !== 'string') return undefined
+    return manifest.version
+  } catch {
+    // A missing or unreadable manifest is "no evidence", not a crash: the caller
+    // turns it into a version-mismatch failure.
+    return undefined
+  }
 }
 
 /** Test helper: clear the host-side Release cache. */

@@ -17,24 +17,73 @@
   z-index: var(--z-modal-backdrop);
   display: flex;
   align-items: center;
-  justify-content: center;
-  padding: 28px;
+  /* The library docks to the right edge of the workspace instead of covering
+   * it: the form it feeds stays visible while browsing. */
+  justify-content: flex-end;
+  padding: 0;
   background: var(--dsw-alias-bg-mask-1);
   color: var(--dsw-alias-label-primary);
   font-family: var(--dsw-font-family);
 }
 
 .shell {
+  position: relative;
   display: flex;
   flex-direction: column;
-  width: min(1180px, 100%);
+  /* The width is a percentage of the overlay, so the floor has to be a
+   * percentage of it too -- a fixed 620px floor would overflow a narrow
+   * workspace and push the resize handle off screen. */
+  min-width: min(560px, 100%);
   height: 100%;
   max-height: 100%;
-  overflow: hidden;
+  /* Visible, not hidden: the resize handle hangs 5px past the left edge. */
+  overflow: visible;
   border: 1px solid var(--dsw-alias-border-l1);
-  border-radius: 14px;
+  border-radius: 18px 0 0 18px;
   background: var(--dsw-alias-bg-base);
   box-shadow: 0 18px 60px rgba(0, 0, 0, 0.28);
+  transition: width 0.18s ease;
+}
+
+/* Dragging writes a new width on every pointermove; the transition would lag
+ * the pointer and make the edge feel rubbery. */
+.shell[data-resizing] {
+  transition: none;
+  user-select: none;
+}
+
+.shell[data-fullscreen] {
+  border-radius: 0;
+  transition: none;
+}
+
+/* Grab strip just outside the shell's left edge. */
+.resizeHandle {
+  position: absolute;
+  /* Above the shell's own children, below the modal scale it rides in. */
+  z-index: var(--z-content);
+  left: -5px;
+  top: 0;
+  bottom: 0;
+  width: 10px;
+  cursor: ew-resize;
+  touch-action: none;
+}
+
+.resizeHandle::after {
+  content: '';
+  position: absolute;
+  top: 45%;
+  bottom: 45%;
+  left: 4px;
+  width: 3px;
+  border-radius: 2px;
+  background: var(--dsw-alias-border-l1);
+}
+
+.resizeHandle:hover::after,
+.resizeHandle:focus-visible::after {
+  background: var(--dsw-alias-brand-primary);
 }
 
 /* --- header ------------------------------------------------------------ */
@@ -159,6 +208,36 @@
   color: var(--dsw-alias-label-secondary);
 }
 
+/* --- view tabs (browse / favorites / recents) ----------------------------- */
+
+.viewTabs {
+  display: flex;
+  gap: 18px;
+  padding: 10px 18px 12px;
+  flex: none;
+}
+
+.viewTab {
+  padding: 5px 0;
+  border: none;
+  border-bottom: 2px solid transparent;
+  background: transparent;
+  color: var(--dsw-alias-label-tertiary);
+  font-size: 13px;
+  font-weight: 500;
+  font-family: inherit;
+  cursor: pointer;
+}
+
+.viewTab:hover {
+  color: var(--dsw-alias-label-primary);
+}
+
+.viewTab[data-active] {
+  color: var(--dsw-alias-label-primary);
+  border-bottom-color: currentColor;
+}
+
 /* --- toolbar ----------------------------------------------------------- */
 
 .toolbar {
@@ -169,7 +248,36 @@
   flex: none;
 }
 
+/* The scope picker sits beside the search box; both must be allowed to shrink,
+ * or the select pushes the input past the drawer's edge. */
+.searchRow {
+  display: flex;
+  gap: 10px;
+  min-width: 0;
+}
+
+.searchScope {
+  flex: none;
+  max-width: 42%;
+  height: 34px;
+  padding: 0 10px;
+  border: 1px solid var(--dsw-alias-border-l1);
+  border-radius: 9px;
+  background: var(--dsw-alias-bg-layer-1);
+  color: var(--dsw-alias-label-secondary);
+  font-size: 12px;
+  font-family: inherit;
+  cursor: pointer;
+}
+
+.searchScope:focus-visible {
+  outline: 2px solid var(--dsw-alias-brand-primary);
+  outline-offset: 2px;
+}
+
 .search {
+  flex: 1;
+  min-width: 0;
   width: 100%;
   height: 34px;
   padding: 0 12px;
@@ -256,8 +364,7 @@
 
 .spinner {
   width: 26px;
-  height: 26px;
-  border: 2px solid var(--dsw-alias-border-l2);
+  height: 26px;  border: 2px solid var(--dsw-alias-border-l2);
   border-top-color: var(--dsw-alias-brand-primary);
   border-radius: 50%;
   animation: dsh-imagegen-templates-spin 0.9s linear infinite;
@@ -265,6 +372,21 @@
 
 @keyframes dsh-imagegen-templates-spin {
   to { transform: rotate(360deg); }
+}
+
+/* A failed library while another one is loaded: the message has to stay
+ * visible without replacing the cards the user can still pick from. */
+.partialError {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 12px;
+  padding: 10px 12px;
+  border: 1px solid var(--dsw-alias-border-l1);
+  border-radius: 9px;
+  background: var(--dsw-alias-bg-layer-1);
+  color: var(--dsw-alias-label-secondary);
+  font-size: 12px;
 }
 
 .favoriteGroups {
@@ -601,5 +723,128 @@
   .detail {
     grid-template-columns: 1fr;
     grid-template-rows: minmax(0, 3fr) minmax(0, 4fr);
+  }
+}
+
+/* --- floating entry ----------------------------------------------------- */
+
+/* Pinned to the right edge of the active studio, vertically centred, so the
+ * library is reachable from every tab without a toolbar slot. */
+.floatingEntry {
+  position: absolute;
+  right: 24px;
+  top: 50%;
+  transform: translateY(-50%);
+  z-index: var(--z-topbar);
+  display: inline-flex;
+  align-items: center;
+  gap: 9px;
+  padding: 12px 18px;
+  border: 1px solid var(--dsw-alias-border-l1);
+  border-radius: 999px;
+  background: var(--dsw-alias-bg-base);
+  color: var(--dsw-alias-label-primary);
+  box-shadow: 0 4px 20px rgba(0, 0, 0, 0.12);
+  font-family: inherit;
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: background 0.15s ease, border-color 0.15s ease;
+}
+
+.floatingEntry:hover {
+  background: var(--dsw-alias-bg-layer-1);
+  border-color: var(--dsw-alias-brand-primary);
+}
+
+.floatingEntry:focus-visible {
+  outline: 2px solid var(--dsw-alias-brand-primary);
+  outline-offset: 3px;
+}
+
+/* --- phone --------------------------------------------------------------- */
+
+@media (max-width: 760px) {
+  /* A phone has no room for a partial drawer: it takes the whole workspace and
+   * the drag strip is meaningless, so it goes away entirely. */
+  .shell {
+    width: 100% !important;
+    min-width: 0;
+    border-radius: 0;
+  }
+
+  .resizeHandle {
+    display: none;
+  }
+
+  .header {
+    flex-wrap: wrap;
+    gap: 8px;
+    padding: 12px;
+  }
+
+  .heading {
+    flex-wrap: wrap;
+    gap: 4px 10px;
+  }
+
+  .headerActions {
+    margin-left: auto;
+  }
+
+  .sourceTabs {
+    padding: 0 12px 10px;
+  }
+
+  .sourceTab {
+    padding: 0 10px;
+  }
+
+  .toolbar,
+  .viewTabs {
+    padding-left: 12px;
+    padding-right: 12px;
+  }
+
+  /* Two fixed columns instead of `auto-fill` with a 180px floor: on a 360px
+   * screen that floor yields ONE column with a huge card, not a gallery. */
+  .grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 10px;
+  }
+
+  .body,
+  .footer {
+    padding-left: 12px;
+    padding-right: 12px;
+  }
+
+  .footer {
+    flex-wrap: wrap;
+  }
+
+  .detailOverlay {
+    padding: 12px;
+  }
+
+  .detail {
+    height: 100%;
+  }
+
+  .detailActions {
+    gap: 6px;
+  }
+
+  .floatingEntry {
+    right: 16px;
+    padding: 11px 15px;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .shell,
+  .card,
+  .floatingEntry {
+    transition: none;
   }
 }

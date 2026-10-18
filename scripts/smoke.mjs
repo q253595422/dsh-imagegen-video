@@ -5485,7 +5485,9 @@ await check('E1 client apply mounts the sidebar entry and studio (jsdom)', async
     assert.ok(templateCard !== undefined, 'template card rendered')
     templateCard.click()
     await new Promise(resolve => setTimeout(resolve, 50))
-    const useTemplate = [...libraryModal.querySelectorAll('button')]
+    // The detail view is a portal on document.body, not a child of the drawer.
+    const detailButtons = [...jsdomDocument.querySelectorAll('[data-template-detail] button')]
+    const useTemplate = detailButtons
       .find(button => button.textContent?.includes('使用此提示词'))
     assert.ok(useTemplate !== undefined, 'use-template action rendered')
     useTemplate.click()

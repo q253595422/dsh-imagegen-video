@@ -1,0 +1,77 @@
+/** Compact edit-reference thumbnails; the generation form owns the images. */
+import { useEffect, useRef, useState } from 'react'
+import { createPortal } from 'react-dom'
+import { Plus, X, ChevronLeft, ChevronRight, ImagePlus } from 'lucide-react'
+import { tt } from './helpers.ts'
+import { clipboardImageFiles, EDIT_REFERENCE_LIMIT, type EditReference } from './reference-images.ts'
+import css from './reference-images.module.css'
+
+export function ReferenceImages(props: {
+  images: EditReference[]
+  reading: boolean
+  onAdd: (files: File[]) => void
+  onRemove: (id: string) => void
+  onClear: () => void
+  notice?: string | null
+}) {
+  const input = useRef<HTMLInputElement>(null)
+  const dialog = useRef<HTMLElement>(null)
+  const previousFocus = useRef<HTMLElement | null>(null)
+  const [previewId, setPreviewId] = useState<string | null>(null)
+  const index = props.images.findIndex(image => image.id === previewId)
+  const preview = props.images[index]
+  const close = (): void => { setPreviewId(null) }
+  const move = (delta: number): void => { const next = props.images[(index + delta + props.images.length) % props.images.length]; if (next) setPreviewId(next.id) }
+
+  useEffect(() => {
+    if (!preview) return
+    dialog.current?.focus()
+    const keyboard = (event: KeyboardEvent): void => {
+      if (event.key === 'Escape' || event.key === 'ArrowLeft' || event.key === 'ArrowRight') {
+        event.preventDefault(); event.stopImmediatePropagation()
+        if (event.key === 'Escape') close()
+        else move(event.key === 'ArrowLeft' ? -1 : 1)
+      }
+      if (event.key === 'Tab') {
+        const buttons = [...(dialog.current?.querySelectorAll<HTMLButtonElement>('button:not(:disabled)') ?? [])]
+        const first = buttons[0], last = buttons[buttons.length - 1]
+        if (event.shiftKey && (document.activeElement === first || document.activeElement === dialog.current)) { event.preventDefault(); last?.focus() }
+        else if (!event.shiftKey && (document.activeElement === last || document.activeElement === dialog.current)) { event.preventDefault(); first?.focus() }
+      }
+    }
+    window.addEventListener('keydown', keyboard, true)
+    return () => window.removeEventListener('keydown', keyboard, true)
+  }, [previewId, props.images])
+  const previewOpen = preview !== undefined
+  useEffect(() => {
+    if (!previewOpen) return
+    return () => { if (previousFocus.current?.isConnected) previousFocus.current.focus() }
+  }, [previewOpen])
+
+  return <>
+    <section className={css.root} data-edit-references="" aria-label={tt('edit.references')} tabIndex={0}
+      onDragOver={event => { event.preventDefault(); event.stopPropagation() }}
+      onDrop={event => { event.preventDefault(); event.stopPropagation(); props.onAdd(Array.from(event.dataTransfer.files)) }}
+      onPaste={event => { const files = clipboardImageFiles(event.clipboardData); if (files.length > 0) { event.preventDefault(); event.stopPropagation(); props.onAdd(files) } }}>
+      <header className={css.header}><strong>{tt('edit.references')}</strong><span className={css.count} aria-live="polite">{tt('edit.addedCount', { count: props.images.length })}</span><button type="button" className={css.clear} disabled={props.images.length === 0 && !props.reading} onClick={props.onClear}>{tt('edit.clearAll')}</button></header>
+      {props.images.length === 0 ? <button type="button" className={css.empty} onClick={() => input.current?.click()}><ImagePlus size={22} aria-hidden="true" /><span>{tt('edit.uploadMultiple')}</span></button> : <div className={css.grid}>
+        {props.images.map((image, index) => <div className={css.item} key={image.id} data-edit-reference="">
+          <button type="button" className={css.thumbnail} aria-label={tt('edit.previewReference', { index: index + 1, name: image.name })} title={image.name} onClick={() => { previousFocus.current = document.activeElement as HTMLElement; setPreviewId(image.id) }}><img src={image.dataUrl} alt={image.name} /><span className={css.number}>{index + 1}</span></button>
+          <button type="button" className={css.remove} aria-label={tt('edit.removeReference', { index: index + 1, name: image.name })} onClick={() => props.onRemove(image.id)}><X size={12} aria-hidden="true" /></button>
+        </div>)}
+        {props.images.length < EDIT_REFERENCE_LIMIT ? <button type="button" className={css.add} aria-label={tt('edit.addMore')} onClick={() => input.current?.click()}><Plus size={19} aria-hidden="true" /><span>{tt('edit.add')}</span></button> : null}
+      </div>}
+      <p className={css.hint} role={props.reading ? 'status' : undefined}>{props.reading ? tt('edit.reading') : tt('edit.multiHint')}</p>
+      <p className={css.limits}>{tt('edit.limits', { count: EDIT_REFERENCE_LIMIT })}</p>
+      {props.notice ? <p className={css.notice} role="status">{props.notice}</p> : null}
+      <input ref={input} className={css.file} type="file" multiple accept="image/png,image/jpeg,image/webp,image/gif" aria-label={tt('edit.uploadMultiple')} onChange={event => { props.onAdd(Array.from(event.target.files ?? [])); event.target.value = '' }} />
+    </section>
+    {preview ? createPortal(<div className={css.overlay} data-edit-reference-preview="" onClick={close} onKeyDown={event => event.stopPropagation()}>
+      <section ref={dialog} className={css.preview} tabIndex={-1} role="dialog" aria-modal="true" aria-label={tt('edit.referencePreview')} onClick={event => event.stopPropagation()}>
+        <header className={css.previewHeader}><span>{index + 1} / {props.images.length} · {preview.name}</span><button type="button" className={css.close} aria-label={tt('preview.close')} onClick={close}><X size={19} /></button></header>
+        <img className={css.previewImage} src={preview.dataUrl} alt={preview.name} />
+        {props.images.length > 1 ? <footer className={css.previewFooter}><button type="button" className={css.close} aria-label={tt('edit.previousReference')} onClick={() => move(-1)}><ChevronLeft size={20} /></button><span>{index + 1} / {props.images.length}</span><button type="button" className={css.close} aria-label={tt('edit.nextReference')} onClick={() => move(1)}><ChevronRight size={20} /></button></footer> : null}
+      </section>
+    </div>, document.body) : null}
+  </>
+}
