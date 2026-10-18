@@ -40,6 +40,24 @@ import { join } from 'node:path'
 import assert from 'node:assert/strict'
 
 const results = []
+
+/**
+ * Uncaught errors raised inside jsdom callbacks, captured where jsdom reports
+ * them.
+ *
+ * This suite drives React inside jsdom, and jsdom does NOT rethrow a callback
+ * error into Node: `reportException` hands it to the window’s virtual console
+ * as a `jsdomError`. With no virtual console configured, that goes to stderr and
+ * the process still exits 0 -- which is exactly how a body observer firing after
+ * the globals were gone (`ReferenceError: window is not defined`, once per
+ * pending observer) printed four stack traces and still produced a green suite.
+ * A `process.on('uncaughtException')` listener never sees these, so the console
+ * is the only place that can.
+ */
+const domErrors = []
+const collectedConsole = new (await import('jsdom')).VirtualConsole()
+collectedConsole.on('jsdomError', (error) => { domErrors.push(error) })
+
 /** Run one check; async-aware and sequential so nothing races the servers. */
 async function check(name, fn, timeoutMs = 60_000) {
   // Progress goes to stderr so a hung check is identifiable from the log alone
@@ -272,7 +290,7 @@ await check('W1-W3 a finished studio clip lands a referenced node and states are
     + '</div>'
     + '</div>'
     + '</body></html>',
-    { pretendToBeVisual: true },
+    { pretendToBeVisual: true, virtualConsole: collectedConsole },
   )
   const jsdomWindow = dom.window
   const jsdomDocument = jsdomWindow.document
@@ -723,16 +741,29 @@ await check('W1-W3 a finished studio clip lands a referenced node and states are
     // `finally` here: closing the window now would unmount the canvas the
     // compose checks still drive.
     cleanups.push(async () => {
-      // Drain pending React work BEFORE restoring the globals. React DOM reads
-      // `window` during commit, so a flush that lands after the jsdom globals
-      // are gone throws "window is not defined" even though every assertion
-      // passed.
+      // Order here is the whole bug. jsdom notifies mutation observers from a
+      // MICROTASK (`queueMutationObserverMicrotask` -> `Promise.resolve().then`
+      // -> `notifyMutationObservers`), not synchronously. Both the plugin
+      // (`mount.tsx` keeps one on document.body) and React DOM itself keep
+      // observers on that document. The old teardown deleted the globals FIRST
+      // and closed the window LAST, so every callback that the close queued ran
+      // after `globalThis.window` was gone: the plugin's `sync` called
+      // `setState`, React's `getCurrentEventPriority` read `window`, and threw
+      // `ReferenceError: window is not defined` -- after all assertions had
+      // passed, so the suite stayed green and the error only ever appeared as
+      // stderr noise.
+      //
+      // Closing while the globals are still the jsdom ones is not enough on
+      // its own: `close()` only QUEUES the notifications. The macrotask below
+      // drains that microtask queue while `window` still resolves, and only
+      // then are the globals restored.
+      await new Promise(resolve => setTimeout(resolve, 25))
+      dom.window.close()
       await new Promise(resolve => setTimeout(resolve, 25))
       if (previousWindow === undefined) delete globalThis.window
       else globalThis.window = previousWindow
       if (previousDocument === undefined) delete globalThis.document
       else globalThis.document = previousDocument
-      dom.window.close()
     })
   const react = await import('react')
   const jsxRuntime = await import('react/jsx-runtime')
@@ -2062,6 +2093,17 @@ await check('E7 a video node whose clip is gone says so, and can be reloaded', a
 })
 
 for (const cleanup of cleanups.reverse()) await cleanup()
+
+// The teardown is where the observer notifications actually land: `close()` only
+// queues them. Anything that escaped a callback is counted here rather than in
+// whatever check happened to be running.
+if (domErrors.length > 0) {
+  results.push(`FAIL  ${domErrors.length} error(s) escaped into the jsdom console: ${domErrors[0].detail?.message ?? domErrors[0].message}`)
+  for (const error of domErrors.slice(1)) results.push(`      also: ${error.detail?.message ?? error.message}`)
+  process.exitCode = 1
+} else {
+  results.push('PASS  the jsdom console stayed quiet: no observer fired after the globals were restored')
+}
 
 console.log('GALLERY CHECKS OK')
 console.log('LINEAGE CHECKS OK')

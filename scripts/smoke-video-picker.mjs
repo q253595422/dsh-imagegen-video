@@ -51,6 +51,20 @@ import { readFileSync } from 'node:fs'
 import assert from 'node:assert/strict'
 
 const results = []
+
+/**
+ * Errors jsdom reports from callbacks, which never reach the awaiting check.
+ *
+ * jsdom hands a throwing mutation-observer callback to the window virtual
+ * console as a 'jsdomError'; with no console configured it prints to stderr
+ * and the process still exits 0. That is how a body observer firing after the
+ * jsdom globals were already restored ('window is not defined') produced a
+ * green run with stack traces in the log. This collector owns them and the
+ * teardown below fails the run if any arrived.
+ */
+const domErrors = []
+const collectedConsole = new (await import('jsdom')).VirtualConsole()
+collectedConsole.on('jsdomError', (error) => { domErrors.push(error) })
 /** Run one check; sequential so nothing races the shared React tree. */
 async function check(name, fn, timeoutMs = 30_000) {
   // Progress goes to stderr so a hung check is identifiable from the log alone
@@ -150,7 +164,7 @@ await check('C1 the dock menu offers 添加视频 and the picker opens with thre
     + '</div>'
     + '</div>'
     + '</body></html>',
-    { pretendToBeVisual: true },
+    { pretendToBeVisual: true, virtualConsole: collectedConsole },
   )
   const jsdomWindow = dom.window
   const jsdomDocument = jsdomWindow.document
@@ -323,15 +337,19 @@ await check('C1 the dock menu offers 添加视频 and the picker opens with thre
   // The panel owns poll timers and the tree outlives every check, so teardown is
   // deferred to the end of the file rather than a `finally` here.
   cleanups.push(async () => {
-    // Drain pending React work BEFORE restoring the globals: React DOM reads
-    // `window` during commit, so a flush that lands after the jsdom globals are
-    // gone throws "window is not defined".
+    // Same ordering bug as smoke-canvas-video.mjs, and the same fix: jsdom
+    // notifies mutation observers from a microtask, so `close()` only QUEUES
+    // them. Deleting the globals before the queue drained made the plugin's
+    // body observer call `setState` with no `window` in scope, and React's
+    // `getCurrentEventPriority` threw per callback. Drain first, close while
+    // the globals are still the jsdom ones, drain again, then restore.
+    await new Promise(resolve => setTimeout(resolve, 25))
+    dom.window.close()
     await new Promise(resolve => setTimeout(resolve, 25))
     if (previousWindow === undefined) delete globalThis.window
     else globalThis.window = previousWindow
     if (previousDocument === undefined) delete globalThis.document
     else globalThis.document = previousDocument
-    dom.window.close()
   })
 
   const react = await import('react')
@@ -733,6 +751,14 @@ await check('C10 a failing history must not suppress the gallery empty state', a
 })
 
 for (const cleanup of cleanups.reverse()) await cleanup()
+
+if (domErrors.length > 0) {
+  results.push(`FAIL  ${domErrors.length} error(s) escaped into the jsdom console: ${domErrors[0].detail?.message ?? domErrors[0].message}`)
+  for (const error of domErrors.slice(1)) results.push(`      also: ${error.detail?.message ?? error.message}`)
+  process.exitCode = 1
+} else {
+  results.push('PASS  the jsdom console stayed quiet: no observer fired after the globals were restored')
+}
 
 console.log(results.join('\n'))
 console.log(process.exitCode === 1 ? '\nVIDEO PICKER SMOKE FAILED' : '\nVIDEO PICKER SMOKE OK')

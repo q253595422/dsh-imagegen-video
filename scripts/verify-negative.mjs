@@ -179,6 +179,29 @@ const CASES = [
     to: "    const target = entries.find(entry => entry.id === id)\n    if (target !== undefined && isLiveEntry(target)) target.deletedAt = Date.now()\n    if (target !== undefined) await removeEntryFiles(target)\n    await writeIndex(entries)\n    return entries.map(toWire)",
     expect: /soft delete keeps the clip bytes/,
   },
+  // --------------------------------------------- the jsdom teardown ordering
+  {
+    // The bug this round was about, restored verbatim: `ReferenceError: window
+    // is not defined` printed four times while the suite still reported green.
+    // jsdom notifies mutation observers from a MICROTASK, so the old teardown --
+    // delete the globals, then `close()` -- ran every queued callback with no
+    // `window` in scope. Both halves are needed to reproduce it: closing last
+    // (this edit) without the collector would only print to stderr again, so
+    // this case is also the proof that the virtual-console collector is wiring
+    // the error into `results` instead of letting it escape as noise.
+    name: 'the jsdom globals are torn down before the observers are drained',
+    runner: 'canvas-video',
+    file: 'scripts/smoke-canvas-video.mjs',
+    from: [
+      '      await new Promise(resolve => setTimeout(resolve, 25))\n      dom.window.close()\n      await new Promise(resolve => setTimeout(resolve, 25))\n',
+      '      else globalThis.document = previousDocument\n    })',
+    ],
+    to: [
+      '      await new Promise(resolve => setTimeout(resolve, 25))\n',
+      '      else globalThis.document = previousDocument\n      dom.window.close()\n    })',
+    ],
+    expect: /escaped into the jsdom console: window is not defined/,
+  },
   // ------------------------------------------------------ the update chain
   {
     // Writing the wrong profile into the CLI call is what made the Desktop
