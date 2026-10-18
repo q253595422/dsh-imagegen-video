@@ -65,6 +65,17 @@ Two deliberate departures from upstream:
   cases and adds a separate "Add" button only when there is something to append
   to, so the primary action never changes meaning under the user.
 
+One gate added after 1.8.0 shipped:
+
+- **A version bump without its notes is now a failure.** This release reached
+  the Release page without `docs/releases/v1.8.0.md`, so `release.yml` fell back
+  to GitHub's auto-generated "Full Changelog: <compare link>" line — a ::warning
+  in a log nobody reads — and the tag froze that one-line page the moment it was
+  created. `verify-pack.mjs` now requires `docs/releases/v<version>.md` to exist
+  and to be inside the archive (it is in `files`), which runs in CI before
+  anything is packed. Two negative cases prove the assertion: bumping `version`
+  with no notes file, and dropping `docs/releases` from `files`.
+
 ### 1.7.8 — the manifest stops claiming a package the host already provides
 
 One packaging correction, no behaviour change.

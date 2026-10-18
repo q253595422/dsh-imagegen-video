@@ -131,6 +131,37 @@ if (present.length > 0) {
   ])
 }
 
+// ------------------------------------------------------------- release notes
+// `release.yml` uses `docs/releases/<tag>.md` as the Release body and falls back
+// to GitHub's auto-generated "Full Changelog: <compare link>" line when the file
+// is absent -- printing only a ::warning nobody reads. v1.8.0 shipped that way,
+// so the page for a release with four user-visible features described none of
+// them, and the tag froze that page the moment it was created. A version bump
+// without its notes sheet is therefore a failure here, before anything is
+// packed, rather than a warning after the release exists.
+//
+// The second half is about the archive, not the Release: `docs/releases` is in
+// `files`, so a tarball that cannot carry its own notes means the manifest
+// drifted from the convention that every release has one.
+const notesEntry = `docs/releases/v${pkg.version}.md`
+if (!existsSync(join(ROOT, notesEntry))) {
+  fail([
+    '',
+    `FAIL: version ${pkg.version} has no release notes (${notesEntry}).`,
+    'release.yml would publish this version with GitHub\'s one-line compare link',
+    'as its entire body, and only a warning to say so. Write the notes first:',
+    'they are the only place the user-visible changes of a version are explained.',
+  ])
+}
+if (!entries.has(`package/${notesEntry}`)) {
+  fail([
+    '',
+    `FAIL: the archive does not contain ${notesEntry}, although \`files\` lists docs/releases.`,
+    'Every release ships its own notes; an archive without them means the',
+    'manifest and the repository no longer agree on what a release contains.',
+  ])
+}
+
 // The archive's own manifest is authoritative: `files` may be edited and the
 // packing happens from the tree, so what the manifest promises and what got
 // packed can disagree. Read the copy INSIDE the archive, not the one on disk.

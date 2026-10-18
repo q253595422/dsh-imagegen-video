@@ -756,6 +756,29 @@ const CASES = [
     expect: /exports\["\.\/client"\] -> lib\/client\.js \(not in the archive\)/,
   },
   {
+    // v1.8.0 shipped without `docs/releases/v1.8.0.md`, and the fallback in
+    // release.yml published the version with GitHub's one-line compare link as
+    // its entire body. A version bump that has no notes is exactly the state
+    // that produced it: the tag freezes that page the moment it is created.
+    name: 'a version bump ships without a release note',
+    runner: 'pack',
+    file: 'package.json',
+    from: '  "version": "1.8.0",',
+    to: '  "version": "1.8.1",',
+    expect: /version 1\.8\.1 has no release notes/,
+  },
+  {
+    // The other half: the notes exist on disk but the archive leaves them out.
+    // `files` lists docs/releases, so this is the manifest drifting from the
+    // convention that every release carries its own notes.
+    name: 'the archive stops carrying the release notes it declares',
+    runner: 'pack',
+    file: 'package.json',
+    from: '  "files": [\n    "lib",\n    "src/templates",\n    "cordis.patch.yml",\n    "docs/releases",',
+    to: '  "files": [\n    "lib",\n    "src/templates",\n    "cordis.patch.yml",',
+    expect: /does not contain docs\/releases\/v1\.8\.0\.md/,
+  },
+  {
     // The publish job proves a publish worked by reading the version back. On
     // 2026-10-18 that read lagged the write by 3m16s, so the shipped 60-second
     // window failed a run whose publish had actually succeeded -- the worst
