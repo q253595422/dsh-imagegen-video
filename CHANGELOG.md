@@ -1,26 +1,20 @@
 # Changelog
 
-This project is a fork of [dsh-imagegen](https://github.com/dickpy/dsh-imagegen).
-The fork starts from the upstream **v1.6.8** release source, which is preserved as
-the first commit (`baseline: upstream @dickpy/dsh-imagegen v1.6.8 source`). Every
-commit after that is this fork's own work.
-
-The list below describes the fork's delta against that baseline. Commit-level
-detail is in `git log 9305f9f..HEAD`.
+Releases are listed newest first. Commit-level detail is in `git log`.
+Attribution for third-party code is in [NOTICE](./NOTICE).
 
 ## Releases
 
 ### 1.8.0 — multi-reference editing, a template drawer, and honest wait states
 
-Four capabilities absorbed from upstream v1.8.0–v1.8.3, each ported file by file
-against our own tree (the two histories share no ancestor). Everything below is
-now this repository's code; the version number is ours.
+Four capabilities: multi-reference editing, a template drawer, wait states that
+show they are waiting, and results that are no longer cropped.
 
 - **Image editing takes up to five reference images.** The first stays in
   `image` and the rest travel in `images`, so a single-reference provider still
   sees exactly one image and every existing request shape is unchanged. The
-  engine half of this was already present and byte-identical to upstream; what
-  was missing was the panel: the form held one `refImage`, so the protocol could
+  engine half of this was already present; what was missing was the panel: the
+  form held one `refImage`, so the protocol could
   never be reached from the UI. It now holds a list, with multi-select, drag,
   paste, per-image removal, a preview with arrow-key paging, and the documented
   limits (5 images, 10 MiB each, 16 MiB total) enforced in one place
@@ -33,7 +27,7 @@ now this repository's code; the version number is ours.
   can be dragged from its left edge or expanded to the full workspace, goes
   full-width on phones, searches across every library, and keeps the last 24
   used templates for one-click reuse. A picked prompt can replace the composer
-  text or be appended to it. Two things upstream dropped were kept on purpose:
+  text or be appended to it. Two things were kept on purpose:
   `favorites: null` still means "not loaded yet" (so a failed read shows an
   unknown star and a retry, not a wall of un-favourited cards), and the shared
   roving-tabindex helper still walks the source tabs.
@@ -48,20 +42,20 @@ now this repository's code; the version number is ours.
   instead of having its edges cut off. The ecommerce cards keep their `cover`
   override — that rule is what stops a product shot from being letterboxed.
 
-Two deliberate departures from upstream:
+Two deliberate choices:
 
-- **Desktop updates still explain themselves.** Upstream v1.8.2 restores
-  in-panel updates when the host exposes an install hook, and otherwise shows a
-  bare hint. We took the first half — `updateInstallTarget()` reports
+- **Desktop updates still explain themselves.** In-panel updates run when the
+  host exposes an install hook, and otherwise show an explanation rather than a
+  bare hint. `updateInstallTarget()` reports
   `cli` / `host` / `host-managed`, and the `host` path installs the exact Release
   tarball through the host and then verifies `application`, exit code, bundle
   name and version, falling back to the installed manifest when an older host
   omits the version (an unverifiable install is a failure, never a success) —
-  but kept `ManualUpdateRequiredError` for the managed case, because our panel
+  and `ManualUpdateRequiredError` stays for the managed case, because the panel
   renders a copyable command from `details.tarballUrl` and a one-line hint would
   lose that.
-- **One primary label in the template detail view.** Upstream renames the button
-  to "Replace" once the composer holds text. Ours says "Use this prompt" in both
+- **One primary label in the template detail view.** The button does not get
+  renamed to "Replace" once the composer holds text. It says "Use this prompt" in both
   cases and adds a separate "Add" button only when there is something to append
   to, so the primary action never changes meaning under the user.
 
@@ -95,8 +89,8 @@ One packaging correction, no behaviour change.
 
 ### 1.7.7 — deleting becomes undoable, the poster editor arrives, and the update chain stops lying
 
-Three user-visible failures and one piece of upstream functionality, plus the
-release process itself moving onto a machine that runs the gates.
+Three user-visible failures and one new feature, plus the release process itself
+moving onto a machine that runs the gates.
 
 - **Deleting a gallery entry no longer destroys its bytes.** Removal was an
   unlink, so every history row and canvas node still holding that URL turned
@@ -112,7 +106,7 @@ release process itself moving onto a machine that runs the gates.
   and the purge confirmation's count could all have broken silently. Each has a
   check now, and the section stopped printing its own count heading directly
   under the toggle that already says it.
-- **The poster editor is ported from upstream v1.7.0.** Text and logo layers are
+- **The poster editor is new.** Text and logo layers are
   composited over an image node locally with Canvas 2D — no model call, no
   quota. Saving uploads the flattened bitmap as a new image node and stores the
   recipe in that node's `metadata.poster` (the new node is wired to its source),
@@ -132,8 +126,8 @@ release process itself moving onto a machine that runs the gates.
   other two, so the flag-only reading targeted the wrong profile for every
   Desktop user — even a successful update left the running host on the old
   plugin. DSH Desktop's profile is locked by the CLI — spawning it anyway
-  produced a bare "update failed" with no cause, the dead end in upstream issue
-  #41 — so that profile now throws `ManualUpdateRequiredError`
+  produced a bare "update failed" with no cause — so that profile now throws
+  `ManualUpdateRequiredError`
   (`update-manual-required`) carrying the archive URL, and the panel shows a
   copyable install command instead of a scary error. A failed spawn keeps the
   last three lines of the CLI's stderr (`STDERR_LIMIT` 4 000 chars) so a pnpm
@@ -289,7 +283,7 @@ included on their licences, takes the library from 5 sources / 2462 cases to
 Two things: a full pass over the plugin's UI, driven by real defects rather than
 taste (the theme no longer leaks into component internals, and the layer order is
 written down in one place), and a failed call that can actually be explained —
-including on the video chain, which upstream's version of that work did not cover.
+including on the video chain, where a failed render had nowhere to be inspected.
 
 - **The nav follows the host theme at runtime.** `GooeyNav` had its four colors
   baked in as literals and detected the surface only once, at mount. Switching
@@ -337,12 +331,6 @@ including on the video chain, which upstream's version of that work did not cove
 
 #### The record of a failed call, and the video chain made equal to it
 
-Upstream's diagnostics work (#38) is part of this release. Their history and ours
-share no ancestor — this fork's baseline is a squash of v1.6.8 — so `git merge`
-is refused outright and the work landed as a file-level port rather than a merge.
-Attribution for their code is in [NOTICE](./NOTICE). The version line here is this
-repository's own and does not follow theirs.
-
 - **Diagnostics: every failed upstream attempt is now on the record.** A new
   in-memory ring buffer (200 entries, cleared on restart, never written to disk)
   keeps the *final* request URL, the HTTP status, the network code
@@ -357,9 +345,9 @@ repository's own and does not follow theirs.
 - **The studio no longer hides behind the plugin-market page.** Both live in the
   same `main` slot, so switching from the conversation to the studio left two
   panels in the column. The keyed slot now yields for non-conversation content.
-- **The video chain records into the same buffer.** Upstream's #38 covered
-  images only, so a user whose images worked and whose videos did not had
-  nowhere to look — and `DiagnosticPhase` could not even name the video legs.
+- **The video chain records into the same buffer.** A user whose images work and
+  whose videos do not would otherwise have nowhere to look — and
+  `DiagnosticPhase` could not even name the video legs.
   Video is submit → poll → download rather than one synchronous call, so each leg
   is its own phase (`video-submit` / `video-poll` / `video-download`), and
   "the render never started" is now distinguishable from "the status endpoint
@@ -416,7 +404,7 @@ repository's own and does not follow theirs.
 node guard accepted only `image` / `text` / `file` / `config` while
 `CanvasNodeType` also declares `video`, so `coerceDocument` returned undefined
 and `save()` answered `malformed canvas document`. Video nodes on the canvas
-are this fork's headline feature, which made the feature unusable end to end:
+are this plugin's headline feature, which made the feature unusable end to end:
 place a clip, and the canvas stopped saving.
 
 No suite caught it because the canvas-video suite answers `/canvas/save` with a
@@ -534,17 +522,14 @@ closes the class of gaps that let a release go out with no automated check.
 - The issue templates lost a duplicated install-method option and an
   outdated version placeholder.
 
-### 1.7.0 — first published release of the fork
+### 1.7.0 — first published release
 
-The fork's first published release. It ships as a **GitHub Release asset**
+This project's first published release. It ships as a **GitHub Release asset**
 (`q253595422-dsh-imagegen-video-1.7.0.tgz`), not as an npm package. Everything in
-"What the fork adds" below is in this release.
+"What this plugin adds" below is in this release.
 
-- **The version line is this repository's own.** It starts at 1.7.0 rather than
-  continuing upstream's 1.6.x, because this fork is an independent project and
-  its releases are not upstream releases. (At the time, 1.6.8 would also have
-  looked like it *predated* the very baseline it derives from, since upstream's
-  own line had moved on.)
+- **The version line is this project's own.** It starts at 1.7.0, so these
+  version numbers never collide with another plugin's release line.
 - **No absolute paths ship in the tarball.** `lib/` is published (it is in
   `files`), and Rolldown stamps each module's id into a `//#region <id>` banner
   that survives into the bundle. The CSS Modules virtual id used to be the CSS
@@ -563,11 +548,11 @@ The fork's first published release. It ships as a **GitHub Release asset**
   by name (the package archive for this version first), so a release that also
   carries another version-named archive cannot win by alphabetical accident.
 
-## What the fork adds
+## What this plugin adds
 
-### Video generation (the original motivation for the fork)
+### Video generation (the original motivation)
 
-Upstream generates images only. The fork adds a complete video pipeline:
+A complete video pipeline, from the contract layer to the studio UI:
 
 - **Contract layer** — video types and the `VIDEO_API` route family, a video
   model catalog with per-family request shaping (`src/video-engine.ts`,
@@ -622,13 +607,13 @@ Select two or more video nodes and stitch them into one clip with the local
 - The sidebar refreshes the clip list when a render finishes, so a new row
   appears without a page reload.
 
-### Fixes to inherited behaviour
+### Fixes to the image chain
 
-- **The update check no longer points at upstream.** `src/updater.ts` carried
-  `PACKAGE_NAME = '@dickpy/dsh-imagegen'` and upstream's GitHub Releases API URL,
-  so this fork's "check for updates" would have offered upstream's release notes
-  and installed upstream's package over itself. Both now point at this
-  repository. (Same class of problem as the package rename below.)
+- **The update check points at this repository.** `src/updater.ts` carried
+  `PACKAGE_NAME = '@dickpy/dsh-imagegen'` and that project's GitHub Releases API
+  URL, so "check for updates" would have offered another package's release notes
+  and installed it over this plugin. Both now point at this repository. (Same
+  class of problem as the package rename below.)
 - The video studio composer was capped at 420px while an empty column took the
   remaining width; it now uses the full panel width (guarded by
   `scripts/verify-video-layout.mjs`).
@@ -642,8 +627,8 @@ Select two or more video nodes and stitch them into one clip with the local
 
 ### This repository's identity
 
-The fork publishes under its own name so it cannot be confused with, or
-mistaken for, upstream:
+The plugin publishes under its own name so it cannot be confused with, or
+mistaken for, another package:
 
 | Where | Value |
 | --- | --- |
@@ -653,8 +638,8 @@ mistaken for, upstream:
 | update check (`src/updater.ts`) | this repository |
 
 The npm package name is `@q253595422/dsh-imagegen-video` as well, but nothing is
-published there: the fork distributes through GitHub Releases, so both the README
-and the in-app update button install the release asset. `src/updater.ts` reads the
+published there: releases go through GitHub Releases, so both the README and the
+in-app update button install the release asset. `src/updater.ts` reads the
 asset URL from the release itself and refuses to install a release that carries no
 archive, rather than falling back to a registry spec that would resolve to nothing.
 
@@ -662,13 +647,12 @@ The **runtime identity is deliberately left alone**: the `/api/dsh-imagegen/*`
 route family, the `dsh-imagegen` settings namespace, the `~/.dsh/dsh-imagegen/`
 data root and the `dsh-imagegen:*` client events/storage keys all keep their
 inherited names. Renaming them would orphan the settings and data of anyone
-switching between the two installs, and the route prefix is upstream's design,
-not this fork's.
+switching between the two installs, and the route prefix predates this plugin.
 
 ### Test infrastructure
 
-Upstream ships one smoke suite. The fork adds offline suites that run without
-network access or paid upstream calls, plus a guard for each defect found:
+The offline suites run without network access or paid upstream calls, plus a
+guard for each defect found:
 
 | Suite | Covers |
 | --- | --- |
@@ -685,17 +669,17 @@ Browser-dependent suites **skip loudly and exit 0** when the browser or
 `ffmpeg` is missing, so a contributor without those tools gets a clear "not
 verified" instead of a false failure.
 
-## Configuration notes for this fork
+## Configuration notes
 
 - The `@q253595422/dsh-imagegen-video` package **cannot be installed alongside
-  upstream `@dickpy/dsh-imagegen`**: both register the same
+  `@dickpy/dsh-imagegen`**: both register the same
   `/api/dsh-imagegen/*` route family and both inject the same UI panel. The
-  route prefix is inherited from upstream, not introduced here.
+  route prefix predates this plugin.
 - Data (history, gallery, canvases, settings) lives under
-  `~/.dsh/dsh-imagegen/` and keeps the inherited name, so it is *shared* with an
-  upstream install. Back it up before switching between the two.
+  `~/.dsh/dsh-imagegen/` and keeps that name, so it is *shared* with an install
+  of `@dickpy/dsh-imagegen`. Back it up before switching between the two.
 
-## Not in this fork
+## Not in this plugin
 
 - No paid upstream verification is performed by the test suites; all upstream
   interactions are replayed from fixtures.

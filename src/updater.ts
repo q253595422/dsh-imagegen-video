@@ -279,9 +279,9 @@ export function updateInstallTarget(
 
 /**
  * Run the same official command documented for plugin installation, but point
- * it at this fork's release archive.
+ * it at this plugin's release archive.
  *
- * There is deliberately no `PACKAGE_NAME@version` spec here: this fork ships as
+ * There is deliberately no `PACKAGE_NAME@version` spec here: this plugin ships as
  * a GitHub Release asset and is not on npm, so a registry spec would resolve to
  * nothing. The route has just fetched the latest release, so resolving the URL
  * through `checkForUpdate` is a cache hit, not a second request.

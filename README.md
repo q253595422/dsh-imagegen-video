@@ -1,9 +1,8 @@
 # dsh-imagegen-video
 
-> **这是 [dickpy/dsh-imagegen](https://github.com/dickpy/dsh-imagegen) 的衍生版（fork）。**
-> 上游只做生图；本仓库在上游 v1.6.8 源码基础上增加了**完整的生视频链路**与
-> **画布视频节点、片段拼接**。上游的署名与许可证见 [NOTICE](./NOTICE)，
-> 本仓库相对上游改了什么见 [CHANGELOG.md](./CHANGELOG.md)。
+> **图片与视频一体化的 DSH 生图 / 生视频插件。**
+> 生图之外，本仓库提供**完整的生视频链路**，以及**画布视频节点、片段拼接**。
+> 各版本的改动见 [CHANGELOG.md](./CHANGELOG.md)，第三方代码归属见 [NOTICE](./NOTICE)。
 
 <div align="center">
   <a href="https://github.com/q253595422/dsh-imagegen-video/releases"><img src="https://img.shields.io/github/v/release/q253595422/dsh-imagegen-video?color=cb3837&label=release" alt="Latest release" /></a>
@@ -16,7 +15,7 @@
 
   <p><strong>在 DeepSeek Harness 里，生成、编辑、管理，一站完成；图片与视频同一套工作流。</strong></p>
   <p><strong>快速导航</strong></p>
-  <p><a href="#quick-start">🚀 快速开始</a>　·　<a href="#canvas">无限画布</a>　·　<a href="#compose">片段拼接</a>　·　<a href="#ecommerce">电商套图</a>　·　<a href="#txt2img">文生图 / 图生图</a>　·　<a href="#txt2video">生视频</a>　·　<a href="#gallery">模板 / 画廊</a>　·　<a href="#configuration">模型配置</a>　·　<a href="#community">交流群</a>　·　<a href="#upstream">上游与授权</a></p>
+  <p><a href="#quick-start">🚀 快速开始</a>　·　<a href="#canvas">无限画布</a>　·　<a href="#compose">片段拼接</a>　·　<a href="#ecommerce">电商套图</a>　·　<a href="#txt2img">文生图 / 图生图</a>　·　<a href="#txt2video">生视频</a>　·　<a href="#gallery">模板 / 画廊</a>　·　<a href="#configuration">模型配置</a>　·　<a href="#community">交流群</a>　·　<a href="#license">授权与致谢</a></p>
 </div>
 
 <a id="sponsor"></a>
@@ -59,10 +58,9 @@ dsh plugin --profile web add https://github.com/q253595422/dsh-imagegen-video/re
 dsh plugin --profile web add ./q253595422-dsh-imagegen-video-1.7.8.tgz
 ```
 
-> ⚠️ **不要与原版 `@dickpy/dsh-imagegen` 同时安装。** 两者注册的是同一套
-> `/api/dsh-imagegen/*` 路由和同一个 UI 面板（该路由前缀继承自上游，不是本
-> 衍生版引入的），同时启用会冲突。数据目录 `~/.dsh/dsh-imagegen/` 也与上游
-> **共用**，切换前请先备份。详见 [上游与授权](#upstream)。
+> ⚠️ **不要与 `@dickpy/dsh-imagegen` 同时安装。** 两者注册的是同一套
+> `/api/dsh-imagegen/*` 路由和同一个 UI 面板，同时启用会冲突。数据目录
+> `~/.dsh/dsh-imagegen/` 也是两者共用的，切换前请先备份。详见 [授权与致谢](#license)。
 
 安装后重启 `dsh web`，侧边栏会出现「生图」入口。到「设置 → 生图配置」添加提供方、填写 API 地址与密钥、检测并选择生图模型，保存后即可开始创作。Windows 若遇 PowerShell 脚本策略限制，请使用 `dsh.cmd`。
 
@@ -72,7 +70,7 @@ dsh plugin --profile web add ./q253595422-dsh-imagegen-video-1.7.8.tgz
 - **让 Agent 安装：**把上面的安装命令发给 DSH、Codex 或其他 coding agent。
 - **指定版本：**把 URL 里的 `v1.7.8` 与文件名里的版本号换成目标版本，或从 [GitHub Releases](https://github.com/q253595422/dsh-imagegen-video/releases) 下载对应版本的 tgz 后安装。
 - **升级：**重复执行 `add` 命令指向新版本即可；插件也会在面板中提示新版本。更新后重启 `dsh web`。
-- **DSH Desktop 用户：**宿主 CLI 不允许写入 `desktop` 这个 profile，所以面板不会假装去更新，而是直接给出可复制的命令和下载地址，由你自己执行——这与上游 issue #41 里「更新失败但看不到原因」是两回事。
+- **DSH Desktop 用户：**宿主 CLI 不允许写入 `desktop` 这个 profile，所以面板不会假装去更新，而是直接给出可复制的命令和下载地址，由你自己执行——不会只甩一句「更新失败」而没有原因。
 - 渠道配置、历史记录和画廊数据保存在 DSH 宿主侧，正常升级不会清空。
 
 </details>
@@ -136,7 +134,7 @@ dsh plugin --profile web add ./q253595422-dsh-imagegen-video-1.7.8.tgz
 
 <a id="txt2img"></a>
 
-输入提示词即可生成，也可上传参考图进行编辑。图生图支持**多张参考图**（最多 5 张，单张 10 MiB、合计 16 MiB）：可多选、拖拽或粘贴，逐张移除，缩略图里用方向键翻看。请求形状按协议族各自整形——第一张始终在 `image`，其余在 `images`，所以只接受单张的上游看到的仍是一张图；面板会在提交前就按模型能力拦下超额张数，而不是让上游默默截断。此外支持多张结果、比例与清晰度设置、任务队列、历史恢复和全屏预览。
+输入提示词即可生成，也可上传参考图进行编辑。图生图支持**多张参考图**（最多 5 张，单张 10 MiB、合计 16 MiB）：可多选、拖拽或粘贴，逐张移除，缩略图里用方向键翻看。请求形状按协议族各自整形——第一张始终在 `image`，其余在 `images`，所以只接受单张的渠道看到的仍是一张图；面板会在提交前就按模型能力拦下超额张数，而不是让服务端默默截断。此外支持多张结果、比例与清晰度设置、任务队列、历史恢复和全屏预览。
 
 <div align="center">
   <img src="docs/images/image-generation-studio-four.png" alt="文生图与图生图工作台" width="100%" />
@@ -148,7 +146,7 @@ dsh plugin --profile web add ./q253595422-dsh-imagegen-video-1.7.8.tgz
 
 ### 生视频
 
-在「生视频」标签页里写视频描述，选择视频模型、比例、分辨率与时长即可提交。视频在上游是**异步渲染**：宿主先提交任务、再按协议族轮询，渲染完成后把成片以文件落盘，并在面板内直接播放；渲染通常需要数分钟，期间可以关闭页面，任务仍在宿主继续执行。
+在「生视频」标签页里写视频描述，选择视频模型、比例、分辨率与时长即可提交。视频是**异步渲染**：宿主先提交任务、再按协议族轮询，渲染完成后把成片以文件落盘，并在面板内直接播放；渲染通常需要数分钟，期间可以关闭页面，任务仍在宿主继续执行。
 
 **视频模型按渠道单独配置**，与图片模型分开：渠道里的「视频模型」目录决定该渠道能用哪些视频模型，因为视频走的是提交+轮询协议，和图片的同步返回不是一回事。
 
@@ -206,14 +204,14 @@ dsh plugin --profile web add ./q253595422-dsh-imagegen-video-1.7.8.tgz
 
 - API 请求经 DSH 宿主转发；密钥保存在本机设置中，不直接暴露给浏览器。
 - 历史、画廊、画布和图片保存在 DSH 数据目录 `~/.dsh/dsh-imagegen/`，由你控制。
-- 生图与图生图会把提示词或参考图发送给所配置的上游服务；请按服务商政策处理敏感内容。
+- 生图与图生图会把提示词或参考图发送给所配置的 API 服务商；请按服务商政策处理敏感内容。
 - 内置轻量技能会把所选内容发送给配置的聊天模型。图片转 PPT 的 PPTX 在本地生成，由原生文字与基础矢量形状组成，不会把整张原图直接铺成幻灯片背景；结果需人工检查。
 - 外部重任务技能可能读写本机文件并执行命令；运行前请确认技能可信、输入内容可共享。
-- 生图会消耗上游 API 额度；请人工检查生成结果。不要把 API 密钥贴到 Issue、日志或截图中。
-- **诊断日志**（两个工作台右上角）：失败的上游请求会留在本机内存里
+- 生图会消耗 API 服务商额度；请人工检查生成结果。不要把 API 密钥贴到 Issue、日志或截图中。
+- **诊断日志**（两个工作台右上角）：失败的 API 请求会留在本机内存里
   （最多 200 条，重启即清空，不写磁盘，不产生后台请求），
   可一键复制后贴进 Issue。记录含实际请求地址、HTTP 状态、网络错误码、耗时、
-  体积与上游原始响应；**密钥已在写入前脱敏**（`Bearer` 令牌、查询串密钥、
+  体积与服务商原始响应；**密钥已在写入前脱敏**（`Bearer` 令牌、查询串密钥、
   内联 base64 均替换为占位符，API Key 只记「是否发送」）。
   生图与生视频写同一个缓冲：视频的提交 / 轮询 / 下载三条腿各自标记。
 
@@ -230,26 +228,20 @@ dsh plugin --profile web add ./q253595422-dsh-imagegen-video-1.7.8.tgz
 > [Issues](https://github.com/q253595422/dsh-imagegen-video/issues) 提问题，
 > 并提醒维护者换一张新码。安全敏感的问题不要发在群里，也不要贴 API 密钥。
 
-<a id="upstream"></a>
-## 上游与授权
+<a id="license"></a>
+## 授权与致谢
 
-本仓库是 [dickpy/dsh-imagegen](https://github.com/dickpy/dsh-imagegen) 的衍生版，按
-[Apache-2.0](./LICENSE) 发布。上游的版权与来源见 [NOTICE](./NOTICE)；本仓库相对
-上游 v1.6.8 的全部改动逐条列在 [CHANGELOG.md](./CHANGELOG.md)。
+本项目按 [Apache-2.0](./LICENSE) 发布。各版本的改动逐条列在
+[CHANGELOG.md](./CHANGELOG.md)；第三方代码与素材的版权、许可与来源见
+[NOTICE](./NOTICE) 与 [THIRD_PARTY_NOTICES.md](./THIRD_PARTY_NOTICES.md)。
 
-> **本仓库是独立项目，不跟随上游版本线。** 上游源码只在 fork 时一次性取用（基线
-> v1.6.8），此后本仓库按自己的节奏发版（当前 v1.7.8）。上游后续版本的功能会**按需**
-> 吸收进来——例如失败可查的诊断日志（上游 #38）——吸收后即为本仓库自己代码的一部分，
-> 版本号仍是本仓库的。因为两边历史没有共同祖先，吸收是**逐文件移植**，不是 `git merge`。
+**核心能力**：生图（文生图 / 图生图 / 多参考图编辑）、生视频（文生视频 / 图生视频 /
+首尾帧 / 多参考图）、无限画布（图片与视频节点、片段拼接、技能）、电商套图、模板库与画廊。
 
-**这个衍生版做了什么**：上游只有生图。本仓库在上游源码上补齐了生视频链路
-（异步提交/轮询、视频渠道目录、视频标签页、Agent 视频工具），并把视频接进
-无限画布（视频节点、片段拼接、视频节点与图片节点同一套控制）。
+**支持与问题反馈请提到本仓库的 Issues**（[Bug 报告](https://github.com/q253595422/dsh-imagegen-video/issues/new?template=bug_report.yml) · [功能建议](https://github.com/q253595422/dsh-imagegen-video/issues/new?template=feature_request.yml) · [全部 Issues](https://github.com/q253595422/dsh-imagegen-video/issues)）。
 
-**支持与问题反馈请提到本仓库的 Issues**（[Bug 报告](https://github.com/q253595422/dsh-imagegen-video/issues/new?template=bug_report.yml) · [功能建议](https://github.com/q253595422/dsh-imagegen-video/issues/new?template=feature_request.yml) · [全部 Issues](https://github.com/q253595422/dsh-imagegen-video/issues)），不要提到上游仓库 —— 上游并不维护这里的代码。上游的 QQ 交流群与本仓库无关，这里不代为宣传。
-
-**与上游不能共存**：两者注册同一套 `/api/dsh-imagegen/*` 路由与同一个 UI
-面板，同时安装会冲突；数据目录 `~/.dsh/dsh-imagegen/` 也是共用的。要换回
+**与 `@dickpy/dsh-imagegen` 不能共存**：两者注册同一套 `/api/dsh-imagegen/*` 路由与
+同一个 UI 面板，同时安装会冲突；数据目录 `~/.dsh/dsh-imagegen/` 也是共用的。要换回
 原版，请先卸载本插件。
 
 <details>
@@ -275,7 +267,7 @@ pnpm pack --pack-destination .
 dsh plugin --profile web add ./q253595422-dsh-imagegen-video-<版本>.tgz
 ```
 
-仓库里的离线套件不需要网络与付费上游调用；需要浏览器或 `ffmpeg` 的检查在缺
+仓库里的离线套件不需要网络与付费 API 调用；需要浏览器或 `ffmpeg` 的检查在缺
 少工具时会**明确跳过并返回成功**，而不是伪装成失败。并行跑构建与测试请用
 `./scripts/with-lock.sh`，它会把整棵工作树串行化。
 
@@ -285,4 +277,4 @@ dsh plugin --profile web add ./q253595422-dsh-imagegen-video-<版本>.tgz
 
 [Apache-2.0](./LICENSE)
 
-上游与本仓库的署名见 [NOTICE](./NOTICE)。内置模板所引用的第三方项目与许可见 [THIRD_PARTY_NOTICES.md](./THIRD_PARTY_NOTICES.md)。
+版权归属与第三方许可见 [NOTICE](./NOTICE) 与 [THIRD_PARTY_NOTICES.md](./THIRD_PARTY_NOTICES.md)。

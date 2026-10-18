@@ -1482,7 +1482,7 @@ export interface GenerationTaskSummary extends Omit<GenerationTask, 'result'> {
 export type DiagnosticPhase =
   // image chain
   | 'generate' | 'fetch-result' | 'poll-task' | 'chat' | 'config'
-  // video chain (added by this fork). Video is a submit → poll → download
+  // video chain. Video is a submit → poll → download
   // pipeline rather than one synchronous call, so each leg is its own phase:
   // "the render never started" and "the status endpoint stopped answering" are
   // different problems, and the image phases cannot express that difference.
@@ -1524,7 +1524,7 @@ export interface UpdateInfo {
   /** Markdown release body shown in the update popover. */
   releaseNotes?: string
   /**
-   * Download URL of the release's installable archive. This fork ships as a
+   * Download URL of the release's installable archive. This plugin ships as a
    * GitHub Release asset rather than an npm package, so the host installs from
    * this URL. Absent when the release carries no archive.
    */
