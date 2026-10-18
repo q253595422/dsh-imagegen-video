@@ -190,29 +190,6 @@ dsh plugin --profile web add ./q253595422-dsh-imagegen-video-1.7.8.tgz
 | <a href="https://api.closeai.hk/"><img src="docs/images/sponsor-yeazi.png" width="170" alt="椰子API" /></a> | **[椰子API](https://api.closeai.hk/)** — OpenAI 兼容的多模型网关。一个 API Key 同时覆盖 GPT Image 与 Gemini 图像模型，不必分别注册各家；在插件里就是一个普通渠道，不需要改代码。<br><br>`https://api.closeai.hk/v1` · Bearer API Key |
 | <a href="https://api.metajing.cn/"><img src="docs/images/sponsor-metajing.png" width="170" alt="清衍 API" /></a> | **[清衍 API](https://api.metajing.cn/)** — 面向国内开发者的 AI API 中转站，站点自述支持 Claude、GPT、Gemini 等模型。<br><br>`https://api.metajing.cn/v1` · `Authorization: Bearer <key>` |
 
-**椰子API 配置细节**
-
-| 项 | 值 |
-| --- | --- |
-| API 地址 | `https://api.closeai.hk/v1` |
-| 图像模型 | `gpt-image-2.5`、`gpt-image-2.5-flare`、`gpt-image-2.5-sunburst`、`gpt-image-2`、`gemini-3-pro-image-preview`、`gemini-3.1-flash-image-preview`、`gemini-3.1-flash-lite-image` |
-| 对话模型（可做提示词增强） | `gpt-5.6`、`auto` |
-
-设置 → 生图配置 → 添加渠道 → API 地址填上面的值、密钥填它的 Key，再点「检测模型」。
-`gpt-image-*` 走标准 `/images/generations`；`gemini-3*-image*` 按本插件的 Nano
-Banana 协议族发送，带 `aspect_ratio` / `image_size` 而不是 `size` / `quality`。
-后一组是否被该网关按这套形状接受**未实测**——它对这几个模型同时声明了 `gemini`
-与 `openai` 两种端点，实际走哪个由网关决定；先用一张图试通再批量用。
-`seedance-2.5-480p` / `-720p` / `-1080p` 虽在模型列表里，但站点公开声明的端点只有
-chat / images / gemini 三类，没有视频端点，**不建议当作视频模型使用**。
-
-**清衍 API 配置细节**
-
-无 Key 访问 `/v1/models` 返回 `401 API_KEY_REQUIRED`，说明它接受 OpenAI 风格的
-Bearer 鉴权，同时认 `x-goog-api-key`（Gemini 原生协议）。但站点没有公开的 OpenAI
-风格定价或模型清单接口，**图像生成端点是否存在、支持哪些图像模型，我没有验证
-过**——填进渠道后请先用「检测模型」看一眼实际返回，再决定是否作为生图渠道。
-
 > **以上是赞助位，不是中立推荐。** 两家服务都由第三方运营：可用模型、价格、
 > 限流与稳定性以各自站点公告为准，本项目不做担保。密钥会发送给对应服务，
 > 请按需自行评估；不要用它们处理你不愿意交给第三方的内容。
