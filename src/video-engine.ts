@@ -820,8 +820,15 @@ export async function generateVideo(
   if (request.mode === 'keyframe' && references.all.length === 0) {
     throw new VideoGenError('首尾帧模式至少需要一张首帧图片', 'video-bad-reference')
   }
-  if (request.mode === 'image' && references.primary === undefined) {
-    throw new VideoGenError('图生视频需要一张参考图片', 'video-bad-reference')
+  // Both image-bearing modes need at least one frame. `reference` used to slip
+  // through: the panel only required a frame for `image`, so a reference-mode
+  // submit with nothing attached reached the provider and came back as an
+  // unexplained rejection instead of "this mode needs a reference image".
+  if ((request.mode === 'image' || request.mode === 'reference') && references.primary === undefined) {
+    throw new VideoGenError(
+      request.mode === 'reference' ? '参考图模式至少需要一张参考图片' : '图生视频需要一张参考图片',
+      'video-bad-reference',
+    )
   }
 
   const baseUrl = upstream.apiUrl.replace(/\/+$/, '')

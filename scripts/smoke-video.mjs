@@ -228,6 +228,27 @@ await check('V1d keyframe and reference modes send family-correct fields', async
   }
 })
 
+await check('V1d2 a reference-mode submit with no frame never reaches the provider', async () => {
+  // The panel's own guard used to cover `image` and `keyframe` but not
+  // `reference`, so the button stayed enabled and the provider answered with a
+  // rejection that explained nothing. The engine is the boundary that matters:
+  // an Agent tool call bypasses the panel entirely.
+  const upstream = await startUpstream()
+  try {
+    await assert.rejects(
+      () => generateVideo(
+        { apiUrl: upstream.base, apiKey: 'k' },
+        { mode: 'reference', model: 'agnes-video-2.5', prompt: 'p', aspectRatio: '16:9', resolution: '720P', seconds: 5 },
+        { family: 'agnes' },
+      ),
+      /参考图|reference/i,
+    )
+    assert.equal(upstream.state.submits.length, 0, 'nothing may be submitted without a reference frame')
+  } finally {
+    await upstream.close()
+  }
+})
+
 await check('V1e an unknown family fails loudly instead of guessing', async () => {
   await assert.rejects(
     () => generateVideo(

@@ -6,3 +6,6 @@ node_modules/
 /lib/
 *.tgz
 .build-lock/
+# Upstream port plans (diff + extracted source). Generated per run, never
+# shipped: the classification is read once and the tree that matters is this one.
+/.upstream/

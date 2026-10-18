@@ -1,0 +1,77 @@
+name: Upstream watch
+
+# The project this one descends from ships faster than anyone watches its
+# releases page. This turns "I noticed a new release" into "there is an issue
+# with the port plan already worked out", so the work starts from a
+# classification instead of from a diff.
+#
+# It never edits source. The issue it opens carries the report; porting stays a
+# decision, because every file lands differently (see scripts/upstream-sync.mjs).
+
+on:
+  schedule:
+    # Every six hours: fast enough that a release is never a week old, rare
+    # enough to stay well inside the unauthenticated API quota.
+    - cron: '17 */6 * * *'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  issues: write
+
+concurrency:
+  group: upstream-watch
+  cancel-in-progress: false
+
+jobs:
+  detect:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 24
+
+      # --check exits 1 when a newer release exists, so the step is readable as
+      # a pass/fail signal and the report step only runs when there is one.
+      - name: Is there a newer release?
+        id: check
+        run: |
+          if node scripts/upstream-sync.mjs --check; then
+            echo "newer=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "newer=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Build the port plan
+        if: steps.check.outputs.newer == 'true'
+        run: node scripts/upstream-sync.mjs
+
+      - name: Open one issue per new release
+        if: steps.check.outputs.newer == 'true'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          for report in .upstream/*/report.md; do
+            [ -e "$report" ] || continue
+            version=$(basename "$(dirname "$report")")
+            title="上游 $version 已发布，待整合"
+
+            # One issue per version, ever: re-running must not file duplicates.
+            existing=$(gh issue list --state all --search "in:title $title" --json number --jq 'length')
+            if [ "$existing" != "0" ]; then
+              echo "issue for $version already exists, skipping"
+              continue
+            fi
+
+            gh issue create --title "$title" --body-file "$report"
+          done
+
+      # The generated tree is for the issue body only; keeping it out of the
+      # repository means the checkout stays the thing that ships.
+      - name: Clean up
+        if: always()
+        run: rm -rf .upstream

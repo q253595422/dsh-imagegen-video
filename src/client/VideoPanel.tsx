@@ -216,8 +216,12 @@ export function VideoPanel(props: VideoPanelProps) {
     return () => { window.clearInterval(timer) }
   }, [anyRunning])
 
+  // Every image-bearing mode needs its frame before submit. `reference` was
+  // missing from this guard while the hint text already told the user it needed
+  // one, so the button stayed enabled and the provider rejected the call.
   const canGenerate = model !== '' && !unknownModel && prompt.trim() !== '' && !busy
     && (mode !== 'image' || reference !== null)
+    && (mode !== 'reference' || reference !== null)
     && (mode !== 'keyframe' || firstFrame !== null)
 
   const buildRequest = (): VideoGenerateRequest => ({

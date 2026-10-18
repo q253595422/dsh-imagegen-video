@@ -260,6 +260,19 @@ pnpm run test:negative
 把每处修复对应的缺陷重新注回**仓库副本**，要求对应检查变红，
 工作树不被改动。
 
+跟进本项目的上游发布：
+
+```bash
+pnpm run upstream:check   # 有新版本时退出码为 1
+pnpm run upstream:plan    # 生成移植报告到 .upstream/<版本>/report.md
+pnpm run upstream:adopt v1.8.3   # 记录「已整合到哪个版本」
+```
+
+`upstream:plan` 会把每个改动文件按**能否干净应用到当前树**分类：新增（整份复制）、
+可直接应用、冲突（需人工读）、本项目自有（视频链、发布说明、授权，不覆盖）。
+它只生成报告，不改任何源码。GitHub Actions 每六小时跑一次检测，有新版本时
+自动开一条带报告的 issue。
+
 本地打包并安装到 DSH 验收：
 
 ```bash
