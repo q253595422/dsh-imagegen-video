@@ -120,6 +120,25 @@ release process itself moving onto a machine that runs the gates.
   from the gate. The chain now includes it, and `verify-negative.mjs` refuses to
   run at all if any defined runner is missing from that command — a guard on the
   gate, since a case can only fail after its runner has been selected.
+- **The build was not a function of the source tree.** Two builds of the same
+  commit produced different `lib/client.js` bytes. `lightningcss` returns
+  CSS-module exports from a native hash map, so the class names arrive in a
+  different order on each process — five runs over one stylesheet produced five
+  different first keys — and `tsdown.config.ts` serialised that map in iteration
+  order. Object key order is invisible to every consumer of a CSS-module map,
+  which is why nothing ever noticed; but it is byte-stable input to the release
+  artifact, so `SHA256SUMS` could not be reproduced from source and "the Release
+  ships the bytes the gates approved" was true only of the run that made them.
+  The map is sorted at the one point where it becomes bytes, and
+  `scripts/verify-reproducible.mjs` now builds twice on every `pnpm test` and
+  requires all four artifacts to be byte-identical.
+- **The npm job's "exactly one tarball" guard could not fail on zero.** Bash
+  leaves an unmatched glob in the array as its own literal, so
+  `packages=(dist/*.tgz)` against an empty `dist/` yielded count=1, the guard
+  passed, and the next line asked npm to publish a file named `dist/*.tgz`. The
+  job did fail — with `ENOENT`, which reads like an npm fault instead of "the
+  artifact never arrived". `shopt -s nullglob` makes the count mean what it
+  says, and the failure now prints `ls -la dist`.
 
 ### 1.7.6 — the template library grows to eight sources, and a parser bug that hid half of one
 

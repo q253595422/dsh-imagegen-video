@@ -727,6 +727,20 @@ const CASES = [
     to: '  "files": [\n    "src/templates",\n    "cordis.patch.yml",\n    "docs/releases",',
     expect: /exports\["\.\/client"\] -> lib\/client\.js \(not in the archive\)/,
   },
+  {
+    // `lightningcss` returns CSS-module exports from a native hash map, so the
+    // class names come out in a different order on every process. Serialising
+    // that map in iteration order made every build of the same commit produce
+    // different bytes -- invisible to every consumer, and fatal to the only
+    // thing `SHA256SUMS` is for. Iterating unsorted is exactly the shipped
+    // shape of the defect, restored verbatim.
+    name: 'the build serialises a hash map in iteration order',
+    runner: 'reproducible',
+    file: 'tsdown.config.ts',
+    from: 'for (const local of Object.keys(exported).sort()) classMap[local] = exported[local].name',
+    to: 'for (const [local, exp] of Object.entries(exported)) classMap[local] = exp.name',
+    expect: /two builds of the same source tree produced different bytes/,
+  },
 ]
 
 const RUNNERS = {
@@ -742,6 +756,11 @@ const RUNNERS = {
   // Needs a real checkout: the guard asks git which files are tracked, and a
   // bare copy would make it skip -- a skip that reads as a pass.
   tracked: { script: 'scripts/verify-tracked.mjs', build: false, git: true },
+  // Builds twice on its own (that is what it measures), so the harness must not
+  // build first: one extra build would be spent and, worse, the copy would be
+  // rebuilt AFTER the mutation, which hides the fact that the baseline and the
+  // mutated tree both need two builds of their own.
+  reproducible: { script: 'scripts/verify-reproducible.mjs', build: false },
 }
 
 // ---------------------------------------------------------------- chain guard

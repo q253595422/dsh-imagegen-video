@@ -290,9 +290,19 @@ jobs:
             echo "$package@$version is already published; nothing to do."
           elif grep -q 'E404' "$probe"; then
             cat "$probe"
+            # `packages=(dist/*.tgz)` is NOT a reliable count. With no match,
+            # bash leaves the pattern itself in the array, so an empty dist/
+            # yields count=1 and this guard passes -- and the next line asks
+            # npm to publish a file literally named `dist/*.tgz`. The job still
+            # fails, but with `ENOENT: no such file or directory`, which reads
+            # like an npm fault instead of "the artifact never arrived".
+            # `nullglob` makes a non-matching glob expand to nothing, so the
+            # count means what it says.
+            shopt -s nullglob
             packages=(dist/*.tgz)
             if [ "${#packages[@]}" -ne 1 ]; then
               echo "::error::expected exactly one tarball in dist/, found ${#packages[@]}"
+              ls -la dist || true
               exit 1
             fi
             echo "Publishing ${packages[0]} -> $package@$version"

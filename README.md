@@ -228,7 +228,7 @@ node scripts/smoke-video.mjs
 pnpm run test:negative
 ```
 
-`pnpm test` 跑全部十道离线检查（`verify-tracked` 排第一）；`pnpm run test:negative` 做反向验证——
+`pnpm test` 跑全部十一项离线检查（`verify-tracked` 排第一）；`pnpm run test:negative` 做反向验证——
 把每处修复对应的缺陷重新注回**仓库副本**，要求对应检查变红，
 工作树不被改动。
 

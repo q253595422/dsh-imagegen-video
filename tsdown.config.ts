@@ -136,8 +136,18 @@ const clientConfig: UserConfig = {
         cssModules: { pattern: '[hash]_[local]' },
         minify: true,
       })
+      // lightningcss hands back CSS-module exports from a native hash map, so
+      // `Object.entries` returns the classes in a different order on every
+      // process -- measured on this repo: five runs of the same stylesheet
+      // produced five different first keys. Nothing READS that order (the map
+      // is only ever indexed by name), but it is serialised into the bundle
+      // and the bundle is the release artifact. An unstable order means two
+      // builds of the same commit hash differently, so `SHA256SUMS` cannot be
+      // reproduced from source and a re-run cannot be shown to ship the bytes
+      // it replaced. Sorting pins it.
       const classMap: Record<string, string> = {}
-      for (const [local, exp] of Object.entries(cssExports ?? {})) classMap[local] = exp.name
+      const exported = cssExports ?? {}
+      for (const local of Object.keys(exported).sort()) classMap[local] = exported[local].name
       return [
         `const css = ${JSON.stringify(code.toString())};`,
         `const tagId = ${JSON.stringify(`${ID}/${basename(fileId)}`)};`,
