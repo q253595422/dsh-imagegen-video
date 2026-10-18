@@ -14,8 +14,8 @@ body:
     id: plugin_version
     attributes:
       label: 插件版本
-      description: 例如 `1.7.1`（面板标题栏或插件目录下的 `package.json` 里可以查看）
-      placeholder: "1.7.1"
+      description: 形如 `x.y.z`，可在面板标题栏或插件目录下的 `package.json` 里查看
+      placeholder: "x.y.z"
     validations:
       required: true
 
@@ -35,8 +35,8 @@ body:
     id: dsh_version
     attributes:
       label: DSH 版本
-      description: 运行 `dsh --version` 查看，例如 `0.1.0-rc.6`
-      placeholder: "0.1.0-rc.6"
+      description: 运行 `dsh --version` 查看，原样填写（形如 `x.y.z-rc.1`）
+      placeholder: "x.y.z-rc.1"
     validations:
       required: true
 
