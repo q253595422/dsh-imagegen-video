@@ -182,6 +182,35 @@ dsh plugin --profile web add ./q253595422-dsh-imagegen-video-1.7.8.tgz
 
 </details>
 
+<a id="sponsor"></a>
+## 赞助商：椰子API
+
+[椰子API](https://api.closeai.hk/)（`api.closeai.hk`）是本项目的赞助商，一个 OpenAI
+兼容的多模型网关：一个 API Key 就能同时用到 GPT Image 与 Gemini 图像模型，不必
+分别注册各家。用它的时候，插件这边按**一个普通渠道**配置即可，不需要改代码。
+
+| 项 | 值 |
+| --- | --- |
+| API 地址 | `https://api.closeai.hk/v1` |
+| 认证 | Bearer API Key（在椰子API 后台创建） |
+| 图像模型 | `gpt-image-2.5`、`gpt-image-2.5-flare`、`gpt-image-2.5-sunburst`、`gpt-image-2`、`gemini-3-pro-image-preview`、`gemini-3.1-flash-image-preview`、`gemini-3.1-flash-lite-image` |
+| 对话模型（可做提示词增强） | `gpt-5.6`、`auto` |
+
+配置步骤和普通渠道一样：设置 → 生图配置 → 添加渠道 → API 地址填上面的值、
+密钥填椰子API 的 Key，然后点「检测模型」。`gpt-image-*` 走标准
+`/images/generations`；`gemini-3*-image*` 按本插件的 Nano Banana 协议族发送，
+带 `aspect_ratio` / `image_size` 而不是 `size` / `quality`。后一组是否被该网关
+按这套形状接受，我没有实测过——它对这几个模型同时声明了 `gemini` 与 `openai`
+两种端点，实际走哪个由网关决定；先用一张图试通再批量用。
+
+> **这是赞助位，不是中立推荐。** 上游服务由第三方运营：可用模型、价格、限流与
+> 稳定性都以椰子API 的公告为准，本项目不做担保。密钥会发送给该服务，请按需自行
+> 评估；不要用它处理你不愿意交给第三方的内容。价格与分组详情见站点内的定价页。
+
+> `seedance-2.5-480p` / `-720p` / `-1080p` 也出现在它的模型列表里，但该站点公开
+> 声明的端点只有 chat / images / gemini 三类，没有视频端点；本插件的通用视频协议
+> 会请求 `/v1/videos`，**这条链路未经实测**，不写进上面的推荐。要用视频请先自测。
+
 <a id="security"></a>
 ## 数据与安全
 
