@@ -19,6 +19,18 @@
   <p><a href="#quick-start">🚀 快速开始</a>　·　<a href="#canvas">无限画布</a>　·　<a href="#compose">片段拼接</a>　·　<a href="#ecommerce">电商套图</a>　·　<a href="#txt2img">文生图 / 图生图</a>　·　<a href="#txt2video">生视频</a>　·　<a href="#gallery">模板 / 画廊</a>　·　<a href="#configuration">模型配置</a>　·　<a href="#community">交流群</a>　·　<a href="#upstream">上游与授权</a></p>
 </div>
 
+<a id="sponsor"></a>
+## 赞助商
+
+| 赞助商 | 简介与接入地址 |
+| :---: | --- |
+| <a href="https://api.closeai.hk/"><img src="docs/images/sponsor-yeazi.png" width="170" alt="椰子API" /></a> | **[椰子API](https://api.closeai.hk/)** — OpenAI 兼容的多模型网关。一个 API Key 同时覆盖 GPT Image 与 Gemini 图像模型，不必分别注册各家；在插件里就是一个普通渠道，不需要改代码。<br><br>`https://api.closeai.hk/v1` · Bearer API Key |
+| <a href="https://api.metajing.cn/"><img src="docs/images/sponsor-metajing.png" width="170" alt="清衍 API" /></a> | **[清衍 API](https://api.metajing.cn/)** — 面向国内开发者的 AI API 中转站，站点自述支持 Claude、GPT、Gemini 等模型。<br><br>`https://api.metajing.cn/v1` · `Authorization: Bearer <key>` |
+
+> **以上是赞助位，不是中立推荐。** 两家服务都由第三方运营：可用模型、价格、
+> 限流与稳定性以各自站点公告为准，本项目不做担保。密钥会发送给对应服务，
+> 请按需自行评估；不要用它们处理你不愿意交给第三方的内容。
+
 <a id="quick-start"></a>
 ## 快速开始
 
@@ -181,18 +193,6 @@ dsh plugin --profile web add ./q253595422-dsh-imagegen-video-1.7.8.tgz
 - 不同服务商的图生图、尺寸与返回格式可能不同，请确认所选模型实际支持的能力。
 
 </details>
-
-<a id="sponsor"></a>
-## 赞助商
-
-| 赞助商 | 简介与接入地址 |
-| :---: | --- |
-| <a href="https://api.closeai.hk/"><img src="docs/images/sponsor-yeazi.png" width="170" alt="椰子API" /></a> | **[椰子API](https://api.closeai.hk/)** — OpenAI 兼容的多模型网关。一个 API Key 同时覆盖 GPT Image 与 Gemini 图像模型，不必分别注册各家；在插件里就是一个普通渠道，不需要改代码。<br><br>`https://api.closeai.hk/v1` · Bearer API Key |
-| <a href="https://api.metajing.cn/"><img src="docs/images/sponsor-metajing.png" width="170" alt="清衍 API" /></a> | **[清衍 API](https://api.metajing.cn/)** — 面向国内开发者的 AI API 中转站，站点自述支持 Claude、GPT、Gemini 等模型。<br><br>`https://api.metajing.cn/v1` · `Authorization: Bearer <key>` |
-
-> **以上是赞助位，不是中立推荐。** 两家服务都由第三方运营：可用模型、价格、
-> 限流与稳定性以各自站点公告为准，本项目不做担保。密钥会发送给对应服务，
-> 请按需自行评估；不要用它们处理你不愿意交给第三方的内容。
 
 <a id="security"></a>
 ## 数据与安全
