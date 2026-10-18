@@ -26,10 +26,12 @@
 | :---: | --- |
 | <a href="https://api.closeai.hk/"><img src="docs/images/sponsor-yeazi.png" width="170" alt="椰子API" /></a> | **[椰子API](https://api.closeai.hk/)** — OpenAI 兼容的多模型网关。一个 API Key 同时覆盖 GPT Image 与 Gemini 图像模型，不必分别注册各家；在插件里就是一个普通渠道，不需要改代码。<br><br>`https://api.closeai.hk/v1` · Bearer API Key |
 | <a href="https://api.metajing.cn/"><img src="docs/images/sponsor-metajing.png" width="170" alt="清衍 API" /></a> | **[清衍 API](https://api.metajing.cn/)** — 面向国内开发者的 AI API 中转站，站点自述支持 Claude、GPT、Gemini 等模型。<br><br>`https://api.metajing.cn/v1` · `Authorization: Bearer <key>` |
+| <a href="https://github.com/ChisaAlter/WhaleIsle"><img src="docs/images/sponsor-whaleisle.png" width="170" alt="鲸屿 Whale Isle" /></a> | **[鲸屿 Whale Isle](https://github.com/ChisaAlter/WhaleIsle)** — 基于 DeepSeek Harness 的开源社区桌面客户端：AI 对话、终端与 Git、模型与 MCP 接入、主题壁纸与桌宠、用量统计，装好即可把本插件跑在桌面上。<br><br>Windows x64 · macOS Apple Silicon · MIT
 
-> **以上是赞助位，不是中立推荐。** 两家服务都由第三方运营：可用模型、价格、
-> 限流与稳定性以各自站点公告为准，本项目不做担保。密钥会发送给对应服务，
-> 请按需自行评估；不要用它们处理你不愿意交给第三方的内容。
+> **以上是赞助位，不是中立推荐。** 三家都由第三方独立维护：两家 API 网关的
+> 可用模型、价格、限流与稳定性，以及桌面客户端的兼容性与稳定性，均以各自
+> 站点公告为准，本项目不做担保。配置网关后密钥会发送给对应服务，请按需自行
+> 评估；不要用它们处理你不愿意交给第三方的内容。
 
 <a id="quick-start"></a>
 ## 快速开始
