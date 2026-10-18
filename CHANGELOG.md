@@ -10,6 +10,23 @@ detail is in `git log 9305f9f..HEAD`.
 
 ## Releases
 
+### 1.7.8 — the manifest stops claiming a package the host already provides
+
+One packaging correction, no behaviour change.
+
+- **`@deepseek-ai/schemastery` moved from `dependencies` to `peerDependencies`.**
+  It is not an implementation detail of this plugin — its `z` builds the config
+  schema the host validates — so the host's own copy is the one that must be
+  used. Declaring it as a dependency made every install pull a second copy of a
+  `@deepseek-ai/*` package alongside the host's, which is both the wrong
+  ownership relationship and the thing plugin directories list as a rule.
+  `devDependencies` still carries it, so local builds, typecheck and the whole
+  offline suite resolve it exactly as before; only the published manifest
+  changes. Verified by installing the packed tarball into an isolated
+  `DSH_HOME`: the profile pulls two packages instead of three (no second
+  schemastery), resolves the host's own 3.18.4, and `lib/index.js` imports
+  cleanly (132 exports, `CURRENT_VERSION` 1.7.8).
+
 ### 1.7.7 — deleting becomes undoable, the poster editor arrives, and the update chain stops lying
 
 Three user-visible failures and one piece of upstream functionality, plus the
