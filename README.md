@@ -24,9 +24,13 @@
 
 需要已安装 [DeepSeek Harness](https://github.com/deepseek-ai/DeepSeek-Harness) 和 Node.js 20+。
 
-安装包以 GitHub Release 资产的形式分发（每次 Release 附带 `SHA256SUMS`）：
+安装包有两个来源：**npm registry**（推荐，包名即版本，`npm view` 能查、能被锁文件盯住）与 **GitHub Release 资产**（每次附带 `SHA256SUMS`）。
 
 ```bash
+# npm（registry 直达）
+dsh plugin --profile web add @q253595422/dsh-imagegen-video
+
+# 或 GitHub Release 资产
 dsh plugin --profile web add https://github.com/q253595422/dsh-imagegen-video/releases/download/v1.7.7/q253595422-dsh-imagegen-video-1.7.7.tgz
 ```
 
