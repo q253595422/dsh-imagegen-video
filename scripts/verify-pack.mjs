@@ -16,6 +16,10 @@
  *    document references.
  *  - `docs/images/` is absent. ~20 MiB of README screenshots (one 13 MiB GIF)
  *    that nothing reads at runtime; GitHub renders them from the repository.
+ *  - Every entry point the packed manifest declares -- `main`, each `exports`
+ *    target, and `dsh.bundle.patch` -- is actually in the archive. A tarball
+ *    that installs and boots while `exports["./client"]` points at a file it
+ *    does not contain produces no error anywhere; the panel just never appears.
  *
  * A missing build is a real failure here, not a skip: packing without `lib/`
  * would produce an archive that installs and does nothing.
@@ -29,6 +33,39 @@ const ROOT = dirname(dirname(fileURLToPath(import.meta.url)))
 
 /** Entries the archive must contain, relative to the `package/` root. */
 const REQUIRED = ['lib/index.js', 'src/templates/cases.json']
+
+/**
+ * Everything `package.json` tells a host to load, resolved the same way the
+ * host resolves it.
+ *
+ * `REQUIRED` above is a hand-maintained list, and a hand-maintained list can
+ * only confirm what somebody remembered to write down. The fields below are
+ * what actually gets loaded: `main` for the node half, every `exports` target
+ * (`.` executes in the host process, `./client` is what the browser fetches as
+ * `/plugins/<id>/client.js`), and the `dsh.bundle.patch` overlay the profile
+ * reads to even register the plugin.
+ *
+ * The failure this catches is silent, which is why it is checked here: a
+ * `files` edit that drops `lib/` or a renamed export produces an archive that
+ * installs cleanly, boots cleanly, and simply never appears in the UI -- "I
+ * installed it and nothing happened" with no error anywhere.
+ */
+function declaredEntryPoints (manifest) {
+  const declared = new Map()
+  const add = (label, value) => {
+    if (typeof value === 'string' && value !== '') declared.set(label, value)
+  }
+  add('main', manifest.main)
+  for (const [key, target] of Object.entries(manifest.exports ?? {})) {
+    // A conditional export (`{import: './x.js'}`) is not a string; the ones
+    // this package ships are, and a non-string is skipped rather than guessed.
+    add(`exports[${JSON.stringify(key)}]`, target)
+  }
+  add('dsh.bundle.patch', manifest.dsh?.bundle?.patch)
+  // `dsh.client` names no file (the client is found through `exports`), but a
+  // `dsh.profile`/`dsh.bundle` rename would silently unmount the plugin.
+  return [...declared]
+}
 
 /** Directories that must NOT be published, with the reason shown on failure. */
 const FORBIDDEN = [
@@ -94,10 +131,31 @@ if (present.length > 0) {
   ])
 }
 
+// The archive's own manifest is authoritative: `files` may be edited and the
+// packing happens from the tree, so what the manifest promises and what got
+// packed can disagree. Read the copy INSIDE the archive, not the one on disk.
+const packedManifest = JSON.parse(
+  execFileSync('tar', ['-xzOf', archivePath, 'package/package.json'], { cwd: ROOT, encoding: 'utf8' }),
+)
+const unresolved = declaredEntryPoints(packedManifest)
+  .map(([label, target]) => [label, target.replace(/^\.\//, '')])
+  .filter(([, target]) => !entries.has(`package/${target}`))
+if (unresolved.length > 0) {
+  fail([
+    '',
+    'FAIL: the archive declares entry points it does not contain:',
+    ...unresolved.map(([label, target]) => `  - ${label} -> ${target} (not in the archive)`),
+    'The plugin would install and boot, and one of its halves would never load:',
+    'the host half throws at import time, or the browser half 404s and the',
+    'panel silently never appears. Neither error names the packaging mistake.',
+  ])
+}
+
 const sizeMiB = Number(execFileSync('du', ['-m', archivePath], { encoding: 'utf8' }).split('\t')[0])
 const topLevel = [...new Set(listing.map(line => line.split('/')[1]).filter(Boolean))].sort()
 console.log(`pack: ${archiveName} (${sizeMiB} MiB) -- ${entries.size} entries, top level: ${topLevel.join(', ')}`)
-console.log('pack: required entries present; no docs/videos, no docs/images')
+console.log('pack: required entries present; every declared entry point resolves')
+console.log('pack: no docs/videos, no docs/images')
 
 // Leave no archive behind in the working tree: the caller only wanted the
 // inspection, and a stray .tgz is what made older checks pick the wrong file.

@@ -101,6 +101,19 @@ release process itself moving onto a machine that runs the gates.
   `scripts/verify-tracked.mjs` runs as the first step of `pnpm test`: every
   relative import under `src/` and `scripts/` must name a file git tracks, and
   no source file may be sitting in the tree untracked.
+- **The archive check only confirmed what somebody remembered to list.** 
+  `verify-pack.mjs` required `lib/index.js` and one template snapshot, both
+  hard-coded, and nothing compared them against what `package.json` tells a host
+  to load. A `files` edit that drops `lib/`, or an `exports` target pointing at
+  a renamed file, produced an archive that installs cleanly, boots cleanly, and
+  does nothing at all: the host throws at import time or the browser half 404s,
+  and neither error names packaging. The check now reads the manifest **inside**
+  the tarball and requires `main`, every `exports` target and
+  `dsh.bundle.patch` to actually be in it. Writing the case exposed a second
+  problem in the harness itself: `freshCopy()` copied `lib` but not
+  `cordis.patch.yml` or the other `files` entries, so the pack runner was
+  inspecting an archive that could never satisfy a packaging rule — the copy is
+  now built from the `files` list instead of a hand-kept one.
 - **`test:negative` was not running every case it defines.** The `canvas-video`
   runner was added for the gallery soft-delete case but never appended to the
   `test:negative` chain, so the case passed when invoked by hand and was absent

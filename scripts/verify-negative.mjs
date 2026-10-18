@@ -15,7 +15,7 @@
  *   video     -- scripts/smoke-video.mjs, which drives the built host's video
  *                engine against a local upstream; also needs the rebuild.
  */
-import { cpSync, symlinkSync, rmSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
+import { cpSync, existsSync, symlinkSync, rmSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { execFileSync } from 'node:child_process'
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
@@ -34,6 +34,19 @@ function freshCopy (needsGit = false) {
   mkdirSync(COPY, { recursive: true })
   for (const entry of ['src', 'scripts', 'lib', 'package.json', 'tsdown.config.ts', '.gitignore']) {
     cpSync(join(SRC, entry), join(COPY, entry), { recursive: true })
+  }
+  // `verify-pack.mjs` reads the packed manifest and requires every entry point
+  // it declares to exist in the archive. Those entries are the `files` list in
+  // package.json, so a copy without them makes the packaging check fail for a
+  // reason that has nothing to do with the injected defect -- the harness
+  // reporting ITS OWN incompleteness as the defect. Copied from `files` rather
+  // than listed here, so the two cannot drift apart.
+  const { files = [] } = JSON.parse(readFileSync(join(SRC, 'package.json'), 'utf8'))
+  for (const entry of files) {
+    const from = join(SRC, entry)
+    const to = join(COPY, entry)
+    if (!existsSync(from)) continue
+    cpSync(from, to, { recursive: true })
   }
   // The `pack` runner inspects a real archive, so the copy needs the directories
   // that the archive rule is about. Reproducing the 57 MiB of real assets would
@@ -696,6 +709,23 @@ const CASES = [
     from: '  "files": [\n    "lib",\n    "src/templates",\n    "cordis.patch.yml",\n    "docs/releases",',
     to: '  "files": [\n    "lib",\n    "src/templates",\n    "cordis.patch.yml",\n    "docs/images",\n    "docs/releases",',
     expect: /docs\/images\/ -- README screenshots/,
+  },
+  {
+    // `files` decides what gets packed; `exports` decides what the host and the
+    // browser will load. Nothing used to compare the two, so a `files` edit that
+    // drops a half of the plugin -- or an `exports` edit pointing at a renamed
+    // file -- produced an archive that installed cleanly, booted cleanly, and
+    // then did absolutely nothing, with no error anywhere.
+    //
+    // Dropping "lib" from `files` is the shape that hurts most: the host half is
+    // `main: lib/index.js` and the browser half is `exports["./client"]`, so the
+    // archive ships a manifest promising two files and contains neither.
+    name: 'the archive declares a client half it does not contain',
+    runner: 'pack',
+    file: 'package.json',
+    from: '  "files": [\n    "lib",\n    "src/templates",\n    "cordis.patch.yml",\n    "docs/releases",',
+    to: '  "files": [\n    "src/templates",\n    "cordis.patch.yml",\n    "docs/releases",',
+    expect: /exports\["\.\/client"\] -> lib\/client\.js \(not in the archive\)/,
   },
 ]
 
