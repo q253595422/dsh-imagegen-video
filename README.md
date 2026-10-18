@@ -16,7 +16,7 @@
 
   <p><strong>在 DeepSeek Harness 里，生成、编辑、管理，一站完成；图片与视频同一套工作流。</strong></p>
   <p><strong>快速导航</strong></p>
-  <p><a href="#quick-start">🚀 快速开始</a>　·　<a href="#canvas">无限画布</a>　·　<a href="#compose">片段拼接</a>　·　<a href="#ecommerce">电商套图</a>　·　<a href="#txt2img">文生图 / 图生图</a>　·　<a href="#txt2video">生视频</a>　·　<a href="#gallery">模板 / 画廊</a>　·　<a href="#configuration">模型配置</a>　·　<a href="#upstream">上游与授权</a></p>
+  <p><a href="#quick-start">🚀 快速开始</a>　·　<a href="#canvas">无限画布</a>　·　<a href="#compose">片段拼接</a>　·　<a href="#ecommerce">电商套图</a>　·　<a href="#txt2img">文生图 / 图生图</a>　·　<a href="#txt2video">生视频</a>　·　<a href="#gallery">模板 / 画廊</a>　·　<a href="#configuration">模型配置</a>　·　<a href="#community">交流群</a>　·　<a href="#upstream">上游与授权</a></p>
 </div>
 
 <a id="quick-start"></a>
@@ -197,6 +197,19 @@ dsh plugin --profile web add ./q253595422-dsh-imagegen-video-1.7.8.tgz
   体积与上游原始响应；**密钥已在写入前脱敏**（`Bearer` 令牌、查询串密钥、
   内联 base64 均替换为占位符，API Key 只记「是否发送」）。
   生图与生视频写同一个缓冲：视频的提交 / 轮询 / 下载三条腿各自标记。
+
+<a id="community"></a>
+## 交流群
+
+微信群「龙虾吹水🦞群」：使用问题、版本更新与画布玩法都可以在群里聊。
+
+<div align="center">
+  <img src="docs/images/wechat-group-qr.png" alt="微信群「龙虾吹水🦞群」的加群二维码" width="360" />
+</div>
+
+> 二维码 7 天内有效（2026 年 10 月 25 日前）。过期或人数已满时，请改到
+> [Issues](https://github.com/q253595422/dsh-imagegen-video/issues) 提问题，
+> 并提醒维护者换一张新码。安全敏感的问题不要发在群里，也不要贴 API 密钥。
 
 <a id="upstream"></a>
 ## 上游与授权
