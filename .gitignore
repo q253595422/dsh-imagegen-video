@@ -1,4 +1,8 @@
 node_modules/
-lib/
+# Anchored: an unanchored `lib/` also matches `scripts/lib/`, which silently
+# kept `scripts/lib/headless-chrome.mjs` out of the repository. Three guard
+# scripts import it, so every clean clone failed with ERR_MODULE_NOT_FOUND while
+# the working tree looked fine -- the file was on one disk only.
+/lib/
 *.tgz
 .build-lock/

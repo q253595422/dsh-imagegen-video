@@ -29,10 +29,10 @@ const SRC = dirname(dirname(fileURLToPath(import.meta.url)))
 // harness stepping on itself, which is just as misleading as a fake pass.
 const COPY = join(tmpdir(), `dsh-neg-verify-${process.pid}`)
 
-function freshCopy () {
+function freshCopy (needsGit = false) {
   rmSync(COPY, { recursive: true, force: true })
   mkdirSync(COPY, { recursive: true })
-  for (const entry of ['src', 'scripts', 'lib', 'package.json', 'tsdown.config.ts']) {
+  for (const entry of ['src', 'scripts', 'lib', 'package.json', 'tsdown.config.ts', '.gitignore']) {
     cpSync(join(SRC, entry), join(COPY, entry), { recursive: true })
   }
   // The `pack` runner inspects a real archive, so the copy needs the directories
@@ -45,6 +45,19 @@ function freshCopy () {
     writeFileSync(join(COPY, dir, file), 'x')
   }
   symlinkSync(join(SRC, 'node_modules'), join(COPY, 'node_modules'))
+  // `verify-tracked.mjs` can only answer its question inside a checkout, and it
+  // SKIPS (green) outside one. A runner that silently skips is exactly how the
+  // incident it guards got through, so the copy becomes a real repository for
+  // the runners that need one -- and only for those, since committing the tree
+  // costs a second and 50+ cases would each pay it.
+  if (needsGit) {
+    const git = (...args) => execFileSync('git', ['-c', 'user.email=neg@verify', '-c', 'user.name=neg', ...args], {
+      cwd: COPY, encoding: 'utf8', stdio: 'ignore',
+    })
+    git('init', '--quiet')
+    git('add', '-A')
+    git('commit', '--quiet', '-m', 'baseline')
+  }
 }
 
 /** @returns {{ ok: boolean, out: string }} ok = the check passed. */
@@ -82,6 +95,15 @@ function patch (relative, from, to) {
   writeFileSync(path, before)
 }
 
+/** Build a `from '<specifier>'` fragment at runtime.
+ *
+ *  Some mutation payloads *are* import specifiers (the tracked-file case points
+ *  an import at a file no checkout has). Written literally they would appear in
+ *  this file's own source, and verify-tracked.mjs -- which scans every script --
+ *  would report them as real broken imports. The case would then fail as
+ *  HARNESS BROKEN before it proved anything. */
+const importFrom = (specifier) => ['from', ["'", '.', specifier, "'"].join('')].join(' ')
+
 const CASES = [
   // ------------------------------------------------ the poster recipe guard
   {
@@ -106,6 +128,24 @@ const CASES = [
     from: "        const poster = metadata?.poster\n        if (isPosterDocument(poster)) {\n          referenced.add(poster.background.assetId)\n          for (const layer of poster.layers) {\n            if (layer.type === 'image') referenced.add(layer.asset.assetId)\n          }\n        }",
     to: '        void 0',
     expect: /poster background was deleted by the sweep/,
+  },
+  {
+    // The incident: a guard imported `scripts/lib/headless-chrome.mjs`, the file
+    // was never committed (an unanchored `lib/` in .gitignore matched it), and
+    // every clean clone died at import time while the author's tree was green.
+    // Pointing an import at a file no checkout has reproduces exactly that
+    // state: the import resolves on disk in the tree that has it and nowhere
+    // else, which is what "not in the repository" means.
+    name: 'a guard imports a helper that never made it into the repository',
+    runner: 'tracked',
+    file: 'scripts/verify-frame-grab.mjs',
+    // Assembled at runtime so this file's OWN source contains no import-shaped
+    // text. The scanner under test reads every script here, so a literal payload
+    // would be reported as a real broken import and the case would come back
+    // HARNESS BROKEN -- failing before it proves anything about the guard.
+    from: importFrom('/lib/headless-chrome.mjs'),
+    to: importFrom('/lib/headless-chrome-not-committed.mjs'),
+    expect: /which is not in the repository/,
   },
   // --------------------------------------------------- the gallery trash window
   {
@@ -669,6 +709,9 @@ const RUNNERS = {
   // The archive rule, run against a real `pnpm pack`. No rebuild: the archive
   // contents depend on package.json and the tree, not on the built output.
   pack: { script: 'scripts/verify-pack.mjs', build: false },
+  // Needs a real checkout: the guard asks git which files are tracked, and a
+  // bare copy would make it skip -- a skip that reads as a pass.
+  tracked: { script: 'scripts/verify-tracked.mjs', build: false, git: true },
 }
 
 // ---------------------------------------------------------------- chain guard
@@ -708,7 +751,7 @@ for (const testCase of CASES) {
   if (nameFilter !== undefined && nameFilter !== '' && !testCase.name.includes(nameFilter)) continue
   const runner = RUNNERS[testCase.runner]
   const script = runner.script
-  freshCopy()
+  freshCopy(runner.git === true)
   const baseline = run(script)
   if (!baseline.ok) {
     results.push({ name: testCase.name, verdict: 'HARNESS BROKEN', detail: baseline.out.slice(-400) })
