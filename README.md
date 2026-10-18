@@ -26,12 +26,15 @@
 | :---: | --- |
 | <a href="https://api.closeai.hk/"><img src="docs/images/sponsor-yeazi.png" width="170" alt="椰子API" /></a> | **[椰子API](https://api.closeai.hk/)** — OpenAI 兼容的多模型网关。一个 API Key 同时覆盖 GPT Image 与 Gemini 图像模型，不必分别注册各家；在插件里就是一个普通渠道，不需要改代码。<br><br>`https://api.closeai.hk/v1` · Bearer API Key |
 | <a href="https://api.metajing.cn/"><img src="docs/images/sponsor-metajing.png" width="170" alt="清衍 API" /></a> | **[清衍 API](https://api.metajing.cn/)** — 面向国内开发者的 AI API 中转站，站点自述支持 Claude、GPT、Gemini 等模型。<br><br>`https://api.metajing.cn/v1` · `Authorization: Bearer <key>` |
-| <a href="https://github.com/ChisaAlter/WhaleIsle"><img src="docs/images/sponsor-whaleisle.png" width="170" alt="鲸屿 Whale Isle" /></a> | **[鲸屿 Whale Isle](https://github.com/ChisaAlter/WhaleIsle)** — 基于 DeepSeek Harness 的开源社区桌面客户端：AI 对话、终端与 Git、模型与 MCP 接入、主题壁纸与桌宠、用量统计，装好即可把本插件跑在桌面上。<br><br>Windows x64 · macOS Apple Silicon · MIT
+| <a href="https://github.com/ChisaAlter/WhaleIsle"><img src="docs/images/sponsor-whaleisle.png" width="170" alt="鲸屿 Whale Isle" /></a> | **[鲸屿 Whale Isle](https://github.com/ChisaAlter/WhaleIsle)** — 基于 DeepSeek Harness 的开源社区桌面客户端：AI 对话、终端与 Git、模型与 MCP 接入、主题壁纸与桌宠、用量统计，装好即可把本插件跑在桌面上。<br><br>Windows x64 · macOS Apple Silicon · MIT |
+| <a href="https://github.com/jev-chat/jev-chat-jarvis"><img src="docs/images/sponsor-jevchat.png" width="170" alt="jev-chat" /></a> | **[jev-chat](https://github.com/jev-chat/jev-chat-jarvis)** — 聊天辅助决策工具：回复前先读懂对方意图与当下风险，再给出可一键填入的草稿，发不发由你。Android · Windows · macOS · iOS，MIT。<br><br>官网 `chatjevs.com` |
+| <a href="https://harnesscatalog.com/"><img src="docs/images/sponsor-harnesscatalog.png" width="170" alt="Harness Catalog" /></a> | **[Harness Catalog](https://harnesscatalog.com/)** — DeepSeek Harness 插件目录：逐个评测、给出真实安装命令，并说明什么场景该用它。本项目已收录其中。<br><br>[dsh-imagegen-video 条目](https://harnesscatalog.com/plugins/dsh-imagegen-video/) |
 
-> **以上是赞助位，不是中立推荐。** 三家都由第三方独立维护：两家 API 网关的
-> 可用模型、价格、限流与稳定性，以及桌面客户端的兼容性与稳定性，均以各自
-> 站点公告为准，本项目不做担保。配置网关后密钥会发送给对应服务，请按需自行
-> 评估；不要用它们处理你不愿意交给第三方的内容。
+> **以上是赞助位，不是中立推荐。** 五项均由第三方独立维护：两家 API 网关的
+> 可用模型、价格、限流与稳定性，桌面客户端与移动应用的兼容性、稳定性及其
+> 使用条款，以及插件目录的收录与评价，均以各自站点公告为准，本项目不做担保。
+> 配置网关后密钥会发送给对应服务，请按需自行评估；不要用它们处理你不愿意
+> 交给第三方的内容。
 
 <a id="quick-start"></a>
 ## 快速开始
