@@ -6090,6 +6090,18 @@ await check('E1 client apply mounts the sidebar entry and studio (jsdom)', async
     inspirationTile.click()
     await new Promise(resolve => setTimeout(resolve, 20))
     assert.equal(jsdomDocument.querySelector('textarea')?.value, 'A reusable template prompt', 'inspiration tile filled the prompt')
+    // Opening a clip from the sidebar returns to this tab with `images` emptied
+    // — the very state that renders the wall above — so the wall has to yield to
+    // the clip. The panel keeps every surface in one JSX tree and `viewingVideoId`
+    // is component state, so the guard is asserted where it lives; the runtime
+    // half (wall on the empty canvas, clip on the board) is covered above and in
+    // the unified-history block below.
+    const panelSource = readFileSync(new URL('../src/client/ImageGenPanel.tsx', import.meta.url), 'utf8')
+    assert.match(
+      panelSource,
+      /isGeneration && !generating && !error && images\.length === 0 && viewingVideoEntry === null \? \(\s*<InspirationGallery/,
+      'the inspiration wall yields to a clip that is on the board',
+    )
 
     // ---------------------------------------------------------- video studio
     // The video tab is a separate surface: selecting it must render the video

@@ -3789,7 +3789,11 @@ export function ImageGenPanel(props: {
             <div className={css.canvasError} role="alert">{tt('canvas.error', { error })}</div>
           ) : null}
 
-          {isGeneration && !generating && !error && images.length === 0 ? (
+          {/* The empty state is "nothing to show yet". Opening a clip from the
+              unified sidebar returns to this tab with `images` emptied, which is
+              exactly the state the inspiration wall renders in — so both drew
+              at once, the prompt suggestions sitting over the playing clip. */}
+          {isGeneration && !generating && !error && images.length === 0 && viewingVideoEntry === null ? (
             <InspirationGallery
               api={api}
               onUse={(text) => {

@@ -255,6 +255,18 @@ const CASES = [
     to: 'const tail = message.slice(0, STDERR_LIMIT)',
     expect: /npm-native-secret|doesNotMatch|secret/i,
   },
+  // ------------------------------------------------- inspiration wall vs a clip
+  {
+    // Opening a clip returns to the image tab with `images` emptied — the exact
+    // state the empty-canvas inspiration wall renders in — so without the video
+    // guard the prompt suggestions drew over the playing clip.
+    name: 'the inspiration wall returns on top of a clip that is playing',
+    runner: 'smoke',
+    file: 'src/client/ImageGenPanel.tsx',
+    from: 'images.length === 0 && viewingVideoEntry === null ? (',
+    to: 'images.length === 0 ? (',
+    expect: /inspiration wall yields to a clip/,
+  },
   // ------------------------------------------------------- the shortcut legend
   {
     // Every binding existed before the legend; none was discoverable. Drop the
