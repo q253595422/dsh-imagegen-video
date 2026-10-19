@@ -290,6 +290,41 @@ const CASES = [
     to: "  const keys = ''\n  return keys === '' ? text : `${text} (${keys})`",
     expect: /the undo control names its key/,
   },
+  // ------------------------------------------------------------- storyboard
+  {
+    // The board's whole reason to exist is that a shot's state is read from the
+    // clip NODE. Making every row fall back to "empty" is the failure mode a
+    // stored-copy implementation has: the clip is finished and on the canvas,
+    // and the row still says there is nothing. SB1 must go red by name.
+    name: 'a storyboard row ignores the clip it produced',
+    runner: 'canvas-video',
+    file: 'src/client/storyboard.ts',
+    from: '  if ((metadata.video?.url ?? \'\') !== \'\') return \'ready\'',
+    to: '  if (false) return \'ready\'',
+    expect: /each row is typed from its own clip node/,
+  },
+  {
+    // A 41st shot means the renderer builds a list the save gate will refuse —
+    // the canvas would then fail every save, losing the whole board on reload.
+    // Dropping the cap makes the harness accept it and H4 must go red.
+    name: 'the shot cap stops being enforced on save',
+    runner: 'storyboard',
+    file: 'src/canvas-store.ts',
+    from: '  if (board.shots.length > 40) return false',
+    to: '  if (board.shots.length > 4000) return false',
+    expect: /41 shots is past the documented cap/,
+  },
+  {
+    // Losing the ready-only filter is how a stitch ends up submitting a clip
+    // that is still rendering: the compose run then fails on an unreadable
+    // segment and the user loses the whole run. P4 must name it.
+    name: 'the stitch hand-off stops filtering for finished clips',
+    runner: 'storyboard',
+    file: 'src/client/storyboard.ts',
+    from: "    return node === undefined || (node.metadata?.video?.url ?? '') === '' ? [] : [node.id]",
+    to: '    return [shot.nodeId ?? "missing"]',
+    expect: /list order, ready clips only/,
+  },
   // ------------------------------------------------- one browser launcher only
   {
     // The flake this removes is invisible in a single run: two guards picking
@@ -866,6 +901,9 @@ const RUNNERS = {
   // The gallery/store half of the video chain: smoke-canvas-video drives the
   // real store in a temp home, which smoke-video does not touch at all.
   'canvas-video': { script: 'scripts/smoke-canvas-video.mjs', build: true },
+  // The board's persisted state and its pure rules, driven against the real
+  // modules in a temp home. No build needed: the source is imported directly.
+  storyboard: { script: 'scripts/smoke-storyboard.mjs', build: false },
   // The archive rule, run against a real `pnpm pack`. No rebuild: the archive
   // contents depend on package.json and the tree, not on the built output.
   pack: { script: 'scripts/verify-pack.mjs', build: false },

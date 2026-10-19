@@ -669,7 +669,39 @@ export interface CanvasAssetRef {
   textPreview?: string
 }
 
-export type CanvasNodeType = 'image' | 'text' | 'file' | 'config' | 'video'
+export type CanvasNodeType = 'image' | 'text' | 'file' | 'config' | 'video' | 'storyboard'
+
+/**
+ * One shot in a storyboard node's list.
+ *
+ * A shot owns its own prompt and length and nothing else: the clip it produces
+ * is an ORDINARY canvas video node, named by {@link nodeId}. Keeping the
+ * result as a reference to that node rather than a copy of its status means
+ * there is exactly one place a clip's state lives (`metadata.status` on the
+ * video node), so the storyboard can never disagree with what the canvas shows,
+ * and the same node is immediately previewable, favoritable and stitchable.
+ */
+export interface CanvasShot {
+  id: string
+  /** Camera direction for this shot only. */
+  prompt: string
+  /** Length handed to the video provider, in seconds. */
+  seconds: number
+  /** The video node this shot produced, once one has been created. */
+  nodeId?: string
+}
+
+/**
+ * Where a video node came from, when a storyboard made it. Written on the
+ * produced node so a later stitch or a re-run can find its shot again without
+ * scanning every storyboard's list.
+ */
+export interface CanvasShotOrigin {
+  storyboardId: string
+  shotId: string
+  /** 1-based position in the shot list, for provenance text. */
+  index: number
+}
 
 /** Coarse bucket driving the file node's icon and preview branch. */
 export type CanvasFileKind = 'text' | 'pdf' | 'image' | 'office' | 'archive' | 'audio' | 'video' | 'other'
@@ -1253,6 +1285,31 @@ export interface CanvasNodeMetadata {
   fileKind?: CanvasFileKind
   /** Skill-produced nodes: which skill produced this and from what. */
   skill?: CanvasSkillProvenance
+  /**
+   * Storyboard nodes: the ordered shot list plus the settings every shot
+   * shares. The per-shot clip lives on the video node named by
+   * `shots[].nodeId`, never here.
+   */
+  storyboard?: CanvasStoryboard
+  /** Video nodes: the shot that produced this clip, when a storyboard did. */
+  shot?: CanvasShotOrigin
+}
+
+/** A storyboard node's whole editable state. */
+export interface CanvasStoryboard {
+  /** Shots in play order; the list itself is the film's running order. */
+  shots: CanvasShot[]
+  /** Shared video settings, the same vocabulary the video node carries. */
+  aspectRatio: string
+  resolution: string
+  /**
+   * `cut` starts every shot from text; `carry` feeds each shot the LAST FRAME
+   * of the previous shot as its first frame, so consecutive shots join up.
+   */
+  continuity: 'cut' | 'carry'
+  /** Shared model override; absent means the canvas default video model. */
+  model?: string
+  channelId?: string
 }
 
 export interface CanvasNode {

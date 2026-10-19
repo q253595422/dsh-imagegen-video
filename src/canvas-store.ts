@@ -318,6 +318,57 @@ function isVideoRef(value: unknown): value is CanvasVideoRef {
   return true
 }
 
+/** One shot of a storyboard node (`CanvasShot` in protocol.ts). A shot with no
+ *  prompt is a legitimate draft — the node renders it as an empty row and the
+ *  run refuses it with a visible message — so only its shape is validated. */
+function isShot(value: unknown): boolean {
+  if (value === null || typeof value !== 'object') return false
+  const shot = value as Record<string, unknown>
+  if (typeof shot.id !== 'string' || shot.id === '') return false
+  if (typeof shot.prompt !== 'string') return false
+  if (typeof shot.seconds !== 'number' || !Number.isFinite(shot.seconds) || shot.seconds <= 0) return false
+  if (shot.nodeId !== undefined && typeof shot.nodeId !== 'string') return false
+  return true
+}
+
+/**
+ * A storyboard's stored state.
+ *
+ * Validated rather than dropped on the floor: `isNode` returning false makes
+ * `coerceDocument` undefined, and `save()` then throws 'malformed canvas
+ * document' — so an over-strict rule here does not reject the incoming request,
+ * it bricks every save of a canvas that holds one storyboard. Each field is
+ * therefore allowed to be missing and filled in at render time, and only a
+ * present-but-wrong-typed value is refused.
+ */
+function isStoryboard(value: unknown): boolean {
+  if (value === null || typeof value !== 'object') return false
+  const board = value as Record<string, unknown>
+  if (!Array.isArray(board.shots) || !board.shots.every(isShot)) return false
+  // A cap so a hand-edited document cannot make the canvas render forever.
+  if (board.shots.length > 40) return false
+  if (board.aspectRatio !== undefined && typeof board.aspectRatio !== 'string') return false
+  if (board.resolution !== undefined && typeof board.resolution !== 'string') return false
+  if (board.continuity !== undefined && board.continuity !== 'cut' && board.continuity !== 'carry') return false
+  if (board.model !== undefined && typeof board.model !== 'string') return false
+  if (board.channelId !== undefined && typeof board.channelId !== 'string') return false
+  return true
+}
+
+/**
+ * Provenance of a storyboard-produced clip. Deliberately NOT part of the save
+ * gate's required set: it is display and lookup metadata, and refusing a whole
+ * canvas document because one of its clips lost this field would be a data-loss
+ * bug, not a consistency check.
+ */
+function isShotOrigin(value: unknown): boolean {
+  if (value === null || typeof value !== 'object') return false
+  const origin = value as Record<string, unknown>
+  return typeof origin.storyboardId === 'string'
+    && typeof origin.shotId === 'string'
+    && typeof origin.index === 'number' && Number.isFinite(origin.index)
+}
+
 function isNode(value: unknown): value is CanvasNode {
   if (value === null || typeof value !== 'object') return false
   const node = value as Record<string, unknown>
@@ -329,7 +380,7 @@ function isNode(value: unknown): value is CanvasNode {
   // `save()` throws 'malformed canvas document'. `video` was exactly that, so
   // every canvas holding a video node failed to save.
   if (node.type !== 'image' && node.type !== 'text' && node.type !== 'file'
-    && node.type !== 'config' && node.type !== 'video') return false
+    && node.type !== 'config' && node.type !== 'video' && node.type !== 'storyboard') return false
   const metadata = node.metadata
   if (metadata !== undefined && (metadata === null || typeof metadata !== 'object')) return false
   const state = (metadata ?? {}) as Record<string, unknown>
@@ -347,11 +398,20 @@ function isNode(value: unknown): value is CanvasNode {
     // `video` is optional: a node that is still generating, failed, or was
     // never given a clip is a legitimate document.
     if (state.video !== undefined && !isVideoRef(state.video)) return false
+    // Storyboard provenance, when present, must be readable: the storyboard
+    // node finds its clips through it, and a half-written origin would make a
+    // shot look unproduced forever.
+    if (state.shot !== undefined && !isShotOrigin(state.shot)) return false
     return state.status === undefined || state.status === 'idle' || state.status === 'generating' || state.status === 'success' || state.status === 'error'
   }
   if (node.type === 'file') {
     // A file node without an asset is the empty "click to upload" placeholder.
     return state.asset === undefined || isAssetRef(state.asset)
+  }
+  if (node.type === 'storyboard') {
+    // A storyboard without a list yet is a freshly created, still-blank one.
+    if (state.storyboard !== undefined && !isStoryboard(state.storyboard)) return false
+    return true
   }
   if (node.type === 'config') {
     return state.prompt === undefined || typeof state.prompt === 'string'

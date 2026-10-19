@@ -3026,3 +3026,416 @@
   color: var(--dsw-alias-state-warn-primary);
   background: color-mix(in srgb, var(--dsw-alias-state-warn-primary) 14%, transparent);
 }
+
+/* ---------------------------------------------------------- 分镜节点 ---
+   分镜节点是一张镜头清单：每一镜产出的都是一个普通视频节点，这里只负责编排。
+   卡片外观（背景 / 边框 / 圆角 / 阴影）全部沿用 `.node`，这里不再另起一套视觉语言；
+   内部按「设置条 → 可滚动镜头列表 → 底部操作」三段纵向排。 */
+
+.storyboardNode {
+  /* 卡片内全是可点的控件，鼠标悬停时不再暗示「整张都能拖」 */
+  cursor: default;
+}
+
+/* 内容容器：本身不滚，滚动交给下面的镜头列表；圆角与图片节点的 body 对齐。 */
+.storyboardBody {
+  flex: 1;
+  min-height: 0;
+  margin: 0 8px 8px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  overflow: hidden;
+  border-radius: 9px;
+}
+
+/* 设置条：镜头衔接与画幅并排一行，每项是「标签 + 下拉」 */
+.storyboardSettings {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+
+.storyboardField {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 11px;
+  color: var(--dsw-alias-label-tertiary);
+}
+
+.storyboardField > span {
+  flex: none;
+  white-space: nowrap;
+}
+
+/* 下拉：与 `.composerControls [data-dsh-select]` / `.generateForm [data-dsh-select]`
+   同一套描边、圆角与字号；保留原生 select，键盘与读屏都直通。 */
+.storyboardSelect {
+  flex: 1;
+  min-width: 0;
+  height: 26px;
+  border-radius: 8px;
+  border: 1px solid var(--dsw-alias-border-l1);
+  background: transparent;
+  color: var(--dsw-alias-label-primary);
+  font-family: inherit;
+  font-size: 11.5px;
+  padding: 0 6px;
+  outline: none;
+}
+
+/* 镜头列表：`min-height: 0` 是 flex 子项真正能滚起来的前提，少了它列表会把节点撑开 */
+.storyboardShots {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin: 0;
+  padding: 0 2px 0 0;
+  list-style: none;
+  scrollbar-gutter: stable;
+  /* `.node` 上的 `touch-action: none` 原本是为拖拽节点，会让整个列表在触屏上滚不动；
+     这里只放开纵向滚动，横向手势仍留给画布平移。 */
+  touch-action: pan-y;
+}
+
+/* 一镜一张小卡：比节点底色略深一档，让每一镜的边界在长列表里也看得清。
+   `flex: none` 是必须的——列方向 flex 子项默认会缩，镜头多了就会被压扁而不是出滚动条。 */
+.storyboardShot {
+  position: relative;
+  flex: none;
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  padding: 7px 8px 8px;
+  border-radius: 9px;
+  border: 1px solid var(--dsw-alias-border-l1);
+  background: color-mix(in srgb, var(--dsw-alias-label-primary) 3%, transparent);
+  transition: border-color 0.12s ease;
+}
+
+.storyboardShot:hover {
+  border-color: color-mix(in srgb, var(--dsw-alias-brand-primary) 32%, var(--dsw-alias-border-l1));
+}
+
+/* 正在跑的那一镜：左侧一条品牌色短竖线，不占布局、不加投影，比整卡高亮轻 */
+.storyboardShot[data-active] {
+  border-color: color-mix(in srgb, var(--dsw-alias-brand-primary) 45%, var(--dsw-alias-border-l1));
+}
+
+.storyboardShot[data-active]::before {
+  content: '';
+  position: absolute;
+  left: -1px;
+  top: 7px;
+  bottom: 7px;
+  width: 2.5px;
+  border-radius: 999px;
+  background: var(--dsw-alias-brand-primary);
+}
+
+.storyboardShotHead {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+}
+
+/* 镜号：固定尺寸的圆标，数字等宽，镜头增删时不会左右跳 */
+.storyboardShotIndex {
+  flex: none;
+  width: 16px;
+  height: 16px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--dsw-alias-label-primary) 8%, transparent);
+  color: var(--dsw-alias-label-secondary);
+  font-size: 10px;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}
+
+.storyboardShot[data-active] .storyboardShotIndex {
+  background: color-mix(in srgb, var(--dsw-alias-brand-primary) 16%, transparent);
+  color: var(--dsw-alias-brand-primary);
+}
+
+/* 状态徽标：形状沿用 `.nodeTag`，颜色按四种状态分开，缺省（empty）保持次要灰 */
+.storyboardShotState {
+  flex: none;
+  padding: 1px 6px;
+  border-radius: 999px;
+  border: 1px solid transparent;
+  font-size: 10px;
+  font-weight: 500;
+  letter-spacing: 0.02em;
+  white-space: nowrap;
+  color: var(--dsw-alias-label-tertiary);
+  background: color-mix(in srgb, var(--dsw-alias-label-primary) 6%, transparent);
+}
+
+.storyboardShotState[data-state='generating'] {
+  color: var(--dsw-alias-brand-primary);
+  background: color-mix(in srgb, var(--dsw-alias-brand-primary) 12%, transparent);
+  border-color: color-mix(in srgb, var(--dsw-alias-brand-primary) 28%, transparent);
+}
+
+.storyboardShotState[data-state='ready'] {
+  color: var(--dsw-alias-state-success-primary, var(--dsw-alias-brand-primary));
+  background: color-mix(in srgb, var(--dsw-alias-state-success-primary, var(--dsw-alias-brand-primary)) 12%, transparent);
+  border-color: color-mix(in srgb, var(--dsw-alias-state-success-primary, var(--dsw-alias-brand-primary)) 28%, transparent);
+}
+
+.storyboardShotState[data-state='failed'] {
+  color: var(--dsw-alias-label-error);
+  background: color-mix(in srgb, var(--dsw-alias-label-error) 12%, transparent);
+  border-color: color-mix(in srgb, var(--dsw-alias-label-error) 28%, transparent);
+}
+
+/* 失败的那一镜整卡描一层错误色，扫列表时不用逐条读徽标 */
+.storyboardShot[data-state='failed'] {
+  border-color: color-mix(in srgb, var(--dsw-alias-label-error) 32%, var(--dsw-alias-border-l1));
+}
+
+/* 镜号右侧的图标按钮组（上移 / 下移 / 删除）：靠右，尺寸与 `.textTool` 同级 */
+.storyboardShotActions {
+  margin-left: auto;
+  display: flex;
+  align-items: center;
+  gap: 1px;
+  flex: none;
+}
+
+/* 节点内的小图标按钮：无底色、悬停才浮出背景，避免一列按钮在黑边上太吵 */
+.storyboardIconButton {
+  min-width: 20px;
+  height: 20px;
+  padding: 0 3px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border: none;
+  border-radius: 5px;
+  background: transparent;
+  color: var(--dsw-alias-label-tertiary);
+  font-size: 11px;
+  line-height: 1;
+  cursor: pointer;
+}
+
+.storyboardIconButton:hover {
+  background: var(--dsw-alias-interactive-bg-hover);
+  color: var(--dsw-alias-label-primary);
+}
+
+.storyboardIconButton:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+  background: transparent;
+}
+
+/* 删除镜头的按钮由调用方打上 `data-danger`，悬停转错误色——和 `.contextMenu button[data-danger]`
+   同一套语义。文案会随语言变化，所以这里不按 `title` 匹配。 */
+.storyboardIconButton[data-danger]:hover {
+  color: var(--dsw-alias-label-error);
+  background: color-mix(in srgb, var(--dsw-alias-label-error) 12%, transparent);
+}
+
+/* 镜头提示词：与 `.textArea` 同一套字号 / 行高 / 占位符色，但要有自己的描边，
+   因为它是列表里的一张卡而不是整块节点；`resize: none` 是硬要求——节点自己会被拖动缩放 */
+.storyboardShotPrompt {
+  width: 100%;
+  box-sizing: border-box;
+  min-height: 42px;
+  resize: none;
+  border: 1px solid transparent;
+  border-radius: 7px;
+  background: color-mix(in srgb, var(--dsw-alias-bg-layer-1) 70%, transparent);
+  color: var(--dsw-alias-label-primary);
+  font-family: inherit;
+  font-size: 12px;
+  line-height: 1.5;
+  padding: 5px 7px;
+  outline: none;
+  cursor: text;
+}
+
+.storyboardShotPrompt::placeholder { color: var(--dsw-alias-label-tertiary); }
+
+.storyboardShotPrompt:focus {
+  border-color: var(--dsw-alias-brand-primary);
+  background: var(--dsw-alias-bg-layer-1);
+}
+
+/* 一镜的底部行：时长下拉在左，生成与预览在右 */
+.storyboardShotFoot {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+}
+
+/* 时长下拉比较窄，不参与拉伸，剩下的空间交给右侧按钮 */
+.storyboardShotFoot .storyboardSelect {
+  flex: none;
+  width: 62px;
+  height: 22px;
+  border-radius: 6px;
+  font-size: 11px;
+}
+
+/* 单镜的「生成这一镜」：低调的描边按钮，主按钮在底部，这一层不该抢主次 */
+.storyboardShotRun {
+  margin-left: auto;
+  height: 22px;
+  padding: 0 9px;
+  border-radius: 6px;
+  border: 1px solid color-mix(in srgb, var(--dsw-alias-brand-primary) 32%, var(--dsw-alias-border-l1));
+  background: color-mix(in srgb, var(--dsw-alias-brand-primary) 8%, transparent);
+  color: var(--dsw-alias-brand-primary);
+  font-family: inherit;
+  font-size: 11px;
+  font-weight: 500;
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+.storyboardShotRun:hover {
+  background: color-mix(in srgb, var(--dsw-alias-brand-primary) 16%, transparent);
+}
+
+/* 这一镜在跑或已失败时，按钮本身就是状态入口，用底色体现而不是再加一个徽标 */
+.storyboardShotRun[data-state='generating'] {
+  border-color: color-mix(in srgb, var(--dsw-alias-brand-primary) 45%, var(--dsw-alias-border-l1));
+}
+
+.storyboardShotRun[data-state='failed'] {
+  border-color: color-mix(in srgb, var(--dsw-alias-label-error) 38%, var(--dsw-alias-border-l1));
+  background: color-mix(in srgb, var(--dsw-alias-label-error) 10%, transparent);
+  color: var(--dsw-alias-label-error);
+}
+
+.storyboardShotRun:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+/* 空状态：居中、次要文字色，和 `.configHint` 的语气一致 */
+.storyboardEmpty {
+  flex: 1;
+  min-height: 48px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 12px;
+  text-align: center;
+  font-size: 11.5px;
+  line-height: 1.6;
+  color: var(--dsw-alias-label-tertiary);
+}
+
+/* 底部操作条：左侧加镜，右侧拼接与批量生成；不滚动，始终贴住节点底边 */
+.storyboardFoot {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding-top: 7px;
+  border-top: 1px solid var(--dsw-alias-border-l1);
+}
+
+/* 把右侧按钮组推到底，中间的空白也兼作触控上的分隔 */
+.storyboardSpacer {
+  flex: 1;
+  min-width: 6px;
+}
+
+/* 次要按钮（加一镜 / 拼接全部镜头）：沿用 `.skillGhost` 的描边风格，尺寸收小一号 */
+.storyboardAdd,
+.storyboardStitch {
+  flex: none;
+  height: 26px;
+  padding: 0 10px;
+  border-radius: 7px;
+  border: 1px solid var(--dsw-alias-border-l1);
+  background: transparent;
+  color: var(--dsw-alias-label-secondary);
+  font-family: inherit;
+  font-size: 11.5px;
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+.storyboardAdd:hover,
+.storyboardStitch:hover {
+  background: var(--dsw-alias-interactive-bg-hover);
+  color: var(--dsw-alias-label-primary);
+}
+
+.storyboardAdd:disabled,
+.storyboardStitch:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+  background: transparent;
+  color: var(--dsw-alias-label-secondary);
+}
+
+/* 主按钮（生成剩余镜头）：填品牌色，参考 `.composeBarRun` / `.skillPrimary`。
+   字色取主题的底色变量而不是白，暗色主题下才有对比。 */
+.storyboardRun {
+  flex: none;
+  height: 26px;
+  padding: 0 12px;
+  border: none;
+  border-radius: 7px;
+  background: var(--dsw-alias-brand-primary);
+  color: var(--dsw-alias-bg-base);
+  font-family: inherit;
+  font-size: 11.5px;
+  font-weight: 600;
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+.storyboardRun:hover { opacity: 0.9; }
+
+.storyboardRun:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+/* 焦点环：节点里既有按钮也有原生 select / textarea，统一一套；
+   `focus-visible` 只对键盘生效，鼠标点过不留圈。 */
+.storyboardNode button:focus-visible,
+.storyboardNode select:focus-visible,
+.storyboardNode textarea:focus-visible {
+  outline: 2px solid var(--dsw-alias-brand-primary);
+  outline-offset: 2px;
+}
+
+/* 标题栏上的镜数 / 生成中徽标：沿用 `.nodeTag` 的品牌色，生成中那枚再轻一点闪，
+   提示「有镜头在跑」而不用另开一行动效。动效只在系统允许时生效。 */
+@keyframes storyboardTagPulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.55; }
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  .nodeTag[data-storyboard-running] {
+    animation: storyboardTagPulse 1.8s ease-in-out infinite;
+  }
+
+  .storyboardShot[data-state='generating'] .storyboardShotIndex {
+    animation: storyboardTagPulse 1.6s ease-in-out infinite;
+  }
+}

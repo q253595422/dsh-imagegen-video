@@ -12,11 +12,12 @@ import {
   Keyboard, Layers, Map as MapIcon, Maximize, Maximize2, MousePointer2, Palette, Pencil, Plus, Redo2, Scissors, SendHorizonal, Sparkles, Star,
   SquareDashedMousePointer, Trash2, Type, Undo2, Upload, Wand2, Wallpaper, X,
 } from 'lucide-react'
-import type { CanvasAnnotation, CanvasAssetRef, CanvasConnection, CanvasDocument, CanvasFileKind, CanvasLayerInfo, CanvasLayerPlanItem, CanvasNode, CanvasRect, CanvasVideoRef, CanvasSkillConfigApplyResult, CanvasSkillConfigField, CanvasSkillConfigSaveResult, CanvasSkillConfigStep, CanvasSkillConfigView, CanvasSkillDescriptor, CanvasSkillLibrary, CanvasSkillOutput, CanvasSkillRunRequest, CanvasSkillTask, CanvasSketchStroke, GenerateRequest, GenerationTask, HistoryEntry, VideoGenerateRequest, VideoTaskSummary, VideoMode, VideoResolution } from '../protocol.ts'
+import type { CanvasAnnotation, CanvasAssetRef, CanvasConnection, CanvasDocument, CanvasFileKind, CanvasLayerInfo, CanvasLayerPlanItem, CanvasNode, CanvasRect, CanvasStoryboard, CanvasVideoRef, CanvasSkillConfigApplyResult, CanvasSkillConfigField, CanvasSkillConfigSaveResult, CanvasSkillConfigStep, CanvasSkillConfigView, CanvasSkillDescriptor, CanvasSkillLibrary, CanvasSkillOutput, CanvasSkillRunRequest, CanvasSkillTask, CanvasSketchStroke, GenerateRequest, GenerationTask, HistoryEntry, VideoGenerateRequest, VideoTaskSummary, VideoMode, VideoResolution } from '../protocol.ts'
 import { VIDEO_DURATIONS } from '../protocol.ts'
 // The stitch order is a SHARED rule: the host builds its ffmpeg concat list with
 // the same function, so the numbers on the badges are the order of the file.
 import { orderIdsByPosition } from '../clip-order.ts'
+import { defaultStoryboard, MAX_SHOTS, SHOT_SECONDS, nextShotId, shotNodeOf, shotProblem, shotState, storyboardClipIds, storyboardOf, storyboardProgress, nextShotIndex, withAppendedShot, withMovedShot, withRemovedShot, withShot, type ShotState } from './storyboard.ts'
 import { ImageGenApiError, type ImageGenApi } from './api.ts'
 import { errorMessage, tt } from './helpers.ts'
 import type { ImageGenKey } from './locales.ts'
@@ -49,6 +50,10 @@ const TEXT_NODE_SIZE = { width: 280, height: 150 }
 const FILE_NODE_SIZE = { width: 300, height: 170 }
 const CONFIG_NODE_SIZE = { width: 320, height: 190 }
 const LEGACY_CONFIG_NODE_SIZE = { width: 240, height: 96 }
+/** Tall enough to show four shot rows without scrolling the node itself: the
+ *  rows are the point of the node, and a board that hides its own list would
+ *  make the user resize it before they could use it. */
+const STORYBOARD_NODE_SIZE = { width: 380, height: 420 }
 /** Sketch boards keep a fixed frame (header + square-ish board + two tool rows)
  *  so the normalized strokes always map onto the same rect. */
 const SKETCH_NODE_SIZE = { width: 300, height: 396 }
@@ -1211,6 +1216,198 @@ function SkillConfirmDialog(props: {
   </>, globalThis.document.body)
 }
 
+/** One shot's label, used for its state chip and its button. */
+function shotStateLabel(state: ShotState): ImageGenKey {
+  switch (state) {
+    case 'ready': return 'canvas.storyboard.stateReady'
+    case 'generating': return 'canvas.storyboard.stateGenerating'
+    case 'failed': return 'canvas.storyboard.stateFailed'
+    default: return 'canvas.storyboard.stateEmpty'
+  }
+}
+
+/**
+ * The storyboard node's body: a settings strip, the shot list, and the two
+ * actions that move the board forward.
+ *
+ * It is a controlled component in the strict sense — every edit goes out
+ * through `onChange` and comes back as a new document — so undo/redo, autosave
+ * and the multi-window revision check all keep working without the board
+ * knowing they exist. The only local state is which row the pointer is over.
+ *
+ * The produced clips are NOT rendered here. They are ordinary video nodes to
+ * the right of the board, which is what makes them previewable, favoritable and
+ * stitchable with no extra plumbing; this body shows each row's state and the
+ * two shortcuts (preview, retry) that make those nodes reachable from the list.
+ */
+function StoryboardBody(props: {
+  node: CanvasNode
+  nodes: readonly CanvasNode[]
+  busy: boolean
+  onChange: (next: CanvasStoryboard) => void
+  onRun: () => void
+  onRunShot: (index: number) => void
+  onPreview: (nodeId: string) => void
+  onStitch: (ids: string[]) => void
+}): React.JSX.Element {
+  const board = storyboardOf(props.node)
+  const progress = storyboardProgress(board, props.nodes)
+  const clipIds = storyboardClipIds(board, props.nodes)
+  const nextIndex = nextShotIndex(board, props.nodes)
+  const [hovered, setHovered] = useState<string | null>(null)
+  // `nextShotIndex` is the single rule for "which shot runs next", and in
+  // `carry` mode it answers -1 while the predecessor has no clip yet. The run
+  // button follows it rather than counting empty rows itself, so the button and
+  // the submit can never disagree about whether a run is possible.
+  const runnable = nextIndex >= 0
+  return <div className={css.storyboardBody} data-storyboard-body="" onPointerDown={event => event.stopPropagation()}>
+    <div className={css.storyboardSettings}>
+      <label className={css.storyboardField}>
+        <span>{tt('canvas.storyboard.continuity')}</span>
+        <select
+          className={css.storyboardSelect}
+          value={board.continuity}
+          aria-label={tt('canvas.storyboard.continuity')}
+          onChange={event => props.onChange({ ...board, continuity: event.target.value === 'carry' ? 'carry' : 'cut' })}
+        >
+          <option value="cut">{tt('canvas.storyboard.continuityCut')}</option>
+          <option value="carry">{tt('canvas.storyboard.continuityCarry')}</option>
+        </select>
+      </label>
+      <label className={css.storyboardField}>
+        <span>{tt('canvas.videoAspect')}</span>
+        <select
+          className={css.storyboardSelect}
+          value={board.aspectRatio}
+          aria-label={tt('canvas.videoAspect')}
+          onChange={event => props.onChange({ ...board, aspectRatio: event.target.value })}
+        >
+          {['16:9', '9:16', '1:1'].map(value => <option key={value} value={value}>{value}</option>)}
+        </select>
+      </label>
+      <label className={css.storyboardField}>
+        <span>{tt('canvas.videoResolution')}</span>
+        <select
+          className={css.storyboardSelect}
+          value={board.resolution}
+          aria-label={tt('canvas.videoResolution')}
+          onChange={event => props.onChange({ ...board, resolution: event.target.value })}
+        >
+          {(['480P', '720P', '1080P'] as const).map(value => <option key={value} value={value}>{value}</option>)}
+        </select>
+      </label>
+    </div>
+
+    {board.shots.length === 0
+      ? <div className={css.storyboardEmpty}>{tt('canvas.storyboard.empty')}</div>
+      : <ol className={css.storyboardShots} data-storyboard-shots="">
+          {board.shots.map((shot, index) => {
+            const state = shotState(shot, props.nodes)
+            const clippable = shotNodeOf(shot, props.nodes)
+            const active = hovered === shot.id || index === nextIndex
+            return <li
+              key={shot.id}
+              className={css.storyboardShot}
+              data-state={state}
+              data-active={active ? '' : undefined}
+              data-shot-id={shot.id}
+              onMouseEnter={() => setHovered(shot.id)}
+              onMouseLeave={() => setHovered(previous => previous === shot.id ? null : previous)}
+            >
+              <div className={css.storyboardShotHead}>
+                <span className={css.storyboardShotIndex}>{index + 1}</span>
+                <span className={css.storyboardShotState} data-state={state}>{tt(shotStateLabel(state))}</span>
+                <span className={css.storyboardShotActions}>
+                  <button
+                    type="button"
+                    className={css.storyboardIconButton}
+                    title={tt('canvas.storyboard.moveUp')}
+                    aria-label={tt('canvas.storyboard.moveUp')}
+                    disabled={index === 0}
+                    onClick={() => props.onChange(withMovedShot(board, index, -1))}
+                  >↑</button>
+                  <button
+                    type="button"
+                    className={css.storyboardIconButton}
+                    title={tt('canvas.storyboard.moveDown')}
+                    aria-label={tt('canvas.storyboard.moveDown')}
+                    disabled={index === board.shots.length - 1}
+                    onClick={() => props.onChange(withMovedShot(board, index, 1))}
+                  >↓</button>
+                  <button
+                    type="button"
+                    className={css.storyboardIconButton}
+                    title={tt('canvas.storyboard.removeShot')}
+                    aria-label={tt('canvas.storyboard.removeShot')}
+                    data-danger=""
+                    onClick={() => props.onChange(withRemovedShot(board, index))}
+                  >×</button>
+                </span>
+              </div>
+              <textarea
+                className={css.storyboardShotPrompt}
+                value={shot.prompt}
+                rows={2}
+                placeholder={tt('canvas.storyboard.promptPlaceholder')}
+                aria-label={tt('canvas.storyboard.shot', { index: index + 1 })}
+                onChange={event => props.onChange(withShot(board, index, { prompt: event.target.value }))}
+              />
+              <div className={css.storyboardShotFoot}>
+                <select
+                  className={css.storyboardSelect}
+                  value={String(shot.seconds)}
+                  aria-label={tt('canvas.storyboard.seconds', { seconds: shot.seconds })}
+                  onChange={event => props.onChange(withShot(board, index, { seconds: Number(event.target.value) }))}
+                >
+                  {SHOT_SECONDS.map(value => <option key={value} value={String(value)}>{tt('canvas.videoDuration', { seconds: value })}</option>)}
+                </select>
+                {state === 'failed' || state === 'empty'
+                  ? <button
+                      type="button"
+                      className={css.storyboardShotRun}
+                      data-state={state}
+                      disabled={props.busy || shot.prompt.trim() === ''}
+                      onClick={() => props.onRunShot(index)}
+                    >{tt(state === 'failed' ? 'canvas.storyboard.retryShot' : 'canvas.storyboard.runShot')}</button>
+                  : state === 'ready' && clippable !== undefined
+                    ? <button
+                        type="button"
+                        className={css.storyboardShotRun}
+                        data-state="ready"
+                        onClick={() => props.onPreview(clippable.id)}
+                      >{tt('canvas.storyboard.previewShot')}</button>
+                    : <span className={css.storyboardShotState} data-state="generating">{tt('canvas.storyboard.stateGenerating')}</span>}
+              </div>
+            </li>
+          })}
+        </ol>}
+
+    <div className={css.storyboardFoot}>
+      <button
+        type="button"
+        className={css.storyboardAdd}
+        disabled={board.shots.length >= MAX_SHOTS}
+        title={tt('canvas.storyboard.addShot')}
+        onClick={() => props.onChange(withAppendedShot(board))}
+      >{tt('canvas.storyboard.addShot')}</button>
+      <span className={css.storyboardSpacer} />
+      <button
+        type="button"
+        className={css.storyboardStitch}
+        disabled={clipIds.length < 2 || props.busy}
+        title={tt('canvas.storyboard.stitch')}
+        onClick={() => props.onStitch(clipIds)}
+      >{tt('canvas.storyboard.stitch')}</button>
+      <button
+        type="button"
+        className={css.storyboardRun}
+        disabled={props.busy || !runnable}
+        onClick={props.onRun}
+      >{tt(board.continuity === 'carry' ? 'canvas.storyboard.runNext' : 'canvas.storyboard.runAll')}</button>
+    </div>
+  </div>
+}
+
 /** Live skill-run card rendered as an ephemeral canvas node. It is not part of
  *  the document: it appears the moment a run is queued (wired to its source
  *  node with an animated edge), reports the host's progress phases, and hands
@@ -1810,6 +2007,22 @@ export function CanvasWorkspace(props: CanvasWorkspaceProps): React.JSX.Element 
       x: Math.round(center.x - SKETCH_NODE_SIZE.width / 2), y: Math.round(center.y - SKETCH_NODE_SIZE.height / 2),
       width: SKETCH_NODE_SIZE.width, height: SKETCH_NODE_SIZE.height,
       metadata: { sketch: { strokes: [] }, status: 'idle' },
+    }
+  }, [canvasCenter])
+
+  /** A shot list that produces one clip per shot, in list order.
+   *
+   * Deliberately a node type of its own rather than a text node with a magic
+   * format: its rows are editable controls, its state is the produced video
+   * nodes it points at, and the canvas needs to tell it apart when it decides
+   * what can be stitched. */
+  const createStoryboardNode = useCallback((position?: Point): CanvasNode => {
+    const center = position ?? canvasCenter()
+    return {
+      id: newId('node'), type: 'storyboard', title: tt('canvas.storyboardNode'),
+      x: Math.round(center.x - STORYBOARD_NODE_SIZE.width / 2), y: Math.round(center.y - STORYBOARD_NODE_SIZE.height / 2),
+      width: STORYBOARD_NODE_SIZE.width, height: STORYBOARD_NODE_SIZE.height,
+      metadata: { storyboard: defaultStoryboard(), status: 'idle' },
     }
   }, [canvasCenter])
 
@@ -3245,6 +3458,313 @@ export function CanvasWorkspace(props: CanvasWorkspaceProps): React.JSX.Element 
     }
   }, [api, channelIsConnected, clearBrokenVideo, defaultChannelId, onOpenSettings, patchNode, videoGroups])
 
+  // ---------------------------------------------------------- storyboard
+
+  /**
+   * Decode one frame out of a served clip, in the browser.
+   *
+   * The canvas already grabs a clip's MIDDLE frame as a still; continuity needs
+   * the LAST frame instead, and it has to be an image the video provider
+   * accepts as a first frame — so this returns the same data URL shape the
+   * image picker hands to the generator. Seeking to the exact end often lands
+   * on a frame the decoder has not flushed, hence the small inset.
+   * @param url - same-origin clip URL.
+   * @param at - 'first' for the opening frame, 'last' for the closing one.
+   */
+  const frameFromClip = useCallback(async (url: string, at: 'first' | 'last'): Promise<string> => {
+    const video = globalThis.document.createElement('video')
+    video.src = url
+    video.muted = true
+    video.preload = 'auto'
+    await new Promise<void>((resolve, reject) => {
+      const fail = (): void => { reject(new Error(tt('canvas.videoGrabFailed'))) }
+      video.addEventListener('loadeddata', () => { resolve() }, { once: true })
+      video.addEventListener('error', fail, { once: true })
+      window.setTimeout(fail, 15_000)
+    })
+    const duration = Number.isFinite(video.duration) && video.duration > 0 ? video.duration : 0
+    const target = at === 'last' && duration > 0 ? Math.max(0, duration - 0.06) : 0
+    if (target > 0) {
+      await new Promise<void>((resolve) => {
+        video.addEventListener('seeked', () => { resolve() }, { once: true })
+        video.currentTime = target
+      })
+    }
+    const width = video.videoWidth
+    const height = video.videoHeight
+    if (width === 0 || height === 0) throw new Error(tt('canvas.videoGrabFailed'))
+    const bitmap = globalThis.document.createElement('canvas')
+    bitmap.width = width
+    bitmap.height = height
+    const context = bitmap.getContext('2d')
+    if (context === null) throw new Error(tt('canvas.videoGrabFailed'))
+    context.drawImage(video, 0, 0, width, height)
+    return bitmap.toDataURL('image/png')
+  }, [])
+
+  /**
+   * Continue from a clip: take its LAST frame as a new image node wired into a
+   * fresh video config, so the user can type the next shot's direction and
+   * generate a take that starts exactly where this one ended.
+   *
+   * This is the manual half of storyboard continuity, and it is deliberately
+   * built from the pieces the canvas already has — a frame grab, an image node,
+   * a config node and one edge — rather than a second generation path. The
+   * generated clip therefore behaves like any other: same queue, same
+   * placeholder, same retry.
+   */
+  const continueFromClip = useCallback(async (node: CanvasNode): Promise<void> => {
+    const clip = videoOf(node)
+    if (clip === undefined || clip.url === '') return
+    await withNodeBusy(node.id, tt('canvas.storyboard.grabLastFrame'), async () => {
+      try {
+        const dataUrl = await frameFromClip(clip.url, 'last')
+        const dimensions = await readImageSize(dataUrl)
+        const uploaded = await api.canvasUpload(dataUrl, dimensions.width, dimensions.height, { origin: 'generated', originId: node.id })
+        const frameFootprint = nodeSizeFromRatio(`${dimensions.width}:${dimensions.height}`, IMAGE_NODE_SIZE)
+        const config = createConfigNode()
+        mutate(previous => {
+          const frameId = newId('node')
+          const frame: CanvasNode = {
+            id: frameId, type: 'image', title: tt('canvas.storyboard.lastFrameNode'),
+            x: Math.round(node.x + node.width + 80), y: Math.round(node.y),
+            width: frameFootprint.width, height: frameFootprint.height,
+            metadata: { asset: uploaded, status: 'success', sourceNodeId: node.id },
+          }
+          // The config node sits to the right of the frame, ready to type into:
+          // the frame is wired in as its reference, so the next generate run is
+          // already an image-to-video on this exact last frame.
+          const placed: CanvasNode = {
+            ...config,
+            x: Math.round(frame.x + frame.width + 80),
+            y: Math.round(node.y + (node.height - config.height) / 2),
+            metadata: { status: 'idle', videoMode: 'image' },
+          }
+          return {
+            ...previous,
+            nodes: [...previous.nodes, frame, placed],
+            connections: [
+              ...previous.connections,
+              { id: newId('edge'), fromNodeId: node.id, toNodeId: frameId },
+              { id: newId('edge'), fromNodeId: frameId, toNodeId: placed.id },
+            ],
+          }
+        })
+        setSelectedIds(new Set())
+        setComposerKind('video')
+        setComposerPrompt('')
+        setNotice(tt('canvas.storyboard.grabLastFrameDone'))
+      } catch (caught) {
+        setError(tt('canvas.storyboard.grabLastFrameFailed', { message: errorMessage(caught) }))
+      }
+    })
+  }, [api, createConfigNode, frameFromClip, mutate, withNodeBusy])
+
+  /**
+   * Where one shot's clip node goes: a column to the RIGHT of the board, one
+   * row per shot, so the produced clips read top-to-bottom in shot order —
+   * which is also the stitch order. A shot that already has a node keeps it,
+   * and the column simply grows past it.
+   */
+  const shotPlacement = useCallback((board: CanvasNode, index: number): { x: number; y: number } => {
+    const size = nodeSizeFromRatio('16:9', IMAGE_NODE_SIZE)
+    return {
+      x: Math.round(board.x + board.width + 96),
+      y: Math.round(board.y + index * (size.height + 48)),
+    }
+  }, [])
+
+  /**
+   * Submit one shot of a storyboard.
+   *
+   * Everything after the submit reuses the ordinary video pipeline: the task is
+   * tracked by `localVideoTaskIds`, the shared poller fills the placeholder
+   * node on completion, and the clip is a plain video node from then on —
+   * previewable, favoritable, downloadable and stitchable with no extra code.
+   *
+   * In `carry` continuity the shot is submitted as a first/last-keyframe run
+   * whose first frame is the previous shot's LAST frame. That frame comes from
+   * the previous clip, so the previous shot must already have one; the caller
+   * picks the next shot with that in mind.
+   * @returns true when a task was submitted.
+   */
+  const submitShot = useCallback(async (board: CanvasNode, index: number): Promise<boolean> => {
+    const current = documentRef.current
+    if (current === null) return false
+    const state = storyboardOf(board)
+    const shot = state.shots[index]
+    if (shot === undefined) return false
+    const problem = shotProblem(shot)
+    if (problem !== undefined) { setError(tt(problem)); return false }
+    const groups = videoGroups ?? []
+    const choice = resolveModelChoice(groups, { channelId: state.channelId, model: state.model }, defaultChannelId)
+    if (choice.model === '') { setError(tt('canvas.videoNoModel')); onOpenSettings?.(); return false }
+    if (!(choice.channelId === '' || channelIsConnected(choice.channelId))) { setError(tt('canvas.needApi')); onOpenSettings?.(); return false }
+
+    let frames: { image?: string; firstFrame?: string; lastFrame?: string; refName?: string } = {}
+    let mode: VideoMode = 'text'
+    if (state.continuity === 'carry' && index > 0) {
+      const previous = state.shots[index - 1]
+      const previousNode = previous === undefined ? undefined : shotNodeOf(previous, current.nodes)
+      const previousClip = previousNode?.metadata?.video
+      // A carry shot whose predecessor has no clip cannot be framed. Say so
+      // instead of submitting a text-only run that would break the join the
+      // user asked for.
+      if (previousClip === undefined || previousClip.url === '') {
+        setError(tt('canvas.storyboard.carryNeedsPrevious'))
+        return false
+      }
+      try {
+        frames = { firstFrame: await frameFromClip(previousClip.url, 'last'), refName: 'storyboard-carry.png' }
+        mode = 'keyframe'
+      } catch (caught) {
+        setError(errorMessage(caught))
+        return false
+      }
+    }
+
+    const existing = shotNodeOf(shot, current.nodes)
+    // Reusing the existing node (a retry) keeps the canvas from collecting a
+    // second clip for the same shot; a fresh shot gets a placeholder placed in
+    // the shot column.
+    const nodeId = existing?.id ?? newId('node')
+    const size = nodeSizeFromRatio(state.aspectRatio, IMAGE_NODE_SIZE)
+    const origin = existing ?? { ...shotPlacement(board, index), ...size }
+    try {
+      const request: VideoGenerateRequest = {
+        mode,
+        model: choice.model,
+        prompt: shot.prompt.trim(),
+        aspectRatio: state.aspectRatio,
+        resolution: state.resolution as VideoResolution,
+        seconds: shot.seconds,
+        ...(choice.channelId === '' ? {} : { channelId: choice.channelId }),
+        ...frames,
+        canvas: {
+          canvasId: current.id,
+          sourceNodeId: board.id,
+          nodeId,
+        },
+      }
+      const task = await api.videoTaskSubmit(request)
+      localVideoTaskIds.current.add(task.id)
+      processedVideoTasks.current.delete(task.id)
+      mutate(previous => {
+        const nodes = [...previous.nodes]
+        const connections = [...previous.connections]
+        const placeholder: CanvasNode = {
+          id: nodeId, type: 'video',
+          title: tt('canvas.storyboard.shotNode', { index: index + 1 }),
+          x: Math.round(origin.x), y: Math.round(origin.y), width: size.width, height: size.height,
+          metadata: {
+            status: 'generating', taskId: task.id,
+            prompt: shot.prompt.trim(), model: choice.model, videoMode: mode,
+            aspectRatio: state.aspectRatio, seconds: shot.seconds, resolution: state.resolution,
+            ...(choice.channelId === '' ? {} : { channelId: choice.channelId }),
+            sourceNodeId: board.id,
+            shot: { storyboardId: board.id, shotId: shot.id, index: index + 1 },
+          },
+        }
+        const at = nodes.findIndex(node => node.id === nodeId)
+        if (at >= 0) nodes[at] = placeholder
+        else nodes.push(placeholder)
+        if (!connections.some(edge => edge.fromNodeId === board.id && edge.toNodeId === nodeId)) {
+          connections.push({ id: newId('edge'), fromNodeId: board.id, toNodeId: nodeId })
+        }
+        // Record the shot -> node link on the board itself, so the row can show
+        // its own clip's state without scanning the whole canvas.
+        const boardIndex = nodes.findIndex(node => node.id === board.id)
+        if (boardIndex >= 0) {
+          const boardNode = nodes[boardIndex]!
+          nodes[boardIndex] = {
+            ...boardNode,
+            metadata: {
+              ...nodeMetadata(boardNode),
+              storyboard: withShot(storyboardOf(boardNode), index, { nodeId }),
+              status: 'success',
+            },
+          }
+        }
+        return { ...previous, nodes, connections }
+      })
+      clearBrokenVideo(nodeId)
+      setError(null)
+      return true
+    } catch (caught) {
+      setError(errorMessage(caught))
+      return false
+    }
+  }, [api, channelIsConnected, clearBrokenVideo, defaultChannelId, frameFromClip, mutate, onOpenSettings, shotPlacement, videoGroups])
+
+  /**
+   * Run the board's next shot, or — in `cut` continuity — every shot that has
+   * no clip yet, in one press.
+   *
+   * The two modes differ for a real reason: a `carry` shot cannot be submitted
+   * before its predecessor's last frame exists, so it is one at a time by
+   * construction. A `cut` board has no such dependency, and making the user
+   * press a button per shot would be a worse workflow than the one they had.
+   */
+  const runStoryboard = useCallback(async (node: CanvasNode): Promise<void> => {
+    const current = documentRef.current
+    if (current === null) return
+    const state = storyboardOf(node)
+    if (state.shots.length === 0) { setError(tt('canvas.storyboard.empty')); return }
+    const pending = state.shots
+      .map((shot, index) => ({ shot, index }))
+      .filter((entry) => {
+        if (entry.shot.prompt.trim() === '') return false
+        const shotStateNow = shotState(entry.shot, current.nodes)
+        return shotStateNow === 'empty' || shotStateNow === 'failed'
+      })
+    if (pending.length === 0) {
+      const progress = storyboardProgress(state, current.nodes)
+      if (progress.generating > 0) setNotice(tt('canvas.storyboard.alreadyRunning'))
+      else setError(tt('canvas.storyboard.allDone'))
+      return
+    }
+    const targets = state.continuity === 'carry'
+      ? [pending[0]!.index]
+      : pending.map(entry => entry.index)
+    let submitted = 0
+    for (const index of targets) {
+      if (!(await submitShot(node, index))) break
+      submitted += 1
+    }
+    if (submitted > 0) setNotice(tt('canvas.storyboard.started', { count: submitted }))
+  }, [submitShot])
+
+  /**
+   * Hand a board's finished clips to the SAME stitch the rest of the canvas
+   * uses: the confirm card, the ①②③ order review, the ffmpeg run and the
+   * produced node all come from the existing compose path, so a storyboard
+   * film is stitched exactly like a hand-picked one.
+   *
+   * Only ready clips are handed over. A shot still rendering has no bytes, and
+   * the compose run fails loudly on an unreadable clip — so a partial stitch
+   * says how many shots it is leaving out instead of submitting a list that
+   * would fail.
+   */
+  const startStoryboardStitch = useCallback((ids: string[]): void => {
+    const current = documentRef.current
+    if (current === null) return
+    if (ids.length < 2) { setError(tt('canvas.storyboard.stitchTooFew')); return }
+    const skill = skillCatalog?.skills.find(item => item.id === COMPOSE_SKILL_ID)
+    if (skill === undefined) {
+      setError(skillCatalog === null ? tt('canvas.skills.loading') : (skillCatalog.reason ?? tt('canvas.skills.unknown')))
+      return
+    }
+    const boards = current.nodes.filter(node => node.type === 'storyboard')
+    const missing = boards.flatMap(node => storyboardOf(node).shots).filter(shot => {
+      if (shot.prompt.trim() === '') return false
+      const state = shotState(shot, current.nodes)
+      return state !== 'ready'
+    }).length
+    setSkillMenu(null)
+    setPendingSkill({ skill, nodeIds: ids, instruction: '' })
+    if (missing > 0) setNotice(tt('canvas.storyboard.stitchPartial', { count: missing }))
+  }, [skillCatalog])
+
   const retryGeneration = useCallback(async (node: CanvasNode): Promise<void> => {
     const current = documentRef.current
     if (current === null) return
@@ -4482,6 +5002,7 @@ export function CanvasWorkspace(props: CanvasWorkspaceProps): React.JSX.Element 
     const isConfig = node.type === 'config'
     const isFile = node.type === 'file'
     const isVideo = node.type === 'video'
+    const isStoryboard = node.type === 'storyboard'
     const video = videoOf(node)
     const hasVideo = video !== undefined && video.url !== ''
     const isSketch = isSketchNode(node)
@@ -4523,7 +5044,7 @@ export function CanvasWorkspace(props: CanvasWorkspaceProps): React.JSX.Element 
       tabIndex={0}
       role="group"
       aria-label={node.title}
-      className={`${css.node} ${isSketch ? css.sketchNode : isConfig ? css.configNode : isTextual ? css.textNode : css.imageNode} ${isSelected ? css.nodeSelected : ''} ${isRelated ? css.nodeRelated : ''} ${isConnectTarget ? css.nodeConnectTarget : ''}`}
+      className={`${css.node} ${isSketch ? css.sketchNode : isStoryboard ? css.storyboardNode : isConfig ? css.configNode : isTextual ? css.textNode : css.imageNode} ${isSelected ? css.nodeSelected : ''} ${isRelated ? css.nodeRelated : ''} ${isConnectTarget ? css.nodeConnectTarget : ''}`}
       style={{ left: node.x, top: node.y, width: node.width, height: node.height }}
       onPointerDown={event => handleNodePointerDown(event, node.id)}
       onDoubleClick={event => {
@@ -4556,6 +5077,15 @@ export function CanvasWorkspace(props: CanvasWorkspaceProps): React.JSX.Element 
         <span className={css.nodeTitle}>{node.title}</span>
         {metadata.videoMode !== undefined ? <span className={css.nodeTag}>{tt(`video.mode.${metadata.videoMode}` as ImageGenKey)}</span> : null}
       </header> : null}
+      {isStoryboard ? (() => {
+        const board = storyboardOf(node)
+        const progress = storyboardProgress(board, document?.nodes ?? [])
+        return <header className={css.nodeHeader}>
+          <span className={css.nodeTitle}>{node.title}</span>
+          <span className={css.nodeTag} data-storyboard-count="">{tt('canvas.storyboard.shotCount', { count: progress.total })}</span>
+          {progress.generating > 0 ? <span className={css.nodeTag} data-storyboard-running="">{tt('canvas.storyboard.running', { count: progress.generating })}</span> : null}
+        </header>
+      })() : null}
       {isTextual || isSketch ? <header className={css.nodeHeader}>
         <span className={css.nodeTitle}>{node.title}</span>
         {metadata.annotation !== undefined ? <span className={css.nodeTag}>{tt('canvas.annotationTag')}</span> : null}
@@ -4628,6 +5158,17 @@ export function CanvasWorkspace(props: CanvasWorkspaceProps): React.JSX.Element 
             strokes={metadata.sketch?.strokes ?? []}
             onStrokesChange={strokes => patchSketchStrokes(node.id, strokes)}
             onAssetChange={asset => patchSketchAsset(node.id, asset)}
+          />
+        : isStoryboard
+        ? <StoryboardBody
+            node={node}
+            nodes={document?.nodes ?? []}
+            busy={busyLabel !== undefined}
+            onChange={next => patchNode(node.id, { storyboard: next })}
+            onRun={() => { void runStoryboard(node) }}
+            onRunShot={index => { void submitShot(node, index) }}
+            onPreview={nodeId => setVideoPreviewNodeId(nodeId)}
+            onStitch={ids => startStoryboardStitch(ids)}
           />
         : isVideo
         ? <div className={css.fileBody} data-video-body="">
@@ -4781,6 +5322,7 @@ export function CanvasWorkspace(props: CanvasWorkspaceProps): React.JSX.Element 
           <span className={css.toolbarDivider} aria-hidden="true" />
           <IconButton name="download" label={tt('canvas.videoDownload')} onClick={() => downloadVideoNode(node)} />
           <IconButton name="sparkle" label={tt('canvas.videoGrabFrame')} disabled={busyLabel !== undefined} onClick={() => { void grabVideoFrame(node) }} />
+          <IconButton name="layers" label={tt('canvas.storyboard.grabLastFrame')} disabled={busyLabel !== undefined} onClick={() => { void continueFromClip(node) }} />
           <IconButton name="favorite" label={tt('canvas.videoFavorite')} disabled={busyLabel !== undefined || video.entryId === undefined} onClick={() => { favoriteVideoNode(node) }} />
           <IconButton name="expand" label={tt('canvas.videoPreview')} onClick={() => { setVideoPreviewNodeId(node.id) }} />
         </> : null}
@@ -5151,6 +5693,7 @@ export function CanvasWorkspace(props: CanvasWorkspaceProps): React.JSX.Element 
         if (node !== undefined && node.type === 'video' && (videoOf(node)?.url ?? '') !== '') {
           items.push({ label: tt('canvas.videoPreview'), icon: 'expand', action: () => { setVideoPreviewNodeId(node.id) } })
           items.push({ label: tt('canvas.videoDownload'), icon: 'download', action: () => { downloadVideoNode(node) } })
+          items.push({ label: tt('canvas.storyboard.grabLastFrame'), icon: 'layers', action: () => { void continueFromClip(node) } })
         }
         if (node !== undefined && node.type !== 'config') {
           items.push({ label: tt('canvas.skills.button'), icon: 'skill', action: () => openSkillMenu(node, { x: contextMenu.screen.x, y: contextMenu.screen.y }) })
@@ -5172,6 +5715,7 @@ export function CanvasWorkspace(props: CanvasWorkspaceProps): React.JSX.Element 
         items.push({ label: tt('canvas.addImage'), icon: 'image', action: () => setPickerOpen(true) })
         items.push({ label: tt('canvas.addTextNode'), icon: 'text', action: () => placeNewNode(createTextNode(contextMenu.world)) })
         items.push({ label: tt('canvas.addSketchNode'), icon: 'sketch', action: () => placeNewNode(createSketchNode(contextMenu.world)) })
+        items.push({ label: tt('canvas.storyboardNode'), icon: 'layers', action: () => placeNewNode(createStoryboardNode(contextMenu.world)) })
         items.push({ label: tt('canvas.paste'), icon: 'duplicate', action: () => pasteClipboard(contextMenu.world) })
         items.push({ label: tt('canvas.fitView'), icon: 'fit', action: fitView })
       }
@@ -5183,6 +5727,7 @@ export function CanvasWorkspace(props: CanvasWorkspaceProps): React.JSX.Element 
       return <div className={css.contextMenu} style={{ left: createMenu.screen.x, top: createMenu.screen.y }} data-canvas-no-zoom="" role="menu">
         <button type="button" role="menuitem" onClick={() => { placeNewNode(createTextNode(createMenu.world)); setCreateMenu(null) }}><ToolbarIcon name="text" size={16} />{tt('canvas.addTextNode')}</button>
         <button type="button" role="menuitem" onClick={() => { placeNewNode(createSketchNode(createMenu.world)); setCreateMenu(null) }}><ToolbarIcon name="sketch" size={16} />{tt('canvas.addSketchNode')}</button>
+        <button type="button" role="menuitem" data-add-storyboard="" onClick={() => { placeNewNode(createStoryboardNode(createMenu.world)); setCreateMenu(null) }}><ToolbarIcon name="layers" size={16} />{tt('canvas.storyboardNode')}</button>
         <button type="button" role="menuitem" onClick={() => { placeNewNode(createImageNode({ assetId: '', url: '', mime: 'image/png', bytes: 0, width: 1, height: 1, origin: 'upload' }, createMenu.world)); setCreateMenu(null) }}><ToolbarIcon name="image" size={16} />{tt('canvas.addImageNode')}</button>
         <button type="button" role="menuitem" onClick={() => { placeNewNode(createEmptyFileNode(createMenu.world)); setFileTargetNodeId(null); setCreateMenu(null) }}><ToolbarIcon name="file" size={16} />{tt('canvas.skills.addFileNode')}</button>
         <button type="button" role="menuitem" onClick={() => { setFileTargetNodeId(null); fileUploadRef.current?.click(); setCreateMenu(null) }}><ToolbarIcon name="upload" size={16} />{tt('canvas.skills.fileMenuUpload')}</button>
@@ -5353,6 +5898,9 @@ export function CanvasWorkspace(props: CanvasWorkspaceProps): React.JSX.Element 
         </div>
         <div className={css.dockItem} data-dock-item="" data-label={tt('canvas.addConfigNode')}>
           <IconButton name="sparkle" size={18} label={tt('canvas.addConfigNode')} onClick={() => placeNewNode(createConfigNode())} />
+        </div>
+        <div className={css.dockItem} data-dock-item="" data-label={tt('canvas.storyboardNode')}>
+          <IconButton name="layers" size={18} label={tt('canvas.storyboardNode')} onClick={() => placeNewNode(createStoryboardNode())} />
         </div>
         <div className={css.dockItem} data-dock-item="" data-label={tt('canvas.templateLibrary')}>
           <IconButton name="template" size={18} label={tt('canvas.templateLibrary')} active={libraryOpen} onClick={() => setLibraryOpen(previous => !previous)} />
@@ -5538,6 +6086,7 @@ export function CanvasWorkspace(props: CanvasWorkspaceProps): React.JSX.Element 
     >
       <button type="button" role="menuitem" onClick={() => { addConnectedNode(nodeAddMenu.nodeId, position => createTextNode(position)); setNodeAddMenu(null) }}><ToolbarIcon name="text" size={16} />{tt('canvas.addTextNode')}</button>
       <button type="button" role="menuitem" onClick={() => { addConnectedNode(nodeAddMenu.nodeId, position => createSketchNode(position)); setNodeAddMenu(null) }}><ToolbarIcon name="sketch" size={16} />{tt('canvas.addSketchNode')}</button>
+      <button type="button" role="menuitem" onClick={() => { addConnectedNode(nodeAddMenu.nodeId, position => createStoryboardNode(position)); setNodeAddMenu(null) }}><ToolbarIcon name="layers" size={16} />{tt('canvas.storyboardNode')}</button>
       <button type="button" role="menuitem" onClick={() => { addConnectedNode(nodeAddMenu.nodeId, position => createImageNode({ assetId: '', url: '', mime: 'image/png', bytes: 0, width: 1, height: 1, origin: 'upload' }, position)); setNodeAddMenu(null) }}><ToolbarIcon name="image" size={16} />{tt('canvas.addImageNode')}</button>
       {nodeAddMenu.nodeType !== 'config' ? <button type="button" role="menuitem" onClick={() => { addConnectedNode(nodeAddMenu.nodeId, position => createConfigNode(position)); setNodeAddMenu(null) }}><ToolbarIcon name="sparkle" size={16} />{tt('canvas.addConfigNode')}</button> : null}
     </div> : null}

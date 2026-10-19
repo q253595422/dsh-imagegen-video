@@ -442,6 +442,12 @@ await check('W1-W3 a finished studio clip lands a referenced node and states are
   const FIXTURE_IDS = new Set(canvasDocument.nodes.map(node => node.id))
   /** Documents the canvas persisted through /canvas/save. */
   const canvasSaves = []
+  /**
+   * What `/canvas/read` answers with. Mutable on purpose: a check that needs a
+   * node the fixture does not carry (a storyboard, say) rewrites this and
+   * re-reads the canvas, which is exactly the path a page reload takes.
+   */
+  let canvasReadDocument = canvasDocument
   /** Asset uploads the canvas made: a copied clip would show up here. */
   const canvasAssetUploads = []
   /** Raw file bodies the picker's upload tab sent (name + declared MIME). */
@@ -649,7 +655,7 @@ await check('W1-W3 a finished studio clip lands a referenced node and states are
     if (path.endsWith('/canvas/list')) {
       return json({ ok: true, projects: [{ id: canvasDocument.id, title: canvasDocument.title, revision: canvasDocument.revision, nodeCount: 0, createdAt: 1, updatedAt: 1 }] })
     }
-    if (path.endsWith('/canvas/read')) return json({ ok: true, document: canvasDocument })
+    if (path.endsWith('/canvas/read')) return json({ ok: true, document: canvasReadDocument })
     if (path.endsWith('/canvas/save')) {
       const payload = JSON.parse(init.body)
       canvasSaves.push(payload.document)
@@ -866,6 +872,25 @@ await check('W1-W3 a finished studio clip lands a referenced node and states are
       canvasDocument, canvasSaves, canvasAssetUploads, canvasFileUploads, videoSubmissions,
       requestPaths, skillRunRequests, galleryVideoFavorites, FIXTURE_IDS,
       pointerDown, nodeById, badgesNow, pickerMenu, openComposeMenu, closeSkillMenu,
+      /** Swap what `/canvas/read` answers with (a document the fixture lacks). */
+      setCanvasReadDocument: next => { canvasReadDocument = next },
+      /**
+       * Re-open the canvas so it RE-READS its document — the same path a page
+       * reload or a project switch takes. Switching to another workspace and
+       * back unmounts and remounts the canvas, which is what a reload does to
+       * it in the real app; writing to `canvasReadDocument` alone would change
+       * nothing visible, because the canvas only reads on mount.
+       */
+      reopenCanvas: async () => {
+        const tabs = [...view.querySelectorAll('[role="tablist"] [role="tab"]')]
+        const other = tabs.find(tab => !/画布/.test(tab.textContent ?? ''))
+        const canvasTab = tabs.find(tab => /画布/.test(tab.textContent ?? ''))
+        assert.ok(other !== undefined && canvasTab !== undefined, 'both the canvas tab and a neighbour tab are on screen')
+        other.dispatchEvent(new jsdomWindow.MouseEvent('click', { bubbles: true, cancelable: true }))
+        await waitUntil(() => view.querySelector('[data-canvas-workspace]') === null)
+        canvasTab.dispatchEvent(new jsdomWindow.MouseEvent('click', { bubbles: true, cancelable: true }))
+        assert.ok(await waitUntil(() => view.querySelector('[data-canvas-workspace]') !== null), 'the canvas came back')
+      },
     })
     // ------------------------------------------------- W1 studio clip actions
     const videoTab = [...view.querySelectorAll('[role="tablist"] button')]
@@ -979,6 +1004,105 @@ await check('W1-W3 a finished studio clip lands a referenced node and states are
     )
 
   })
+
+await check('SB1-SB4 the storyboard board renders and hands its clips to the stitch', async () => {
+  const { jsdomWindow, jsdomDocument, view, waitUntil, canvasSaves, canvasDocument, setCanvasReadDocument, reopenCanvas } = shared
+
+  // Seed a board the way a saved document carries one: three shots (one
+  // finished, one still rendering, one blank) plus the two produced clips. The
+  // document is handed to the read route and the canvas is reopened, which is
+  // the same path a page reload or a project switch takes — not a shortcut that
+  // bypasses the loader.
+  const board = {
+    id: 'node-board', type: 'storyboard', title: '分镜', x: 40, y: 40, width: 380, height: 420,
+    metadata: {
+      status: 'idle',
+      storyboard: {
+        shots: [
+          { id: 'shot-1', prompt: '一只猫在窗台上', seconds: 3, nodeId: 'node-shot-1' },
+          { id: 'shot-2', prompt: '猫跳下窗台', seconds: 2, nodeId: 'node-shot-2' },
+          { id: 'shot-3', prompt: '猫睡着了', seconds: 5 },
+        ],
+        aspectRatio: '16:9', resolution: '720P', continuity: 'carry',
+      },
+    },
+  }
+  const finishedShot = {
+    id: 'node-shot-1', type: 'video', title: '第 1 镜视频', x: 520, y: 40, width: 240, height: 160,
+    metadata: {
+      status: 'success', prompt: '一只猫在窗台上',
+      video: { url: CLIP_LEFT_URL, mime: CLIP_MIME, duration: 3, entryId: 'entry-shot-1' },
+      shot: { storyboardId: 'node-board', shotId: 'shot-1', index: 1 },
+    },
+  }
+  const pendingShot = {
+    id: 'node-shot-2', type: 'video', title: '第 2 镜视频', x: 520, y: 260, width: 240, height: 160,
+    metadata: { status: 'generating', taskId: 'vt-999', prompt: '猫跳下窗台', videoMode: 'keyframe', shot: { storyboardId: 'node-board', shotId: 'shot-2', index: 2 } },
+  }
+  setCanvasReadDocument({
+    ...canvasDocument,
+    revision: canvasDocument.revision + 1,
+    nodes: [
+      ...canvasDocument.nodes.filter(node => node.id !== 'node-board'),
+      board, finishedShot, pendingShot,
+    ],
+    connections: [...canvasDocument.connections,
+      { id: 'sb-e1', fromNodeId: 'node-board', toNodeId: 'node-shot-1' },
+      { id: 'sb-e2', fromNodeId: 'node-board', toNodeId: 'node-shot-2' }],
+  })
+  await reopenCanvas()
+
+  const boardEl = () => view.querySelector('[data-node-id="node-board"]')
+
+  // ---- SB1 the board is a node with one typed row per shot
+  assert.ok(await waitUntil(() => boardEl() !== null, 6000), 'SB1: the storyboard node renders after a reload')
+  const rows = () => [...boardEl().querySelectorAll('[data-shot-id]')]
+  assert.equal(rows().length, 3, 'SB1: one row per shot')
+  assert.deepEqual(
+    rows().map(row => row.getAttribute('data-state')),
+    ['ready', 'generating', 'empty'],
+    'SB1: each row is typed from its own clip node, not from stored text',
+  )
+  assert.ok(boardEl().querySelector('[data-storyboard-count]') !== null, 'SB1: the header states the shot count')
+  assert.match(boardEl().textContent ?? '', /一只猫在窗台上/, 'SB1: the saved prompt is editable on its row')
+
+  // ---- SB2 the stitch action refuses one finished clip
+  const footButton = pattern => [...boardEl().querySelectorAll('button')].find(button => pattern.test(button.textContent ?? ''))
+  const stitch = footButton(/拼接全部镜头/)
+  assert.ok(stitch !== undefined, 'SB2: the board offers a stitch action')
+  assert.equal(stitch.disabled, true, 'SB2: one finished clip is not enough to stitch')
+
+  // ---- SB3 the run action follows the continuity rule
+  // This board is in `carry` mode and shot 2 is still rendering, so shot 3's
+  // first frame does not exist yet: running is refused, and the button says so
+  // instead of submitting a run that would silently drop the join. Shot 3 has a
+  // prompt of its own — it is blocked by the SEQUENCE, not by being blank.
+  const run = () => [...boardEl().querySelectorAll('button')].find(button => /生成剩余镜头|生成下一镜/.test(button.textContent ?? ''))
+  assert.ok(run() !== undefined, 'SB3: the board offers a run action')
+  assert.equal(run().disabled, true, 'SB3: in carry mode the shot after a pending one cannot run yet')
+
+  // Switch the board to independent shots: now shot 3 is free to run, and the
+  // SAME button has to notice. This is the half that proves the rule is read
+  // from the board rather than hard-coded.
+  const continuity = [...boardEl().querySelectorAll('select')]
+    .find(select => select.getAttribute('aria-label') === '镜头衔接')
+  assert.ok(continuity !== undefined, 'SB3: the continuity switch is on the board')
+  const selectSetter = Object.getOwnPropertyDescriptor(jsdomWindow.HTMLSelectElement.prototype, 'value').set
+  selectSetter.call(continuity, 'cut')
+  continuity.dispatchEvent(new jsdomWindow.Event('change', { bubbles: true }))
+  assert.ok(
+    await waitUntil(() => run() !== undefined && run().disabled === false, 4000),
+    'SB3: with independent shots, the shot that has no clip is runnable again',
+  )
+
+  // ---- SB4 a video node carries the continuation action
+  const clipEl = view.querySelector('[data-node-id="node-shot-1"]')
+  assert.ok(clipEl !== null, 'SB4: the produced clip renders as an ordinary video node')
+  const continueButton = [...clipEl.querySelectorAll('button')]
+    .find(button => (button.getAttribute('aria-label') ?? '') === '取尾帧续拍')
+  assert.ok(continueButton !== undefined, 'SB4: the clip offers 取尾帧续拍')
+  assert.equal(continueButton.disabled, false, 'SB4: the action is live on a finished clip')
+})
 
 await check('B1-B3 the stitch strip is a real button that opens the confirm card', async () => {
   const {
