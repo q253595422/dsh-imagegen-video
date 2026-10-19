@@ -1,0 +1,460 @@
+<!doctype html>
+<html lang="zh-CN" data-layout="wide">
+<head>
+<meta charset="utf-8">
+<title>VisioWork — 30s promo</title>
+<style>
+/* ── tokens ─────────────────────────────────────────────────────────── */
+:root{
+  --ink:#09090b;
+  --paper:#f2f2f3;
+  --white:#ffffff;
+  --dim:#6b6b74;
+  --line:#d9d9de;
+  --accent:#ff5a1f;
+  --sans:"PingFang SC","Hiragino Sans GB","Helvetica Neue",Helvetica,Arial,sans-serif;
+  --mono:"SF Mono",ui-monospace,SFMono-Regular,Menlo,monospace;
+  --pad:76px;
+}
+html[data-layout="wide"]{--w:1920px;--h:1080px}
+html[data-layout="tall"]{--w:1080px;--h:1920px;--pad:56px;--safe-top:150px;--safe-bottom:230px}
+
+*{margin:0;padding:0;box-sizing:border-box}
+html,body{width:var(--w);height:var(--h);overflow:hidden;background:#000}
+body{font-family:var(--sans);-webkit-font-smoothing:antialiased}
+img{display:block}
+
+#stage{position:relative;width:var(--w);height:var(--h);overflow:hidden;background:var(--ink)}
+
+/* ── scene shell ────────────────────────────────────────────────────── */
+.scene{position:absolute;inset:0;display:none}
+.scene[data-tone="paper"]{background:var(--paper);color:var(--ink)}
+.scene[data-tone="ink"]{background:var(--ink);color:var(--white)}
+
+/* ── wide: copy column + shot column ────────────────────────────────── */
+html[data-layout="wide"] .scene{
+  display:grid;
+  grid-template-columns:620px 1fr;
+  column-gap:64px;
+  align-items:center;
+  padding:0 var(--pad);
+}
+html[data-layout="wide"] .scene[data-layout="stack"]{
+  display:flex;flex-direction:column;justify-content:center;align-items:center;
+  text-align:center;
+}
+
+/* ── tall: copy on top, near-square crop, notes under it ────────────── */
+html[data-layout="tall"] .scene{
+  display:flex;flex-direction:column;
+  justify-content:flex-start;
+  padding-top:var(--safe-top);
+  padding-bottom:var(--safe-bottom);
+}
+html[data-layout="tall"] .copy{padding:0 var(--pad)}
+html[data-layout="tall"] .shot-hold{padding:0;margin-top:38px}
+html[data-layout="tall"] .notes{margin-top:34px;padding:0 var(--pad);align-items:center}
+html[data-layout="tall"] .scene[data-layout="stack"]{
+  justify-content:center;align-items:center;text-align:center;padding:0 var(--pad);
+}
+
+/* ── copy ───────────────────────────────────────────────────────────── */
+.copy{position:relative;z-index:3}
+.eyebrow{
+  display:flex;align-items:center;gap:14px;
+  font:500 21px/1 var(--sans);letter-spacing:.15em;
+  color:var(--dim);margin-bottom:32px;
+}
+.eyebrow::before{content:"";width:40px;height:2px;background:var(--accent);flex:none}
+html[data-layout="tall"] .eyebrow{font-size:25px;margin-bottom:26px;justify-content:center}
+html[data-layout="tall"] .scene[data-layout="stack"] .eyebrow::before{display:none}
+
+.headline{
+  font:600 90px/1.05 var(--sans);
+  letter-spacing:-.025em;
+  text-wrap:balance;
+}
+html[data-layout="tall"] .headline{font-size:78px;line-height:1.08;letter-spacing:-.02em;text-align:center}
+
+.sub{
+  margin-top:28px;
+  font:400 33px/1.5 var(--sans);
+  color:var(--dim);max-width:560px;letter-spacing:-.004em;
+}
+html[data-layout="tall"] .sub{font-size:31px;max-width:none;text-align:center;margin-top:18px;line-height:1.45}
+
+.notes{margin-top:40px;display:flex;flex-direction:column;gap:15px}
+.note{display:flex;align-items:flex-start;gap:14px;font:400 25px/1.35 var(--sans);color:var(--dim)}
+.note::before{content:"";flex:none;width:6px;height:6px;border-radius:50%;background:var(--accent);margin-top:14px}
+html[data-layout="tall"] .notes{gap:11px}
+html[data-layout="tall"] .note{font-size:25px;text-align:left;line-height:1.3}
+
+/* ── shot ───────────────────────────────────────────────────────────── */
+.shot-hold{position:relative;min-width:0}
+.shot{
+  position:relative;width:100%;overflow:hidden;
+  border-radius:14px;background:var(--white);
+  box-shadow:0 36px 90px -38px rgba(9,9,11,.5), 0 0 0 1px rgba(9,9,11,.08);
+  transform-origin:center center;will-change:transform,opacity;
+}
+html[data-layout="tall"] .shot{border-radius:0;box-shadow:none;border-top:1px solid var(--line);border-bottom:1px solid var(--line)}
+.crop{position:absolute;inset:0;overflow:hidden}
+.crop img{
+  position:absolute;
+  width:calc(100% / var(--w));
+  height:calc(100% / var(--h));
+  left:calc(-100% * var(--x) / var(--w));
+  top:calc(-100% * var(--y) / var(--h));
+  max-width:none;
+}
+
+/* dim everything but the region of interest */
+.spot{
+  position:absolute;pointer-events:none;border-radius:5px;
+  box-shadow:0 0 0 4000px rgba(9,9,11,.58);
+  outline:2px solid var(--accent);
+  opacity:0;
+}
+.shot-tag{
+  position:absolute;z-index:4;display:inline-flex;align-items:center;
+  padding:8px 15px;border-radius:999px;
+  background:var(--accent);color:var(--white);
+  font:600 18px/1 var(--sans);white-space:nowrap;
+  box-shadow:0 8px 22px -8px rgba(255,90,31,.65);
+}
+html[data-layout="tall"] .shot-tag{font-size:20px}
+
+/* real generated clip, 6x4 sprite sheet */
+.sprite{
+  position:absolute;inset:0;
+  background-image:url("assets/clip-sprite.jpg");
+  background-repeat:no-repeat;
+  background-size:600% 400%;
+}
+.clip{
+  position:absolute;z-index:5;border-radius:11px;overflow:hidden;background:#000;
+  box-shadow:0 26px 60px -22px rgba(9,9,11,.7),0 0 0 1px rgba(255,255,255,.16);
+}
+
+/* ── intro / outro ──────────────────────────────────────────────────── */
+.mark{font:600 162px/1 var(--sans);letter-spacing:-.045em}
+html[data-layout="tall"] .mark{font-size:118px}
+.mark-sub{margin-top:32px;font:400 35px/1.5 var(--sans);color:#a1a1aa}
+html[data-layout="tall"] .mark-sub{font-size:32px}
+.kicker{font:500 19px/1 var(--sans);letter-spacing:.2em;color:#5b5b64;text-transform:uppercase}
+html[data-layout="tall"] .kicker{font-size:22px}
+
+.cmd{
+  font:500 32px/1.5 var(--mono);color:var(--white);
+  padding:24px 32px;border:1px solid #27272a;border-radius:12px;background:#101012;
+  white-space:nowrap;
+}
+.cmd .p{color:var(--accent)}
+html[data-layout="tall"] .cmd{font-size:25px;white-space:normal;overflow-wrap:anywhere;text-align:left;max-width:940px}
+/* 竖屏放不下一整行时，在包名前换行——不要让 break-all 把 video 劈成 vi/deo */
+html[data-layout="tall"] .cmd-pkg{display:block;margin-left:1.15em}
+.repo{font:400 25px/1.4 var(--mono);color:#71717a}
+html[data-layout="tall"] .repo{font-size:24px}
+
+/* ── HUD + subtitle ─────────────────────────────────────────────────── */
+#hud{position:absolute;inset:0;z-index:20;pointer-events:none;opacity:0}
+.hud-top{
+  position:absolute;left:var(--pad);right:var(--pad);top:46px;
+  display:flex;align-items:center;justify-content:space-between;
+  font:500 16px/1 var(--sans);letter-spacing:.14em;color:var(--dim);text-transform:uppercase;
+}
+.hud-top b{font-weight:600;color:var(--ink)}
+html[data-layout="tall"] .hud-top{display:none}
+.hud-bar{position:absolute;left:0;bottom:0;height:3px;background:var(--accent);width:0}
+
+#sub{
+  position:absolute;z-index:22;pointer-events:none;
+  left:var(--pad);right:var(--pad);bottom:96px;
+  display:flex;justify-content:center;
+}
+html[data-layout="tall"] #sub{bottom:calc(var(--safe-bottom) - 120px)}
+#sub span{
+  display:inline-block;
+  font:500 34px/1.45 var(--sans);
+  letter-spacing:-.005em;
+  padding:16px 30px;border-radius:10px;
+  background:rgba(9,9,11,.86);color:#fafafa;
+  max-width:100%;
+}
+html[data-layout="tall"] #sub span{font-size:31px;text-align:center;padding:14px 26px}
+</style>
+</head>
+<body>
+<div id="stage">
+
+  <!-- ══ 0 · intro ═══════════════════════════════════════════════════ -->
+  <section class="scene" data-scene data-in="0" data-out="2.7" data-tone="ink" data-layout="stack" data-hud="off">
+    <div class="eyebrow" style="justify-content:center" data-a="fade" data-d="0" data-dur="0.45">DeepSeek Harness 插件</div>
+    <div class="mark" data-a="rise" data-d="0.06" data-dur="0.75">VisioWork</div>
+    <div class="mark-sub" data-a="rise" data-d="0.5" data-dur="0.65">AI 生图 · 生视频 · 无限画布</div>
+  </section>
+
+  <!-- ══ 1 · multi-reference ═════════════════════════════════════════ -->
+  <section class="scene" data-scene data-in="2.7" data-out="8.7" data-tone="paper"
+           data-crop="0,0,0.78,1" data-crop-tall="0.10,0.02,0.50,0.70">
+    <div class="copy">
+      <div class="eyebrow" data-a="fade" data-d="0.02" data-dur="0.45">01 / 多图参考</div>
+      <h1 class="headline" data-a="rise" data-d="0.08" data-dur="0.65">一次参考<br>五张图</h1>
+      <p class="sub" data-a="rise" data-d="0.26" data-dur="0.6">风格、人物、构图分开给，一起用。</p>
+      <div class="notes" data-a="rise" data-d="0.46" data-dur="0.6">
+        <div class="note">单张 ≤10MB · 合计 ≤16MB</div>
+        <div class="note">拖拽、粘贴或批量选择</div>
+      </div>
+    </div>
+    <div class="shot-hold">
+      <div class="shot" data-a="slideR" data-d="0.14" data-dur="0.85" data-drift="1.05">
+        <div class="crop"><img src="assets/multiref.jpg" alt=""></div>
+        <div class="spot" data-spot="17.5,9,25.5,30" data-d="1.05" data-dur="0.55"></div>
+        <div class="shot-tag" data-anchor="31,8" data-a="pop" data-d="1.35" data-dur="0.5">已添加 4 张</div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ══ 2 · video ═══════════════════════════════════════════════════ -->
+  <section class="scene" data-scene data-in="8.7" data-out="14.7" data-tone="paper"
+           data-crop="0,0,0.72,1" data-crop-tall="0.16,0.05,0.56,0.66">
+    <div class="copy">
+      <div class="eyebrow" data-a="fade" data-d="0.02" data-dur="0.45">02 / 生视频</div>
+      <h1 class="headline" data-a="rise" data-d="0.08" data-dur="0.65">让图片<br>动起来</h1>
+      <p class="sub" data-a="rise" data-d="0.26" data-dur="0.6">文生视频、图生视频、首尾帧、多参考。</p>
+      <div class="notes" data-a="rise" data-d="0.46" data-dur="0.6">
+        <div class="note">5s / 10s · 480P–1080P</div>
+        <div class="note">关掉页面，任务仍在宿主继续跑</div>
+      </div>
+    </div>
+    <div class="shot-hold">
+      <div class="shot" data-a="slideL" data-d="0.14" data-dur="0.85" data-drift="1.04">
+        <div class="crop"><img src="assets/video.jpg" alt=""></div>
+        <div class="clip" style="right:5%;bottom:7%;width:31%;aspect-ratio:16/9"
+             data-a="pop" data-d="0.95" data-dur="0.6">
+          <div class="sprite" data-hook="sprite"></div>
+        </div>
+        <div class="shot-tag" style="right:5%;bottom:calc(7% + 17.4% + 14px)" data-a="pop" data-d="1.3" data-dur="0.5">真实生成 · 5s</div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ══ 3 · canvas ══════════════════════════════════════════════════ -->
+  <section class="scene" data-scene data-in="14.7" data-out="20.7" data-tone="paper"
+           data-crop="0.12,0.02,0.9,1" data-crop-tall="0.13,0.04,0.74,0.88">
+    <div class="copy">
+      <div class="eyebrow" data-a="fade" data-d="0.02" data-dur="0.45">03 / 无限画布</div>
+      <h1 class="headline" data-a="rise" data-d="0.08" data-dur="0.65">流程摊在<br>画布上</h1>
+      <p class="sub" data-a="rise" data-d="0.26" data-dur="0.6">节点连线，改一步只重跑一步。</p>
+      <div class="notes" data-a="rise" data-d="0.46" data-dur="0.6">
+        <div class="note">图片与视频节点同一套控制</div>
+        <div class="note">多选后按位置拼成一条成片</div>
+      </div>
+    </div>
+    <div class="shot-hold">
+      <div class="shot" data-a="rise" data-d="0.14" data-dur="0.9" data-drift="1.06">
+        <div class="crop"><img src="assets/canvas.jpg" alt=""></div>
+        <div class="spot" data-spot="6,8,52,74" data-d="1.0" data-dur="0.6"></div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ══ 4 · templates ═══════════════════════════════════════════════ -->
+  <section class="scene" data-scene data-in="20.7" data-out="26.1" data-tone="paper"
+           data-crop="0.16,0.04,0.84,0.98" data-crop-tall="0.13,0.13,0.74,0.74">
+    <div class="copy">
+      <div class="eyebrow" data-a="fade" data-d="0.02" data-dur="0.45">04 / 模板库</div>
+      <h1 class="headline" data-a="rise" data-d="0.08" data-dur="0.65">3774 条<br>现成提示词</h1>
+      <p class="sub" data-a="rise" data-d="0.26" data-dur="0.6">8 个库、17 个分类，点一下填进输入框。</p>
+      <div class="notes" data-a="rise" data-d="0.46" data-dur="0.6">
+        <div class="note">在线刷新，不用等版本更新</div>
+        <div class="note">支持收藏与历史记录</div>
+      </div>
+    </div>
+    <div class="shot-hold">
+      <div class="shot" data-a="zoomIn" data-d="0.14" data-dur="0.85" data-drift="1.045">
+        <div class="crop"><img src="assets/templates.jpg" alt=""></div>
+        <div class="spot" data-spot="4,16,92,80" data-d="0.95" data-dur="0.65"></div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ══ 5 · outro ═══════════════════════════════════════════════════ -->
+  <section class="scene" data-scene data-in="26.1" data-out="30" data-tone="ink" data-layout="stack" data-hud="off">
+    <div class="kicker" style="color:#71717a" data-a="fade" data-d="0" data-dur="0.45">装上就能用</div>
+    <div style="margin-top:38px" data-a="rise" data-d="0.16" data-dur="0.6">
+      <div class="cmd"><span class="p">$</span> dsh plugin --profile web add <span class="cmd-pkg">@q253595422/dsh-imagegen-video</span></div>
+    </div>
+    <div class="repo" style="margin-top:36px" data-a="fade" data-d="0.7" data-dur="0.55">github.com/q253595422/dsh-imagegen-video</div>
+    <div class="mark" style="font-size:72px;margin-top:76px;letter-spacing:-.03em" data-a="fade" data-d="1.45" data-dur="0.7">VisioWork</div>
+  </section>
+
+  <div id="sub"></div>
+
+  <div id="hud">
+    <div class="hud-top"><span><b>VisioWork</b> &nbsp;·&nbsp; DeepSeek Harness</span><span id="hud-idx">01 / 04</span></div>
+    <div class="hud-bar" id="hud-bar"></div>
+  </div>
+</div>
+
+<script>
+(() => {
+  const DURATION = 30;
+  const clamp01 = x => x < 0 ? 0 : x > 1 ? 1 : x;
+  const ease = {
+    expo: x => x >= 1 ? 1 : 1 - Math.pow(2, -10 * x),
+    back: x => { const c = 1.70158, d = c + 1; return 1 + d * Math.pow(x - 1, 3) + c * Math.pow(x - 1, 2) },
+  };
+
+  // Each scene declares a crop window into its screenshot:
+  // data-crop (wide) / data-crop-tall (portrait), "x,y,w,h" in source %.
+  // Portrait gets its own near-square window: a 16:9 strip would leave the
+  // lower half of the phone screen empty.
+  const tall = document.documentElement.dataset.layout === 'tall'
+  const scenes = [...document.querySelectorAll('[data-scene]')].map(el => {
+    const spec = (tall && el.dataset.cropTall) || el.dataset.crop || '0,0,1,1'
+    const crop = spec.split(',').map(Number)
+    const [cx, cy, cw, ch] = crop
+    // Source-percentage → visible-percentage, so a highlight lands on the same
+    // UI element whichever crop window the layout uses.
+    const toVis = ([sx, sy]) => [(sx - cx * 100) / cw, (sy - cy * 100) / ch];
+    const shot = el.querySelector('.shot');
+    if (shot) {
+      const cropBox = shot.querySelector('.crop');
+      cropBox.style.setProperty('--x', cx);
+      cropBox.style.setProperty('--y', cy);
+      cropBox.style.setProperty('--w', cw);
+      cropBox.style.setProperty('--h', ch);
+      // 2560x1440 source → aspect = (cw*2560)/(ch*1440)
+      shot.style.aspectRatio = String((cw * 2560) / (ch * 1440));
+    }
+    return {
+      el,
+      in: +el.dataset.in,
+      out: +el.dataset.out,
+      hud: el.dataset.hud !== 'off',
+      items: [...el.querySelectorAll('[data-a]')].map(n => {
+        // Both highlights and tags are authored in source coordinates; convert
+        // once here so setTime only writes finished percentages.
+        let spot = null
+        if (n.dataset.spot) {
+          const [sx, sy, sw, sh] = n.dataset.spot.split(',').map(Number)
+          const [vx, vy] = toVis([sx, sy])
+          spot = [vx, vy, sw / cw, sh / ch]
+        }
+        if (n.dataset.anchor) {
+          const [vx, vy] = toVis(n.dataset.anchor.split(',').map(Number))
+          n.style.left = vx + '%'
+          n.style.top = vy + '%'
+        }
+        return {
+          n,
+          kind: n.dataset.a,
+          start: +(n.dataset.d || 0),
+          dur: +(n.dataset.dur || 0.6),
+          drift: n.dataset.drift ? +n.dataset.drift : 0,
+          spot,
+          hook: n.dataset.hook || '',
+        }
+      }),
+    };
+  });
+
+  const spriteNodes = [...document.querySelectorAll('[data-hook="sprite"]')];
+  const hud = document.getElementById('hud');
+  const hudIdx = document.getElementById('hud-idx');
+  const hudBar = document.getElementById('hud-bar');
+  const subEl = document.getElementById('sub');
+
+  // Burned-in subtitles: no voice-over, so the line carries the pitch.
+  const CUES = [
+    [2.7, 8.7, '五张参考图一起喂，风格和人物不用二选一。'],
+    [8.7, 14.7, '图片定好，一句话让它动起来。'],
+    [14.7, 20.7, '整条流程摊在画布上，改哪步只跑哪步。'],
+    [20.7, 26.1, '3774 条现成提示词，点一下就能用。'],
+  ];
+
+  function applyItem(it, lt, sceneDur) {
+    if (it.hook === 'sprite') return;
+    const n = it.n;
+    if (it.spot) {
+      const p = ease.expo(clamp01((lt - it.start) / it.dur));
+      const [x, y, w, h] = it.spot;
+      n.style.left = x + '%'; n.style.top = y + '%';
+      n.style.width = w + '%'; n.style.height = h + '%';
+      n.style.opacity = String(p);
+      return;
+    }
+    const p = clamp01((lt - it.start) / it.dur);
+    const e = (it.kind === 'pop' ? ease.back : ease.expo)(p);
+    n.style.opacity = String(clamp01(p * 1.7));
+
+    let tf = '';
+    switch (it.kind) {
+      case 'rise': tf = `translate3d(0,${(1 - e) * 54}px,0)`; break;
+      case 'fade': tf = ''; break;
+      case 'slideL': tf = `translate3d(${(1 - e) * -88}px,0,0)`; break;
+      case 'slideR': tf = `translate3d(${(1 - e) * 88}px,0,0)`; break;
+      case 'pop': tf = `scale(${0.9 + 0.1 * e})`; break;
+      case 'zoomIn': tf = `scale(${1.055 - 0.055 * e})`; break;
+    }
+    if (it.drift) {
+      const s = 1 + (it.drift - 1) * clamp01(lt / sceneDur);
+      tf = (tf ? tf + ' ' : '') + `scale(${s})`;
+    }
+    n.style.transform = tf || 'none';
+  }
+
+  // 24 frames in a 6x4 sheet; hold the last frame once the clip ends.
+  const CLIP = 5.375, COLS = 6, ROWS = 4, FRAMES = 24;
+  function applySprite(lt) {
+    const idx = Math.min(FRAMES - 1, Math.floor(lt / (CLIP / FRAMES)));
+    const col = idx % COLS, row = Math.floor(idx / COLS);
+    const px = (col / (COLS - 1)) * 100, py = (row / (ROWS - 1)) * 100;
+    for (const s of spriteNodes) s.style.backgroundPosition = `${px}% ${py}%`;
+  }
+
+  window.setTime = function setTime(t) {
+    let hudScene = null;
+    for (const s of scenes) {
+      if (t < s.in || t >= s.out) { s.el.style.display = 'none'; continue; }
+      s.el.style.display = '';
+      if (s.hud) hudScene = s;
+      const lt = t - s.in;
+      for (const it of s.items) applyItem(it, lt, s.out - s.in);
+    }
+    applySprite(t - 8.7);
+
+    if (hudScene) {
+      hud.style.opacity = '1';
+      const i = scenes.filter(s => s.hud).indexOf(hudScene);
+      hudIdx.textContent = String(i + 1).padStart(2, '0') + ' / 04';
+      hudBar.style.width = (t / DURATION * 100) + '%';
+    } else {
+      hud.style.opacity = '0';
+    }
+
+    const cue = CUES.find(([a, b]) => t >= a && t < b);
+    if (cue) {
+      const local = t - cue[0], span = cue[1] - cue[0];
+      if (subEl.dataset.text !== cue[2]) {
+        subEl.dataset.text = cue[2];
+        subEl.innerHTML = '<span></span>';
+        subEl.firstChild.textContent = cue[2];
+      }
+      // Fade the caption in/out at the edges of its slot.
+      subEl.style.opacity = String(Math.min(clamp01(local / 0.35), clamp01((span - local) / 0.3)));
+    } else {
+      subEl.style.opacity = '0';
+      subEl.dataset.text = '';
+    }
+  };
+
+  const q = new URLSearchParams(location.search);
+  if (q.has('layout')) document.documentElement.dataset.layout = q.get('layout');
+  window.setTime(q.has('t') ? +q.get('t') : 0);
+  window.__ready = Promise.all([...document.images].map(img => img.decode().catch(() => {})));
+})();
+</script>
+</body>
+</html>

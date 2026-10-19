@@ -11,3 +11,5 @@ node_modules/
 /.upstream/
 # 推广片逐帧渲染的中间产物（900 帧 × 两版，约 300MB）。成片与源文件在 docs/promo/。
 /docs/promo/src/frames/
+# macOS Finder 目录元数据：每次浏览目录都会重新生成，不属于仓库内容。
+.DS_Store
