@@ -5,6 +5,35 @@ Attribution for third-party code is in [NOTICE](./NOTICE).
 
 ## Releases
 
+### 1.10.0 — storyboards: a shot list that runs into clip nodes
+
+- **A storyboard node.** One board is a list of shots — a prompt and a length
+  each, reorderable, renamable by moving — and every shot produces an ORDINARY
+  video node on the canvas. That is the whole design: because the result is the
+  same node type as a hand-made clip, it is previewable, downloadable,
+  favoritable, retryable and stitchable with no second workflow to learn.
+- **Two kinds of continuity.** The independent mode submits every shot that has
+  no clip in one press; the carry mode submits one shot at a time, using the
+  previous shot's last frame as this shot's first frame, so consecutive shots
+  join up. A carry shot is blocked — with a visible state, not a silent refusal
+  — until its predecessor has a clip.
+- **The tail frame is reusable on its own.** Any finished clip offers a
+  continue-from-tail action: it grabs the closing frame, drops it as an image
+  node, and wires it into a fresh video config, ready to type the next shot's
+  direction into.
+- **The board stitches through the existing compose run.** Once two shots have
+  clips, the board's stitch action hands them to the same ffmpeg path, with the
+  same numbered order review; a shot still rendering is left out and the
+  shortfall is said out loud instead of being submitted as a run that would
+  fail.
+- **State survives a reload.** The shot list, the shared settings and each
+  shot's link to its clip node are part of the canvas document; a board whose
+  stored state cannot be honoured fails the save loudly rather than being
+  written half-valid. Every row's state is read from its clip node, so the board
+  and the canvas can never disagree about what is finished.
+- **Editing goes through the document**, so undo, redo and autosave work on a
+  board exactly as they do on a text node.
+
 ### 1.9.3 — session images, PPT delivery, and xAI Grok video
 
 Upstream 1.9.1 + 1.9.2 landed here, alongside this repository's own fixes.

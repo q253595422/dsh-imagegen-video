@@ -1,14 +1,14 @@
 /**
  * Wire contract shared by the host and client halves of dsh-imagegen: the
  * settings namespace, the route paths, and the generate payload/result shapes.
- * Pure types + constants 鈥?safe for the client bundle to inline.
+ * Pure types + constants — safe for the client bundle to inline.
  */
 
 /** Settings namespace this plugin owns (host settings seam + bridge). */
 export const IMAGEGEN_SETTINGS_NAMESPACE = 'dsh-imagegen'
 
 /** Published package version shared by the host updater and the client UI. */
-export const PLUGIN_VERSION = '1.9.3'
+export const PLUGIN_VERSION = '1.10.0'
 
 /** Same-origin route family (loopback-only, mirroring the dsh-ssh fence). */
 export const SETTINGS_API = {
@@ -186,7 +186,7 @@ export const HISTORY_API = {
 /**
  * Same-origin route family for the user-curated gallery (favorites). Entries
  * reuse the history wire shape and persist under ~/.dsh/dsh-imagegen/gallery/;
- * unlike history there is no size cap 鈥?the user adds images on purpose.
+ * unlike history there is no size cap — the user adds images on purpose.
  *
  * Every response that can change the trash carries it as a second field next
  * to `entries`: the same two lists are always what the client renders.
