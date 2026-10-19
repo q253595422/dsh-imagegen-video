@@ -33,7 +33,7 @@ import { testStorage, type StorageSyncConfig } from './storage-sync.ts'
 import { checkForUpdate, CURRENT_VERSION, installUpdate, ManualUpdateRequiredError, updateInstallTarget, type UpdateHostContext } from './updater.ts'
 import { IMAGE_PRESETS } from './presets.ts'
 import { clearDiagnostics, listDiagnostics } from './diagnostics-store.ts'
-import { AGENT_IMAGE_API, CANVAS_API, CANVAS_SKILL_API, CONVERSATION_IMAGE_API, DATA_FOLDER_API, DEFAULT_TEMPLATE_SOURCE_ID, DIAGNOSTICS_API, GALLERY_API, GENERATE_API, HISTORY_API, IMAGEGEN_SETTINGS_NAMESPACE, IMAGE_MODEL_API, PRESETS_API, PROMPT_ENHANCE_API, SETTINGS_API, STORAGE_API, SUBSCRIPTION_API, SUBSCRIPTION_PROVIDERS, TASK_API, TEMPLATE_FAVORITES_API, TEMPLATES_API, UPDATE_API, USAGE_API, VIDEO_API, isChannelProtocolPreference, isTemplateSourceId, type CanvasAssetRef, type CanvasDocument, type CanvasSkillCatalog, type CanvasSkillConfigApplyRequest, type CanvasSkillConfigApplyResult, type CanvasSkillConfigSaveRequest, type CanvasSkillConfigSaveResult, type CanvasSkillInstallRequest, type CanvasSkillInstallResult, type CanvasSkillLibrary, type CanvasSkillRemoveResult, type CanvasSkillRunRequest, type CanvasSkillTask, type GeneratedImage, type GenerateRequest, type HistoryEntry, type HistoryEntryInput, type ModelMapping, type PresetProviderView, type TemplateFavorite, type TemplateListResult, type TemplateRefreshResult, type TemplateSample, type CanvasVideoTaskMeta, type VideoGenerateRequest, type VideoHistoryEntry } from './protocol.ts'
+import { AGENT_IMAGE_API, CANVAS_API, CANVAS_SKILL_API, CONVERSATION_IMAGE_API, DATA_FOLDER_API, DEFAULT_TEMPLATE_SOURCE_ID, DIAGNOSTICS_API, GALLERY_API, GENERATE_API, HISTORY_API, IMAGEGEN_SETTINGS_NAMESPACE, IMAGE_MODEL_API, PRESETS_API, PROMPT_ENHANCE_API, SETTINGS_API, STORAGE_API, SUBSCRIPTION_API, SUBSCRIPTION_PROVIDERS, TASK_API, TEMPLATE_FAVORITES_API, TEMPLATES_API, UPDATE_API, USAGE_API, VIDEO_API, isChannelProtocolPreference, isTemplateSourceId, type CanvasAssetRef, type CanvasDocument, type CanvasSkillCatalog, type CanvasSkillConfigApplyRequest, type CanvasSkillConfigApplyResult, type CanvasSkillConfigSaveRequest, type CanvasSkillConfigSaveResult, type CanvasSkillInstallRequest, type CanvasSkillInstallResult, type CanvasSkillLibrary, type CanvasSkillRemoveResult, type CanvasSkillRunRequest, type CanvasSkillTask, type PptRunRequest, type PptRuntimeStatus, type GeneratedImage, type GenerateRequest, type HistoryEntry, type HistoryEntryInput, type ModelMapping, type PresetProviderView, type TemplateFavorite, type TemplateListResult, type TemplateRefreshResult, type TemplateSample, type CanvasVideoTaskMeta, type VideoGenerateRequest, type VideoHistoryEntry } from './protocol.ts'
 
 /** Cap on JSON request bodies (settings ops and generate payloads are small). */
 const MAX_JSON_BODY_BYTES = 24 * 1024 * 1024
@@ -217,9 +217,14 @@ export interface ImageGenRoutesDeps {
    * never mounted (deployments without them): the canvas then offers its
    * built-in text actions only and says why.
    */
+  pptRuntime?: { check: () => Promise<PptRuntimeStatus>; install: () => Promise<PptRuntimeStatus> }
   skills?: {
     list: (language?: string) => Promise<CanvasSkillCatalog>
     run: (request: CanvasSkillRunRequest) => Promise<CanvasSkillTask>
+    /** Standalone image-to-PPT conversion (no canvas involved). */
+    runPpt?: (request: PptRunRequest) => Promise<CanvasSkillTask>
+    /** Conversion history, including runs that outlived a reload. */
+    pptTasks?: () => Promise<CanvasSkillTask[]>
     task: (id: string) => CanvasSkillTask | undefined
     tasksOfCanvas: (canvasId: string) => CanvasSkillTask[]
     cancel: (id: string) => Promise<boolean>
@@ -1826,6 +1831,57 @@ export function makeRoutes(deps: ImageGenRoutesDeps): WebRoute[] {
             }),
           })
         } catch (error) { writeJson(res, 200, { ok: false, code: 'preview-failed', message: messageOf(error) }) }
+      },
+    },
+    // Standalone PPT conversion shares the skill runtime and asset store.
+    {
+      kind: 'exact',
+      path: CANVAS_SKILL_API.pptRuntime,
+      handler: async (req, res) => {
+        if (!guard(req, res, 'POST')) return
+        const body = await readJsonBody(req)
+        if (deps.pptRuntime === undefined) { writeJson(res, 200, { ok: false, message: 'PPT runtime unavailable' }); return }
+        try {
+          const runtime = body?.install === true ? await deps.pptRuntime.install() : await deps.pptRuntime.check()
+          writeJson(res, 200, { ok: true, runtime })
+        } catch (error) { writeJson(res, 200, { ok: false, message: messageOf(error) }) }
+      },
+    },
+    {
+      kind: 'exact',
+      path: CANVAS_SKILL_API.pptTasks,
+      handler: async (req, res) => {
+        if (!guard(req, res, 'POST')) return
+        if (deps.skills?.pptTasks === undefined) { writeJson(res, 200, { ok: false, message: 'PPT runtime unavailable' }); return }
+        try { writeJson(res, 200, { ok: true, tasks: await deps.skills.pptTasks() }) }
+        catch (error) { writeJson(res, 200, { ok: false, message: messageOf(error) }) }
+      },
+    },
+    {
+      kind: 'exact',
+      path: CANVAS_SKILL_API.pptRun,
+      handler: async (req, res) => {
+        if (!guard(req, res, 'POST')) return
+        const body = await readJsonBody(req)
+        if (!Array.isArray(body?.images) || body.images.length < 1 || body.images.length > 12
+          || typeof body.offlineOcr !== 'boolean') {
+          writeJson(res, 200, { ok: false, code: 'bad-request', message: '请选择1–12张图片和OCR方式' }); return
+        }
+        // The client sends asset ids only; the URL is rebuilt here so a caller
+        // cannot point the conversion at an arbitrary address.
+        const images: CanvasAssetRef[] = []
+        for (const raw of body.images) {
+          if (raw === null || typeof raw !== 'object' || typeof raw.assetId !== 'string' || !/^[\w.-]+$/.test(raw.assetId)) {
+            writeJson(res, 200, { ok: false, code: 'bad-request', message: '图片资产无效' }); return
+          }
+          images.push({ assetId: raw.assetId, url: `${CANVAS_API.asset}/${encodeURIComponent(raw.assetId)}`, mime: '', width: 0, height: 0, bytes: 0, origin: 'upload' })
+        }
+        if (deps.skills?.runPpt === undefined) { writeJson(res, 200, { ok: false, message: 'PPT runtime unavailable' }); return }
+        try {
+          const runtime = await deps.pptRuntime?.check()
+          if (runtime !== undefined && !runtime.available) throw new Error(`editppt 尚未就绪，请在生图配置中检查或安装运行环境。${runtime.message}`)
+          writeJson(res, 200, { ok: true, task: await deps.skills.runPpt({ images, offlineOcr: body.offlineOcr, ...parseSkillLanguage(body) }) })
+        } catch (error) { writeJson(res, 200, { ok: false, code: 'ppt-run-failed', message: messageOf(error) }) }
       },
     },
     // --------------------------------------------------- canvas skills list

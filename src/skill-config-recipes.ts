@@ -34,14 +34,14 @@ const RECIPES: readonly SkillConfigRecipe[] = [
     name: EDITABLE_PPT_SKILL,
     declaration: {
       version: 1,
-      note: '密钥只写入本机 ~/.editppt/config.yaml；不会进入运行目录、清单或提示词。页面素材需要任何 OpenAI 兼容的图像 API。',
+      note: '使用已有 Codex OAuth 时可不填图像 API 密钥；需要 API 兜底时填写。密钥只写入本机 ~/.editppt/config.yaml；不会进入运行目录、清单或提示词。页面素材需要任何 OpenAI 兼容的图像 API。',
       fields: [
         {
           id: 'image-api-key',
           label: '图像 API 密钥',
           description: '用于页面背景修复与素材分离的 OpenAI 兼容图像 API 密钥',
           type: 'secret',
-          required: true,
+          required: false,
         },
         {
           id: 'image-base-url',
@@ -68,6 +68,7 @@ const RECIPES: readonly SkillConfigRecipe[] = [
       apply: [
         {
           kind: 'command',
+          when: { field: 'image-api-key', set: true },
           argv: [
             'editppt', 'config',
             '--api-key', '{image-api-key}',

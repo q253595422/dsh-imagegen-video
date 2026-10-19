@@ -34,6 +34,7 @@ import type {
   CanvasSkillRunRequest,
   CanvasSkillTask,
   ClipComposer,
+  PptRunRequest,
 } from './protocol.ts'
 import { extractFileText, MAX_EXTRACTED_CHARS } from './file-text.ts'
 import {
@@ -49,6 +50,7 @@ import {
   type ExternalSkillSummary,
 } from './skills-catalog.ts'
 import { orderByPosition } from './clip-order.ts'
+import { readZipDirectory, readZipEntry } from './zip.ts'
 import { fileKindOf } from './canvas-store.ts'
 
 // ---------------------------------------------------------------- contracts
@@ -154,6 +156,8 @@ export interface SkillRunnerOptions {
   dataRoot: () => string
   /** Upstream home of the deck pipeline, surfaced as a one-click install. */
   pptInstallUrl?: string
+  /** The isolated editppt CLI this host installed, when it has one. */
+  pptCommand?: () => Promise<string>
   /**
    * Local clip stitcher (ffmpeg) for the `local` tier. Optional so every other
    * path — and the smoke suites — can run without ffmpeg installed; a compose
@@ -517,6 +521,24 @@ export class SkillRunner {
     if (skill.tier === 'heavy' && !catalog.agentAvailable) throw new Error(t('canvas.skills.needAgent'))
 
     const language = request.language
+    return this.startTask(request, skill, inputs)
+  }
+
+  /**
+   * Create, track and queue one task.
+   *
+   * Split out of {@link run} because a standalone conversion builds its inputs
+   * itself: it has no canvas to resolve them from, and its task has to carry
+   * the slide list so a reloaded panel can still show what was submitted.
+   * @param ppt - true for a standalone conversion, which persists its task.
+   */
+  private async startTask(
+    request: CanvasSkillRunRequest,
+    skill: CanvasSkillDescriptor,
+    inputs: RunInput[],
+    ppt = false,
+  ): Promise<CanvasSkillTask> {
+    const language = request.language
     const task: CanvasSkillTask = {
       id: newId('skillrun'),
       canvasId: request.canvasId,
@@ -529,8 +551,12 @@ export class SkillRunner {
       nodeIds: [...request.nodeIds],
       startedAt: Date.now(),
       ...language === undefined || language === '' ? {} : { language },
+      ...ppt ? { pptImages: inputs.flatMap(input => input.asset === undefined ? [] : [input.asset]) } : {},
     }
     this.tasks.set(task.id, task)
+    // A conversion the user cannot see in the list is a run they cannot recover
+    // after a reload, so failing to record it fails the run instead.
+    try { await this.persistPpt(task) } catch (error) { this.tasks.delete(task.id); throw error }
     this.pruneTasks()
     const job = this.enqueue(task, skill, inputs, request)
     // The caller polls the task; the job never rejects outward.
@@ -565,7 +591,94 @@ export class SkillRunner {
     const canceller = this.cancellers.get(id)
     this.cancellers.delete(id)
     if (canceller !== undefined) await canceller.dispose().catch(() => { /* best effort */ })
+    await this.persistPpt(task)
     return true
+  }
+
+  // ------------------------------------------------------------- ppt
+
+  /**
+   * Standalone image-to-PPT conversion: the same installed skill the canvas
+   * uses, run without creating a canvas.
+   *
+   * The run is keyed by `canvasId: 'ppt'`, which is what marks it as a
+   * conversion everywhere else (prompt, deck validation, persistence) rather
+   * than threading a flag through every method.
+   */
+  async runPpt(request: PptRunRequest): Promise<CanvasSkillTask> {
+    const t = this.translate(request.language)
+    const catalog = await this.list(request.language)
+    const skill = catalog.skills.find(item => item.id === BUILTIN_PPT)
+    if (skill === undefined || !catalog.agentAvailable) throw new Error(t('canvas.skills.needAgent'))
+    if (!catalog.installed.includes(EDITABLE_PPT_SKILL)) throw new Error(t('canvas.skills.skillMissing', { name: EDITABLE_PPT_SKILL }))
+    if (request.images.length === 0 || request.images.length > MAX_SKILL_INPUT_NODES) throw new Error(t('ppt.inputLimit'))
+    const inputs: RunInput[] = []
+    for (const [index, asset] of request.images.entries()) {
+      const found = await this.backend.canvas.readAsset(asset.assetId)
+      if (found === undefined || !/^image\/(png|jpeg|webp)$/.test(found.mime)) throw new Error(t('ppt.invalidImage'))
+      // The slide name is derived from the position, so the deck's page order is
+      // the order the user arranged, not whatever the upload happened to be.
+      const safeAsset: CanvasAssetRef = {
+        ...asset,
+        mime: found.mime,
+        name: `slide-${index + 1}.${found.mime === 'image/jpeg' ? 'jpg' : found.mime.split('/')[1]}`,
+      }
+      inputs.push({
+        asset: safeAsset,
+        node: {
+          id: newId('ppt-input'), type: 'image', title: safeAsset.name!, x: 0, y: 0, width: 320, height: 240,
+          metadata: { asset: safeAsset },
+        },
+      })
+    }
+    return this.startTask({
+      canvasId: 'ppt',
+      skillId: BUILTIN_PPT,
+      nodeIds: inputs.map(input => input.node.id),
+      language: request.language,
+      instruction: request.offlineOcr
+        ? 'The user explicitly chose offline text detection for this run. Use upstream editppt prepare --no-text-hints, then editppt page hints for each page to generate offline hints before reconstruction. Do not call PaddleOCR for this run or ask about a token again. All other upstream steps remain required.'
+        : 'Use the configured PaddleOCR token. Follow the upstream skill if OCR fails; do not silently downgrade quality.',
+    }, skill, inputs, true)
+  }
+
+  /** Conversion history, so a panel reload or a host restart does not lose it. */
+  async pptTasks(): Promise<CanvasSkillTask[]> {
+    const dir = path.join(this.options.dataRoot(), 'ppt-tasks')
+    const files = await fs.readdir(dir).catch(() => [])
+    const persisted: CanvasSkillTask[] = []
+    for (const name of files.filter(entry => /^skillrun-[\w-]+\.json$/.test(entry))) {
+      const task = await fs.readFile(path.join(dir, name), 'utf8')
+        .then(raw => JSON.parse(raw) as CanvasSkillTask)
+        .catch(() => undefined)
+      if (task === undefined || task.canvasId !== 'ppt' || task.id !== name.slice(0, -5)) continue
+      const live = this.tasks.get(task.id)
+      if (live !== undefined) { persisted.push(live); continue }
+      // A run that was in flight when the host stopped is not still working;
+      // saying so is the only honest state for it.
+      if (task.status === 'queued' || task.status === 'running') {
+        task.status = 'failed'
+        task.error = this.translate(task.language)('ppt.interrupted')
+        task.finishedAt = Date.now()
+        await this.persistPpt(task)
+      }
+      persisted.push(task)
+    }
+    for (const task of this.tasks.values()) {
+      if (task.canvasId === 'ppt' && !persisted.some(item => item.id === task.id)) persisted.push(task)
+    }
+    return persisted.sort((a, b) => b.startedAt - a.startedAt)
+  }
+
+  /** Write one conversion task to disk; a no-op for canvas runs. */
+  private async persistPpt(task: CanvasSkillTask): Promise<void> {
+    if (task.canvasId !== 'ppt') return
+    const dir = path.join(this.options.dataRoot(), 'ppt-tasks')
+    await fs.mkdir(dir, { recursive: true })
+    const file = path.join(dir, `${task.id}.json`)
+    const temporary = `${file}.${randomUUID()}.tmp`
+    await fs.writeFile(temporary, JSON.stringify(task), 'utf8')
+    await fs.rename(temporary, file)
   }
 
   // ------------------------------------------------------------- compose
@@ -768,6 +881,9 @@ export class SkillRunner {
       } finally {
         task.finishedAt = Date.now()
         this.cancellers.delete(task.id)
+        // Best effort: a run that finished is already reported to the caller,
+        // so a disk error here must not turn it into a failure.
+        await this.persistPpt(task).catch(() => { /* the in-memory task stands */ })
       }
     }
     const next = this.tail.then(run, run)
@@ -1084,7 +1200,24 @@ export class SkillRunner {
     // Exposable declared values (secrets filtered host-side) tell the agent what
     // is already configured, so it does not hunt for settings it already has.
     const configNote = await this.backend.skillConfig?.note(skillName).catch(() => undefined)
-    const systemPrompt = this.heavySystemPrompt(skill, body, fileLines, outputDir, t, configNote)
+    // A conversion runs the installed skill as-is. The extra lines pin the
+    // things that go wrong when an agent improvises: a replaced pipeline, a
+    // rasterised deck passed off as editable, or an intermediate page deck
+    // reported as the result.
+    const definition = await this.backend.registry?.list()
+      .then(items => items.find(item => item.name === skillName))
+      .catch(() => undefined)
+    const command = task.canvasId === 'ppt' ? await this.options.pptCommand?.() : undefined
+    const systemPrompt = [
+      this.heavySystemPrompt(skill, body, fileLines, outputDir, t, configNote),
+      ...definition?.path === undefined ? [] : [`Skill entry path: ${JSON.stringify(definition.path)}. Resolve every skill-local reference, prompt builder and CLI source relative to its directory.`],
+      ...task.canvasId !== 'ppt' ? [] : [
+        'This is an image-to-editable-PPT conversion explicitly requested by the user. Follow the installed upstream skill unchanged; do not design a replacement pipeline.',
+        'The input order is the slide order. Use the original images as source slides. Copy ONLY the validated final deck, final previews and validation report to the output directory. Do not copy intermediate page decks as final decks. If finalize cannot pass, report failure; never substitute a full-slide raster.',
+        `Runtime CLI: ${JSON.stringify(command ?? 'editppt')}. Use this executable for editppt commands; add its parent directory to your shell PATH for upstream helpers.`,
+        request.instruction ?? '',
+      ],
+    ].join('\n\n')
     task.stage = t('canvas.skills.stageRunning')
     task.phase = 'running'
     const controller = new AbortController()
@@ -1092,7 +1225,12 @@ export class SkillRunner {
     const timer = timeout > 0 ? setTimeout(() => controller.abort(), timeout) : undefined
     timer?.unref?.()
     let handle: SkillAgentHandle | undefined
+    // A cancel can land while the run is still preparing. Without this check the
+    // agent is created anyway and works for minutes on a task the user already
+    // stopped, with the run card saying it is cancelled.
+    const cancelled = (): boolean => task.status === 'cancelled'
     try {
+      if (cancelled()) throw new Error(t('canvas.skills.stageCancelled'))
       handle = await agents.create({
         sessionId: newId('skillagent'),
         cwd: runDir,
@@ -1101,6 +1239,7 @@ export class SkillRunner {
         fail: key => t(key),
       })
       if (handle === undefined) throw new Error(t('canvas.skills.agentFailed'))
+      if (cancelled()) { handle.cancel(); throw new Error(t('canvas.skills.stageCancelled')) }
       this.cancellers.set(task.id, {
         dispose: async () => {
           controller.abort()
@@ -1117,6 +1256,9 @@ export class SkillRunner {
       } finally {
         watch.stop()
       }
+      // Nothing collected after a cancel is a result the user asked for.
+      controller.signal.throwIfAborted()
+      if (cancelled()) throw new Error(t('canvas.skills.stageCancelled'))
       task.stage = t('canvas.skills.stageCollecting')
       task.phase = 'collecting'
       const answer = lastAssistantText(handle.session.deriveMessages())
@@ -1148,6 +1290,13 @@ export class SkillRunner {
     if (skill.id.startsWith('skill:')) return skill.id.slice('skill:'.length)
     if (skill.id === BUILTIN_PPT) return EDITABLE_PPT_SKILL
     return skill.name
+  }
+
+  /** Where an installed skill lives on disk, for callers that run its CLI. */
+  async skillDefinition(name: string): Promise<{ name: string; path?: string } | undefined> {
+    return this.backend.registry?.list()
+      .then(items => items.find(item => item.name === name))
+      .catch(() => undefined)
   }
 
   private async loadSkillBody(name: string): Promise<string | undefined> {
@@ -1227,6 +1376,19 @@ export class SkillRunner {
       const data = await fs.readFile(found.file).catch(() => undefined)
       if (data === undefined) continue
       const name = path.basename(found.file)
+      // A conversion must hand back a real deck. A .pptx that is not a valid
+      // OOXML package, or whose slide count does not match the images the user
+      // submitted, is a broken result however plausible it looks in the list.
+      if (task.canvasId === 'ppt' && name.toLowerCase().endsWith('.pptx')) {
+        const entries = readZipDirectory(data)
+        const presentation = entries.find(entry => entry.name === 'ppt/presentation.xml')
+        const slides = entries.filter(entry => /^ppt\/slides\/slide\d+\.xml$/.test(entry.name))
+        if (presentation === undefined || readZipEntry(data, presentation) === undefined
+          || slides.length !== task.pptImages?.length
+          || slides.some(entry => readZipEntry(data, entry) === undefined)) {
+          throw new Error(t('ppt.invalidDeck'))
+        }
+      }
       // WHY per-file: `putFile` refuses a blocked extension (.html/.js/.svg/…),
       // a file over 50 MB and a few malformed names. Without this catch a single
       // such artifact unwound the whole run — every node and connection collected
@@ -1250,6 +1412,11 @@ export class SkillRunner {
       const node = fileOutputNode(target.node, asset, name, skill.id, skill.name, [target.node.id])
       nodes.push(node)
       connections.push({ id: newId('edge'), fromNodeId: target.node.id, toNodeId: node.id })
+    }
+    if (task.canvasId === 'ppt' && !nodes.some(node => node.metadata?.asset?.name?.toLowerCase().endsWith('.pptx'))) {
+      // Falling back to the agent's prose here would report a conversion that
+      // produced no deck as a success with a note attached.
+      throw new Error([t('ppt.noDeck'), answer?.trim()].filter(Boolean).join('\n'))
     }
     if (nodes.length === 0) {
       // The skill finished without a file: keep the agent's answer so the run

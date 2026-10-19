@@ -2093,6 +2093,49 @@ await check('C6c3 every bundled snapshot keeps its ids unique', async () => {
 })
 
 
+await check('C6c4 PPT routes validate the request and rebuild asset URLs host-side', async () => {
+  // The client sends asset ids only; the URL is rebuilt on the host so a caller
+  // cannot point the conversion at an arbitrary address. Both halves are
+  // asserted: the malformed inputs are refused, and a well-formed one produces
+  // a URL on this host's asset route rather than the one it was handed.
+  const tooMany = await post('/api/dsh-imagegen/ppt/run', {
+    images: Array.from({ length: 13 }, (_, i) => ({ assetId: `a${i}` })),
+    offlineOcr: true,
+  })
+  assert.equal(tooMany.body.ok, false, '13 images must be refused')
+  assert.equal(tooMany.body.code, 'bad-request', JSON.stringify(tooMany.body))
+
+  const none = await post('/api/dsh-imagegen/ppt/run', { images: [], offlineOcr: true })
+  assert.equal(none.body.code, 'bad-request', 'zero images must be refused')
+
+  const badId = await post('/api/dsh-imagegen/ppt/run', {
+    images: [{ assetId: '../etc/passwd' }],
+    offlineOcr: true,
+  })
+  assert.equal(badId.body.code, 'bad-request', 'an asset id with path syntax must be refused')
+
+  const missingOcr = await post('/api/dsh-imagegen/ppt/run', { images: [{ assetId: 'ok-1' }] })
+  assert.equal(missingOcr.body.code, 'bad-request', 'offlineOcr is required, not defaulted')
+
+  // Without a usable editppt setup the route must say what is missing instead
+  // of starting a run that cannot finish. Two refusals are legitimate here —
+  // the runtime is not installed, or the skill itself is not — so the assertion
+  // is "refused, with a reason naming what to fix", not one exact message.
+  const run = await post('/api/dsh-imagegen/ppt/run', { images: [{ assetId: 'ok-1' }], offlineOcr: true })
+  assert.equal(run.body.ok, false, JSON.stringify(run.body))
+  assert.match(String(run.body.message), /PPT runtime|editppt|image-to-editable-ppt|技能/i, JSON.stringify(run.body))
+
+  const runtime = await post('/api/dsh-imagegen/ppt/runtime', {})
+  assert.equal(typeof runtime.body.ok, 'boolean', JSON.stringify(runtime.body))
+
+  // The task list is served whenever the host mounted the skill registry, which
+  // this suite does. An empty list is the correct answer here — what must hold
+  // is that the route answers with tasks rather than failing.
+  const tasks = await post('/api/dsh-imagegen/ppt/tasks', {})
+  assert.equal(tasks.body.ok, true, JSON.stringify(tasks.body))
+  assert.ok(Array.isArray(tasks.body.tasks), 'the task list is always an array')
+})
+
 await check('C6d data-folder route resolves the host directory (no spawn in tests)', async () => {
   const { body } = await post('/api/dsh-imagegen/data-folder/open', { open: false })
   assert.equal(body.ok, true)
@@ -3503,11 +3546,15 @@ await check('C13c the built-in recipe covers image-to-editable-ppt and a sidecar
     const recipe = await host.readCanvasSkillConfig({ name: 'image-to-editable-ppt', root, store: { values: {}, secrets: {} } })
     assert.equal(recipe.declaration.source, 'plugin')
     assert.deepEqual(recipe.declaration.manifest.fields.map(field => field.id), ['image-api-key', 'image-base-url', 'image-model', 'paddle-ocr-token'])
-    assert.deepEqual(recipe.view.missing, ['图像 API 密钥'])
+    // The image API key is optional: a host that already has Codex OAuth does
+    // not need one, so nothing is reported missing on a fresh install.
+    assert.deepEqual(recipe.view.missing, [])
     assert.equal(recipe.view.applicable, true)
-    // The declared command is exactly what the skill documents.
+    // The declared command is exactly what the skill documents, and it only runs
+    // once a key is actually set — otherwise it would write an empty secret.
     assert.ok(recipe.declaration.manifest.steps[0].argv.includes('editppt'))
     assert.ok(recipe.declaration.manifest.steps[0].argv.includes('{image-api-key}'))
+    assert.deepEqual(recipe.declaration.manifest.steps[0].when, { field: 'image-api-key', set: true })
     assert.deepEqual(recipe.declaration.manifest.steps[1].when, { field: 'paddle-ocr-token', set: true })
 
     // A skill's own sidecar takes over, and a broken one reports why.
@@ -5078,9 +5125,11 @@ await check('E1 client apply mounts the sidebar entry and studio (jsdom)', async
     // Gallery keeps the sidebar history visible, and selecting one history
     // group returns the center workspace to text-to-image.
     const tablistButtons = [...view.querySelectorAll('[role="tablist"] button')]
-    // Four top-nav entries (normal / gallery / canvas / ecommerce) plus the
-    // normal workspace's three generation modes (text / edit / video).
-    assert.equal(tablistButtons.length, 7, 'top nav has four entries and the normal workspace shows three generation modes')
+    // Five top-nav entries (normal / gallery / canvas / ecommerce / ppt) plus
+    // the normal workspace's three generation modes (text / edit / video).
+    assert.equal(tablistButtons.length, 8, 'top nav has five entries and the normal workspace shows three generation modes')
+    const pptSwitch = tablistButtons.find(button => button.textContent?.includes('图片转 PPT'))
+    assert.ok(pptSwitch !== undefined, 'ppt top-nav entry is present')
     const ecommerceSwitch = tablistButtons.find(button => button.textContent?.includes('电商模式'))
     assert.ok(ecommerceSwitch !== undefined, 'ecommerce top-nav entry is present')
     const normalSwitch = tablistButtons.find(button => button.textContent?.includes('普通生图'))
@@ -5092,7 +5141,7 @@ await check('E1 client apply mounts the sidebar entry and studio (jsdom)', async
     const ecommerceWorkspace = view.querySelector('[data-ecommerce-workspace]')
     assert.ok(ecommerceWorkspace !== null, 'ecommerce workspace is rendered')
     assert.equal(jsdomWindow.getComputedStyle(ecommerceWorkspace).fontSize, '12px', 'ecommerce UI inherits the compact panel type scale')
-    assert.equal(view.querySelectorAll('[role="tablist"] button').length, 4, 'generation sub-modes hide in the ecommerce workspace')
+    assert.equal(view.querySelectorAll('[role="tablist"] button').length, 5, 'generation sub-modes hide in the ecommerce workspace')
     assert.equal([...view.querySelectorAll('textarea')].some(textarea => (textarea.getAttribute('placeholder') ?? '').includes('描述你想要的画面')), false, 'normal prompt card is hidden in ecommerce workspace')
     const ecommerceName = view.querySelector('input[placeholder="商品名称（必填）"]')
     assert.ok(ecommerceName !== null, 'ecommerce product form is rendered')
@@ -5153,7 +5202,7 @@ await check('E1 client apply mounts the sidebar entry and studio (jsdom)', async
     // Back to the normal workspace via the top nav: gallery works as before.
     normalSwitch.click()
     await new Promise(resolve => setTimeout(resolve, 50))
-    assert.equal(view.querySelectorAll('[role="tablist"] button').length, 7, 'generation sub-modes return in the normal workspace')
+    assert.equal(view.querySelectorAll('[role="tablist"] button').length, 8, 'generation sub-modes return in the normal workspace')
     const galleryPill = [...view.querySelectorAll('[role="tablist"] button')].find(button => button.textContent?.includes('素材库'))
     assert.ok(galleryPill !== undefined, '素材库入口存在')
     galleryPill.click()

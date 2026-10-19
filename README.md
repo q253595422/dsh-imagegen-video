@@ -236,7 +236,8 @@ dsh plugin --profile web add ./q253595422-dsh-imagegen-video-1.7.8.tgz
 [NOTICE](./NOTICE) 与 [THIRD_PARTY_NOTICES.md](./THIRD_PARTY_NOTICES.md)。
 
 **核心能力**：生图（文生图 / 图生图 / 多参考图编辑）、生视频（文生视频 / 图生视频 /
-首尾帧 / 多参考图）、无限画布（图片与视频节点、片段拼接、技能）、电商套图、模板库与画廊。
+首尾帧 / 多参考图）、图片转可编辑 PPT（最多 12 张，每张一页）、无限画布（图片与视频节点、
+片段拼接、技能）、电商套图、模板库与画廊。
 
 **支持与问题反馈请提到本仓库的 Issues**（[Bug 报告](https://github.com/q253595422/dsh-imagegen-video/issues/new?template=bug_report.yml) · [功能建议](https://github.com/q253595422/dsh-imagegen-video/issues/new?template=feature_request.yml) · [全部 Issues](https://github.com/q253595422/dsh-imagegen-video/issues)）。
 

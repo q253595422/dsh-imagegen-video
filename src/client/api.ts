@@ -3,7 +3,7 @@
  * data access path the panel uses — plain fetch, same origin.
  */
 
-import { CANVAS_API, CANVAS_SKILL_API, CONVERSATION_IMAGE_API, DATA_FOLDER_API, DIAGNOSTICS_API, GALLERY_API, GENERATE_API, HISTORY_API, PROMPT_ENHANCE_API, STORAGE_API, TASK_API, TEMPLATE_FAVORITES_API, TEMPLATES_API, UPDATE_API, VIDEO_API, type CanvasAssetRef, type CanvasDocument, type CanvasFilePreview, type CanvasLayerPlan, type CanvasSkillCatalog, type CanvasSkillConfigApplyRequest, type CanvasSkillConfigApplyResult, type CanvasSkillConfigSaveRequest, type CanvasSkillConfigSaveResult, type CanvasSkillInstallRequest, type CanvasSkillInstallResult, type CanvasSkillLibrary, type CanvasSkillRemoveResult, type CanvasSkillRunRequest, type CanvasSkillTask, type CanvasSummary, type DiagnosticEntry, type GenerateRequest, type GenerateResult, type GenerationTask, type GenerationTaskSummary, type HistoryEntry, type HistoryEntryInput, type TemplateCase, type TemplateFavorite, type TemplateListResult, type TemplateRefreshResult, type TemplateSample, type UpdateInfo, type VideoGenerateRequest, type VideoGenerateResult, type VideoHistoryEntry, type VideoTask, type VideoTaskSummary } from '../protocol.ts'
+import { CANVAS_API, CANVAS_SKILL_API, CONVERSATION_IMAGE_API, DATA_FOLDER_API, DIAGNOSTICS_API, GALLERY_API, GENERATE_API, HISTORY_API, PROMPT_ENHANCE_API, STORAGE_API, TASK_API, TEMPLATE_FAVORITES_API, TEMPLATES_API, UPDATE_API, VIDEO_API, type CanvasAssetRef, type CanvasDocument, type CanvasFilePreview, type CanvasLayerPlan, type CanvasSkillCatalog, type CanvasSkillConfigApplyRequest, type CanvasSkillConfigApplyResult, type CanvasSkillConfigSaveRequest, type CanvasSkillConfigSaveResult, type CanvasSkillInstallRequest, type CanvasSkillInstallResult, type CanvasSkillLibrary, type CanvasSkillRemoveResult, type CanvasSkillRunRequest, type CanvasSkillTask, type CanvasSummary, type DiagnosticEntry, type GenerateRequest, type GenerateResult, type GenerationTask, type GenerationTaskSummary, type HistoryEntry, type HistoryEntryInput, type PptRunRequest, type PptRuntimeStatus, type TemplateCase, type TemplateFavorite, type TemplateListResult, type TemplateRefreshResult, type TemplateSample, type UpdateInfo, type VideoGenerateRequest, type VideoGenerateResult, type VideoHistoryEntry, type VideoTask, type VideoTaskSummary } from '../protocol.ts'
 import { activeImageGenLanguage } from './helpers.ts'
 
 /** Error carrying the route's JSON error message. */
@@ -51,6 +51,32 @@ async function readEnvelope<T>(response: Response): Promise<T> {
 
 /** The browser half's data entry point. */
 export class ImageGenApi {
+  /** Submit a standalone image-to-PPT conversion. */
+  async pptRun(request: Omit<PptRunRequest, 'language'>): Promise<CanvasSkillTask> {
+    const response = await fetch(CANVAS_SKILL_API.pptRun, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ ...request, language: activeImageGenLanguage() }),
+    })
+    return (await readEnvelope<{ ok: true; task: CanvasSkillTask }>(response)).task
+  }
+
+  /** Conversion history, including runs from before a reload. */
+  async pptTasks(): Promise<CanvasSkillTask[]> {
+    return (await readEnvelope<{ ok: true; tasks: CanvasSkillTask[] }>(
+      await fetch(CANVAS_SKILL_API.pptTasks, { method: 'POST' }),
+    )).tasks
+  }
+
+  /** Check (or install) the isolated editppt runtime. */
+  async pptRuntime(install = false): Promise<PptRuntimeStatus> {
+    const response = await fetch(CANVAS_SKILL_API.pptRuntime, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ install }),
+    })
+    return (await readEnvelope<{ ok: true; runtime: PptRuntimeStatus }>(response)).runtime
+  }
   /** Ask the host to check the latest stable GitHub Release. */
   async updateCheck(): Promise<UpdateInfo> {
     const response = await fetch(UPDATE_API.check, { method: 'POST' })

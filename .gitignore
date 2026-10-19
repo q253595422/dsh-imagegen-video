@@ -9,3 +9,5 @@ node_modules/
 # Upstream port plans (diff + extracted source). Generated per run, never
 # shipped: the classification is read once and the tree that matters is this one.
 /.upstream/
+# 推广片逐帧渲染的中间产物（900 帧 × 两版，约 300MB）。成片与源文件在 docs/promo/。
+/docs/promo/src/frames/

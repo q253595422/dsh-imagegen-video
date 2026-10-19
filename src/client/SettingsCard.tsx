@@ -25,6 +25,8 @@ import { IMAGE_MODEL_API, PRESETS_API, PROMPT_ENHANCE_API, USAGE_API, CANVAS_SKI
 import type { ImageGenKey } from './locales.ts'
 import { tt, type TranslateValues } from './helpers.ts'
 import { useImageGenLanguageTick } from './use-language.ts'
+import { OPEN_IMAGE_GEN_CONFIG_EVENT, takeImageGenConfigSection } from './config-entry.tsx'
+import { PptSetup } from './PptSetup.tsx'
 import { Select } from './Select.tsx'
 import { onTablistKeyDown, tabIndexFor } from './tablist.ts'
 import css from './settings-card.module.css'
@@ -213,7 +215,7 @@ interface UsageCounters {
   totals: Record<string, number>
 }
 
-type SettingsSectionId = 'channels' | 'prompt' | 'storage' | 'skills' | 'general' | null
+type SettingsSectionId = 'channels' | 'prompt' | 'storage' | 'skills' | 'ppt' | 'general' | null
 
 /** One mutually-exclusive settings group. */
 function SettingsSection(props: {
@@ -261,7 +263,16 @@ export function ImageGenSettingsSection(props: ImageGenSettingsSectionProps) {
   useImageGenLanguageTick()
   const state = props.useImageGenSettingsCard(snapshot => snapshot)
   const [open, setOpen] = useState(true)
-  const [activeSection, setActiveSection] = useState<SettingsSectionId>('channels')
+  const [activeSection, setActiveSection] = useState<SettingsSectionId>(() => takeImageGenConfigSection() ?? 'channels')
+  // "Set up PPT" elsewhere in the panel jumps straight to this section.
+  useEffect(() => {
+    const open = (): void => {
+      const section = takeImageGenConfigSection()
+      if (section !== undefined) setActiveSection(section)
+    }
+    window.addEventListener(OPEN_IMAGE_GEN_CONFIG_EVENT, open)
+    return () => { window.removeEventListener(OPEN_IMAGE_GEN_CONFIG_EVENT, open) }
+  }, [])
   // Global-section local states (prompt enhancement etc.).
   const [promptModels, setPromptModels] = useState<string[]>([])
   const [loadingPromptModels, setLoadingPromptModels] = useState(false)
@@ -510,6 +521,7 @@ export function ImageGenSettingsSection(props: ImageGenSettingsSectionProps) {
     { id: 'channels', label: t('settings.summaryChannelsLabel'), value: channelSummary, tone: readyChannels > 0 ? 'ready' : 'attention' },
     { id: 'prompt', label: t('settings.summaryPromptLabel'), value: promptSummary },
     { id: 'storage', label: t('settings.summaryStorageLabel'), value: storageSummary, tone: state.storageEnabled.text === 'true' ? 'ready' : 'neutral' },
+    { id: 'ppt', label: t('ppt.nav'), value: 'PPTX' },
     { id: 'skills', label: t('settings.summarySkillsLabel'), value: skillsSummary, tone: state.skillsEnabled.text === 'false' ? 'neutral' : 'ready' },
     { id: 'general', label: t('settings.summaryGeneralLabel'), value: generalSummary, tone: state.enabled.text === 'false' ? 'attention' : 'ready' },
   ]
@@ -903,6 +915,17 @@ export function ImageGenSettingsSection(props: ImageGenSettingsSectionProps) {
               {storageTestResult !== null ? <p className={css.failed} role="status">{storageTestResult}</p> : null}
             </div>
             <p className={css.hint}>{t('settings.storageKeyHint')}</p>
+            </SettingsSection>
+
+            <SettingsSection
+              id="ppt"
+              title={t('ppt.title')}
+              hint={t('ppt.setupHint')}
+              summary="PPTX"
+              expanded={activeSection === 'ppt'}
+              onToggle={() => { setActiveSection(activeSection === 'ppt' ? null : 'ppt') }}
+            >
+              <PptSetup />
             </SettingsSection>
 
             <SettingsSection

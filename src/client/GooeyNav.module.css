@@ -14,6 +14,7 @@
   --gooey-color-3: color-mix(in srgb, var(--dsw-alias-brand-primary, #5227ff) 55%, #ffffff);
   --gooey-color-4: color-mix(in srgb, var(--dsw-alias-brand-primary, #5227ff) 40%, #22d3ee);
   position: relative;
+  max-width: 100%;
   font-size: 13px;
 }
 
@@ -236,4 +237,14 @@
   .point {
     animation: none;
   }
+}
+
+/* On a phone the nav is wider than the screen. Scrolling it keeps every entry
+   reachable; `width: max-content` stops the labels from being squeezed instead. */
+@media (max-width: 760px) {
+  .container {
+    overflow-x: auto;
+    scrollbar-width: none;
+  }
+  .container nav { width: max-content; }
 }

@@ -5,6 +5,37 @@ Attribution for third-party code is in [NOTICE](./NOTICE).
 
 ## Releases
 
+### 1.9.0 — images to an editable PPTX
+
+A standalone conversion workspace, reached from any finished image.
+
+- **A PPT workspace of its own.** Upload PNG / JPG / WebP — up to 12, 20 MB each —
+  reorder or remove the thumbnails (the order is the slide order), and convert.
+  The run reports its real state: running, cancellable, done with a download, or
+  failed; the inputs stay put so a deck can be converted again.
+- **Every result can start a conversion.** Text-to-image, image-to-image,
+  the multi-model comparison cards and the full-screen preview each gained a
+  "make an editable PPT" action that carries the image into the workspace.
+- **A PPT section in the settings card.** Install or update the official skill,
+  install and check the isolated `editppt` Python environment, configure the
+  image API and an optional PaddleOCR token. Keys go through the existing
+  redacted secret storage and never enter the task prompt.
+- **OCR is a choice, not a requirement.** PaddleOCR, or the offline text
+  detection that ships with the conversion.
+- **A conversion that produced nothing is reported as failed.** No final PPTX, an
+  invalid ZIP, or a page-count mismatch all fail loudly; a task interrupted by a
+  host restart shows as interrupted and can be started again.
+- **PPT routes validate before they run.** The client sends asset ids only and the
+  host rebuilds the URL, so a caller cannot point the conversion at an arbitrary
+  address; image count, asset-id syntax and the OCR flag are checked up front,
+  and the refusal names what is missing. Covered by `C6c4`.
+- **The nav scrolls on a phone.** At ≤760px the top nav scrolls horizontally
+  instead of pushing entries off-screen, and settings summaries wrap.
+
+Prerequisites: Python 3.10+, a configured default model, skills and long tasks
+enabled, and an Agent preset with file and command tools. Multi-page runs use the
+skill's own page tasks, which need sub-agent support in the preset.
+
 ### 1.8.0 — multi-reference editing, a template drawer, and honest wait states
 
 Four capabilities: multi-reference editing, a template drawer, wait states that

@@ -25,6 +25,7 @@ import { editReferenceLimit, useEditReferences } from './reference-images.ts'
 import { GooeyNav } from './GooeyNav.tsx'
 import { InspirationGallery } from './InspirationGallery.tsx'
 import { CanvasWorkspace } from './CanvasWorkspace.tsx'
+import { PptWorkspace } from './PptWorkspace.tsx'
 import { ModelPicker, resolveModelChoice, type ModelPickerValue } from './ModelPicker.tsx'
 import { DiagnosticsButton, DiagnosticsPanel } from './DiagnosticsPanel.tsx'
 import { GenerationLoading } from './GenerationLoading.tsx'
@@ -510,7 +511,7 @@ const MODE_TABS = ['text', 'edit', 'video'] as const satisfies readonly PanelTab
 
 /** Top-level workspaces inside the panel. 'normal' is the classic studio;
  *  more task-oriented modes (prototype, …) can join alongside 'ecommerce'. */
-type PanelWorkspace = 'normal' | 'ecommerce' | 'canvas'
+type PanelWorkspace = 'normal' | 'ecommerce' | 'canvas' | 'ppt'
 
 /**
  * What the panel hands the canvas when the user asks to add something.
@@ -2792,18 +2793,20 @@ export function ImageGenPanel(props: {
         </span>
         <GooeyNav
           ariaLabel={tt('workspace.label')}
-          activeIndex={workspace === 'normal' ? (tab === 'gallery' ? 1 : 0) : workspace === 'canvas' ? 2 : 3}
+          activeIndex={workspace === 'normal' ? (tab === 'gallery' ? 1 : 0) : workspace === 'canvas' ? 2 : workspace === 'ecommerce' ? 3 : 4}
           onSelect={index => {
             if (index === 0) openTab('text')
             else if (index === 1) openTab('gallery')
             else if (index === 2) setWorkspace('canvas')
-            else setWorkspace('ecommerce')
+            else if (index === 3) setWorkspace('ecommerce')
+            else setWorkspace('ppt')
           }}
           items={[
             { key: 'normal', label: tt('workspace.normal') },
             { key: 'gallery', label: tt('gallery.title') },
             { key: 'canvas', label: tt('workspace.canvas') },
             { key: 'ecommerce', label: <>{tt('workspace.ecommerce')}<span className={css.previewBadge}>{tt('ecommerce.badge')}</span></> },
+            { key: 'ppt', label: tt('workspace.ppt') },
           ]}
         />
         <span className={css.panelHeaderActions}>
@@ -3385,6 +3388,11 @@ export function ImageGenPanel(props: {
               }}
               onOpenSettings={(kind = 'generation') => { openSettingsGuide(kind) }}
             />
+          ) : null}
+
+          {/* ----------------------------------------------- ppt conversion */}
+          {workspace === 'ppt' ? (
+            <PptWorkspace api={api} active={active && workspace === 'ppt'} onImported={() => { /* no queued import to clear */ }} />
           ) : null}
 
           {/* -------------------------------------------------- video studio */}

@@ -308,6 +308,7 @@ import { installFromArchive, installFromUrl, knownSkillUrl, listLibrary, listLoc
 import { applySkillConfigSteps, asConfigDict, configNote, configView, missingFields, parseSkillConfigManifest, readSkillConfigFile, skillConfigKey, valuesFor, type SkillConfigDeclaration, type SkillConfigIssue, type SkillConfigStore } from './skill-config.ts'
 import { recipeFor } from './skill-config-recipes.ts'
 import { createClipComposer } from './clip-compose.ts'
+import { PptRuntime } from './ppt-runtime.ts'
 import { EDITABLE_PPT_SKILL, type ExternalSkillSummary } from './skills-catalog.ts'
 import { canvasStore } from './canvas-store.ts'
 import { imageGenLanguageOf, interpolate } from './locale-tables.ts'
@@ -785,6 +786,15 @@ export function apply(ctx: Context, config?: Config): (() => void) | void {
   // below, and routes read it per request — so a deployment without the agent
   // runtime still gets the built-in light actions.
   let skillRunner: SkillRunner | undefined
+  // The isolated editppt environment lives under the data root, so a reinstall
+  // or a data-folder move is picked up without restarting the host.
+  const pptRuntime = new PptRuntime(
+    () => imageDataRoot(),
+    async () => {
+      const definition = await skillRunner?.skillDefinition(EDITABLE_PPT_SKILL)
+      return definition?.path
+    },
+  )
   const resolveSkills = (): EffectiveConfig['skills'] => resolve().skills
   skillRunner = new SkillRunner({
     backend: {
@@ -800,6 +810,9 @@ export function apply(ctx: Context, config?: Config): (() => void) | void {
     heavyTimeoutMs: () => resolveSkills().heavyTimeoutMs,
     dataRoot: () => imageDataRoot(),
     pptInstallUrl: knownSkillUrl(EDITABLE_PPT_SKILL),
+    // The deck pipeline runs an installed CLI, so the runner has to know which
+    // executable this host prepared rather than assuming one on PATH.
+    pptCommand: () => pptRuntime.command(),
     // The local (ffmpeg) tier: stitching clips happens entirely on this machine,
     // so the runner gets a seam instead of importing the video store itself.
     // `createClipComposer()` only resolves/memoizes the tool paths on first use,
@@ -1096,6 +1109,7 @@ export function apply(ctx: Context, config?: Config): (() => void) | void {
           subscriptions,
           resolveStorage: () => resolve().storage,
           skills: skillRunner,
+          pptRuntime,
           skillLibrary,
         })
         const disposers = routes.map(route => ctx.webServer.register(route))

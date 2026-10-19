@@ -8,7 +8,7 @@
 export const IMAGEGEN_SETTINGS_NAMESPACE = 'dsh-imagegen'
 
 /** Published package version shared by the host updater and the client UI. */
-export const PLUGIN_VERSION = '1.8.0'
+export const PLUGIN_VERSION = '1.9.0'
 
 /** Same-origin route family (loopback-only, mirroring the dsh-ssh fence). */
 export const SETTINGS_API = {
@@ -229,6 +229,9 @@ export const CANVAS_API = {
 
 /** Same-origin route family for canvas skills (catalog + run control). */
 export const CANVAS_SKILL_API = {
+  pptRun: '/api/dsh-imagegen/ppt/run',
+  pptTasks: '/api/dsh-imagegen/ppt/tasks',
+  pptRuntime: '/api/dsh-imagegen/ppt/runtime',
   list: '/api/dsh-imagegen/canvas/skills/list',
   run: '/api/dsh-imagegen/canvas/skills/run',
   task: '/api/dsh-imagegen/canvas/skills/task',
@@ -880,6 +883,8 @@ export interface CanvasSkillOutput {
 }
 
 export interface CanvasSkillTask {
+  /** Standalone PPT conversions retain their ordered input thumbnails. */
+  pptImages?: CanvasAssetRef[]
   id: string
   canvasId: string
   skillId: string
@@ -918,6 +923,18 @@ export interface CanvasSkillRunRequest {
 /** Polls and cancels carry the same language hint so stages stay translated.
  *  A `canvasId` without a `taskId` lists that canvas's unfinished runs, which
  *  is how a reopened canvas rebuilds its live run cards. */
+export interface PptRunRequest {
+  images: CanvasAssetRef[]
+  /** The user chose offline OCR in the conversion form. */
+  offlineOcr: boolean
+  language?: string
+}
+
+export interface PptRuntimeStatus {
+  available: boolean
+  message: string
+}
+
 export interface CanvasSkillTasksRequest {
   taskId: string
   canvasId?: string

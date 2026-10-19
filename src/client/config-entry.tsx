@@ -1,4 +1,4 @@
-﻿/**
+/**
  * Configuration entry surfaces shared by the browser half.
  *
  * The host renders the real settings page from a `settings.section`
@@ -13,7 +13,15 @@ export const IMAGE_GEN_SECTION_ID = 'dsh-imagegen'
 export const OPEN_IMAGE_GEN_CONFIG_EVENT = 'dsh-imagegen:open-config'
 
 /** Ask the host to open Settings and select the dsh-imagegen section. */
-export function openImageGenConfig(): void {
+let requestedSection: 'ppt' | undefined
+export function takeImageGenConfigSection(): 'ppt' | undefined {
+  const section = requestedSection
+  requestedSection = undefined
+  return section
+}
+
+export function openImageGenConfig(section?: 'ppt'): void {
+  requestedSection = section
   if (typeof window === 'undefined') return
-  window.dispatchEvent(new CustomEvent(OPEN_IMAGE_GEN_CONFIG_EVENT))
+  window.dispatchEvent(new CustomEvent(OPEN_IMAGE_GEN_CONFIG_EVENT, { detail: { section } }))
 }

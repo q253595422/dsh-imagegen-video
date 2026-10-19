@@ -357,7 +357,7 @@ function mask(text: string, secrets: readonly string[]): string {
 }
 
 /** Run one command without a shell, bounded by a timer and an output cap. */
-function runCommand(argv: string[], options: { cwd: string; timeoutMs: number }): Promise<{ code: number; output: string }> {
+export function runCommand(argv: string[], options: { cwd: string; timeoutMs: number }): Promise<{ code: number; output: string }> {
   return new Promise(resolve => {
     let settled = false
     const child = spawn(argv[0]!, argv.slice(1), {
