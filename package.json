@@ -1,7 +1,7 @@
 {
   "name": "@q253595422/dsh-imagegen-video",
   "description": "AI image AND video generation plugin for the dsh web GUI, with a complete video pipeline alongside the image pipeline. Images: text-to-image and image-to-image through configurable provider channels (gpt-image-2 / grok-imagine-image / nanobanana series / seedream-5.0-pro / dall-e-3, with native xAI Grok Imagine, Google Nano Banana and ByteDance Seedream request shaping), per-channel model catalogs, a three-column studio beside the native conversation, an infinite canvas with node-graph workflows (annotation boxes with attached prompt cards, local background removal, AI layer split, per-node model choice, file nodes with any-file upload, and a canvas skill system covering skill-driven next steps on every node: text polish, image description, content extraction, and long-running headless-agent pipelines such as image-to-editable-ppt, with a local skill library that installs and removes skills from URLs or uploaded archives), an ecommerce product-set mode and a prompt template library. Video: text-to-video, image-to-video, first/last-keyframe and multi-reference modes with per-channel video model catalogs, an async submit/poll/download pipeline, a clip history merged into the sidebar, favorited clips in the asset library, host-side Agent video tools, video nodes on the infinite canvas with the same controls as image nodes, and clip stitching of two or more canvas video nodes into one MP4 with the local ffmpeg in canvas reading order.",
-  "version": "1.9.0",
+  "version": "1.9.3",
   "type": "module",
   "main": "lib/index.js",
   "exports": {
@@ -113,6 +113,8 @@
     "watch": "tsdown --watch",
     "typecheck": "tsc --noEmit",
     "fetch-templates": "node scripts/fetch-templates.mjs",
+    "ppt:preview": "tsdown --config scripts/ppt-preview.config.ts",
+    "test:ppt-browser": "node scripts/ppt-browser-test.mjs",
     "upstream:check": "node scripts/upstream-sync.mjs --check",
     "upstream:plan": "node scripts/upstream-sync.mjs",
     "upstream:adopt": "node scripts/upstream-sync.mjs --adopt",

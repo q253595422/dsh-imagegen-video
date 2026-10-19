@@ -122,6 +122,17 @@ function patch (relative, from, to) {
  *  HARNESS BROKEN before it proved anything. */
 const importFrom = (specifier) => ['from', ["'", '.', specifier, "'"].join('')].join(' ')
 
+// The version this checkout declares. Two pack cases below inject a version
+// bump, and a hardcoded old version silently stops matching the tree the day
+// the package is released -- the case then reports HARNESS BROKEN (or, worse,
+// goes red for the wrong reason) while the guard it exists to prove is fine.
+const SRC_VERSION = JSON.parse(readFileSync(join(SRC, 'package.json'), 'utf8')).version
+/** Bump the patch component: the smallest version change a release can make. */
+const bumped = (version, by) => {
+  const [major, minor, patch] = version.split('.').map(Number)
+  return `${major}.${minor}.${patch + by}`
+}
+
 const CASES = [
   // ------------------------------------------------ the poster recipe guard
   {
@@ -210,13 +221,39 @@ const CASES = [
     name: 'the updater spawns the locked desktop profile anyway',
     runner: 'smoke',
     file: 'src/updater.ts',
-    from: "  if (profile.toLowerCase() === DESKTOP_PROFILE) {\n    throw new ManualUpdateRequiredError(profile, tarballUrl)",
-    to: "  if (profile.toLowerCase() === DESKTOP_PROFILE && false) {\n    throw new ManualUpdateRequiredError(profile, tarballUrl)",
+    // The refusal lives on `installMode` now: a Desktop profile without the
+    // launcher's install hook resolves to `host-managed`, and that branch is
+    // the only thing standing between the user and a `dsh plugin --profile
+    // desktop` spawn the CLI is guaranteed to reject.
+    from: "  if (installMode === 'host-managed') {\n    throw new ManualUpdateRequiredError(profile, tarballUrl)",
+    to: "  if (installMode === 'host-managed' && false) {\n    throw new ManualUpdateRequiredError(profile, tarballUrl)",
     // The refusal is an `assert.rejects`, so a spawn instead of a throw surfaces
     // as "Missing expected rejection" — that message IS the defect firing, and
     // the two wire-contract strings are listed for the variants that throw a
     // different error instead of none.
     expect: /Missing expected rejection|locked profile has its own wire code|never spawned/,
+  },
+  // ------------------------------------------------- PPT agent error passthrough
+  {
+    // A failure inside the host Agent used to be swallowed and reported as
+    // "no final PPTX was produced", hiding the real cause (a 401, a bad
+    // adapter). Drop the turn-end read and the failure loses its reason.
+    name: 'a host Agent error collapses back into a missing-file message',
+    runner: 'smoke',
+    file: 'src/skill-runner.ts',
+    from: "    if (reason?.kind === 'error') return redactDiagnosticText(",
+    to: "    if (reason?.kind === 'error' && false) return redactDiagnosticText(",
+    expect: /NO_ADAPTER|agent error|RED as/i,
+  },
+  {
+    // The updater's message is copied into public issue threads. Skipping the
+    // redaction step is how a credential reaches one.
+    name: 'the updater stops redacting package-manager output',
+    runner: 'smoke',
+    file: 'src/updater.ts',
+    from: 'const tail = updateDiagnosticText(message, STDERR_LIMIT)',
+    to: 'const tail = message.slice(0, STDERR_LIMIT)',
+    expect: /npm-native-secret|doesNotMatch|secret/i,
   },
   // ------------------------------------------------------- the shortcut legend
   {
@@ -763,9 +800,12 @@ const CASES = [
     name: 'a version bump ships without a release note',
     runner: 'pack',
     file: 'package.json',
-    from: '  "version": "1.8.0",',
-    to: '  "version": "1.8.1",',
-    expect: /version 1\.8\.1 has no release notes/,
+    // Derived, so the case keeps naming a version this tree never had a note
+    // for: `1.8.0 -> 1.8.1` was the original shape, and a literal like that goes
+    // stale the moment the package is released.
+    from: `  "version": "${SRC_VERSION}",`,
+    to: `  "version": "${bumped(SRC_VERSION, 1)}",`,
+    expect: new RegExp(`version ${bumped(SRC_VERSION, 1).replace(/\./g, '\\.')} has no release notes`),
   },
   {
     // The other half: the notes exist on disk but the archive leaves them out.
@@ -776,7 +816,7 @@ const CASES = [
     file: 'package.json',
     from: '  "files": [\n    "lib",\n    "src/templates",\n    "cordis.patch.yml",\n    "docs/releases",',
     to: '  "files": [\n    "lib",\n    "src/templates",\n    "cordis.patch.yml",',
-    expect: /does not contain docs\/releases\/v1\.8\.0\.md/,
+    expect: new RegExp(`does not contain docs\\/releases\\/v${SRC_VERSION.replace(/\./g, '\\.')}\\.md`),
   },
   {
     // The publish job proves a publish worked by reading the version back. On

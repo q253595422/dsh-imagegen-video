@@ -5,6 +5,49 @@ Attribution for third-party code is in [NOTICE](./NOTICE).
 
 ## Releases
 
+### 1.9.3 — session images, PPT delivery, and xAI Grok video
+
+Upstream 1.9.1 + 1.9.2 landed here, alongside this repository's own fixes.
+
+- **A host Agent failure is reported as itself.** Model and execution errors are
+  kept (and redacted) instead of surfacing as "no final PPTX was produced";
+  a run with no reply points at the default-model connection and tool setup.
+- **The upstream skill's own `final/` deck is collected.** Only a run summary
+  marked complete with a passed validation report qualifies, and the deck is
+  still checked for PPTX structure and page count — an intermediate page file
+  never becomes the result.
+- **PPT configuration opens in place.** The dialog reuses the generation
+  settings' own fields rather than reaching for the host settings button by DOM
+  lookup, with Escape, focus containment and return-to-trigger.
+- **Uploads become a thumbnail grid** with an add tile: preview, reorder, delete,
+  and the order is the slide order.
+- **The result pane shows only the final PPTX**, auto-opened: left column for
+  sources and options, right for the deck with page thumbnails, previous/next,
+  expand and download. Narrow screens go single-column with the source list
+  scrolling on its own. A task diagnostic entry exports the run's identifiers,
+  a failed preview can be retried, and the download survives the error.
+- **Conversation tool results show their images again.** The renderer reads DSH's
+  persisted result metadata, so text-to-image, image-to-image and task-query
+  results all display thumbnails and open the original; older sessions keep
+  working through their image content blocks and JSON references, and a repeated
+  attachment appears once. Images stay UI data — what the model receives is
+  still text.
+- **`format v4 message requires a producer-owned source kind` is fixed.** A PPT
+  run's first message carries `plugin:dsh-imagegen` instead of the v4-rejected
+  plugin wrapper; cast-heavy canvas skills share the fix.
+- **Grok video speaks xAI's own contract.** A new `xai` family submits to
+  `/v1/videos/generations` and reads `request_id`, polls
+  `/v1/videos/{request_id}` for `video.url` / `video.duration`, and reports
+  `failed` and `expired` as failures. The body sends a numeric `duration`, a
+  lowercase `resolution` and `image: { url }`. The `xai-grok` preset ships
+  `grok-imagine-video-1.5` and `-lite`.
+- **The narrow centre column stays usable.** Below 760px the conversation row
+  sizes to its content, the studio scrolls as a whole, and the config column no
+  longer stretches the layout — the generate button and the canvas stay reachable.
+- **Desktop updates run through the launcher's install hook** and verify what it
+  actually reports: installed bundle, version, exit code and error code are each
+  checked, and an unverifiable result fails rather than claiming success.
+
 ### 1.9.0 — images to an editable PPTX
 
 A standalone conversion workspace, reached from any finished image.

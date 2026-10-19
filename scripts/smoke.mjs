@@ -13,6 +13,8 @@
 import { createServer, request as httpRequest } from 'node:http'
 import assert from 'node:assert/strict'
 import vm from 'node:vm'
+import { EventEmitter } from 'node:events'
+import { Readable } from 'node:stream'
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { homedir, tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -252,7 +254,9 @@ await check('A3b update install refuses what it cannot verify, and never guesses
   const spawnCalls = []
   const spawnFn = (...args) => {
     spawnCalls.push(args)
-    return { once: (event, handler) => { if (event === 'exit') queueMicrotask(() => { handler(0, null) }) } }
+    // The updater settles on `close` (it waits for the piped output to drain);
+    // a real child emits both, so the stub does too.
+    return { once: (event, handler) => { if (event === 'exit' || event === 'close') queueMicrotask(() => { handler(0, null) }) } }
   }
   const releaseWith = assets => async () => new Response(JSON.stringify({
     tag_name: 'v9.9.9', html_url: 'https://github.com/q253595422/dsh-imagegen-video/releases/tag/v9.9.9',
@@ -312,10 +316,266 @@ await check('A3b update install refuses what it cannot verify, and never guesses
   ]))
   assert.equal(spawnCalls.length, 1)
   assert.deepEqual(spawnCalls[0][1], ['plugin', '--profile', 'web', 'add', archive])
+
+  // Every shape an installer can boot under. `--profile=name` and the Windows
+  // `…\profiles\desktop\` path both resolved to `web` before, so an update ran
+  // against a profile the user was not running.
+  const desktopArgv = [
+    '/Applications/DSH.app/Contents/MacOS/DSH',
+    '/Applications/DSH.app/Contents/Resources/app.asar/dsh/node_modules/@deepseek-ai/dsh-desktop-host/lib/index.js',
+    '/Users/test/.dsh/profiles/desktop',
+  ]
+  assert.equal(host.profileFromProcess(['node', 'dsh', '--profile=custom_web'], {}), 'custom_web')
+  assert.equal(host.profileFromProcess(['node', 'dsh', 'C:\\Users\\test\\.dsh\\profiles\\desktop\\'], {}), 'desktop')
+  assert.equal(host.profileFromProcess(['node', 'dsh', '--profile', 'desktop'], { DSH_PROFILE: 'custom' }), 'custom', 'the env profile outranks the flag')
+  assert.equal(host.profileFromProcess(['node', 'dsh', '--profile', 'desktop'], { DSH_PROFILE: 'ignored' }, { profile: 'host-profile' }), 'host-profile', 'the launcher outranks both')
+  // A path that merely contains "profiles" must not match; only a real segment does.
+  assert.equal(host.profileFromProcess(['node', 'dsh', '--profile', '../bad'], {}), 'web', 'an invalid profile falls back instead of being used')
+  assert.equal(host.updateInstallTarget(desktopArgv, {}).installMode, 'host-managed')
+  assert.equal(host.updateInstallTarget(['node', 'dsh', 'web'], { DSH_DESKTOP: '1' }).installMode, 'host-managed', 'the launcher marker alone locks CLI writes')
+  assert.equal(host.updateInstallTarget(['node', 'dsh', 'web'], {}).installMode, 'cli')
+  assert.equal(host.updateInstallTarget([], {}, { installBundle: async () => undefined }).installMode, 'host')
+  // A version string is spliced into argv, so anything that is not a semver
+  // triple must be refused before a process exists.
+  host.clearUpdateCache()
+  await assert.rejects(host.installUpdate('9.9.9; touch nope', spawnFn, webArgv, {}, releaseWith([])), /invalid update version/)
+  assert.equal(spawnCalls.length, 1, 'an invalid version never starts a package operation')
   host.clearUpdateCache()
 })
 
+await check('A3c updater keeps the package manager output, store guidance and a diagnostic record', async () => {
+  const calls = []
+  // A child process good enough for the updater: two piped streams, an exit, and
+  // a close that arrives AFTER the output (which is why `close` is awaited).
+  const fakeSpawn = (code, output = '', error) => (command, args, options) => {
+    calls.push({ command, args, options })
+    const child = new EventEmitter()
+    child.stdout = new EventEmitter()
+    child.stderr = new EventEmitter()
+    child.kill = () => true
+    queueMicrotask(() => {
+      if (error !== undefined) { child.emit('error', error); return }
+      child.emit('exit', code, null)
+      setTimeout(() => {
+        child.stderr.emit('data', Buffer.from(output))
+        child.emit('close', code, null)
+      }, 5)
+    })
+    return child
+  }
+  // The three things pnpm prints that matter, assembled from parts so this
+  // fixture carries no credential-shaped literal of its own.
+  const marker = ['Zq4x', 'marker'].join('')
+  const failures = [
+    'ERR_PNPM_UNEXPECTED_STORE',
+    'store/v10 does not match store/v11',
+    ['_auth', 'Token=', marker].join(''),
+    ['https://svc:', marker, '@registry.example/'].join(''),
+  ].join('\n')
+  const release = async () => new Response(JSON.stringify({
+    tag_name: 'v9.9.9', draft: false, prerelease: false,
+    assets: [{ name: 'q253595422-dsh-imagegen-video-9.9.9.tgz', browser_download_url: 'https://github.com/q253595422/dsh-imagegen-video/releases/download/v9.9.9/q253595422-dsh-imagegen-video-9.9.9.tgz' }],
+  }), { status: 200, headers: { 'content-type': 'application/json' } })
+  const webArgv = ['node', 'dsh', 'web']
+
+  host.clearDiagnostics()
+  host.clearUpdateCache()
+  await host.installUpdate('9.9.9', fakeSpawn(0), webArgv, {}, release)
+  assert.deepEqual(calls.at(-1).args, ['plugin', '--profile', 'web', 'add', 'https://github.com/q253595422/dsh-imagegen-video/releases/download/v9.9.9/q253595422-dsh-imagegen-video-9.9.9.tgz'])
+  // Both pipes are read: pnpm splits its explanation across stdout and stderr,
+  // and `ignore` on either used to lose half of it.
+  assert.deepEqual(calls.at(-1).options.stdio, ['ignore', 'pipe', 'pipe'])
+
+  host.clearUpdateCache()
+  await assert.rejects(
+    host.installUpdate('9.9.9', fakeSpawn(1, failures), ['node', 'dsh', 'web', '--profile', 'team-web'], {}, release),
+    error => {
+      assert.match(error.message, /profile: team-web/, 'the failure names the profile it wrote to')
+      assert.match(error.message, /exited with code 1/)
+      assert.match(error.message, /ERR_PNPM_UNEXPECTED_STORE/)
+      assert.match(error.message, /same pnpm version/, 'a store mismatch carries its own remedy')
+      assert.ok(!error.message.includes(marker), 'package-manager output is redacted before it is shown')
+      return true
+    },
+  )
+  // The same failure is retained host-side, so the panel can still explain a
+  // failed update after the popover has been dismissed.
+  const recorded = host.listDiagnostics()
+  assert.ok(
+    recorded.some(entry => entry.mode === 'update' && entry.message.includes('ERR_PNPM_UNEXPECTED_STORE')),
+    JSON.stringify(recorded.map(entry => entry.mode)),
+  )
+  assert.ok(recorded.every(entry => !entry.message.includes(marker)), 'diagnostics never keep a credential')
+
+  host.clearUpdateCache()
+  await assert.rejects(host.installUpdate('9.9.9', fakeSpawn(null, '', new Error('spawn dsh ENOENT')), webArgv, {}, release), /ENOENT/)
+  host.clearUpdateCache()
+  // A spawn that throws synchronously (missing binary, refused execution) used
+  // to escape as a bare exception with nothing about the update attached.
+  await assert.rejects(host.installUpdate('9.9.9', () => { throw new Error('spawn refused') }, webArgv, {}, release), /spawn refused/)
+  host.clearDiagnostics()
+  host.clearUpdateCache()
+})
+
+await check('A3d update discovery exposes the launcher-owned profile and install mode', async () => {
+  const savedFetch = globalThis.fetch
+  host.clearUpdateCache()
+  globalThis.fetch = async () => new Response(JSON.stringify({ tag_name: 'v9.9.9', draft: false, prerelease: false }), { status: 200, headers: { 'content-type': 'application/json' } })
+  try {
+    // A launcher that reports no install hook: the check has to say so, because
+    // "update available" without an install mode is what made Desktop show a
+    // button that then failed with a bare message.
+    const routes = host.makeRoutes({
+      settings: { describe: () => [], mutate: async () => {} },
+      resolve: () => ({ apiUrl: '', apiKey: '' }),
+      resolveUpdateContext: () => ({ profile: 'desktop', profileDir: '/Users/test/.dsh/profiles/desktop' }),
+    })
+    const route = routes.find(candidate => candidate.path === '/api/dsh-imagegen/update/check')
+    assert.ok(route !== undefined, 'the update check route exists')
+    let result
+    await route.handler({ method: 'POST', socket: { remoteAddress: '127.0.0.1' }, headers: { host: '127.0.0.1' } }, { writeHead() {}, end(payload) { result = JSON.parse(payload) } })
+    assert.equal(result.ok, true)
+    assert.equal(result.update.profile, 'desktop', 'the panel can tell the user which profile it would write to')
+    assert.equal(result.update.installMode, 'host-managed', 'a Desktop profile without an install hook cannot be updated by the CLI')
+  } finally {
+    globalThis.fetch = savedFetch
+    host.clearUpdateCache()
+  }
+})
+
+await check('A3e desktop updates delegate to the launcher and verify its actual outcome', async () => {
+  const calls = []
+  const neverSpawn = () => { throw new Error('a launcher-managed update must not spawn a CLI') }
+  const tarball = 'https://github.com/q253595422/dsh-imagegen-video/releases/download/v9.9.9/q253595422-dsh-imagegen-video-9.9.9.tgz'
+  const release = async () => new Response(JSON.stringify({
+    tag_name: 'v9.9.9', draft: false, prerelease: false,
+    assets: [{ name: 'q253595422-dsh-imagegen-video-9.9.9.tgz', browser_download_url: tarball }],
+  }), { status: 200, headers: { 'content-type': 'application/json' } })
+  const context = {
+    profile: 'desktop',
+    installBundle: async (spec, options) => {
+      calls.push({ spec, options })
+      return { application: 'restart-required', bundle: host.PACKAGE_NAME ?? packageJson.name, version: '9.9.9', packageResult: { exitCode: 0 } }
+    },
+  }
+  host.clearUpdateCache()
+  assert.equal(host.updateInstallTarget([], {}, context).installMode, 'host', 'an install hook outranks the locked profile name')
+  await host.installUpdate('9.9.9', neverSpawn, [], {}, release, context)
+  assert.deepEqual(calls, [{ spec: tarball, options: { saveExact: true } }], 'the launcher receives the verified archive URL')
+
+  host.clearUpdateCache()
+  await assert.rejects(host.installUpdate('9.9.9; bad', neverSpawn, [], {}, release, context), /invalid update version/)
+  assert.equal(calls.length, 1, 'an invalid version never reaches the launcher')
+
+  // Nothing about the launcher's report is believed on trust: an update that
+  // claims success but installed something else leaves the disk and the running
+  // plugin disagreeing, which is worse than a visible failure.
+  for (const result of [
+    null,
+    {},
+    { application: 'failed', error: { code: 'already-installed', diagnostic: 'native refusal' } },
+    { application: 'cancelled', version: '9.9.9' },
+    { application: 'overridden', version: '9.9.9' },
+    { application: 'applied', version: '9.9.9', packageResult: { exitCode: 1 } },
+    { application: 'applied', version: '9.9.8' },
+    { application: 'applied', version: '9.9.9', bundle: '@other/bundle' },
+    { application: 'applied' },
+  ]) {
+    host.clearUpdateCache()
+    await assert.rejects(
+      host.installUpdate('9.9.9', neverSpawn, [], {}, release, { ...context, installBundle: async () => result }),
+      undefined,
+      `launcher result must be refused: ${JSON.stringify(result)}`,
+    )
+  }
+
+  const marker = ['Zq4x', 'marker'].join('')
+  host.clearUpdateCache()
+  await assert.rejects(
+    host.installUpdate('9.9.9', neverSpawn, [], {}, release, {
+      ...context,
+      installBundle: async () => ({
+        application: 'failed',
+        error: { code: 'operation-error' },
+        packageResult: { exitCode: 1, output: ['_auth', 'Token=', marker].join('') + '\nERR_PNPM_UNEXPECTED_STORE', logPath: '/profile/diagnostics.log' },
+      }),
+    }),
+    error => {
+      assert.match(error.message, /ERR_PNPM_UNEXPECTED_STORE/)
+      assert.match(error.message, /diagnostics\.log/, 'the launcher diagnostic file is named')
+      assert.ok(!error.message.includes(marker), 'launcher output is redacted too')
+      return true
+    },
+  )
+
+  host.clearUpdateCache()
+  await assert.rejects(
+    host.installUpdate('9.9.9', neverSpawn, [], {}, release, { ...context, installBundle: async () => { throw new Error('host offline') } }),
+    /host offline/,
+  )
+
+  // Older launchers omit `version`; the installed manifest is then the only
+  // evidence, and a missing one is a failure rather than a silent success.
+  const profileDir = mkdtempSync(join(tmpdir(), 'dsh-imagegen-update-profile-'))
+  const packageDir = join(profileDir, 'node_modules', '@q253595422', 'dsh-imagegen-video')
+  mkdirSync(packageDir, { recursive: true })
+  writeFileSync(join(packageDir, 'package.json'), JSON.stringify({ name: packageJson.name, version: '9.9.9' }))
+  host.clearUpdateCache()
+  await host.installUpdate('9.9.9', neverSpawn, [], {}, release, { ...context, profileDir, installBundle: async () => ({ application: 'applied' }) })
+  rmSync(profileDir, { recursive: true, force: true })
+  host.clearUpdateCache()
+})
+
+await check('A3f update routes propagate launcher capability and installation failures', async () => {
+  const savedFetch = globalThis.fetch
+  host.clearUpdateCache()
+  const tarball = 'https://github.com/q253595422/dsh-imagegen-video/releases/download/v9.9.9/q253595422-dsh-imagegen-video-9.9.9.tgz'
+  globalThis.fetch = async () => new Response(JSON.stringify({
+    tag_name: 'v9.9.9', draft: false, prerelease: false,
+    assets: [{ name: 'q253595422-dsh-imagegen-video-9.9.9.tgz', browser_download_url: tarball }],
+  }), { status: 200, headers: { 'content-type': 'application/json' } })
+  let installs = 0
+  let fail = false
+  try {
+    const routes = host.makeRoutes({
+      settings: { describe: () => [], mutate: async () => {} },
+      resolve: () => ({ apiUrl: '', apiKey: '' }),
+      resolveUpdateContext: () => ({
+        profile: 'desktop',
+        installBundle: async spec => {
+          installs += 1
+          assert.equal(spec, tarball)
+          return fail
+            ? { application: 'failed', error: { code: 'operation-error', diagnostic: 'native install failed' } }
+            : { application: 'restart-required', bundle: packageJson.name, version: '9.9.9' }
+        },
+      }),
+    })
+    const invoke = async (path, body = {}) => {
+      const req = Object.assign(Readable.from([Buffer.from(JSON.stringify(body))]), { method: 'POST', socket: { remoteAddress: '127.0.0.1' }, headers: { host: '127.0.0.1' } })
+      let response
+      await routes.find(candidate => candidate.path.endsWith(path)).handler(req, { writeHead() {}, end(payload) { response = JSON.parse(payload) } })
+      return response
+    }
+    assert.equal((await invoke('/update/check')).update.installMode, 'host')
+    // Only the version the check just reported is installable, so a stale panel
+    // cannot install a version that has since been pulled.
+    assert.equal((await invoke('/update/apply', { version: '1.0.0' })).code, 'update-not-available')
+    assert.equal(installs, 0, 'a non-latest version never reaches the launcher')
+    assert.equal((await invoke('/update/apply', { version: '9.9.9' })).updatedVersion, '9.9.9')
+    assert.equal(installs, 1)
+    fail = true
+    const failure = await invoke('/update/apply', { version: '9.9.9' })
+    assert.equal(failure.ok, false, 'a refused install is not reported as applied')
+    assert.match(failure.message, /native install failed/, 'the launcher cause survives to the panel')
+  } finally {
+    globalThis.fetch = savedFetch
+    host.clearUpdateCache()
+  }
+})
+
 // ---------------------------------------------- B. engine vs mock upstream
+/** A PNG fixture: one pixel, valid header, no external file needed. */
 const pngBytes = Buffer.from('89504e470d0a1a0a0000000d49484452000000010000000108060000001f15c4890000000d49444154789c6360000002000100ffff03000006000557bfabd40000000049454e44ae426082', 'hex')
 let activeGenerationRequests = 0
 let maxGenerationRequests = 0
@@ -2602,6 +2862,39 @@ await check('C10c4 a poster recipe round-trips, and a broken one is refused', as
     expectedRevision: reopened.body.document.revision,
   })
   assert.equal(remote.body.ok, false, `a recipe pointing off-host must be refused: ${JSON.stringify(remote.body)}`)
+
+  // The whole guard, not just two of its edges: each entry below is a recipe the
+  // renderer would either crash on or draw something the user never made, so a
+  // save that accepts one of them corrupts a stored poster instead of failing.
+  const unchanged = { id: 'legacy-image', type: 'image', title: '旧节点', x: 0, y: 0, width: 240, height: 240, metadata: { asset, status: 'success' } }
+  const withLegacy = { ...reopened.body.document, nodes: [unchanged, node] }
+  const baseline = await post('/api/dsh-imagegen/canvas/save', { document: withLegacy, expectedRevision: reopened.body.document.revision })
+  assert.equal(baseline.body.ok, true, `a legacy image node beside a poster still saves: ${JSON.stringify(baseline.body)}`)
+  assert.deepEqual(baseline.body.document.nodes[0], unchanged, 'a recipe never rewrites the plain image node beside it')
+  const revision = baseline.body.document.revision
+  const layer = poster.layers[0]
+  for (const [label, broken] of [
+    ['width 0', { ...poster, width: 0 }],
+    ['height past the cap', { ...poster, height: 999999 }],
+    ['null font size', { ...poster, layers: [{ ...layer, fontSize: null }] }],
+    ['4001-character text', { ...poster, layers: [{ ...layer, text: 'x'.repeat(4001) }] }],
+    ['a remote image layer', { ...poster, layers: [{ ...poster.layers[1], asset: { ...asset, url: 'https://example.test/logo.png' } }] }],
+    ['41 layers', { ...poster, layers: Array.from({ length: 41 }, (_, index) => ({ ...layer, id: `text-${index}` })) }],
+  ]) {
+    const result = await post('/api/dsh-imagegen/canvas/save', {
+      document: { ...withLegacy, nodes: [unchanged, { ...node, metadata: { ...node.metadata, poster: broken } }] },
+      expectedRevision: revision,
+    })
+    assert.equal(result.body.ok, false, `a recipe with ${label} must be refused: ${JSON.stringify(result.body)}`)
+  }
+  // None of those refusals may have replaced the document that is on disk.
+  const afterRefusals = await post('/api/dsh-imagegen/canvas/read', { id: document.id })
+  assert.deepEqual(afterRefusals.body.document.nodes.find(candidate => candidate.id === 'legacy-image'), unchanged)
+  assert.deepEqual(
+    afterRefusals.body.document.nodes.find(candidate => candidate.id === node.id).metadata.poster,
+    poster,
+    'an invalid save leaves the stored recipe intact',
+  )
 })
 
 await check('C10c5 deleting a canvas keeps the assets a poster recipe still points at', async () => {
@@ -3270,6 +3563,203 @@ await check('C11h a heavy run composes its agent with the preset roster and a mo
     }),
     /copy:canvas\.skills\.needModel/,
   )
+})
+
+await check('C11i a contained host Agent failure is surfaced instead of a missing-file error', async () => {
+  // The driver contains a failed turn: `whenIdle` resolves normally and the
+  // reason only exists as a retained event. Reading it is what turns
+  // "the skill produced no final PPTX" into "the model API returned 401" —
+  // and the key inside that message must not reach the panel.
+  let listener
+  const marker = '401 ' + ['sk', 'fake', '123456789'].join('-')
+  const created = await host.createCanvasSkillAgent({
+    agents: {
+      async create(options) {
+        await options.setup({
+          on(name, callback) { if (name === 'agent/error') listener = callback },
+          systemPrompt: { section() {} },
+        })
+        return {
+          agent: {
+            session: { deriveMessages: () => [] },
+            followup() {},
+            async whenIdle() {
+              listener({ agent: { id: 'failure-test' }, error: new Error(`Model API returned ${marker}`) })
+            },
+            cancel() {},
+          },
+          async dispose() {},
+        }
+      },
+    },
+    defaultModel: { currentSelection: () => ({ provider: 'p', model: 'm' }) },
+    agentPreset: '',
+    sessionId: 'failure-test',
+    cwd: 'c',
+    systemPrompt: 's',
+  })
+  await assert.rejects(
+    created.whenIdle(),
+    error => {
+      assert.match(error.message, /401/, 'the model error survives instead of being replaced by "no output"')
+      assert.ok(!error.message.includes(marker), 'the key inside the model error is redacted')
+      return true
+    },
+  )
+  await created.dispose()
+})
+
+await check('C11ppt standalone PPT validates input, preserves order, persists results and rejects incomplete outputs', async () => {
+  const root = mkdtempSync(join(tmpdir(), 'dsh-ppt-conversion-'))
+  const assets = ['first.png', 'second.png'].map(assetId => ({
+    assetId, url: `/api/dsh-imagegen/canvas/asset/${assetId}`, mime: 'image/png',
+    bytes: pngBytes.length, width: 1, height: 1, origin: 'upload', name: assetId,
+  }))
+  let mode = 'ok'
+  let stopped = 0
+  let recordedPrompt = ''
+  const recordedInputs = []
+  let release
+  const backend = {
+    ...canvasBackend,
+    async readAsset(id) {
+      return assets.some(asset => asset.assetId === id) ? { data: pngBytes, mime: 'image/png' } : undefined
+    },
+    async materialize(asset, target) {
+      recordedInputs.push([asset.assetId, target])
+      writeFileSync(target, pngBytes)
+    },
+  }
+  const options = {
+    backend: { canvas: backend },
+    enabled: () => true,
+    heavyEnabled: () => true,
+    allowlist: () => [],
+    runRoot: () => root,
+    dataRoot: () => root,
+    heavyTimeoutMs: () => 30_000,
+    pptCommand: async () => '/test/python/bin/editppt',
+  }
+  const runner = new host.SkillRunner(options)
+  const registry = {
+    async list() { return [{ name: 'image-to-editable-ppt', description: 'PPT skill', path: '/upstream/image-to-editable-ppt/SKILL.md' }] },
+    async get() { return { name: 'image-to-editable-ppt', content: '# upstream body\nFollow upstream commands.' } },
+  }
+  runner.attach({
+    registry,
+    agents: {
+      available: () => true,
+      async create(createOptions) {
+        recordedPrompt = createOptions.systemPrompt
+        return {
+          session: {
+            get seq() { return mode === 'agent-error' ? 1 : 0 },
+            eventAt() {
+              return { type: 'turn/end', data: { reason: { kind: 'error', error: { code: 'NO_ADAPTER', message: 'Provider unavailable sk-private123456789' } } } }
+            },
+            deriveMessages: () => [{ role: 'assistant', content: [{ type: 'text', text: 'agent result' }] }],
+          },
+          followup() {},
+          async whenIdle() {
+            if (mode === 'hold') await new Promise(resolve => { release = resolve })
+            if (mode === 'no-deck' || mode === 'agent-error') return
+            const slides = mode === 'wrong-count' ? 1 : 2
+            const deck = mode === 'bad-zip' ? Buffer.from('not-a-pptx') : buildZip([
+              { name: 'ppt/presentation.xml', body: '<p:presentation/>' },
+              ...Array.from({ length: slides }, (_, index) => ({ name: `ppt/slides/slide${index + 1}.xml`, body: '<p:sld><p:sp>Editable text</p:sp></p:sld>' })),
+            ])
+            if (mode === 'upstream-final' || mode === 'unvalidated-final') {
+              // The editppt skill finalizes outside the output dir this runner
+              // hands it; only a completed, validated run may be collected.
+              const final = join(createOptions.cwd, 'output', 'upstream-run', 'final')
+              mkdirSync(final, { recursive: true })
+              writeFileSync(join(final, 'deck_edited.pptx'), deck)
+              writeFileSync(join(final, 'validation.json'), JSON.stringify({ passed: mode === 'upstream-final' }))
+              writeFileSync(join(final, 'run_summary.json'), JSON.stringify({
+                status: 'complete', page_count: 2, output: join(final, 'deck_edited.pptx'), validation: join(final, 'validation.json'),
+              }))
+            } else writeFileSync(join(createOptions.cwd, 'output', 'final.pptx'), deck)
+          },
+          cancel() { stopped += 1; release?.() },
+          async dispose() {},
+        }
+      },
+    },
+  })
+  const wait = async task => {
+    for (let index = 0; index < 200 && ['running', 'queued'].includes(task.status); index++) await new Promise(resolve => setTimeout(resolve, 10))
+    return task
+  }
+  try {
+    await assert.rejects(runner.runPpt({ images: [], offlineOcr: true }), /1.?12|图片|images/)
+    await assert.rejects(runner.runPpt({ images: [{ ...assets[0], assetId: 'missing' }], offlineOcr: true }), /图片|image/i)
+    const task = await wait(await runner.runPpt({ images: assets, offlineOcr: true, language: 'zh' }))
+    assert.equal(task.status, 'completed', JSON.stringify(task))
+    assert.deepEqual(recordedInputs.slice(0, 2).map(([id]) => id), ['first.png', 'second.png'], 'slide order follows the upload order')
+    assert.match(recordedPrompt, /upstream body/)
+    assert.match(recordedPrompt, /\/upstream\/image-to-editable-ppt\/SKILL.md/)
+    assert.match(recordedPrompt, /\/test\/python\/bin\/editppt/)
+    assert.match(recordedPrompt, /prepare --no-text-hints/, 'the offline OCR choice reaches the skill untouched')
+    assert.ok(task.output.nodes.some(node => node.metadata.asset?.name === 'final.pptx'))
+    // Final persistence finishes just after the terminal status becomes visible.
+    await new Promise(resolve => setTimeout(resolve, 30))
+    const restarted = new host.SkillRunner(options)
+    const restored = await restarted.pptTasks()
+    assert.equal(restored[0].id, task.id)
+    assert.equal(restored[0].status, 'completed')
+    assert.ok(restored[0].agentSessionId?.startsWith('skillagent-'), 'the conversion history names its agent session')
+    assert.ok(restored[0].runDirectory?.includes(task.id), 'the conversion history names its run directory')
+    assert.equal(restored[0].output.nodes[0].metadata.asset.name, 'final.pptx')
+    for (const bad of ['bad-zip', 'wrong-count', 'no-deck']) {
+      mode = bad
+      const failed = await wait(await runner.runPpt({ images: assets, offlineOcr: false, language: 'en' }))
+      assert.equal(failed.status, 'failed', bad)
+      assert.ok(failed.error, `${bad} reports why it failed`)
+    }
+    mode = 'upstream-final'
+    const recovered = await wait(await runner.runPpt({ images: assets, offlineOcr: true, language: 'zh' }))
+    assert.equal(recovered.status, 'completed', JSON.stringify(recovered))
+    assert.ok(recovered.output.nodes.some(node => node.metadata.asset?.name === 'deck_edited.pptx'), 'the skill final deck is collected')
+    mode = 'unvalidated-final'
+    const unvalidated = await wait(await runner.runPpt({ images: assets, offlineOcr: true }))
+    assert.equal(unvalidated.status, 'failed', 'a final deck without a passing validation report must not become successful')
+    mode = 'agent-error'
+    const providerError = await wait(await runner.runPpt({ images: assets, offlineOcr: true, language: 'zh' }))
+    assert.equal(providerError.status, 'failed')
+    assert.match(providerError.error, /NO_ADAPTER/)
+    assert.ok(!providerError.error.includes('sk-private123456789'), 'provider error secrets are redacted')
+    mode = 'hold'
+    const live = await runner.runPpt({ images: assets, offlineOcr: true })
+    for (let i = 0; i < 100 && !release; i++) await new Promise(resolve => setTimeout(resolve, 10))
+    const queued = await runner.runPpt({ images: assets, offlineOcr: true })
+    assert.equal(await runner.cancel(queued.id), true)
+    assert.equal(queued.status, 'cancelled')
+    assert.equal(await runner.cancel(live.id), true)
+    assert.equal(live.status, 'cancelled')
+    assert.equal(stopped, 1, 'the running agent is cancelled exactly once')
+    await new Promise(resolve => setTimeout(resolve, 30))
+    // A run interrupted by a restart is reported as interrupted, not left running.
+    writeFileSync(join(root, 'ppt-tasks', 'skillrun-interrupted.json'), JSON.stringify({ ...task, id: 'skillrun-interrupted', status: 'running' }))
+    const afterRestart = await restarted.pptTasks()
+    assert.equal(afterRestart.find(item => item.id === 'skillrun-interrupted').status, 'failed')
+    assert.ok(afterRestart.find(item => item.id === 'skillrun-interrupted').error)
+    const noAgent = new host.SkillRunner(options)
+    await assert.rejects(noAgent.runPpt({ images: assets, offlineOcr: true }))
+  } finally {
+    release?.()
+    rmSync(root, { recursive: true, force: true })
+  }
+})
+
+await check('C11ppt routes refuse bad sources and expose durable conversion history', async () => {
+  for (const body of [{ images: [], offlineOcr: true }, { images: [{ assetId: '../escape' }], offlineOcr: true }, { images: [{ assetId: 'x.png' }] }]) {
+    const result = await post('/api/dsh-imagegen/ppt/run', body)
+    assert.equal(result.body.ok, false, JSON.stringify(body))
+    assert.equal(result.body.code, 'bad-request')
+  }
+  const list = await post('/api/dsh-imagegen/ppt/tasks', {})
+  assert.equal(list.body.ok, true)
+  assert.ok(Array.isArray(list.body.tasks))
 })
 
 // ------------------------------------------- C12. local skill library
@@ -4422,9 +4912,21 @@ await check('E1 client apply mounts the sidebar entry and studio (jsdom)', async
   let failSaveBudget = 0
   /** How many save requests answered with a failure. */
   let failedSaveAttempts = 0
+  /** PPT conversions this run submitted / sources it uploaded / tasks it lists. */
+  const pptSubmissions = []
+  const pptUploaded = []
+  let pptClientTasks = []
+  /** Requests the deck preview issued for `/canvas/file/preview`. */
+  const deckPreviewRequests = []
   const fetchStub = async (input, init) => {
     const path = String(input)
     requestPaths.push(path)
+    // Tool-result attachments are served as bytes by the host route; the tool
+    // view then turns the blob into an object URL. Without this branch the
+    // view shows its load error instead of the generated image.
+    if (path.startsWith('/api/dsh-imagegen/agent-image?')) {
+      return { ok: true, blob: async () => new Blob([pngBytes], { type: 'image/png' }) }
+    }
     if (path.endsWith('/settings/describe')) {
       return {
         ok: true,
@@ -4650,15 +5152,70 @@ await check('E1 client apply mounts the sidebar entry and studio (jsdom)', async
       }
       return { ok: true, json: async () => ({ ok: true, document: { ...payload.document, revision: payload.document.revision + 1 } }) }
     }
+    if (path.endsWith('/ppt/tasks')) {
+      return { ok: true, json: async () => ({ ok: true, tasks: pptClientTasks }) }
+    }
+    if (path.endsWith('/ppt/run')) {
+      const payload = JSON.parse(init.body)
+      pptSubmissions.push(payload)
+      // The conversion drops the source images from its result: the panel shows
+      // the produced deck, never the uploads.
+      const task = {
+        id: 'ppt-client-1', canvasId: 'ppt', skillId: 'ppt.fromImages', label: 'PPT',
+        tier: 'heavy', status: 'completed', startedAt: Date.now(), pptImages: payload.images,
+        output: {
+          nodes: [{
+            id: 'ppt-file', type: 'file', title: 'final.pptx',
+            metadata: { asset: { assetId: 'deck.pptx', url: '/api/dsh-imagegen/canvas/asset/deck.pptx', name: 'final.pptx', mime: 'application/vnd.openxmlformats-officedocument.presentationml.presentation', bytes: 12, width: 0, height: 0, origin: 'upload' } },
+          }],
+          connections: [], warnings: [],
+        },
+      }
+      pptClientTasks = [task]
+      return { ok: true, json: async () => ({ ok: true, task }) }
+    }
+    if (path.endsWith('/canvas/skills/list')) {
+      return { ok: true, json: async () => ({ ok: true, skills: [], installed: ['image-to-editable-ppt'], agentAvailable: true, registryAvailable: true }) }
+    }
+    if (path.endsWith('/canvas/skills/library')) {
+      return { ok: true, json: async () => ({ ok: true, library: { entries: [] } }) }
+    }
+    if (path.includes('/canvas/file/upload?')) {
+      const name = new URL(path, 'http://localhost').searchParams.get('name')
+      const asset = {
+        assetId: `${pptUploaded.length + 1}.png`,
+        url: `/api/dsh-imagegen/canvas/asset/${pptUploaded.length + 1}.png`,
+        mime: init.headers['content-type'], name, bytes: 12, width: 12, height: 12, origin: 'upload',
+      }
+      pptUploaded.push(asset)
+      return { ok: true, json: async () => ({ ok: true, asset }) }
+    }
     if (path.endsWith('/canvas/file/preview')) {
       // The real host decodes the asset; the fixture stands in with the decoded
       // shape so the reader can be exercised end to end.
-      previewRequests.push(JSON.parse(init.body))
+      const payload = JSON.parse(init.body)
+      previewRequests.push(payload)
+      // A deck decodes to one card per slide; everything else stays text. The
+      // PPT panel reads THIS shape (it previews the produced PPTX, not the
+      // source images), so returning text for a .pptx would leave its viewer
+      // empty and the check would pass on nothing.
+      if (payload.assetId === 'preview-retry.pptx') deckPreviewRequests.push(payload)
+      const slides = payload.assetId === 'deck.pptx' || payload.assetId === 'preview-retry.pptx'
       return {
         ok: true,
         json: async () => ({
           ok: true,
-          preview: { kind: 'text', format: 'txt', text: '文件预览正文\nsecond line\nthird line', truncated: false, lines: 3 },
+          preview: slides
+            ? {
+                kind: 'slides',
+                format: 'pptx',
+                slides: [
+                  { title: 'AI PLATFORM ROADMAP', lines: ['第一页可编辑内容'], images: [] },
+                  { title: 'NEXT STEPS', lines: ['第二页可编辑内容'], images: [] },
+                ],
+                truncated: false,
+              }
+            : { kind: 'text', format: 'txt', text: '文件预览正文\nsecond line\nthird line', truncated: false, lines: 3 },
         }),
       }
     }
@@ -4837,6 +5394,13 @@ await check('E1 client apply mounts the sidebar entry and studio (jsdom)', async
       get src() { return this._src }
     },
     fetch: fetchStub,
+    // The tool view turns a fetched blob into an <img> source. jsdom ships
+    // neither, and the bundle reads them off the global scope.
+    URL: class SmokeURL extends URL {
+      static createObjectURL() { return 'blob:image-toolview-smoke' }
+      static revokeObjectURL() {}
+    },
+    URLSearchParams,
     console,
   }
   // jsdom's window.window is a getter-only property; only plain-object
@@ -4896,8 +5460,15 @@ await check('E1 client apply mounts the sidebar entry and studio (jsdom)', async
     },
     slots: {
       // The Web UI plugin group slot is already declared.
-      inject(key, callback) { callback(); return () => {} },
-      register(options) { registered.push(options); return () => {} },
+      // `inject` may return an iterable of disposers (the tool-view registrations
+      // yield one per tool), and `register` takes the component as a second
+      // argument — a stub that dropped it made every toolview check vacuous.
+      inject(key, callback) {
+        const result = callback()
+        if (result?.[Symbol.iterator]) for (const _dispose of result) { /* drain */ }
+        return () => {}
+      },
+      register(options, component) { registered.push({ ...options, component }); return () => {} },
     },
   }
   // react-dom (outer realm) reads the bare `window`/`document` globals at
@@ -4961,6 +5532,52 @@ await check('E1 client apply mounts the sidebar entry and studio (jsdom)', async
   })
 
   exportsOf.apply(ctx)
+  // #46: DSH's Web client forwards persisted result metadata (it does not call
+  // the host's presentResult), while older sessions only kept JSON or image
+  // content blocks. All three shapes have to yield the same visible image, and
+  // none may show a duplicate or an errored result's images.
+  const rawImage = {
+    attachment_id: 'issue-46-image', media_type: 'image/png', bytes: pngBytes.length,
+    width: 1, height: 1, name: 'chat-result.png',
+  }
+  const toolBlock = {
+    kind: 'tool-result',
+    callId: 'call-image',
+    isError: false,
+    content: [{ type: 'text', text: JSON.stringify({ status: 'completed', message: 'done', images: [rawImage] }) }],
+    meta: { images: [rawImage] },
+  }
+  const refsOf = exportsOf.imageRefsOf
+  assert.equal(typeof refsOf, 'function', 'the tool-view ref reader is part of the built bundle')
+  assert.equal(refsOf(toolBlock)[0].attachmentId, rawImage.attachment_id, 'persisted metadata alone is enough')
+  assert.equal(refsOf({ ...toolBlock, meta: undefined }).length, 1, 'a JSON-only tool result stays visible on replay')
+  const directImage = { type: 'image', attachment: refsOf(toolBlock)[0] }
+  assert.equal(refsOf({ ...toolBlock, content: [directImage, ...toolBlock.content] }).length, 1, 'content and metadata refs are deduplicated')
+  assert.equal(refsOf({ ...toolBlock, isError: true }).length, 0, 'a failed call shows no image')
+  assert.equal(refsOf({ phase: 'start' }).length, 0, 'an in-flight call shows no image')
+  assert.equal(
+    refsOf({ ...toolBlock, content: [], meta: { images: [{ ...rawImage, width: -1 }, null, {}] } }).length,
+    0,
+    'an invalid reference is dropped rather than rendered broken',
+  )
+  const toolviewHost = jsdomDocument.createElement('div')
+  jsdomDocument.body.append(toolviewHost)
+  const toolviewRoot = moduleStubs['react-dom/client'].createRoot(toolviewHost)
+  for (const toolName of ['generate_image', 'edit_image', 'get_image_generation_task']) {
+    const registration = registered.find(row => row.name === 'tool.call.toolview' && row.key === toolName)
+    assert.ok(registration?.component, `${toolName} registers its real conversation renderer`)
+    toolviewRoot.render(react.createElement(registration.component, {
+      key: toolName, sessionId: 'issue-46-other', toolName, callId: 'call-image', block: toolBlock,
+    }))
+    assert.ok(
+      await waitUntil(() => toolviewHost.querySelector('img')?.getAttribute('src') === 'blob:image-toolview-smoke'),
+      `${toolName} displays a metadata-only generated image`,
+    )
+    assert.equal(toolviewHost.querySelectorAll('img').length, 1, `${toolName} shows the image once`)
+    assert.equal(toolviewHost.querySelector('a')?.getAttribute('href'), 'blob:image-toolview-smoke', `${toolName} links the full image`)
+  }
+  toolviewRoot.unmount()
+  toolviewHost.remove()
   // In-app prompts must open Settings through its rendered dialog affordances
   // and select the image-generation section.
   const settingsTrigger = jsdomDocument.createElement('button')
@@ -5199,6 +5816,90 @@ await check('E1 client apply mounts the sidebar entry and studio (jsdom)', async
     const polishButtons = [...view.querySelectorAll('[data-ecommerce-preview] button')].filter(button => button.textContent?.includes('AI 润色'))
     assert.equal(polishButtons.length, 6, 'every ecommerce preview prompt exposes AI polish')
     assert.equal(ecommerceSubmissions.length, 0, 'plan preview must not submit generation tasks')
+
+    // ------------------------------------------------------ PPT workspace
+    // The production panel, driven the way a user drives it: upload two
+    // sources, reorder them, convert, then read the produced deck. Nothing
+    // here stubs the component, so a regression in its wiring fails a check
+    // instead of passing as a no-op.
+    // Re-query the nav: switching workspaces re-renders the tab list, so a
+    // button captured earlier is detached and its click reaches nothing.
+    // A local predicate helper: this scope declares its own `waitUntil` further
+    // down, and using that name here would hit the temporal dead zone.
+    const waitPpt = async (predicate, timeout = 3000) => {
+      const deadline = Date.now() + timeout
+      while (!predicate() && Date.now() < deadline) await new Promise(resolve => setTimeout(resolve, 25))
+      return predicate()
+    }
+    // The studio was closed by the native "new session" action above, so the
+    // tab strip is visible but the panel is mounted inactive — `active` gates
+    // `PptWorkspace`'s `hidden`. Re-open the studio through the image tab the
+    // way a user would before switching workspaces.
+    jsdomDocument.querySelector('[data-dsh-imagegen-tab="image"]')
+      .dispatchEvent(new jsdomWindow.MouseEvent('click', { bubbles: true }))
+    assert.ok(
+      await waitPpt(() => jsdomDocument.documentElement.hasAttribute('data-dsh-imagegen-active')),
+      'the studio re-opens before the PPT workspace is exercised',
+    )
+    const pptTab = [...view.querySelectorAll('[role="tablist"] button')].find(button => button.textContent?.includes('图片转 PPT'))
+    assert.ok(pptTab !== undefined, 'the PPT entry survives a workspace switch')
+    pptTab.click()
+    const pptShown = await waitPpt(() => {
+      const el = view.querySelector('[data-ppt-workspace]')
+      return el !== null && el.hidden === false
+    }, 3000)
+    assert.ok(
+      pptShown,
+      `the PPT tab shows its workspace — tabs=${[...view.querySelectorAll('[role="tablist"] button')].map(b => `${b.textContent}:${b.getAttribute('aria-selected')}`).join('|')} pptNodes=${view.querySelectorAll('[data-ppt-workspace]').length} hidden=${String(view.querySelector('[data-ppt-workspace]')?.hidden)} attr=${String(view.querySelector('[data-ppt-workspace]')?.getAttribute('hidden'))} parentHidden=${String(view.querySelector('[data-ppt-workspace]')?.parentElement?.hidden)}`,
+    )
+    const pptView = view.querySelector('[data-ppt-workspace]')
+    assert.ok(pptView !== null, 'the PPT workspace is rendered')
+    // The upload hero is replaced by the thumbnail grid once a source exists,
+    // and the add tile is the way back to the picker.
+    assert.ok(pptView.querySelector('[data-ppt-upload-empty]') !== null, 'an empty conversion offers the upload area')
+    const pptUpload = pptView.querySelector('input[type="file"]')
+    assert.ok(pptUpload !== null, 'the workspace has a file input')
+    const fileFor = name => new dom.window.File([new Uint8Array([137, 80, 78, 71])], name, { type: 'image/png' })
+    Object.defineProperty(pptUpload, 'files', { value: [fileFor('slide-1.png')], configurable: true })
+    pptUpload.dispatchEvent(new dom.window.Event('change', { bubbles: true }))
+    assert.ok(await waitPpt(() => pptView.querySelectorAll('[data-ppt-input]').length === 1), 'the first upload becomes a thumbnail')
+    assert.ok(pptView.querySelector('[data-ppt-upload-empty]') === null, 'thumbnails replace the upload hero')
+    assert.ok(pptView.querySelector('[data-ppt-add]') !== null, 'an add tile offers more sources')
+    Object.defineProperty(pptUpload, 'files', { value: [fileFor('slide-2.png')], configurable: true })
+    pptUpload.dispatchEvent(new dom.window.Event('change', { bubbles: true }))
+    assert.ok(await waitPpt(() => pptView.querySelectorAll('[data-ppt-input]').length === 2), 'the second upload appends')
+    // Source order is slide order, and the reorder control is what changes it.
+    assert.ok(pptView.querySelector('[data-ppt-input]').textContent.includes('slide-1.png'))
+    pptView.querySelectorAll('[data-ppt-input]')[1].querySelector('button[aria-label="向前移动一页"]')
+      .dispatchEvent(new dom.window.MouseEvent('click', { bubbles: true }))
+    assert.ok(await waitPpt(() => pptView.querySelector('[data-ppt-input]').textContent.includes('slide-2.png')), 'the reorder control changes the slide order')
+    // Configuration opens in place instead of hunting for the host's button.
+    pptView.querySelector('[data-ppt-open-settings]').dispatchEvent(new dom.window.MouseEvent('click', { bubbles: true }))
+    await waitForSelector(jsdomDocument, '[role="dialog"][aria-label="图片转 PPT 配置"]')
+    assert.ok(jsdomDocument.querySelector('[data-ppt-setup]') !== null, 'the configuration dialog renders its fields')
+    jsdomDocument.querySelector('[role="dialog"][aria-label="图片转 PPT 配置"] button[aria-label="关闭"]')
+      .dispatchEvent(new dom.window.MouseEvent('click', { bubbles: true }))
+    await new Promise(resolve => setTimeout(resolve, 30))
+    assert.equal(jsdomDocument.querySelector('[role="dialog"][aria-label="图片转 PPT 配置"]') === null, true, 'the configuration dialog closes')
+    pptView.querySelector('[data-ppt-convert]').dispatchEvent(new dom.window.MouseEvent('click', { bubbles: true }))
+    assert.ok(await waitPpt(() => pptSubmissions.length === 1), 'the convert button starts a conversion')
+    assert.deepEqual(pptSubmissions[0].images.map(image => image.name), ['slide-2.png', 'slide-1.png'], 'the conversion sends the sources in the order the user set')
+    assert.equal(pptSubmissions[0].offlineOcr, true, 'the default OCR choice reaches the host')
+    assert.ok(await waitPpt(() => pptView.querySelector('a[download="final.pptx"]') !== null), 'the finished deck is downloadable')
+    // The result pane shows the produced deck only — never the sources — and
+    // opens its first slide without another click.
+    assert.equal(pptView.querySelectorAll('[data-ppt-task] img').length, 0, 'the result pane shows no source images')
+    assert.ok(await waitPpt(() => (pptView.querySelector('[data-ppt-slide="1"]')?.textContent ?? '').includes('第一页可编辑内容')), 'the produced deck opens inline')
+    pptView.querySelector('[data-ppt-page="2"]').dispatchEvent(new dom.window.MouseEvent('click', { bubbles: true }))
+    assert.ok(await waitPpt(() => (pptView.querySelector('[data-ppt-slide="2"]')?.textContent ?? '').includes('第二页可编辑内容')), 'the filmstrip switches slides')
+    pptView.querySelector('[data-ppt-preview]').dispatchEvent(new dom.window.MouseEvent('click', { bubbles: true }))
+    await waitForSelector(jsdomDocument, '[role="dialog"][aria-label="final.pptx"]')
+    assert.ok(await waitPpt(() => (jsdomDocument.querySelector('[role="dialog"]')?.textContent ?? '').includes('AI PLATFORM ROADMAP')), 'the expanded viewer previews the deck')
+    jsdomDocument.querySelector('[role="dialog"][aria-label="final.pptx"] [aria-label="关闭"]')
+      .dispatchEvent(new dom.window.MouseEvent('click', { bubbles: true }))
+    await new Promise(resolve => setTimeout(resolve, 30))
+    assert.equal(jsdomDocument.querySelector('[role="dialog"][aria-label="final.pptx"]') === null, true, 'closing dismisses the expanded viewer')
+
     // Back to the normal workspace via the top nav: gallery works as before.
     normalSwitch.click()
     await new Promise(resolve => setTimeout(resolve, 50))

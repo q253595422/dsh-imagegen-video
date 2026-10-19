@@ -97,7 +97,7 @@ interface PreviewState {
 }
 
 /** Load one asset's structured preview once, shared by node body and overlay. */
-function useFilePreview(api: ImageGenApi, asset: CanvasAssetRef, enabled: boolean): PreviewState & { reload: () => void } {
+export function useFilePreview(api: ImageGenApi, asset: CanvasAssetRef, enabled: boolean): PreviewState & { reload: () => void } {
   const cached = previewCache.get(asset.assetId)
   const [state, setState] = useState<PreviewState>(() => cached === undefined ? { loading: enabled } : { preview: cached, loading: false })
   const [nonce, setNonce] = useState(0)

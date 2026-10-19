@@ -39,8 +39,8 @@ import { setStorageSyncHandler, putObject, type StorageSyncConfig } from './stor
  * driver without it.
  */
 interface CanvasSkillAgent {
-  readonly session: { deriveMessages: () => readonly unknown[] }
-  followup: (message: { id: string; role: 'user'; content: Array<{ type: 'text'; text: string }>; source: { kind: 'plugin'; plugin: string } }) => void
+  readonly session: { deriveMessages: () => readonly unknown[]; readonly seq?: number; eventAt?: (seq: number) => unknown }
+  followup: (message: { id: string; role: 'user'; content: Array<{ type: 'text'; text: string }>; source: { kind: 'plugin:dsh-imagegen' } }) => void
   whenIdle: () => Promise<void>
   /** Durable cancellation cause; `user` is the canvas cancel button. */
   cancel: (cause: { kind: 'user' }) => void
@@ -173,6 +173,7 @@ export async function createCanvasSkillAgent(options: CanvasSkillAgentOptions): 
   const model = selection?.model?.trim() ?? ''
   const fail = options.fail ?? (key => key)
   if (provider === '' || model === '') throw new Error(fail('canvas.skills.needModel'))
+  let runtimeFailure: string | undefined
   const handle = await options.agents.create({
     sessionId: options.sessionId,
     meta: {
@@ -183,6 +184,13 @@ export async function createCanvasSkillAgent(options: CanvasSkillAgentOptions): 
     agentOptions: { provider, model },
     ...options.signal === undefined ? {} : { signal: options.signal },
     setup: async (agentCtx: Context) => {
+      // The driver contains errors before whenIdle resolves; retain its reason.
+      const events = agentCtx as unknown as { on: (name: string, listener: (payload: { agent?: { id?: string }; error?: unknown }) => void) => unknown }
+      events.on?.('agent/error', payload => {
+        if (payload.agent?.id !== options.sessionId) return
+        const error = payload.error
+        runtimeFailure = redactDiagnosticText(error instanceof Error ? error.message : String(error))
+      })
       // Join the preset FIRST: its rows must exist before the skill body is
       // registered, so the body never shadows the composition it runs inside.
       if (options.presets !== undefined && presetId !== undefined) await options.presets.mount(agentCtx, presetId)
@@ -201,10 +209,13 @@ export async function createCanvasSkillAgent(options: CanvasSkillAgentOptions): 
         id: `canvas-skill-${Date.now().toString(36)}`,
         role: 'user',
         content: [{ type: 'text', text: body }],
-        source: { kind: 'plugin', plugin: 'dsh-imagegen' },
+        source: { kind: 'plugin:dsh-imagegen' },
       })
     },
-    whenIdle: () => agent.whenIdle(),
+    whenIdle: async () => {
+      await agent.whenIdle()
+      if (runtimeFailure !== undefined) throw new Error(runtimeFailure)
+    },
     // The canvas cancel button is the human asking to stop.
     cancel: () => agent.cancel({ kind: 'user' }),
     dispose: () => handle.dispose(),
@@ -310,6 +321,7 @@ import { recipeFor } from './skill-config-recipes.ts'
 import { createClipComposer } from './clip-compose.ts'
 import { PptRuntime } from './ppt-runtime.ts'
 import { EDITABLE_PPT_SKILL, type ExternalSkillSummary } from './skills-catalog.ts'
+import { redactDiagnosticText } from './diagnostics-store.ts'
 import { canvasStore } from './canvas-store.ts'
 import { imageGenLanguageOf, interpolate } from './locale-tables.ts'
 
@@ -338,7 +350,7 @@ export { appendGallery, appendGalleryVideo, clearGallery, GALLERY_TRASH_RETENTIO
 export { listTemplates, readTemplateImage, refreshTemplates, sampleTemplates, syncAllTemplates, clearTemplateMemo } from './templates-store.ts'
 export { addTemplateFavorite, clearTemplateFavoritesMemo, listTemplateFavorites, removeTemplateFavorite } from './template-favorites.ts'
 export { putObject, setStorageSyncHandler, testStorage, type StorageSyncConfig } from './storage-sync.ts'
-export { SkillRunner, setSkillTranslate, setSkillLanguage, canvasSkillCopy } from './skill-runner.ts'
+export { agentSessionFailure, SkillRunner, setSkillTranslate, setSkillLanguage, canvasSkillCopy } from './skill-runner.ts'
 export { builtinCanvasSkills, canvasSkillCatalog, EDITABLE_PPT_SKILL, findCanvasSkill, isEditablePptSkill, mergeExternalSkills, tierOfExternalSkill } from './skills-catalog.ts'
 export { extractFileText, MAX_EXTRACTED_CHARS } from './file-text.ts'
 export { buildFilePreview, MAX_PREVIEW_CHARS, type FilePreviewInput } from './file-preview.ts'
@@ -348,7 +360,7 @@ export { recipeFor, recipeNames } from './skill-config-recipes.ts'
 export { createClipComposer, localVideoToolDirs } from './clip-compose.ts'
 export { isZipDirectory, readZipDirectory, readZipEntry } from './zip.ts'
 export { canvasStore, isBlockedFileName, fileKindOf, MAX_CANVAS_FILE_BYTES, mimeFromFileName, safeFileName } from './canvas-store.ts'
-export { checkForUpdate, clearUpdateCache, compareVersions, CURRENT_VERSION, installUpdate, isInstallableTarballUrl, profileFromProcess } from './updater.ts'
+export { checkForUpdate, clearUpdateCache, compareVersions, CURRENT_VERSION, DESKTOP_PROFILE, installUpdate, isInstallableTarballUrl, ManualUpdateRequiredError, PACKAGE_NAME, profileFromProcess, updateInstallTarget, type UpdateHostContext, type UpdateInstallTarget } from './updater.ts'
 export { clearDiagnostics, listDiagnostics, networkErrorFields, redactDiagnosticText, recordDiagnostic, DIAGNOSTIC_MAX, type DiagnosticEntry } from './diagnostics-store.ts'
 
 /** The branded settings namespace of this plugin (the card edits it). */

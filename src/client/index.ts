@@ -240,3 +240,4 @@ export function apply(ctx: ClientContext): void {
   scope.subscribe(syncEnabled)
   syncEnabled()
 }
+export { imageRefsOf } from './image-toolview.tsx'

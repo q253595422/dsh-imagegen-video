@@ -36,10 +36,38 @@ function isSettled(block: ToolCallBlock): block is Extract<ToolCallBlock, { kind
   return 'kind' in block
 }
 
-function imageRefsOf(block: ToolCallBlock): ImageAttachmentRef[] {
-  if (!isSettled(block)) return []
-  return block.content
-    .flatMap(content => content.type === 'image' ? [content.attachment] : [])
+/** Read persisted UI metadata on modern hosts and content blocks on older hosts. */
+export function imageRefsOf(block: ToolCallBlock): ImageAttachmentRef[] {
+  if (!isSettled(block) || block.isError) return []
+  const refs = new Map<string, ImageAttachmentRef>()
+  const append = (value: unknown): void => {
+    if (typeof value !== 'object' || value === null || Array.isArray(value)) return
+    const raw = value as Record<string, unknown>
+    const attachmentId = raw.attachmentId ?? raw.attachment_id
+    const mediaType = raw.mediaType ?? raw.media_type
+    if (typeof attachmentId !== 'string' || attachmentId === ''
+      || !['image/png', 'image/jpeg', 'image/webp', 'image/gif'].includes(String(mediaType))
+      || typeof raw.bytes !== 'number' || !Number.isSafeInteger(raw.bytes) || raw.bytes <= 0
+      || typeof raw.width !== 'number' || !Number.isSafeInteger(raw.width) || raw.width <= 0
+      || typeof raw.height !== 'number' || !Number.isSafeInteger(raw.height) || raw.height <= 0) return
+    if (!refs.has(attachmentId)) refs.set(attachmentId, {
+      attachmentId: attachmentId as ImageAttachmentRef['attachmentId'],
+      mediaType: mediaType as ImageAttachmentRef['mediaType'],
+      bytes: raw.bytes, width: raw.width, height: raw.height,
+      ...typeof raw.name === 'string' ? { name: raw.name } : {},
+    })
+  }
+  const fromImages = (value: unknown): void => {
+    if (typeof value !== 'object' || value === null || Array.isArray(value)) return
+    const images = (value as { images?: unknown }).images
+    if (Array.isArray(images)) images.forEach(append)
+  }
+  block.content.forEach(content => { if (content.type === 'image') append(content.attachment) })
+  // DSH's Web client consumes persisted result.meta, not host presentResult().
+  fromImages((block as { meta?: unknown }).meta)
+  // Existing sessions also carry the exact references in the textual tool result.
+  if (refs.size === 0) { try { fromImages(JSON.parse(textOf(block))) } catch { /* Not a JSON image-tool result. */ } }
+  return [...refs.values()]
 }
 
 function textOf(block: ToolCallBlock): string {
@@ -82,6 +110,7 @@ function useAttachmentImages(
 
   useEffect(() => {
     let disposed = false
+    let failed = false
     const urls: string[] = []
     const revoke = (): void => {
       for (const url of urls) URL.revokeObjectURL(url)
@@ -94,13 +123,15 @@ function useAttachmentImages(
 
     void Promise.all(refs.map(async ref => {
       const src = await load(sessionId, ref)
-      urls.push(src)
+      if (disposed || failed) URL.revokeObjectURL(src)
+      else urls.push(src)
       return { ref, src }
     }))
       .then(next => {
         if (!disposed) setImages(next)
       })
       .catch(errorValue => {
+        failed = true
         revoke()
         if (!disposed) setError(errorValue instanceof Error ? errorValue.message : String(errorValue))
       })

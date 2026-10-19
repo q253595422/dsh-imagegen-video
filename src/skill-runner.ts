@@ -37,6 +37,7 @@ import type {
   PptRunRequest,
 } from './protocol.ts'
 import { extractFileText, MAX_EXTRACTED_CHARS } from './file-text.ts'
+import { redactDiagnosticText } from './diagnostics-store.ts'
 import {
   BUILTIN_COMPOSE,
   BUILTIN_DESCRIBE,
@@ -77,6 +78,8 @@ export interface SkillRegistryBackend {
 
 /** The renderer face of a live agent, narrowed to what a skill run drives. */
 export interface SkillAgentSession {
+  readonly seq?: number
+  eventAt?: (seq: number) => unknown
   deriveMessages: () => readonly unknown[]
 }
 
@@ -404,6 +407,20 @@ function videoOutputNode(
       skill: { id: skillId, label, sourceNodeIds: sourceIds, createdAt: Date.now() },
     },
   }
+}
+
+/** whenIdle contains driver errors; inspect its durable turn ending instead. */
+export function agentSessionFailure(session: SkillAgentSession): string | undefined {
+  if (session.eventAt === undefined || !Number.isSafeInteger(session.seq)) return undefined
+  for (let index = session.seq! - 1; index >= Math.max(0, session.seq! - 1000); index -= 1) {
+    const raw = session.eventAt(index) as { type?: string; data?: { reason?: { kind?: string; error?: { code?: string; message?: string }; reason?: { kind?: string } } } } | undefined
+    if (raw?.type !== 'turn/end') continue
+    const reason = raw.data?.reason
+    if (reason?.kind === 'error') return redactDiagnosticText([reason.error?.code, reason.error?.message].filter(Boolean).join(': ') || 'Agent execution failed')
+    if (reason?.kind === 'aborted') return `Agent stopped (${reason.reason?.kind ?? 'aborted'})`
+    return undefined
+  }
+  return undefined
 }
 
 /** Find the last assistant text in a session message list (structural). */
@@ -1112,6 +1129,7 @@ export class SkillRunner {
   ): Promise<CanvasSkillOutput> {
     const runRoot = this.options.runRoot().trim() === '' ? path.join(this.options.dataRoot(), 'canvas', 'runs') : this.options.runRoot().trim()
     const runDir = path.join(runRoot, request.canvasId, task.id)
+    if (task.canvasId === 'ppt') task.runDirectory = runDir
     // The run directory is scratch space for one run: inputs are copied in and
     // the agent writes its products there, which can be tens of MiB per run. It
     // is deleted as soon as the run reaches a terminal state — successful,
@@ -1231,8 +1249,10 @@ export class SkillRunner {
     const cancelled = (): boolean => task.status === 'cancelled'
     try {
       if (cancelled()) throw new Error(t('canvas.skills.stageCancelled'))
+      const sessionId = newId('skillagent')
+      if (task.canvasId === 'ppt') { task.agentSessionId = sessionId; await this.persistPpt(task) }
       handle = await agents.create({
-        sessionId: newId('skillagent'),
+        sessionId,
         cwd: runDir,
         systemPrompt,
         signal: controller.signal,
@@ -1261,7 +1281,10 @@ export class SkillRunner {
       if (cancelled()) throw new Error(t('canvas.skills.stageCancelled'))
       task.stage = t('canvas.skills.stageCollecting')
       task.phase = 'collecting'
+      const failure = agentSessionFailure(handle.session)
+      if (failure !== undefined) throw new Error(t('ppt.agentFailed', { error: failure }))
       const answer = lastAssistantText(handle.session.deriveMessages())
+      if (task.canvasId === 'ppt') await this.recoverFinalizedPpt(runDir, outputDir, task.pptImages?.length ?? 0)
       return await this.collectHeavyOutput(task, skill, target, outputDir, answer, warnings, t)
     } finally {
       if (timer !== undefined) clearTimeout(timer)
@@ -1345,6 +1368,54 @@ export class SkillRunner {
     ].join('\n')
   }
 
+  /**
+   * The editppt skill finalizes into its own `final/` directory, outside the
+   * output folder this runner hands it. Collect only a completed, validated
+   * final deck — never an intermediate page — and only when this run produced
+   * no deck of its own.
+   */
+  private async recoverFinalizedPpt(runDir: string, outputDir: string, pageCount: number): Promise<void> {
+    const root = await fs.realpath(runDir)
+    const inside = (file: string): boolean => file.startsWith(root + path.sep)
+    const resolveFile = async (raw: string, base: string): Promise<string | undefined> => {
+      const file = await fs.realpath(path.resolve(base, raw)).catch(() => undefined)
+      return file !== undefined && inside(file) ? file : undefined
+    }
+    const boundedJson = async (file: string): Promise<Record<string, unknown> | undefined> => {
+      const stat = await fs.stat(file).catch(() => undefined)
+      if (!stat?.isFile() || stat.size > 2 * 1024 * 1024) return undefined
+      const value = await fs.readFile(file, 'utf8').then(raw => JSON.parse(raw)).catch(() => undefined)
+      return value !== null && typeof value === 'object' && !Array.isArray(value) ? value : undefined
+    }
+    let inspected = 0
+    const walk = async (dir: string, depth: number): Promise<void> => {
+      if (depth > 7 || inspected > 2000) return
+      const entries = await fs.readdir(dir, { withFileTypes: true }).catch(() => [])
+      for (const entry of entries) {
+        if (++inspected > 2000) return
+        const full = path.join(dir, entry.name)
+        if (entry.isDirectory() && !['input', 'pages', 'node_modules', '.venv'].includes(entry.name)) { await walk(full, depth + 1); continue }
+        if (!entry.isFile() || entry.name !== 'run_summary.json') continue
+        const summary = await boundedJson(full)
+        if (summary?.status !== 'complete' || summary.page_count !== pageCount || typeof summary.output !== 'string' || typeof summary.validation !== 'string') continue
+        const deck = await resolveFile(summary.output, dir)
+        const report = await resolveFile(summary.validation, dir)
+        if (deck === undefined || report === undefined || !deck.toLowerCase().endsWith('.pptx')) continue
+        const validation = await boundedJson(report)
+        if (validation?.passed !== true) continue
+        const size = await fs.stat(deck)
+        if (!size.isFile() || size.size === 0 || size.size > 64 * 1024 * 1024) continue
+        const target = path.join(outputDir, path.basename(deck))
+        // A deck already delivered explicitly is authoritative; don't overwrite it.
+        if (!(await fs.stat(target).then(() => true, () => false))) await fs.copyFile(deck, target)
+        await fs.copyFile(report, path.join(outputDir, 'validation.json'))
+        await fs.copyFile(full, path.join(outputDir, 'run_summary.json'))
+      }
+    }
+    const delivered = await fs.readdir(outputDir).then(names => names.some(name => name.toLowerCase().endsWith('.pptx')))
+    if (!delivered) await walk(runDir, 0)
+  }
+
   private async collectHeavyOutput(
     task: CanvasSkillTask,
     skill: CanvasSkillDescriptor,
@@ -1362,7 +1433,7 @@ export class SkillRunner {
       try { entries = await fs.readdir(dir, { withFileTypes: true }) } catch { return }
       for (const entry of entries) {
         const full = path.join(dir, entry.name)
-        if (entry.isDirectory()) { await walk(full, depth + 1); continue }
+        if (entry.isDirectory()) { if (task.canvasId !== 'ppt') await walk(full, depth + 1); continue }
         if (!entry.isFile()) continue
         const stat = await fs.stat(full).catch(() => undefined)
         if (stat === undefined || stat.size === 0) continue
@@ -1416,7 +1487,7 @@ export class SkillRunner {
     if (task.canvasId === 'ppt' && !nodes.some(node => node.metadata?.asset?.name?.toLowerCase().endsWith('.pptx'))) {
       // Falling back to the agent's prose here would report a conversion that
       // produced no deck as a success with a note attached.
-      throw new Error([t('ppt.noDeck'), answer?.trim()].filter(Boolean).join('\n'))
+      throw new Error([t('ppt.noDeck'), answer?.trim() || t('ppt.noAgentReply')].filter(Boolean).join('\n'))
     }
     if (nodes.length === 0) {
       // The skill finished without a file: keep the agent's answer so the run
