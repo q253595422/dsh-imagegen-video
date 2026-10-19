@@ -4,7 +4,7 @@ import { spawn, type ChildProcess } from 'node:child_process'
 import { readFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { PLUGIN_VERSION, type UpdateInfo } from './protocol.ts'
-import { redactDiagnosticText } from './diagnostics-store.ts'
+import { recordDiagnostic, redactDiagnosticText } from './diagnostics-store.ts'
 export type { UpdateInfo } from './protocol.ts'
 
 /** Keep this in sync with package.json for each published release. */
@@ -35,6 +35,18 @@ const CACHE_TTL_MS = 15 * 60_000
  * update from parking a megabyte in the response.
  */
 const STDERR_LIMIT = 4_000
+/**
+ * Cap on the raw output kept while the package manager runs. pnpm prints a
+ * store-mismatch stack that is long but only its tail is useful, so the buffer
+ * is bounded and the failure message reports the last lines.
+ */
+const OUTPUT_LIMIT = 32_768
+/**
+ * A `pkg add` that hangs holds the popover's "updating" state forever. Ten
+ * minutes is long enough for a cold pnpm store on a slow link and short enough
+ * that the user still gets an answer.
+ */
+const UPDATE_TIMEOUT_MS = 10 * 60_000
 
 interface GitHubRelease {
   tag_name?: unknown
@@ -221,20 +233,35 @@ export interface UpdateInstallTarget {
  * for every Desktop user. The update then ran against the wrong profile: even
  * when it succeeded, the running host kept the old plugin.
  */
-export function profileFromProcess(argv: readonly string[] = process.argv, env: NodeJS.ProcessEnv = process.env): string {
+export function profileFromProcess(
+  argv: readonly string[] = process.argv,
+  env: NodeJS.ProcessEnv = process.env,
+  host: UpdateHostContext = {},
+): string {
+  // The launcher's own answer beats anything inferred from this process: it
+  // knows which profile it booted, and a wrong guess installs into the profile
+  // the user is not running.
+  const hostProfile = host.profile?.trim()
+  if (hostProfile !== undefined && /^[a-zA-Z0-9_-]+$/.test(hostProfile)) return hostProfile
   const envProfile = env.DSH_PROFILE?.trim()
   if (envProfile !== undefined && /^[a-zA-Z0-9_-]+$/.test(envProfile)) return envProfile
   const profileIndex = argv.indexOf('--profile')
-  const explicit = profileIndex >= 0 ? argv[profileIndex + 1]?.trim() : undefined
+  // `--profile=name` is as common as the two-token form; reading only the
+  // latter silently fell through to the path scan and then to `web`.
+  const inline = argv.find(entry => entry.startsWith('--profile='))
+  const explicit = profileIndex >= 0 ? argv[profileIndex + 1]?.trim() : inline?.slice('--profile='.length).trim()
   if (explicit !== undefined && /^[a-zA-Z0-9_-]+$/.test(explicit)) return explicit
   // `…/.dsh/profiles/<name>` — the Electron host's only description of which
   // profile it booted. Matched on the path segments rather than on a resolved
   // absolute prefix, because `DSH_HOME` moves the tree.
   const fromPath = argv
-    .map(entry => /(?:^|[/\\])profiles[/\\]([A-Za-z0-9_-]+)\/?$/.exec(entry))
+    // A trailing separator is normal here: Windows paths arrive as
+    // `…\profiles\desktop\`, and matching only `/` sent every one of those
+    // back to `web`.
+    .map(entry => /(?:^|[/\\])profiles[/\\]([A-Za-z0-9_-]+)[/\\]?$/.exec(entry))
     .find(match => match !== null)
   if (fromPath !== null && fromPath !== undefined && fromPath[1] !== undefined) return fromPath[1]
-  if (argv.includes('web')) return 'web'
+  if (env.DSH_DESKTOP === '1' || argv.some(entry => /[/\\]dsh-desktop-host[/\\]/.test(entry))) return DESKTOP_PROFILE
   return 'web'
 }
 
@@ -271,10 +298,13 @@ export function updateInstallTarget(
   env: NodeJS.ProcessEnv = process.env,
   host: UpdateHostContext = {},
 ): UpdateInstallTarget {
-  const hostProfile = host.profile?.trim()
-  const profile = hostProfile !== undefined && /^[a-zA-Z0-9_-]+$/.test(hostProfile) ? hostProfile : profileFromProcess(argv, env)
+  const profile = profileFromProcess(argv, env, host)
   if (typeof host.installBundle === 'function') return { profile, installMode: 'host' }
-  return { profile, installMode: profile.toLowerCase() === DESKTOP_PROFILE ? 'host-managed' : 'cli' }
+  // The launcher's marker is as authoritative as the profile name: a Desktop
+  // host that reports `DSH_DESKTOP=1` still refuses CLI writes even when its
+  // argv names no profile.
+  const desktop = profile.toLowerCase() === DESKTOP_PROFILE || env.DSH_DESKTOP === '1'
+  return { profile, installMode: desktop ? 'host-managed' : 'cli' }
 }
 
 /**
@@ -322,29 +352,106 @@ export async function installUpdate(
     throw new ManualUpdateRequiredError(profile, tarballUrl)
   }
   const command = process.platform === 'win32' ? 'dsh.cmd' : 'dsh'
-  const child = spawnFn(command, ['plugin', '--profile', profile, 'add', tarballUrl], {
-    shell: process.platform === 'win32',
-    // stderr has to be read: the CLI explains *why* it refused (locked profile,
-    // pnpm store mismatch, unreachable registry) and discarding it left the user
-    // with an exit code and nothing to act on.
-    stdio: ['ignore', 'ignore', 'pipe'],
-  }) as ChildProcess
-  let stderr = ''
-  const appendStderr = (chunk: unknown): void => {
-    if (stderr.length >= STDERR_LIMIT) return
-    stderr += typeof chunk === 'string' ? chunk : String(chunk)
+  const args = ['plugin', '--profile', profile, 'add', tarballUrl]
+  const displayCommand = `${command} ${args.join(' ')}`
+  const started = Date.now()
+  // One place builds both the diagnostic record and the thrown message: the
+  // panel shows the same text the log keeps, so a user copy-pasting a failure
+  // into an issue never pastes a credential with it.
+  const failure = (message: string): Error => {
+    const safe = updateDiagnosticText(
+      `profile: ${profile}\ncommand: ${displayCommand}\n${message}`,
+    )
+    recordDiagnostic({
+      phase: 'config',
+      channel: '',
+      model: PACKAGE_NAME,
+      mode: 'update',
+      url: command,
+      method: 'SPAWN',
+      message: safe,
+      requestExcerpt: displayCommand,
+      durationMs: Date.now() - started,
+    })
+    return new Error(safe)
   }
+  let child: ChildProcess
+  try {
+    child = spawnFn(command, args, {
+      shell: process.platform === 'win32',
+      // Both streams are read. pnpm explains *why* it refused on stderr (locked
+      // profile, pnpm store mismatch, unreachable registry) and prints a store
+      // hint on stdout; discarding either left the user with an exit code.
+      stdio: ['ignore', 'pipe', 'pipe'],
+      env,
+    }) as ChildProcess
+  } catch (caught) {
+    // A spawn that throws synchronously (missing binary, refused execution)
+    // used to escape as a raw exception with no profile or cause attached.
+    return Promise.reject(failure(caught instanceof Error ? caught.message : String(caught)))
+  }
+  let output = ''
+  let settled = false
+  let timedOut = false
+  const append = (chunk: unknown): void => {
+    output = (output + (typeof chunk === 'string' ? chunk : String(chunk))).slice(-OUTPUT_LIMIT)
+  }
+  child.stdout?.setEncoding?.('utf8')
   child.stderr?.setEncoding?.('utf8')
-  child.stderr?.on?.('data', appendStderr)
+  child.stdout?.on?.('data', append)
+  child.stderr?.on?.('data', append)
   return new Promise((resolve, reject) => {
-    child.once('error', reject)
-    child.once('exit', (code, signal) => {
-      if (code === 0) { resolve(); return }
-      const reason = stderr.trim().split('\n').filter(line => line.trim() !== '').slice(-3).join(' | ')
-      const base = signal === null ? `plugin update exited with code ${code ?? 'unknown'}` : `plugin update terminated by ${signal}`
-      reject(new Error(reason === '' ? base : `${base}: ${reason}`))
+    const finish = (message?: string): void => {
+      if (settled) return
+      settled = true
+      clearTimeout(timer)
+      if (message === undefined) { resolve(); return }
+      // The store mismatch has a specific remedy, and without it the message is
+      // an opaque pnpm stack. Everything else reports its own tail.
+      const hint = /ERR_PNPM_UNEXPECTED_STORE/.test(output)
+        ? '\nThe pnpm store does not match this profile. Use the DSH installation that created it, or the same pnpm version/store recorded in node_modules/.modules.yaml; do not switch stores automatically.'
+        : ''
+      const tail = output.trim().split(/\r?\n/).slice(-50).join('\n').slice(-STDERR_LIMIT)
+      reject(failure(`${message}${hint}${tail === '' ? '' : `\n${tail}`}`))
+    }
+    const timer = setTimeout(() => {
+      timedOut = true
+      try { child.kill() } catch { /* keep the timeout diagnostic */ }
+      finish(`plugin update timed out after ${Math.round(UPDATE_TIMEOUT_MS / 60_000)} minutes`)
+    }, UPDATE_TIMEOUT_MS)
+    timer.unref?.()
+    child.once('error', (error: Error) => finish(error.message))
+    // `close`, not `exit`: exit can arrive before the piped streams drain, and
+    // the drained stderr is the whole point of reading them.
+    child.once('close', (code: number | null, signal: string | null) => {
+      if (timedOut) return
+      finish(
+        code === 0
+          ? undefined
+          : signal === null
+            ? `plugin update exited with code ${code ?? 'unknown'}`
+            : `plugin update terminated by ${signal}`,
+      )
     })
   })
+}
+
+/**
+ * Bounded, credential-redacted package-manager output.
+ *
+ * `redactDiagnosticText` already masks `sk-…` keys, bearer tokens and URL
+ * passwords, but not the `_authToken=<value>` line npm/pnpm writes into their
+ * own config on failure. That value is exactly the kind of thing a user pastes
+ * into an issue, so it is masked here before the shared redaction runs.
+ */
+function updateDiagnosticText(value: string, limit = STDERR_LIMIT): string {
+  return redactDiagnosticText(
+    value
+      .replace(/\x1b\[[0-9;]*m/g, '')
+      .replace(/(https?:\/\/)[^\s/@]+:[^\s/@]+@/gi, '$1<redacted>@')
+      .replace(/((?:_authToken|npm_token|password)\s*[=:]\s*)[^\s]+/gi, '$1<redacted>'),
+    limit,
+  )
 }
 
 /**
@@ -366,7 +473,9 @@ async function installThroughHost(
   const install = host.installBundle
   if (install === undefined) throw new Error('DSH does not provide a plugin install hook')
   const fail = (message: string): Error => {
-    const tail = redactDiagnosticText(message.replace(/\x1b\[[0-9;]*m/g, ''), STDERR_LIMIT)
+    // The launcher hands back the package manager's own output, which can carry
+    // `_authToken=` lines just like the CLI path — same masking, same cap.
+    const tail = updateDiagnosticText(message, STDERR_LIMIT)
     return new Error(`DSH could not install the update for profile "${profile}": ${tail}`)
   }
   let result: HostUpdateResult
