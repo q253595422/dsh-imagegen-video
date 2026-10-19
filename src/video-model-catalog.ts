@@ -6,6 +6,7 @@
  * Families differ in far more than a URL path:
  *  - `agnes`      : POST /v1/videos → poll GET /v1/videos/{id} → metadata.url
  *  - `comemoe`    : POST /v1/videos → poll GET /v1/videos/{id} → flat top-level url
+ *  - `xai`        : POST /v1/videos/generations → poll GET /v1/videos/{id} → video.url
  *  - `openai-video`: best-effort OpenAI-style video endpoint
  *
  * Framework-free (pure data + regex), safe for the client bundle to inline.
@@ -69,6 +70,21 @@ const ENTRIES: Record<Exclude<VideoModelFamily, 'unknown'>, Omit<VideoCatalogEnt
     supportsSeed: false,
     requiresReference: false,
   },
+  // xAI's own contract, verified against docs.x.ai/developers/rest-api-reference:
+  // submit returns `request_id`, the poll carries `video.url` / `video.duration`.
+  xai: {
+    label: 'xAI Grok',
+    labelZh: 'xAI Grok',
+    known: true,
+    // Reference frames are accepted by the API, but the panel's keyframe and
+    // reference modes need a shape this engine has not measured yet; offering
+    // them would produce a body the provider rejects.
+    modes: ['text', 'image'],
+    resolutions: ['480P', '720P', '1080P'],
+    aspectRatios: ['16:9', '9:16', '1:1', '4:3', '3:4'],
+    supportsSeed: false,
+    requiresReference: false,
+  },
 }
 
 /** comemoe model ids (they do not start with a vendor prefix). */
@@ -85,6 +101,10 @@ export function describeVideoModel(model: string): VideoCatalogEntry {
   const id = model.trim()
   if (id === '') return unknownEntry()
   if (/^agnes-video/i.test(id)) return { family: 'agnes', ...ENTRIES.agnes }
+  // Before the generic `isLikelyVideoModelId` branch: `grok-imagine-video-*`
+  // matches that regex too, and the generic family posts to `/videos`, which
+  // xAI answers with 404 (it serves `/videos/generations`).
+  if (/^grok-imagine-video/i.test(id)) return { family: 'xai', ...ENTRIES.xai }
   if (isComemoeVideoModel(id)) {
     const base = ENTRIES.comemoe
     // `wan2.2-t2v` is text-only; the rest accept one reference image.

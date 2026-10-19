@@ -116,6 +116,9 @@ const POLL_POLICY: Record<string, { intervalMs: number; deadlineMs: number }> = 
   // a slower poll so a long render does not hammer the status endpoint.
   comemoe: { intervalMs: 6_000, deadlineMs: 40 * 60_000 },
   'openai-video': { intervalMs: 5_000, deadlineMs: 20 * 60_000 },
+  // xAI renders take "up to several minutes"; the default poll cadence is fine,
+  // the deadline matches the other async video families.
+  xai: { intervalMs: 5_000, deadlineMs: 20 * 60_000 },
   unknown: { intervalMs: 5_000, deadlineMs: 20 * 60_000 },
 }
 
@@ -186,7 +189,41 @@ function familyMode(family: string, mode: VideoMode): string {
 
 /** Resolve the request URL: base URL + path, or the exact configured URL. */
 function endpointUrl(upstream: VideoUpstreamConfig, baseUrl: string, path: string): string {
-  return upstream.apiUrlFull === true && path === '/videos' ? baseUrl : `${baseUrl}${path}`
+  // `apiUrlFull` means "this is the exact submit URL". It used to apply only to
+  // the `/videos` path, which made the switch silently do nothing for a family
+  // whose submit path differs (xAI's `/videos/generations`).
+  return upstream.apiUrlFull === true ? baseUrl : `${baseUrl}${path}`
+}
+
+/**
+ * Submit and status paths for one family.
+ *
+ * xAI is the odd one out: it serves `POST /videos/generations` and returns a
+ * `request_id`, while polling is the same `GET /videos/{id}` every other family
+ * uses. Posting to `/videos` — what the generic family did — answers 404 (#5).
+ */
+const VIDEO_PATHS: Record<string, { submit: string; status: string }> = {
+  xai: { submit: '/videos/generations', status: '/videos/{id}' },
+}
+
+/**
+ * The status URL for a task id.
+ *
+ * `apiUrlFull` names the exact SUBMIT url, so the status url is derived from it
+ * rather than from the base: without this, a user who configured
+ * `https://api.x.ai/v1/videos/generations` got polled at
+ * `…/videos/generations/videos/{id}`, which is a 404 every time (#5).
+ */
+function statusUrlFor(upstream: VideoUpstreamConfig, baseUrl: string, family: string, taskId: string): string {
+  const path = (VIDEO_PATHS[family]?.status ?? '/videos/{id}').replace('{id}', encodeURIComponent(taskId))
+  if (upstream.apiUrlFull !== true) return `${baseUrl}${path}`
+  // Trim the submit path off the configured URL; its origin+prefix is the base.
+  const configured = baseUrl.replace(/\/+$/, '')
+  const submitPath = VIDEO_PATHS[family]?.submit ?? '/videos'
+  const base = configured.endsWith(submitPath)
+    ? configured.slice(0, configured.length - submitPath.length)
+    : configured
+  return `${base}${path}`
 }
 
 /** Whether a URL lives on the same origin as the configured API base. */
@@ -505,6 +542,8 @@ function taskIdOf(payload: Record<string, unknown>): string {
   const candidates = [
     payload.video_id,
     payload.id,
+    // xAI answers a submit with `{ request_id }` and nothing else.
+    payload.request_id,
     nested !== null && typeof nested === 'object' ? (nested as Record<string, unknown>).id : undefined,
     payload.task_id,
     nested !== null && typeof nested === 'object' ? (nested as Record<string, unknown>).task_id : undefined,
@@ -532,15 +571,19 @@ type PollOutcome =
  */
 function readPoll(payload: Record<string, unknown>): PollOutcome {
   const status = String(payload.status ?? '').toLowerCase().trim()
-  if (['failed', 'error', 'cancelled', 'canceled'].includes(status)) {
-    return { kind: 'failed', message: errorTextOf(payload, '视频生成失败') }
+  if (['failed', 'error', 'cancelled', 'canceled', 'expired'].includes(status)) {
+    return { kind: 'failed', message: errorTextOf(payload, status === 'expired' ? '视频任务已过期' : '视频生成失败') }
   }
   const metadata = payload.metadata !== null && typeof payload.metadata === 'object'
     ? payload.metadata as Record<string, unknown>
     : undefined
+  // xAI nests the finished clip under `video.url`.
+  const video = payload.video !== null && typeof payload.video === 'object'
+    ? payload.video as Record<string, unknown>
+    : undefined
   // comemoe puts the result at the top level (`url`); Agnes nests it under
   // `metadata.url`. Accept both regardless of which family we are polling.
-  const urlCandidates = [payload.url, payload.result_url, payload.video_url, metadata?.url]
+  const urlCandidates = [payload.url, payload.result_url, payload.video_url, metadata?.url, video?.url]
   const url = urlCandidates.find(candidate => typeof candidate === 'string' && candidate.trim() !== '')
   if (['completed', 'succeeded', 'success', 'done', 'finished'].includes(status)) {
     if (typeof url !== 'string') {
@@ -548,7 +591,8 @@ function readPoll(payload: Record<string, unknown>): PollOutcome {
     }
     const duration = typeof payload.duration === 'number' ? payload.duration
       : typeof metadata?.duration === 'number' ? metadata.duration as number
-        : undefined
+        : typeof video?.duration === 'number' ? video.duration as number
+          : undefined
     const poster = typeof payload.poster === 'string' ? payload.poster
       : typeof metadata?.poster === 'string' ? metadata.poster as string
         : undefined
@@ -605,7 +649,7 @@ async function pollUntilDone(
 ): Promise<{ url: string; duration?: number; poster?: string }> {
   const policy = POLL_POLICY[family] ?? POLL_POLICY.unknown!
   const deadline = Date.now() + policy.deadlineMs
-  const statusUrl = `${baseUrl}/videos/${encodeURIComponent(taskId)}`
+  const statusUrl = statusUrlFor(upstream, baseUrl, family, taskId)
   const statusAttempt: VideoAttempt = {
     ...attempt,
     phase: 'video-poll',
@@ -783,6 +827,20 @@ function submitBody(
     return body
   }
 
+  if (familyName === 'xai') {
+    // docs.x.ai: `duration` is seconds as a NUMBER, `resolution` is lowercase,
+    // and an image goes as `{ url }` (a data URL is accepted in that slot).
+    const body: Record<string, unknown> = {
+      model: request.upstream ?? request.model,
+      prompt: request.prompt,
+      duration: seconds,
+      resolution: resolution.toLowerCase(),
+    }
+    if (entry.aspectRatios.includes(request.aspectRatio)) body.aspect_ratio = request.aspectRatio
+    if (references.primary !== undefined) body.image = { url: dataUrlOf(references.primary) }
+    return body
+  }
+
   // Generic OpenAI-style video endpoint: best effort, widened parameters.
   const body: Record<string, unknown> = {
     model: request.upstream ?? request.model,
@@ -832,7 +890,7 @@ export async function generateVideo(
   }
 
   const baseUrl = upstream.apiUrl.replace(/\/+$/, '')
-  const url = endpointUrl(upstream, baseUrl, '/videos')
+  const url = endpointUrl(upstream, baseUrl, VIDEO_PATHS[family]?.submit ?? '/videos')
   const body = submitBody(entry, family, request, references)
   // The submit leg's own context: every failure from here to the task id is a
   // "the render never started" report, which is a different problem from a

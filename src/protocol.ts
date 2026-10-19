@@ -453,7 +453,7 @@ export type StoredEntryMode = GenerateMode | 'video'
 export type VideoMode = 'text' | 'image' | 'keyframe' | 'reference' | 'compose'
 
 /** Request-shaping family a video model id routes through. */
-export type VideoModelFamily = 'agnes' | 'comemoe' | 'openai-video' | 'unknown'
+export type VideoModelFamily = 'agnes' | 'comemoe' | 'xai' | 'openai-video' | 'unknown'
 
 /** Video output resolution tier, mapped per family by the engine. */
 export type VideoResolution = '480P' | '720P' | '1080P'
@@ -1468,6 +1468,8 @@ export interface PresetProviderView {
   apiUrl: string
   hint: string
   models: ModelMapping[]
+  /** Video model catalog prefilled alongside the image one. */
+  videoModels?: ModelMapping[]
   /** Set for subscription-backed presets. */
   subscription?: SubscriptionProvider
   /** True when the subscription relies on an undocumented interface. */

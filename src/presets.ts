@@ -22,6 +22,8 @@ export interface PresetProvider {
   hint: string
   /** Known model list prefilled into the channel's model catalog. */
   models: ModelMapping[]
+  /** Known video model list prefilled into the channel's video catalog. */
+  videoModels?: ModelMapping[]
   /** Set for subscription-backed presets; fixed model, no API URL/key. */
   subscription?: SubscriptionProvider
   /** True when the subscription relies on an undocumented interface. */
@@ -90,6 +92,10 @@ export const IMAGE_PRESETS: PresetProvider[] = [
     hint: 'xAI 官方接口：Grok Imagine 系列',
     models: [
       { alias: 'grok-imagine-image', id: 'grok-imagine-image' },
+    ],
+    videoModels: [
+      { alias: 'grok-imagine-video-1.5', id: 'grok-imagine-video-1.5' },
+      { alias: 'grok-imagine-video-1.5-lite', id: 'grok-imagine-video-1.5-lite' },
     ],
   },
   {

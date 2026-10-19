@@ -1139,6 +1139,7 @@ function newChannelDraft(preset: PresetProviderView | undefined): ChannelDraft {
     protocol: 'auto',
     ...preset?.subscription === undefined ? {} : { auth: 'subscription' as const, subscription: preset.subscription },
     models: (preset?.models ?? []).map(model => ({ ...model })),
+    ...preset?.videoModels === undefined ? {} : { videoModels: preset.videoModels.map(model => ({ ...model })) },
   }
 }
 

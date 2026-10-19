@@ -902,6 +902,7 @@ export function makeRoutes(deps: ImageGenRoutesDeps): WebRoute[] {
           apiUrl: preset.apiUrl,
           hint: preset.hint,
           models: preset.models,
+          ...preset.videoModels === undefined ? {} : { videoModels: preset.videoModels },
           ...preset.subscription === undefined ? {} : { subscription: preset.subscription },
           ...preset.experimental === undefined ? {} : { experimental: preset.experimental },
         }))

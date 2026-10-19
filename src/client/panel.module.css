@@ -296,7 +296,12 @@ html[data-dsh-imagegen-active] [data-dsh-imagegen-sidebar-root] > :not([data-dsh
   html[data-dsh-imagegen-active]:not([data-dsh-taskboard-active]):not([data-dsh-ssh-active]) [data-pane='conversation'],
   html[data-dsh-imagegen-active]:not([data-dsh-taskboard-active]):not([data-dsh-ssh-active]) [class*='centerCol'] {
     grid-template-columns: minmax(0, 1fr);
-    grid-template-rows: minmax(0, 1fr) minmax(340px, 0.9fr);
+    /* The chat row used to claim `minmax(340px, 0.9fr)` even when the chat was
+       collapsed and nothing rendered in it. At 664×768 that left the studio
+       404px tall while its config column needed 787px, so everything below
+       "尺寸" was clipped and unreachable (#3). The chat row now sizes to its
+       content: zero when collapsed, its own height when open. */
+    grid-template-rows: minmax(0, 1fr) auto;
     overflow-y: auto;
   }
 
@@ -304,6 +309,13 @@ html[data-dsh-imagegen-active] [data-dsh-imagegen-sidebar-root] > :not([data-dsh
   html[data-dsh-imagegen-active]:not([data-dsh-taskboard-active]):not([data-dsh-ssh-active]) [data-slot='main.conversation'] > [data-phase] {
     grid-column: 1;
     grid-row: 2;
+    min-height: 0;
+  }
+
+  /* An open chat keeps a usable height without stealing the studio's; the
+     studio keeps at least one screen's worth of the column. */
+  html[data-dsh-imagegen-active]:not([data-dsh-taskboard-active]):not([data-dsh-ssh-active]) [data-slot='conversation'] {
+    min-height: min(340px, 45vh);
   }
 
   html[data-dsh-imagegen-active] [data-dsh-imagegen-chat-resizer] {
@@ -459,7 +471,8 @@ html[data-dsh-imagegen-active] .sidebarHistoryHost {
   background: transparent;
 }
 
-[data-dsh-frame][data-sidebar-collapsed] .sidebarHistoryHost {
+[data-dsh-frame][data-sidebar-collapsed] .sidebarHistoryHost,
+[data-sidebar-collapsed] .sidebarHistoryHost {
   display: none;
 }
 
@@ -3342,16 +3355,35 @@ html[data-dsh-imagegen-chat-collapsed] [data-dsh-imagegen-chat-resizer] {
 }
 
 @media (max-width: 760px) {
+  /* `.studio` is a flex container, so the grid properties this rule used to set
+     never applied: the generation row kept its desktop `flex-direction: row`
+     and the config column stayed `height: 100%` inside a 340px-tall view, which
+     is what made "开始生成" unreachable at 664px (#3). One column, and the
+     studio itself is the scrollport. */
   .studio {
-    grid-template-columns: minmax(0, 1fr);
-    grid-template-rows: minmax(220px, 36%) minmax(0, 1fr);
+    display: flex;
+    flex-direction: column;
     overflow-y: auto;
+    overflow-x: hidden;
   }
-  .history { grid-column: 1; grid-row: 1; min-height: 220px; }
-  .generation { grid-column: 1; grid-row: 2; flex-direction: column; min-height: 0; }
-  .config { width: auto; max-width: none; height: auto; min-height: 0; }
+  .history { min-height: 220px; }
+  .generation { flex-direction: column; min-height: 0; }
+  /* The config column must keep its own height budget: `height: auto` here let
+     the card list grow to 1105px and pushed the footer out of the view. */
+  .config {
+    width: auto;
+    max-width: none;
+    height: auto;
+    min-height: 0;
+    max-height: none;
+  }
+  /* The card list sizes to its content instead of squeezing into the leftover
+     height of a column that is now taller than the screen. */
+  .configScroll { flex: none; overflow-y: visible; }
   .config[data-gallery='true'] { flex: none; }
   .canvas { min-height: 560px; }
+  .generation[data-workspace='canvas'],
+  .generation[data-workspace='ppt'] { height: auto; min-height: 560px; }
   .galleryToolbar { align-items: flex-start; flex-direction: column; }
   .galleryToolbarActions { width: 100%; flex-wrap: wrap; justify-content: flex-start; }
   .galleryMasonry { grid-template-columns: 1fr; }

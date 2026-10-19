@@ -55,7 +55,7 @@ function startUpstream() {
   const state = { submits: [], polls: [], downloads: [], script: null }
   const server = createServer((req, res) => {
     const url = new URL(req.url ?? '/', 'http://127.0.0.1')
-    if (req.method === 'POST' && url.pathname === '/v1/videos') {
+    if (req.method === 'POST' && (url.pathname === '/v1/videos' || url.pathname === '/v1/videos/generations')) {
       const chunks = []
       req.on('data', chunk => chunks.push(chunk))
       req.on('end', () => {
@@ -172,6 +172,53 @@ await check('V1b the engine handles the flat comemoe shape and its processing st
     assert.equal(upstream.state.polls[0].id, 'vid_flat_1', 'the flat body\'s resource id is polled')
   } finally {
     await upstream.close()
+  }
+})
+
+await check('V1b2 xAI submits to /videos/generations and reads request_id + video.url (#5)', async () => {
+  const upstream = await startUpstream()
+  upstream.state.script = {
+    // docs.x.ai/developers/rest-api-reference: a submit answers `{ request_id }`
+    // and nothing else; a finished poll nests the clip under `video.url`.
+    submit: { request_id: 'req_xai_1' },
+    polls: [
+      { status: 'pending' },
+      { status: 'done', model: 'grok-imagine-video-1.5', video: { url: `http://127.0.0.1:${upstream.port}/x/clip.mp4`, duration: 8 } },
+    ],
+  }
+  try {
+    const result = await generateVideo(
+      { apiUrl: upstream.base, apiKey: 'sk-video-xai' },
+      { mode: 'text', model: 'grok-imagine-video-1.5', prompt: 'a fox', aspectRatio: '16:9', resolution: '720P', seconds: 8 },
+      { family: 'xai' },
+    )
+    assert.equal(result.videos[0].mime, 'video/mp4')
+    assert.equal(result.videos[0].duration, 8, 'the duration comes from video.duration')
+    const body = upstream.state.submits[0].body
+    assert.equal(body.duration, 8, 'xAI takes a numeric duration')
+    assert.equal(body.resolution, '720p', 'xAI resolution is lowercase')
+    assert.equal(upstream.state.polls[0].id, 'req_xai_1', 'the request_id is the polled id')
+  } finally {
+    await upstream.close()
+  }
+
+  // The escape hatch must not turn into a trap: a user who pastes the exact
+  // submit URL must still be polled at `<base>/videos/{id}`, not at
+  // `…/videos/generations/videos/{id}`.
+  const full = await startUpstream()
+  full.state.script = {
+    submit: { request_id: 'req_xai_full' },
+    polls: [{ status: 'done', video: { url: `http://127.0.0.1:${full.port}/x/full.mp4` } }],
+  }
+  try {
+    await generateVideo(
+      { apiUrl: `${full.base}/videos/generations`, apiKey: 'k', apiUrlFull: true },
+      { mode: 'text', model: 'grok-imagine-video-1.5', prompt: 'p', aspectRatio: '16:9', resolution: '720P', seconds: 5 },
+      { family: 'xai' },
+    )
+    assert.equal(full.state.polls[0].id, 'req_xai_full', 'the status URL is derived from the full submit URL')
+  } finally {
+    await full.close()
   }
 })
 
