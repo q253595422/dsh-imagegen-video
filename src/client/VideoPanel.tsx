@@ -19,7 +19,7 @@ import { tt } from './helpers.ts'
 import { videoModelOptions, type ImageGenConfig, type ImageGenScope } from './settings-scope.ts'
 import type { VideoDirectorPlan, VideoGenerateRequest, VideoHistoryEntry, VideoMode, VideoTask, VideoTaskSummary } from '../protocol.ts'
 import { VIDEO_ASPECT_RATIOS, VIDEO_DURATIONS, type VideoResolution } from '../protocol.ts'
-import { describeVideoModel, isLikelyVideoModelId } from '../video-model-catalog.ts'
+import { describeVideoModel, isLikelyVideoModelId, resolveVideoModelId } from '../video-model-catalog.ts'
 import { Select } from './Select.tsx'
 import { DiagnosticsButton, DiagnosticsPanel } from './DiagnosticsPanel.tsx'
 import type { ImageGenKey } from './locales.ts'
@@ -162,9 +162,17 @@ export function VideoPanel(props: VideoPanelProps) {
     if (!videoModels.includes(model)) setModel(videoModels[0]!)
   }, [videoModels, model])
 
-  const family = model === '' ? 'unknown' : describeVideoModel(model).family
-  const unknownModel = model !== '' && describeVideoModel(model).family === 'unknown'
-  const catalog = describeVideoModel(model)
+  /**
+   * Capabilities belong to the id the provider receives, not to the alias.
+   * A channel can map `seedance-hd` → a fast id that caps at 720p; describing
+   * the alias would offer 1080P and then quietly render 720p.
+   */
+  const catalogModel = useMemo(
+    () => resolveVideoModelId(model, config?.channels),
+    [config, model],
+  )
+  const catalog = describeVideoModel(catalogModel)
+  const unknownModel = model !== '' && catalog.family === 'unknown'
 
   // Modes this model actually supports, so the picker cannot offer a mode the
   // provider will reject (e.g. wan2.2-t2v is text-only).

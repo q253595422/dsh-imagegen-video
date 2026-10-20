@@ -353,6 +353,33 @@ await check('V1c3 Seedance clamps duration and resolution to what the model acce
   }
 })
 
+await check('V1c4 the panel describes the upstream id a channel alias maps to', async () => {
+  // The panel narrows its mode/tier pickers from the model it shows. A channel
+  // alias hides the real id, so the narrowing must resolve it first — otherwise
+  // the picker offers 1080P for a fast model and the request comes back 400.
+  const channels = [
+    { videoModels: [{ alias: 'seedance-fast-hd', id: 'doubao-seedance-2-0-fast-260128' }] },
+    { videoModels: [{ alias: 'plain-alias' }] },
+  ]
+  assert.equal(
+    host.resolveVideoModelId('seedance-fast-hd', channels),
+    'doubao-seedance-2-0-fast-260128',
+    'an alias resolves to the id the provider receives',
+  )
+  assert.equal(host.resolveVideoModelId('plain-alias', channels), 'plain-alias', 'a row without an id stays its own alias')
+  assert.equal(host.resolveVideoModelId('unmapped', channels), 'unmapped', 'an unmapped model passes through unchanged')
+  assert.equal(host.resolveVideoModelId('  ', channels), '', 'a blank model resolves to blank, not to a false match')
+
+  const panelEntry = host.describeVideoModel(host.resolveVideoModelId('seedance-fast-hd', channels))
+  assert.deepEqual(panelEntry.resolutions, ['480P', '720P'], 'the picker must not offer 1080P for a fast id')
+  assert.equal(host.normalizeVideoResolution('seedance-fast-hd', '1080P'), '1080P', 'the alias alone cannot narrow anything')
+  assert.equal(
+    host.normalizeVideoResolution(host.resolveVideoModelId('seedance-fast-hd', channels), '1080P'),
+    '720P',
+    'resolving first is what makes the narrowing apply',
+  )
+})
+
 await check('V1d keyframe and reference modes send family-correct fields', async () => {
   const upstream = await startUpstream()
   upstream.state.script = {

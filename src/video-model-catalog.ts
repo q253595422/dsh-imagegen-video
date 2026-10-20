@@ -221,6 +221,33 @@ export function normalizeVideoCatalog(value: unknown): ModelMapping[] {
   return [...new Map(rows.map(row => [row.alias, row])).values()]
 }
 
+/**
+ * The upstream id a channel alias actually resolves to.
+ *
+ * Capability checks (modes, resolutions, family) must describe the id the
+ * provider RECEIVES, not the alias the user typed: a channel can map
+ * `seedance-hd` → `doubao-seedance-2-0-fast-260128`, and only the latter is
+ * capped at 720p. Describing the alias would offer a tier the id rejects.
+ *
+ * Falls back to the alias itself when no channel maps it (a request built
+ * outside the panel, or a catalog edited after selection).
+ */
+export function resolveVideoModelId(
+  alias: string,
+  channels: ReadonlyArray<{ videoModels?: ReadonlyArray<{ alias: string; id?: string }> }> | undefined,
+): string {
+  const wanted = alias.trim()
+  if (wanted === '') return ''
+  for (const channel of channels ?? []) {
+    for (const row of channel.videoModels ?? []) {
+      if (row.alias !== wanted) continue
+      const upstream = (row.id ?? '').trim()
+      return upstream === '' ? wanted : upstream
+    }
+  }
+  return wanted
+}
+
 /** Clamp a requested duration into what the family accepts. */
 export function clampVideoSeconds(seconds: number): number {
   const rounded = Math.round(seconds)
