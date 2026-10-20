@@ -5,6 +5,47 @@ Attribution for third-party code is in [NOTICE](./NOTICE).
 
 ## Releases
 
+### 1.14.0 — draw it in code, render it here
+
+- **A second renderer, chosen per task.** The canvas composer now carries a
+  *Rendering* select: **Model** (the historical path, unchanged and still the
+  default) or **Code**. The choice belongs to the task being submitted — it is
+  not a setting, not a global switch, and nothing is written to disk, so the
+  next generation on the same canvas can use the other one.
+- **No image or video provider involved.** In code mode the drawing program is
+  written by the conversation model DSH already has (`ctx.agentDefaultModel`,
+  mounted through the host's `agents` and `agentPresets` services) — not the
+  plugin's prompt-enhancement endpoint — and rendered on this machine. One
+  headless turn, no tools, no vendor SDK, no second credential.
+- **Rendered, not prompted.** The returned JavaScript runs in a `node:vm`
+  context with a drawing API and no `require`, `process` or filesystem; each
+  frame is RGBA pixels handed to ffmpeg, or encoded straight to PNG. Nothing
+  leaves the machine, so a code render costs no image/video quota.
+- **Same pipeline, same slots.** A code result is submitted through the same
+  `GenerateRequest` / `VideoGenerateRequest` (an extra `renderer: 'code'`),
+  lands in the same `images/` and `videos/` directories and the same history
+  stores, and is therefore stitchable, timeline-cuttable, transitionable,
+  favouritable and re-framable exactly like a model result. Resolution,
+  aspect and duration come from the same composer controls; frames =
+  duration × 30 fps.
+- **Failures are named and recoverable.** `code-prompt-empty`,
+  `code-prompt-too-long`, `code-no-chat-model`, `code-chat-failed`,
+  `code-not-code`, `code-syntax`, `code-runtime`, `render-timeout`,
+  `render-no-ffmpeg`, `render-cancelled`, `render-encoder-died`,
+  `render-encoder-failed`, `render-empty`. The node shows the host's own
+  message plus a hint to switch back to Model and retry; a missing ffmpeg is
+  warned about in the composer *before* submitting (`POST /code/probe`).
+- **A non-code answer still produces something.** If the model replies with
+  prose instead of a program, the render falls back to a built-in title card
+  and the task is marked `degraded` with the reason — a wasted render is worse
+  than a plain one.
+- **Retry replays the program.** The generated source is kept on the task, so
+  retrying a failed *render* does not ask the model again; generating again
+  does.
+- **No new dependency.** `node:vm`, hand-written PNG encoding and the existing
+  `locateFfmpeg()` / `clip-compose.ts` path — ffmpeg remains the only external
+  tool, needed for code videos only.
+
 ### 1.13.0 — the video is directed before it is rendered
 
 - **A planning step before every render.** With the studio's new *Plan first*

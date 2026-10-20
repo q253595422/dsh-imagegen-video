@@ -87,7 +87,7 @@ function render(ctx) {
 `
 
 await check('C1 a probe reports the pixels and frames the render will use', async () => {
-  const { probeCodeRender, codeRenderPlan } = await import('../lib/index.js')
+  const { probeCodeRender, codeRenderPlan } = await import(new URL('../lib/index.js', import.meta.url).href)
   const plan = codeRenderPlan({ kind: 'video', resolution: '720P', aspectRatio: '16:9', seconds: 3, fps: 30 })
   assert.equal(plan.width, 1280, `expected 1280 wide, got ${plan.width}`)
   assert.equal(plan.height, 720, `expected 720 tall, got ${plan.height}`)
@@ -101,7 +101,7 @@ await check('C1 a probe reports the pixels and frames the render will use', asyn
 })
 
 await check('C2 empty input is refused with a wire code before any model call', async () => {
-  const { runCodeRender, CodeRenderError } = await import('../lib/index.js')
+  const { runCodeRender, CodeRenderError } = await import(new URL('../lib/index.js', import.meta.url).href)
   const chat = scriptedChat(BANNER)
   let code
   try {
@@ -115,7 +115,7 @@ await check('C2 empty input is refused with a wire code before any model call', 
 })
 
 await check('C3 a prose answer degrades to a drawn title card instead of failing', async () => {
-  const { runCodeRender } = await import('../lib/index.js')
+  const { runCodeRender } = await import(new URL('../lib/index.js', import.meta.url).href)
   const chat = scriptedChat('Sure! I would draw a nice blue circle with some text in the middle.')
   const outcome = await runCodeRender(
     { kind: 'image', prompt: 'a calm intro card', resolution: '720P', aspectRatio: '16:9' },
@@ -129,7 +129,7 @@ await check('C3 a prose answer degrades to a drawn title card instead of failing
 })
 
 await check('C4a broken code fails as code-syntax, not as a crash', async () => {
-  const { runCodeRender } = await import('../lib/index.js')
+  const { runCodeRender } = await import(new URL('../lib/index.js', import.meta.url).href)
   const chat = scriptedChat('function render(ctx) { ctx.background( }')
   let code
   try {
@@ -139,7 +139,7 @@ await check('C4a broken code fails as code-syntax, not as a crash', async () => 
 })
 
 await check('C4b code calling an API that does not exist fails as code-runtime', async () => {
-  const { runCodeRender } = await import('../lib/index.js')
+  const { runCodeRender } = await import(new URL('../lib/index.js', import.meta.url).href)
   const chat = scriptedChat('function render(ctx) { ctx.background("#000"); ctx.drawTriangle(1,2,3) }')
   let code
   try {
@@ -149,7 +149,7 @@ await check('C4b code calling an API that does not exist fails as code-runtime',
 })
 
 await check('C4c a slow renderer hits the deadline instead of hanging', async () => {
-  const { renderCode } = await import('../lib/index.js')
+  const { renderCode } = await import(new URL('../lib/index.js', import.meta.url).href)
   // An infinite loop cannot be interrupted inside a frame; the deadline is
   // checked between frames, so make each frame exceed it and use 2 frames.
   const slow = 'function render(ctx) { ctx.background("#000"); const until = Date.now() + 60; while (Date.now() < until) {} }'
@@ -163,7 +163,7 @@ await check('C4c a slow renderer hits the deadline instead of hanging', async ()
 })
 
 await check('C4d a missing ffmpeg is reported by name', async () => {
-  const { renderCode } = await import('../lib/index.js')
+  const { renderCode } = await import(new URL('../lib/index.js', import.meta.url).href)
   let code
   try {
     await renderCode({ kind: 'video', source: BANNER, width: 64, height: 64, fps: 30, seconds: 1 }, { ffmpeg: '/nonexistent/ffmpeg' })
@@ -206,7 +206,7 @@ function startUpstream() {
 }
 
 await check('C5 renderer:code produces a PLAYABLE clip stored with renderer:code', async () => {
-  const { ImageGenerationRuntime, listVideoHistory, locateFfmpeg } = await import('../lib/index.js')
+  const { ImageGenerationRuntime, listVideoHistory, locateFfmpeg } = await import(new URL('../lib/index.js', import.meta.url).href)
   if (locateFfmpeg() === undefined) {
     process.stderr.write('      (skipping: no ffmpeg on this machine, C4d covers that path)\n')
     return
@@ -260,7 +260,7 @@ await check('C5 renderer:code produces a PLAYABLE clip stored with renderer:code
 })
 
 await check('C6 renderer:code produces a real PNG stored with renderer:code', async () => {
-  const { ImageGenerationRuntime } = await import('../lib/index.js')
+  const { ImageGenerationRuntime } = await import(new URL('../lib/index.js', import.meta.url).href)
   const chat = scriptedChat(BANNER)
   const runtime = new ImageGenerationRuntime(
     () => ({ channels: [], defaultChannelId: '' }),
@@ -295,7 +295,7 @@ await check('C6 renderer:code produces a real PNG stored with renderer:code', as
 })
 
 await check('C7 a code-rendered clip is stitchable by the local composer', async () => {
-  const { ImageGenerationRuntime, createClipComposer, locateFfmpeg } = await import('../lib/index.js')
+  const { ImageGenerationRuntime, createClipComposer, locateFfmpeg } = await import(new URL('../lib/index.js', import.meta.url).href)
   if (locateFfmpeg() === undefined) {
     process.stderr.write('      (skipping: stitching needs ffmpeg)\n')
     return
@@ -335,7 +335,7 @@ await check('C7 a code-rendered clip is stitchable by the local composer', async
 })
 
 await check('C8 a request without renderer still goes to the model provider', async () => {
-  const { ImageGenerationRuntime } = await import('../lib/index.js')
+  const { ImageGenerationRuntime } = await import(new URL('../lib/index.js', import.meta.url).href)
   const upstream = startUpstream()
   await new Promise(resolve => upstream.server.listen(0, '127.0.0.1', resolve))
   const { port } = upstream.server.address()
@@ -363,6 +363,116 @@ await check('C8 a request without renderer still goes to the model provider', as
   } finally {
     await new Promise(resolve => upstream.server.close(resolve))
   }
+})
+
+// C9/C10 drive the DSH host seam directly. The rest of this suite injects a
+// scripted seam, which proves the renderer but not the wiring to the user's own
+// conversation model — the piece the requirement is actually about.
+await check('C9 the host seam asks the DSH conversation model and reads its answer', async () => {
+  const { createHostChatSeam } = await import(new URL('../lib/index.js', import.meta.url).href)
+  const seen = { sections: [], turns: [], disposed: 0, created: [], mounted: [] }
+  const agents = {
+    create: async options => {
+      seen.created.push(options)
+      const messages = []
+      const agent = {
+        session: {
+          deriveMessages: () => messages,
+          eventAt: () => undefined,
+          seq: 0,
+        },
+        followup: message => {
+          seen.turns.push(message)
+          messages.push({ role: 'assistant', content: [{ type: 'text', text: BANNER }] })
+        },
+        whenIdle: async () => {},
+        cancel: () => {},
+      }
+      const setup = options.setup
+      if (setup !== undefined) {
+        await setup({ systemPrompt: { section: section => { seen.sections.push(section) } } })
+      }
+      return { agent, dispose: async () => { seen.disposed += 1 } }
+    },
+  }
+  const presets = {
+    resolve: async id => ({ id: id ?? 'default-preset' }),
+    mount: async (_ctx, id) => { seen.mounted.push(id); return { id: id ?? 'default-preset' } },
+  }
+  const seam = createHostChatSeam({
+    agents,
+    presets,
+    defaultModel: { currentSelection: () => ({ provider: 'deepseek', model: 'deepseek-chat' }) },
+    cwd: () => '/tmp',
+    preset: () => '',
+  })
+  assert.equal(seam.available(), true, 'a mounted agents service with a default model is usable')
+  assert.equal(seam.label(), 'deepseek-chat', 'the seam names the model the user already has selected')
+  const answer = await seam.complete({ system: 'you draw', content: 'a blue circle' })
+  assert.equal(answer, BANNER.trim(), 'the model answer comes back verbatim')
+  assert.equal(seen.created.length, 1, 'exactly one agent turn is composed')
+  assert.deepEqual(seen.created[0].agentOptions, { provider: 'deepseek', model: 'deepseek-chat' }, 'the deployment default route is used')
+  assert.equal(seen.created[0].meta.origin, 'subagent', 'the turn is a headless subagent')
+  assert.equal(seen.created[0].meta.agentPreset, 'default-preset', 'the preset that carries the model route is joined')
+  assert.deepEqual(seen.mounted, ['default-preset'], 'the preset is mounted before the brief is registered')
+  assert.equal(seen.sections[0].text, 'you draw', 'the brief travels as a system section')
+  assert.equal(seen.turns[0].content[0].text, 'a blue circle', 'the user turn is the request itself')
+  assert.equal(seen.turns[0].role, 'user')
+  assert.equal(seen.turns[0].source.kind, 'plugin:dsh-imagegen')
+  assert.equal(seen.disposed, 1, 'the agent is disposed even on success')
+})
+
+await check('C10 the host seam reports why it cannot run, instead of failing mid-render', async () => {
+  const { createHostChatSeam } = await import(new URL('../lib/index.js', import.meta.url).href)
+  // No agents service at all: a host that mounts none must be "unavailable",
+  // which is what makes the runtime fall back to its other source.
+  const bare = createHostChatSeam({
+    defaultModel: { currentSelection: () => ({ provider: 'deepseek', model: 'deepseek-chat' }) },
+    cwd: () => '/tmp',
+    preset: () => '',
+  })
+  assert.equal(bare.available(), false, 'no agents service means the host seam is unavailable')
+
+  // A mounted service with no chosen model is also unavailable — and asking it
+  // anyway must name that, not compose an agent with nothing to think with.
+  const chooser = createHostChatSeam({
+    agents: { create: async () => { throw new Error('must not be called without a model') } },
+    defaultModel: { currentSelection: () => ({}) },
+    cwd: () => '/tmp',
+    preset: () => '',
+  })
+  assert.equal(chooser.available(), false, 'an empty model selection is not usable')
+  let message = ''
+  try { await chooser.complete({ system: 's', content: 'c' }) } catch (error) { message = error.message }
+  assert.match(message, /对话模型|模型/, `the refusal must name the missing model, got: ${message}`)
+
+  // A turn that ended in an error must surface that reason. `whenIdle` resolves
+  // regardless, so without reading the durable ending this is the "returned
+  // nothing" message that names none of the real cause.
+  const failing = createHostChatSeam({
+    agents: {
+      create: async options => {
+        const agent = {
+          session: {
+            deriveMessages: () => [],
+            seq: 1,
+            eventAt: () => ({ type: 'turn/end', data: { reason: { kind: 'error', error: { code: 'unauthorized', message: 'bad key' } } } }),
+          },
+          followup: () => {},
+          whenIdle: async () => {},
+          cancel: () => {},
+        }
+        if (options.setup !== undefined) await options.setup({ systemPrompt: { section: () => {} } })
+        return { agent, dispose: async () => {} }
+      },
+    },
+    defaultModel: { currentSelection: () => ({ provider: 'p', model: 'm' }) },
+    cwd: () => '/tmp',
+    preset: () => '',
+  })
+  let failure = ''
+  try { await failing.complete({ system: 's', content: 'c' }) } catch (error) { failure = error.message }
+  assert.match(failure, /unauthorized|bad key/, `the real turn failure must reach the user, got: ${failure}`)
 })
 
 // ---------------------------------------------------------------- report

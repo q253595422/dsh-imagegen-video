@@ -19,7 +19,7 @@
  */
 
 import type { Context } from '@deepseek-ai/cordis'
-import { lastAssistantText } from './skill-runner.ts'
+import { agentSessionFailure, lastAssistantText, type SkillAgentSession } from './skill-runner.ts'
 import type { HostChatSeam } from './generation-runtime.ts'
 
 /** The host `agents` service, narrowed to what one plain turn needs. */
@@ -35,7 +35,7 @@ export interface HostAgentsService {
 
 /** One composed agent, narrowed to sending a turn and reading its answer. */
 export interface HostAgent {
-  session: { deriveMessages: () => readonly unknown[] }
+  session: SkillAgentSession
   followup: (message: { id: string; role: 'user'; content: Array<{ type: 'text'; text: string }>; source: { kind: string } }) => void
   whenIdle: () => Promise<void>
   cancel: (reason: { kind: string }) => void
@@ -128,6 +128,11 @@ export function createHostChatSeam(options: HostChatOptions): HostChatSeam {
         })
         await agent.whenIdle()
         if (signal?.aborted === true) throw new Error('代码生成已取消')
+        // `whenIdle` resolves even when the turn failed; the durable ending is
+        // where a dead key or an unreachable provider actually says so. Without
+        // this the user would read "the model returned nothing" instead.
+        const failure = agentSessionFailure(agent.session)
+        if (failure !== undefined) throw new Error(`DSH 的对话模型调用失败：${failure}`)
         const answer = lastAssistantText(agent.session.deriveMessages())
         if (answer === undefined) throw new Error('DSH 的对话模型没有返回任何内容')
         return answer

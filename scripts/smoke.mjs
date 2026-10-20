@@ -5007,6 +5007,12 @@ await check('E1 client apply mounts the sidebar entry and studio (jsdom)', async
         blob: async () => new Blob([new Uint8Array([0, 0, 0, 24, 102, 116, 121, 112])], { type: 'video/mp4' }),
       }
     }
+    if (path.endsWith('/code/probe')) {
+      // The composer asks this before a code run so it can warn about a missing
+      // ffmpeg BEFORE a chat call is spent. Report it as available here; the
+      // warning branch is covered by its own case in the code-render suite.
+      return { ok: true, json: async () => ({ ok: true, probe: { width: 1280, height: 720, fps: 30, seconds: 5, frames: 150, ffmpegAvailable: true, ffmpegPath: '/usr/local/bin/ffmpeg' } }) }
+    }
     if (path.endsWith('/video/tasks/submit')) {
       const body = JSON.parse(init.body)
       videoSubmissions.push(body)
@@ -6928,6 +6934,85 @@ await check('E1 client apply mounts the sidebar entry and studio (jsdom)', async
     clipOverlay.querySelector('button').dispatchEvent(new jsdomWindow.MouseEvent('click', { bubbles: true, cancelable: true }))
     await new Promise(resolve => setTimeout(resolve, 40))
     assert.equal(view.querySelector('[data-video-preview]') === null, true, 'the full-screen player dismisses')
+
+    // --- the code-generation path, chosen per task in the same composer ---
+    // The requirement is that both paths sit side by side and the user picks one
+    // per run; this drives the real composer rather than the runtime API.
+    const rendererTrigger = view.querySelector('button[data-dsh-select][aria-label="生成方式"]')
+    assert.ok(rendererTrigger !== null, 'the composer offers a per-task rendering choice')
+    assert.equal(rendererTrigger.textContent, '模型生成', 'the historical model path stays the default')
+    rendererTrigger.click()
+    await waitForSelector(jsdomDocument, '[data-dsh-select-menu]')
+    const codeOption = [...jsdomDocument.querySelectorAll('[data-dsh-select-menu] [role="option"]')].find(option => option.textContent === '代码生成')
+    assert.ok(codeOption !== undefined, 'the menu offers the code path next to model generation')
+    codeOption.click()
+    await new Promise(resolve => setTimeout(resolve, 60))
+    // Re-grab the composer: the switch re-renders it, and a stale reference
+    // would make the "picker is hidden" assertion pass against a detached node.
+    const codeComposer = view.querySelector('[data-canvas-no-zoom] textarea').closest('[data-canvas-no-zoom]')
+    assert.equal(view.querySelector('button[data-dsh-select][aria-label="生成方式"]').textContent, '代码生成', 'the switch took effect')
+
+    // No provider is picked in this mode — there is no provider to pick.
+    assert.equal(codeComposer.querySelector('[aria-label^="视频模型"]') === null, true, 'the video model picker is hidden on the code path')
+    // The shape controls that the code renderer actually honours stay.
+    assert.ok(view.querySelector('[aria-label="比例"]') !== null, 'the aspect select survives the switch')
+    assert.ok(view.querySelector('[aria-label="分辨率"]') !== null, 'the resolution select survives the switch')
+    assert.ok(view.querySelector('[aria-label="时长"]') !== null, 'the duration select survives the switch')
+    assert.ok(
+      (view.textContent ?? '').includes('由本机渲染') || (view.textContent ?? '').includes('本机渲染'),
+      'the composer explains that this path renders locally',
+    )
+
+    const codePrompt = view.querySelector('[data-canvas-no-zoom] textarea')
+    const codeSetter = Object.getOwnPropertyDescriptor(jsdomWindow.HTMLTextAreaElement.prototype, 'value').set
+    codeSetter.call(codePrompt, 'a slow pan over a blue grid')
+    codePrompt.dispatchEvent(new jsdomWindow.Event('input', { bubbles: true }))
+    await new Promise(resolve => setTimeout(resolve, 40))
+    const codeSend = view.querySelector('[aria-label="生成视频"]')
+    assert.equal(codeSend.disabled, false, 'a code run does not require a connected channel')
+    const codeRunsBefore = canvasVideoSubmissions.length
+    codeSend.dispatchEvent(new jsdomWindow.MouseEvent('click', { bubbles: true, cancelable: true }))
+    assert.ok(
+      await waitUntil(() => canvasVideoSubmissions.length > codeRunsBefore, 6000),
+      'the composer submits a code run',
+    )
+    const codeRun = canvasVideoSubmissions.at(-1)
+    assert.equal(codeRun.renderer, 'code', 'the run is marked as a code render')
+    assert.equal(codeRun.model, '', 'no model alias is sent on the code path')
+    assert.equal(codeRun.channelId, undefined, 'no channel is named on the code path')
+    assert.equal(codeRun.mode, 'text', 'references are not sent as provider frames')
+    assert.equal(codeRun.image, undefined, 'the wired picture is not uploaded as a provider frame')
+    assert.equal(codeRun.prompt, 'a slow pan over a blue grid')
+    assert.equal(codeRun.seconds, Number(codeRun.seconds), 'the duration is a number')
+    assert.ok(
+      await waitUntil(() => (canvasSaves.at(-1)?.nodes ?? []).some(node => node.id === codeRun.canvas.nodeId && node.metadata?.renderer === 'code'), 6000),
+      'the placeholder remembers it is a code render',
+    )
+    // A failed code run must say it can be switched back, not just die.
+    const codePlaceholderId = codeRun.canvas.nodeId
+    const codeTask = videoTasks.find(task => task.id === canvasSaves.at(-1).nodes.find(node => node.id === codePlaceholderId).metadata.taskId)
+    assert.ok(codeTask !== undefined, 'the code run reached the queue stub')
+    codeTask.status = 'failed'
+    codeTask.error = 'code-syntax: unexpected token'
+    assert.ok(
+      await waitUntil(() => (canvasSaves.at(-1)?.nodes ?? []).find(node => node.id === codePlaceholderId)?.metadata?.status === 'error', 6000),
+      'a failed code run lands on the node as an error',
+    )
+    const failedCodeNode = view.querySelector(`[data-node-id="${codePlaceholderId}"]`)
+    assert.ok((failedCodeNode?.textContent ?? '').includes('code-syntax'), 'the host message is shown verbatim')
+    assert.ok((failedCodeNode?.textContent ?? '').includes('切回模型生成'), 'the node says how to recover')
+
+    // Switching back restores the model picker with the configured model.
+    view.querySelector('button[data-dsh-select][aria-label="生成方式"]').click()
+    await waitForSelector(jsdomDocument, '[data-dsh-select-menu]')
+    const modelOption = [...jsdomDocument.querySelectorAll('[data-dsh-select-menu] [role="option"]')].find(option => option.textContent === '模型生成')
+    assert.ok(modelOption !== undefined, 'the menu still offers the model path')
+    modelOption.click()
+    await new Promise(resolve => setTimeout(resolve, 60))
+    assert.ok(
+      await waitUntil(() => view.querySelector('[aria-label^="视频模型"]') !== null),
+      'switching back brings the video model picker back',
+    )
 
     // Switching back to the image kind restores the image controls.
     const imageKindButton = [...view.querySelectorAll('[class*="composerKind"] button')].find(button => button.textContent === '图片')
