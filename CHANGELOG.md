@@ -5,6 +5,27 @@ Attribution for third-party code is in [NOTICE](./NOTICE).
 
 ## Releases
 
+### 1.11.0 — the canvas runs the whole chain, not one node
+
+- **A workflow run.** The dock's new branch button walks the graph downstream
+  from the selection (or from every unfinished node when nothing is selected)
+  and runs the whole chain: nodes with no remaining dependency start together,
+  the next layer waits for the previous one, and finished nodes are reused
+  rather than generated twice.
+- **Failures stop the chain where they happen.** One node failing ends the run
+  and names the node, instead of submitting a downstream wave that would fail
+  for lack of input and read like a broken app.
+- **A cycle is refused before anything is submitted.** Self-loops count as
+  cycles: a node wired to itself would wait for its own product forever.
+- **A running node is adopted, not resubmitted.** Re-running a chain no longer
+  pays twice for work already in flight.
+- **Progress and stop.** A bar reports the current layer and how many nodes are
+  done; stopping ends the chain at the next layer boundary while tasks already
+  submitted finish on their own.
+- The scheduling rules are pure functions (`workflow-graph.ts`) and the run loop
+  is engine-free (`workflow-runner.ts`), so `pnpm test:workflow` exercises them
+  offline.
+
 ### 1.10.0 — storyboards: a shot list that runs into clip nodes
 
 - **A storyboard node.** One board is a list of shots — a prompt and a length

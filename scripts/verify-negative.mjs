@@ -325,6 +325,30 @@ const CASES = [
     to: '    return [shot.nodeId ?? "missing"]',
     expect: /list order, ready clips only/,
   },
+  // --------------------------------------------------------------- workflow
+  {
+    // Treating a self-loop as "no dependency" makes the run start a node that
+    // waits for its own product forever -- a hang the user cannot see, instead
+    // of the cycle refusal. The planner has to call it a cycle by name.
+    name: 'a self-loop is mistaken for an independent node',
+    runner: 'workflow',
+    file: 'src/client/workflow-graph.ts',
+    from: '    dependencies.get(edge.toNodeId)!.add(edge.fromNodeId)',
+    to: '    if (edge.fromNodeId !== edge.toNodeId) dependencies.get(edge.toNodeId)!.add(edge.fromNodeId)',
+    expect: /互相依赖的节点应报为环/,
+  },
+  {
+    // The failure rule that keeps a broken node from spawning a wave of
+    // downstream failures: drop it and the chain keeps submitting after a
+    // failure, which is the "everything looks broken" state the loop exists to
+    // avoid. The run loop must stop at the failed node.
+    name: 'the run loop keeps going after a node failed',
+    runner: 'workflow',
+    file: 'src/client/workflow-runner.ts',
+    from: "      if (outcome.value === 'failed') {",
+    to: "      if (false) {",
+    expect: /链路中段失败应让整体失败|失败节点之后不该再提交任何节点/,
+  },
   // ------------------------------------------------- one browser launcher only
   {
     // The flake this removes is invisible in a single run: two guards picking
@@ -904,6 +928,9 @@ const RUNNERS = {
   // The board's persisted state and its pure rules, driven against the real
   // modules in a temp home. No build needed: the source is imported directly.
   storyboard: { script: 'scripts/smoke-storyboard.mjs', build: false },
+  // The workflow planner and run loop are imported straight from source, so
+  // this group needs no build: it is pure functions plus a promise loop.
+  workflow: { script: 'scripts/smoke-workflow.mjs', build: false },
   // The archive rule, run against a real `pnpm pack`. No rebuild: the archive
   // contents depend on package.json and the tree, not on the built output.
   pack: { script: 'scripts/verify-pack.mjs', build: false },

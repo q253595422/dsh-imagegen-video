@@ -6650,6 +6650,23 @@ await check('E1 client apply mounts the sidebar entry and studio (jsdom)', async
     drainDockFrames(12)
     jsdomWindow.requestAnimationFrame = originalRequestAnimationFrame
 
+    // The workflow runner lives in the dock: one press runs the selected
+    // nodes' downstream chain. It must be rendered, reachable by its label,
+    // and — with nothing selected and no unfinished node — report the
+    // "nothing to run" reason instead of failing silently.
+    const workflowDockButton = view.querySelector('[data-dock-item][data-label="运行工作流（从选中节点往下）"] button')
+    assert.ok(workflowDockButton !== null, 'canvas workflow dock action is rendered')
+    const workflowErrorsBefore = view.querySelectorAll('[data-canvas-error]').length
+    workflowDockButton.click()
+    await waitUntil(() => view.querySelectorAll('[data-canvas-error]').length > workflowErrorsBefore
+      || view.textContent.includes('这条链路上的节点都已经有结果了'))
+    const workflowMessage = view.textContent
+    assert.ok(
+      workflowMessage.includes('这条链路上的节点都已经有结果了')
+      || workflowMessage.includes('画布上还没有节点'),
+      'workflow action explains why nothing was run when the chain is already complete',
+    )
+
     // The background menu exposes an explicit performance-off action, and the
     // blank mode unmounts every animated background implementation (#27).
     const backgroundDockButton = view.querySelector('[data-dock-item][data-label="画布背景"] button')

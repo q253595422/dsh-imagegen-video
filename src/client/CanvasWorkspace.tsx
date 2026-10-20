@@ -9,7 +9,7 @@ import { useCallback, useEffect, useMemo, useRef, useState, type ChangeEvent, ty
 import { createPortal } from 'react-dom'
 import {
   Bold, BookOpen, ChevronDown, Copy, Download, Eraser, FileText as FileTextIcon, FolderX, Hand, Image as ImageIcon,
-  Keyboard, Layers, Map as MapIcon, Maximize, Maximize2, MousePointer2, Palette, Pencil, Plus, Redo2, Scissors, SendHorizonal, Sparkles, Star,
+  GitBranch, Keyboard, Layers, Map as MapIcon, Maximize, Maximize2, MousePointer2, Palette, Pencil, Plus, Redo2, Scissors, SendHorizonal, Sparkles, Star,
   SquareDashedMousePointer, Trash2, Type, Undo2, Upload, Wand2, Wallpaper, X,
 } from 'lucide-react'
 import type { CanvasAnnotation, CanvasAssetRef, CanvasConnection, CanvasDocument, CanvasFileKind, CanvasLayerInfo, CanvasLayerPlanItem, CanvasNode, CanvasRect, CanvasStoryboard, CanvasVideoRef, CanvasSkillConfigApplyResult, CanvasSkillConfigField, CanvasSkillConfigSaveResult, CanvasSkillConfigStep, CanvasSkillConfigView, CanvasSkillDescriptor, CanvasSkillLibrary, CanvasSkillOutput, CanvasSkillRunRequest, CanvasSkillTask, CanvasSketchStroke, GenerateRequest, GenerationTask, HistoryEntry, VideoGenerateRequest, VideoTaskSummary, VideoMode, VideoResolution } from '../protocol.ts'
@@ -23,6 +23,9 @@ import { errorMessage, tt } from './helpers.ts'
 import type { ImageGenKey } from './locales.ts'
 import { autoRemoveBackground, canvasToDataUrl, compositeAnnotatedResult, containRect, cropRaster, drawAnnotation, loadRaster, rectBetween, transparencyRatio } from './image-ops.ts'
 import { PosterEditor } from './PosterEditor.tsx'
+// 工作流执行器：分层调度在 workflow-graph.ts（纯函数），执行循环在 workflow-runner.ts。
+import { runWorkflow } from './workflow-runner.ts'
+import type { WorkflowProgress } from './workflow-runner.ts'
 import { ShortcutHelp, shortcutKeysFor } from './ShortcutHelp.tsx'
 import { TemplateLibrary } from './TemplateLibrary.tsx'
 import { ModelPicker, resolveModelChoice, type ModelPickerValue } from './ModelPicker.tsx'
@@ -603,7 +606,7 @@ function rasterizeSketch(strokes: CanvasSketchStroke[], boardWidth: number, boar
   return { dataUrl: canvas.toDataURL('image/png'), width: canvas.width, height: canvas.height }
 }
 
-type ToolbarIconName = 'new' | 'select' | 'pan' | 'image' | 'text' | 'file' | 'sketch' | 'eraser' | 'trash' | 'undo' | 'redo' | 'fit' | 'minimap' | 'background' | 'template' | 'download' | 'duplicate' | 'sparkle' | 'send' | 'close' | 'deleteProject' | 'annotate' | 'removeBg' | 'layers' | 'bold' | 'color' | 'skill' | 'upload' | 'expand' | 'favorite' | 'favoriteFilled' | 'help'
+type ToolbarIconName = 'new' | 'select' | 'pan' | 'image' | 'text' | 'file' | 'sketch' | 'eraser' | 'trash' | 'undo' | 'redo' | 'fit' | 'minimap' | 'background' | 'template' | 'download' | 'duplicate' | 'sparkle' | 'send' | 'close' | 'deleteProject' | 'annotate' | 'removeBg' | 'layers' | 'bold' | 'color' | 'skill' | 'upload' | 'expand' | 'favorite' | 'favoriteFilled' | 'help' | 'workflow'
 
 /** Lucide icons (stroke matches the DSH line style); one shared component so
  *  every dock/toolbar icon comes from the same well-drawn set. */
@@ -645,6 +648,8 @@ function ToolbarIcon({ name, size = 16 }: { name: ToolbarIconName; size?: number
     // "help" as a bare `?` reads as unknown/unimplemented in a dock that is
     // otherwise all verbs.
     case 'help': return <Keyboard {...common} />
+    // 一条连线分叉成三支：这是「整张图按依赖跑」这个动作最短的形状。
+    case 'workflow': return <GitBranch {...common} />
   }
 }
 
@@ -1787,6 +1792,13 @@ export function CanvasWorkspace(props: CanvasWorkspaceProps): React.JSX.Element 
   const [annotateNodeId, setAnnotateNodeId] = useState<string | null>(null)
   const [annotationDraft, setAnnotationDraft] = useState<{ nodeId: string; rect: CanvasRect } | null>(null)
   const [busyNodes, setBusyNodes] = useState<Record<string, string>>({})
+  // 工作流运行：`null` 表示没在跑；中断控制器放在 ref 里，因为它不是渲染数据。
+  const [workflowBusy, setWorkflowBusy] = useState(false)
+  const [workflowProgress, setWorkflowProgress] = useState<WorkflowProgress | null>(null)
+  const workflowAbort = useRef<AbortController | null>(null)
+  // 防重入读 ref 而不是 state：`runWorkflowFrom` 的闭包会捕获创建时的
+  // `workflowBusy`，连点两下时第二次看到的仍是 false。
+  const workflowBusyRef = useRef(false)
   const [focusNodeId, setFocusNodeId] = useState<string | null>(null)
   const [colorPickerNodeId, setColorPickerNodeId] = useState<string | null>(null)
   const annotationDragRef = useRef<{ nodeId: string; pointerId: number; start: Point; box: { left: number; top: number; width: number; height: number } } | null>(null)
@@ -3830,6 +3842,178 @@ export function CanvasWorkspace(props: CanvasWorkspaceProps): React.JSX.Element 
       setError(caught instanceof Error ? caught.message : String(caught))
     }
   }, [annotatedReference, api, channelIsConnected, defaultChannelId, modelGroups, onOpenSettings, patchNode, retryVideoGeneration, upstreamNodes])
+
+  // --------------------------------------------------------------- workflow
+
+  /**
+   * 判断一个节点是不是「已经有可用产物」。
+   *
+   * 产物按节点类型各有一处存放点（图像的 asset、视频的 video），所以这里
+   * 按类型分别看，而不是只看 `status`：一个 `success` 的配置节点没有任何
+   * 产物，不该被当成跑过。
+   */
+  const hasProduce = useCallback((node: CanvasNode): boolean => {
+    const metadata = nodeMetadata(node)
+    if (node.type === 'image') return metadata.status === 'success' && usableAsset(node) !== undefined
+    if (node.type === 'video') {
+      const video = metadata.video
+      return metadata.status === 'success' && video !== undefined && video.url !== ''
+    }
+    return false
+  }, [])
+
+  /**
+   * 等一个节点从 `generating` 走到 `success` / `error`。
+   *
+   * 轮询而不是事件：回填发生在几个不同的 effect 里（图像、视频各一条），
+   * 统一等一个终态比在每条链路上挂回调更不容易漏。
+   *
+   * @param settleMs - 最多等多久；到点仍停在 `generating` 视为失败，避免一次
+   *   丢了的任务让整条链路永远挂着。
+   */
+  const waitForNodeSettled = useCallback(async (
+    nodeId: string,
+    signal: AbortSignal,
+    settleMs = 30 * 60 * 1000,
+  ): Promise<'success' | 'error' | 'gone' | 'cancelled'> => {
+    const deadline = Date.now() + settleMs
+    for (;;) {
+      if (signal.aborted) return 'cancelled'
+      const node = documentRef.current?.nodes.find(item => item.id === nodeId)
+      if (node === undefined) return 'gone'
+      const status = nodeMetadata(node).status
+      if (status === 'success') return 'success'
+      if (status === 'error') return 'error'
+      if (status !== 'generating') return 'gone'
+      if (Date.now() > deadline) return 'error'
+      await new Promise<void>(resolve => { window.setTimeout(resolve, 700) })
+    }
+  }, [])
+
+  /**
+   * 等一次提交真正落地。
+   *
+   * `retryGeneration` 内部的 `patchNode` 只是排进 React 的更新队列，而
+   * `documentRef` 要等渲染才刷新——调用后立刻读状态会读到提交前的旧值，把
+   * 一次成功的提交误判成失败。所以这里轮询等状态离开原值，而不是同步读。
+   *
+   * @returns `generating` 表示已提交；`error` 表示提交失败或节点已经出错。
+   */
+  const waitForSubmission = useCallback(async (nodeId: string, signal: AbortSignal): Promise<'generating' | 'error' | 'gone' | 'cancelled'> => {
+    // 提交是本地的一次请求往返：正常几百毫秒就有结论。给 8 秒已经宽裕，
+    // 再长只会让一次注定失败的提交把整条链路挂住。
+    const deadline = Date.now() + 8_000
+    for (;;) {
+      if (signal.aborted) return 'cancelled'
+      const node = documentRef.current?.nodes.find(item => item.id === nodeId)
+      if (node === undefined) return 'gone'
+      const status = nodeMetadata(node).status
+      if (status === 'generating') return 'generating'
+      // 提交后立刻成功（例如走了本地缓存）也算落地了。
+      if (status === 'success') return 'generating'
+      if (status === 'error') return 'error'
+      if (Date.now() > deadline) return 'error'
+      await new Promise<void>(resolve => { window.setTimeout(resolve, 120) })
+    }
+  }, [])
+
+  /**
+   * 跑一个节点并等到它出结果。
+   *
+   * 生成复用既有链路：`retryGeneration` 从节点 metadata 里的 prompt/model
+   * 重新提交，图像和视频各自走自己的队列。执行器只加「等」和「判断」。
+   * 已经有产物的节点直接复用，这就是冻结/缓存语义：跑过一次的链路不会再
+   * 花一次钱。
+   */
+  const runWorkflowNode = useCallback(async (
+    nodeId: string,
+    options: { signal: AbortSignal; reuse: boolean },
+  ): Promise<'done' | 'cached' | 'skipped' | 'failed'> => {
+    const node = documentRef.current?.nodes.find(item => item.id === nodeId)
+    if (node === undefined) return 'skipped'
+    if (options.reuse && hasProduce(node)) return 'cached'
+    // 没有提示词的配置/文本节点不产生调用：它们是输入，跑完原样留在原处。
+    if (node.type !== 'image' && node.type !== 'video') return 'skipped'
+    const prompt = (nodeMetadata(node).prompt ?? '').trim()
+    if (prompt === '') return 'skipped'
+    if (options.signal.aborted) return 'failed'
+    // 这个节点已经在跑了：接管它，而不是再提交一次。重跑一次等于再付一次钱，
+    // 而且两个任务会抢着回填同一个节点。
+    if (nodeMetadata(node).status === 'generating') {
+      const settledNow = await waitForNodeSettled(nodeId, options.signal)
+      return settledNow === 'success' ? 'done' : 'failed'
+    }
+    await retryGeneration(node)
+    // 提交是否落地要看状态真的变了，不能同步读：`patchNode` 只是排进 React
+    // 的更新队列，`documentRef` 还没刷新。
+    const submitted = await waitForSubmission(nodeId, options.signal)
+    if (submitted !== 'generating') return 'failed'
+    const settled = await waitForNodeSettled(nodeId, options.signal)
+    return settled === 'success' ? 'done' : 'failed'
+  }, [hasProduce, retryGeneration, waitForNodeSettled, waitForSubmission])
+
+  /**
+   * 从选中的起点往下游跑完整张图。
+   *
+   * 起点是选区：没选东西时以「失败/未跑过」的节点为起点，等于「把这板上
+   * 该跑的补完」。只往下游走，因为上游是输入，不是这次要重做的东西。
+   */
+  const runWorkflowFrom = useCallback(async (roots: string[]): Promise<void> => {
+    const current = documentRef.current
+    if (current === null) return
+    if (workflowBusyRef.current) return
+    if (current.nodes.length === 0) { setError(tt('canvas.workflow.empty')); return }
+    const starts = roots.length > 0
+      ? roots
+      : current.nodes.filter(node => {
+          if (node.type !== 'image' && node.type !== 'video') return false
+          if (!hasProduce(node)) return true
+          return nodeMetadata(node).status === 'error'
+        }).map(node => node.id)
+    if (starts.length === 0) { setError(tt('canvas.workflow.allDone')); return }
+    const controller = new AbortController()
+    workflowAbort.current = controller
+    workflowBusyRef.current = true
+    setWorkflowBusy(true)
+    setWorkflowProgress({ layer: 0, total: 0, running: [], done: 0, count: 0 })
+    try {
+      const result = await runWorkflow({
+        roots: starts,
+        nodeIds: current.nodes.map(node => node.id),
+        edges: current.connections,
+        signal: controller.signal,
+        onProgress: progress => setWorkflowProgress(progress),
+        run: async nodeId => {
+          const outcome = await runWorkflowNode(nodeId, { signal: controller.signal, reuse: true })
+          return outcome === 'cached' ? 'cached' : outcome
+        },
+      })
+      if (result.status === 'cycle') {
+        setError(tt('canvas.workflow.cycle', { count: result.cycle.length }))
+        return
+      }
+      if (result.status === 'cancelled') { setNotice(tt('canvas.workflow.cancelled')); return }
+      if (result.status === 'failed') {
+        const failed = current.nodes.find(node => node.id === result.failedNodeId)
+        setError(tt('canvas.workflow.failed', {
+          node: failed?.title ?? (result.failedNodeId ?? ''),
+          message: result.error ?? '',
+        }))
+        return
+      }
+      setNotice(tt('canvas.workflow.done', { count: result.done }))
+      setError(null)
+    } finally {
+      workflowAbort.current = null
+      workflowBusyRef.current = false
+      setWorkflowBusy(false)
+      setWorkflowProgress(null)
+    }
+  }, [hasProduce, runWorkflowNode])
+
+  const cancelWorkflow = useCallback((): void => {
+    workflowAbort.current?.abort()
+  }, [])
 
   // Orphan reconciliation: a generating placeholder whose task no longer exists
   // in the host feed (e.g. the host restarted) can never complete on its own.
@@ -5915,6 +6099,16 @@ export function CanvasWorkspace(props: CanvasWorkspaceProps): React.JSX.Element 
           />
         </div>
         <span className={css.dockDivider} aria-hidden="true" />
+        <div className={css.dockItem} data-dock-item="" data-label={tt('canvas.workflow.run')}>
+          <IconButton
+            name="workflow"
+            size={18}
+            label={tt('canvas.workflow.run')}
+            active={workflowBusy}
+            disabled={document === null || document.nodes.length === 0}
+            onClick={() => { void runWorkflowFrom([...selectedIds]) }}
+          />
+        </div>
         <div className={css.dockItem} data-dock-item="" data-label={tt('canvas.background')}>
           <IconButton
             name="background"
@@ -6166,6 +6360,17 @@ export function CanvasWorkspace(props: CanvasWorkspaceProps): React.JSX.Element 
       <button type="button" aria-label={tt('canvas.dismiss')} onClick={() => { setError(null); setErrorAction(null) }}><ToolbarIcon name="close" /></button>
     </div> : null}
     {notice !== null ? <div className={css.errorToast} data-variant="notice" role="status" data-canvas-no-zoom=""><span>{notice}</span><button type="button" aria-label={tt('canvas.dismiss')} onClick={() => setNotice(null)}><ToolbarIcon name="close" /></button></div> : null}
+    {/* 运行中的进度：用户要能看到「跑到第几层、还剩多少」，而不是一个转圈。 */}
+    {workflowProgress !== null ? <div className={css.workflowBar} data-workflow-progress="" role="status" data-canvas-no-zoom="">
+      <span className={css.nodeSpinner} aria-hidden="true" />
+      <span>{tt('canvas.workflow.progress', {
+        layer: Math.min(workflowProgress.layer + 1, workflowProgress.total),
+        total: workflowProgress.total,
+        done: workflowProgress.done,
+        count: workflowProgress.count,
+      })}</span>
+      <button type="button" onClick={cancelWorkflow}>{tt('canvas.workflow.stop')}</button>
+    </div> : null}
 
     {posterTarget !== null && document?.id === posterTarget.canvasId ? (() => {
       const source = document.nodes.find(node => node.id === posterTarget.nodeId)

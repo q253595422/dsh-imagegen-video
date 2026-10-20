@@ -1374,6 +1374,39 @@
   box-shadow: 0 12px 30px rgb(15 23 42 / 18%);
 }
 
+/* 工作流进度：贴在画布底部居中，位于 dock 之上但不出画布区域。
+   档位沿用 --z-notice，不新增 rung——项目的 z-index 表有契约测试。 */
+.workflowBar {
+  position: absolute;
+  left: 50%;
+  bottom: 96px;
+  transform: translateX(-50%);
+  z-index: var(--z-notice);
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  max-width: min(520px, 88%);
+  padding: 8px 12px;
+  border-radius: 10px;
+  border: 1px solid var(--dsw-alias-border-l1);
+  background: var(--dsw-alias-bg-layer-1);
+  color: var(--dsw-alias-label-secondary);
+  font-size: 12.5px;
+  line-height: 1.5;
+  box-shadow: 0 12px 30px rgb(15 23 42 / 18%);
+}
+
+.workflowBar button {
+  flex: none;
+  border: 1px solid currentColor;
+  border-radius: 7px;
+  background: transparent;
+  color: inherit;
+  cursor: pointer;
+  padding: 3px 9px;
+  font-size: 12px;
+}
+
 .errorToast button {
   border: none;
   background: transparent;
