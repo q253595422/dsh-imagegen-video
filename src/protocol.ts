@@ -178,6 +178,27 @@ export const VIDEO_API = {
 } as const
 
 /**
+ * Code-render route family: the second production path, beside the model APIs.
+ *
+ * A request here names a chat model, not an image/video model: the chat model
+ * writes drawing code and this host renders it locally. Nothing in this family
+ * touches an image or video provider.
+ */
+export const CODE_RENDER_API = {
+  /**
+   * Resolve what a render WOULD do (dimensions, frames, dependency status)
+   * without calling a model or rendering a frame.
+   *
+   * There is deliberately no `render` route here. A code render is submitted
+   * through the ordinary generate / video-submit endpoints with
+   * `renderer: 'code'`, so it inherits the same queue, cancellation, retry,
+   * placeholder and history behaviour as a model render instead of growing a
+   * second pipeline that would drift from the first.
+   */
+  probe: '/api/dsh-imagegen/code/probe',
+} as const
+
+/**
  * Same-origin route family for the host-persisted generation history. Images
  * live as files under ~/.dsh/dsh-imagegen/images/ and are served back through
  * the `image` prefix route, so list responses carry metadata only (never
@@ -500,7 +521,54 @@ export interface VideoGenerateResult {
   historyError?: string
   /** The director plan that produced this clip, when planning ran. */
   plan?: VideoDirectorPlan
+  /** `code` when a chat model wrote the drawing code for this clip. */
+  renderer?: 'model' | 'code'
+  /** The drawing code that produced the clip (code path only). */
+  renderSource?: string
+  /** True when the model answered prose and the built-in title card drew it. */
+  degraded?: boolean
+  degradedReason?: string
 }
+
+/** One code-render request as the route accepts it (already shape-checked). */
+export interface CodeRenderRequest {
+  kind: CodeTarget
+  source: string
+  width: number
+  height: number
+  fps: number
+  seconds: number
+}
+
+/** Shape of the code-render probe answer. */
+export interface CodeRenderResponse {
+  width: number
+  height: number
+  fps: number
+  seconds: number
+  frames: number
+  /** False when no ffmpeg was found: a video render would fail, an image would not. */
+  ffmpegAvailable: boolean
+  ffmpegPath?: string
+}
+
+/** What `code/render` answers: the produced bytes already persisted, plus where. */
+export interface CodeRenderApiResult {
+  kind: CodeTarget
+  width: number
+  height: number
+  fps?: number
+  seconds?: number
+  source: string
+  degraded: boolean
+  degradedReason?: string
+  video?: { entryId: string; url: string; mime: string; duration?: number }
+  image?: { entryId: string; url: string; mime: string }
+  history?: VideoHistoryEntry[] | HistoryEntry[]
+}
+
+/** `video` renders an MP4 here; `image` renders a PNG here. */
+export type CodeTarget = 'video' | 'image'
 
 /** A client → host video generation request (what the panel collects). */
 export interface VideoGenerateRequest {
@@ -551,6 +619,17 @@ export interface VideoGenerateRequest {
    * Re-validated host-side against `seconds` / `aspectRatio` / `resolution`.
    */
   planPreview?: VideoDirectorPlan
+  /**
+   * How this clip should be produced. Absent means the video model path, which
+   * is the historical behaviour; `code` makes a chat model write drawing code
+   * that this host renders and encodes — no video model is contacted.
+   */
+  renderer?: 'model' | 'code'
+  /**
+   * A drawing source produced by a previous code run. A retry sends it back so
+   * the same clip is reproduced without another chat call.
+   */
+  renderSource?: string
 }
 
 /**
@@ -642,9 +721,12 @@ export interface VideoHistoryEntry {
   channel?: string
   /** The director plan that shaped this clip, when planning ran. */
   plan?: VideoDirectorPlan
+  /**
+   * How this clip was produced. Absent means the model provider rendered it;
+   * `code` means a chat model wrote drawing code and this host rendered it.
+   */
+  renderer?: 'model' | 'code'
 }
-
-/** A video history entry the client submits for persistence. */
 export interface VideoHistoryEntryInput {
   id: string
   createdAt: number
@@ -661,6 +743,8 @@ export interface VideoHistoryEntryInput {
   channel?: string
   /** Host-filled: the plan that produced this clip, when planning ran. */
   plan?: VideoDirectorPlan
+  /** Host-filled: `code` when a chat model wrote the drawing code. */
+  renderer?: 'model' | 'code'
 }
 
 /** Lifecycle of one host-resident video generation task. */
@@ -711,6 +795,14 @@ export interface VideoTaskSummary extends Omit<VideoTask, 'result'> {
    * panel show the shot list and the parameters it chose alongside the clip.
    */
   plan?: VideoDirectorPlan
+  /**
+   * The drawing code that produced this clip (code path only), so the canvas
+   * can retry the render without paying for another chat call.
+   */
+  renderSource?: string
+  /** True when the model answered prose and the fallback title card drew it. */
+  degraded?: boolean
+  degradedReason?: string
 }
 
 /** Origin information carried by a generation started from the canvas. */
@@ -1368,6 +1460,14 @@ export interface CanvasNodeMetadata {
   resolution?: string
   taskId?: string
   sourceNodeId?: string
+  /** Generated nodes: how the run was produced (`code` = chat-written code). */
+  renderer?: 'model' | 'code'
+  /**
+   * Code-rendered nodes: the drawing code that produced them. A retry re-sends
+   * it so the same pixels are reproduced instead of paying for another model
+   * call — and so the node can show what actually drew it.
+   */
+  renderSource?: string
   /** Text nodes. */
   text?: string
   fontSize?: number
@@ -1562,6 +1662,17 @@ export interface GenerateRequest extends EcommerceTaskMeta {
   comparisonModels?: string[]
   /** Optional canvas lineage metadata. */
   canvas?: CanvasTaskMeta
+  /**
+   * How this still should be produced. Absent means the image model path, which
+   * is the historical behaviour; `code` makes a chat model write drawing code
+   * that this host renders locally — no image model is contacted.
+   */
+  renderer?: 'model' | 'code'
+  /**
+   * A drawing source produced by a previous code run. A retry sends it back so
+   * the same still is reproduced without another chat call.
+   */
+  renderSource?: string
 }
 
 /** One generated image, normalized host-side to base64 so the browser never
@@ -1582,6 +1693,13 @@ export interface GenerateResult {
   history?: HistoryEntry[]
   /** Persistence failure after images were successfully generated. */
   historyError?: string
+  /** `code` when a chat model wrote the drawing code for these images. */
+  renderer?: 'model' | 'code'
+  /** The drawing code that produced the image (code path only). */
+  renderSource?: string
+  /** True when the model answered prose and the built-in title card drew it. */
+  degraded?: boolean
+  degradedReason?: string
 }
 
 /**
@@ -1677,6 +1795,10 @@ export type DiagnosticPhase =
   // The reasoning step that runs before a submit. Its own phase because a
   // failed plan is neither a rejected submit nor a failed render.
   | 'video-plan'
+  // The code-render path: the chat call that writes the drawing code, and the
+  // local render that turns it into bytes. Two phases because "the model wrote
+  // bad code" and "this machine could not render it" have different fixes.
+  | 'code-generate' | 'code-render'
 
 /**
  * One retained upstream attempt (#38). Every string is already redacted
@@ -1766,6 +1888,12 @@ export interface HistoryEntry extends EcommerceTaskMeta {
   comparisonModels?: string[]
   canvas?: CanvasTaskMeta
   /**
+   * How this still was produced. Absent means an image model returned it;
+   * `code` means a chat model wrote drawing code and this host rendered it.
+   * Downstream code treats both the same — the bytes land in the same store.
+   */
+  renderer?: 'model' | 'code'
+  /**
    * A favorited clip, recorded by reference to the video store rather than
    * copied: a clip is orders of magnitude larger than an image, and the video
    * route already serves it with Range support. An entry with `video` may have
@@ -1811,4 +1939,6 @@ export interface HistoryEntryInput extends EcommerceTaskMeta {
   /** Model aliases included in the comparison run. */
   comparisonModels?: string[]
   canvas?: CanvasTaskMeta
+  /** Host-filled: `code` when a chat model wrote the drawing code. */
+  renderer?: 'model' | 'code'
 }

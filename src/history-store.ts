@@ -57,6 +57,8 @@ interface StoredEntry {
   projectName?: string
   slotKey?: string
   slotLabel?: string
+  /** `code` when a chat model wrote the drawing code (absent = model). */
+  renderer?: 'model' | 'code'
   canvas?: HistoryEntryInput['canvas']
 }
 
@@ -177,6 +179,7 @@ function toWire(entry: StoredEntry): HistoryEntry {
     ...entry.slotKey === undefined ? {} : { slotKey: entry.slotKey },
     ...entry.slotLabel === undefined ? {} : { slotLabel: entry.slotLabel },
     ...entry.canvas === undefined ? {} : { canvas: entry.canvas },
+    ...entry.renderer === undefined ? {} : { renderer: entry.renderer },
   }
 }
 
@@ -230,6 +233,7 @@ export async function appendHistory(input: HistoryEntryInput): Promise<HistoryEn
       ...input.slotKey === undefined ? {} : { slotKey: input.slotKey },
       ...input.slotLabel === undefined ? {} : { slotLabel: input.slotLabel },
       ...input.canvas === undefined ? {} : { canvas: input.canvas },
+      ...input.renderer === undefined ? {} : { renderer: input.renderer },
     }
     const merged = [entry, ...await readIndex()]
     const kept = merged.slice(0, HISTORY_MAX)

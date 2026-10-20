@@ -307,7 +307,8 @@ function mimeOfPath(filePath: string): string {
     default: return 'image/png'
   }
 }
-import { ImageGenerationRuntime, type ChannelsView, type RuntimeChannel } from './generation-runtime.ts'
+import { ImageGenerationRuntime, type ChannelsView, type HostChatSeam, type RuntimeChannel } from './generation-runtime.ts'
+import { createHostChatSeam, type HostAgentPresets, type HostAgentsService, type HostDefaultModel } from './host-chat.ts'
 import { registerAgentImageTools } from './agent-image-tools.ts'
 import { registerAgentVideoTools } from './agent-video-tools.ts'
 import { registerEditImageCommand } from './edit-image-command.ts'
@@ -343,7 +344,11 @@ export { appendVideoHistory, clearVideoHistory, listVideoHistory, readVideoFile,
 export { VideoTaskQueue } from './video-task-queue.ts'
 export { promptCharLimit } from './model-catalog.ts'
 export { analyzeLayers, normalizeLayerPlan, MAX_LAYER_IMAGE_BYTES } from './layer-analyzer.ts'
-export { ImageGenerationRuntime } from './generation-runtime.ts'
+export { ImageGenerationRuntime, type HostChatSeam } from './generation-runtime.ts'
+export { createHostChatSeam } from './host-chat.ts'
+export { runCodeRender, codeRenderPlan, probeCodeRender, validateCodeInput, type CodeRenderInput, type CodeRenderOutcome, type CodeChatCompleter } from './code-render-runtime.ts'
+export { renderCode, dimensionsFor, locateFfmpeg, extractRenderSource, looksLikeCode, CodeRenderError, MAX_CODE_CHARS, DEFAULT_RENDER_TIMEOUT_MS, type CodeRenderKind, type CodeRenderRequest, type CodeRenderResult } from './code-render.ts'
+export { codeRenderSystemPrompt, codeRenderUserPrompt, readGeneratedCode, fallbackRendererSource, type CodeBrief, type CodeTarget } from './code-prompt.ts'
 export { registerAgentImageTools, resolveAgentImageModel } from './agent-image-tools.ts'
 export { registerAgentVideoTools, resolveAgentVideoModel, AGENT_VIDEO_TOOL_NAMES } from './agent-video-tools.ts'
 export { latestSessionImage, registerEditImageCommand } from './edit-image-command.ts'
@@ -788,9 +793,27 @@ export function apply(ctx: Context, config?: Config): (() => void) | void {
   // The video director plans through the same chat endpoint prompt enhancement
   // uses, so there is no second credential to configure. Resolved per call, so
   // a settings change takes effect on the next render without a restart.
+  // The host conversation model is reached through its `agents` service, which
+  // this plugin only sees inside the injection block below; the runtime is
+  // built before that. A holder keeps the wiring order honest: the seam the
+  // runtime holds asks this holder per call instead of capturing a snapshot.
+  let hostServices: { agents?: HostAgentsService; presets?: HostAgentPresets; defaultModel?: HostDefaultModel } | undefined
+  const hostChatService = (): HostChatSeam => createHostChatSeam({
+    ...hostServices === undefined ? {} : hostServices,
+    cwd: () => process.cwd(),
+    preset: () => resolveSkills().agentPreset,
+  })
+
   const runtime = new ImageGenerationRuntime(channelsView, undefined, subscriptions, {
     resolveConfig: () => resolvePromptModelConfig(resolve()),
     complete: async options => chatComplete(resolvePromptModelConfig(resolve()), options),
+  }, {
+    // The host's own conversation model, resolved lazily: `agents` mounts in
+    // the injection block below, AFTER this runtime is built, and the selected
+    // model can change at any time.
+    available: () => hostChatService().available(),
+    label: () => hostChatService().label(),
+    complete: async options => await hostChatService().complete(options),
   })
   const pendingConversationImages = new Map<string, ImageAttachmentRef>()
 
@@ -1038,6 +1061,15 @@ export function apply(ctx: Context, config?: Config): (() => void) | void {
   // included) on a host that never mounted them.
   ctx.inject(['skills', 'agents'], sctx => {
     const services = sctx as unknown as CanvasSkillServices
+    // Hand the host conversation model to the code-render path. Set inside the
+    // effect and cleared on unload, so a host that drops the services makes the
+    // code path fall back to the prompt-enhancement endpoint rather than using
+    // a stale handle.
+    hostServices = {
+      agents: services.agents as unknown as HostAgentsService,
+      presets: sctx.get('agentPresets') as unknown as HostAgentPresets | undefined,
+      defaultModel: sctx.get('agentDefaultModel') as unknown as HostDefaultModel | undefined,
+    }
     const unregister = sctx.effect(() => {
       // The canvas catalog unions the host registry with the local library: on
       // the Web surface the registry alone is scope-blind here (see the adapter).
@@ -1090,7 +1122,7 @@ export function apply(ctx: Context, config?: Config): (() => void) | void {
           },
         },
       })
-      return () => { skillRunner?.attach({}) }
+      return () => { skillRunner?.attach({}); hostServices = undefined }
     }, 'dsh-imagegen: canvas skills')
     void unregister
   })

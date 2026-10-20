@@ -3,7 +3,7 @@
  * data access path the panel uses — plain fetch, same origin.
  */
 
-import { CANVAS_API, CANVAS_SKILL_API, CONVERSATION_IMAGE_API, DATA_FOLDER_API, DIAGNOSTICS_API, GALLERY_API, GENERATE_API, HISTORY_API, PROMPT_ENHANCE_API, STORAGE_API, TASK_API, TEMPLATE_FAVORITES_API, TEMPLATES_API, UPDATE_API, VIDEO_API, type CanvasAssetRef, type CanvasDocument, type CanvasFilePreview, type CanvasLayerPlan, type CanvasSkillCatalog, type CanvasSkillConfigApplyRequest, type CanvasSkillConfigApplyResult, type CanvasSkillConfigSaveRequest, type CanvasSkillConfigSaveResult, type CanvasSkillInstallRequest, type CanvasSkillInstallResult, type CanvasSkillLibrary, type CanvasSkillRemoveResult, type CanvasSkillRunRequest, type CanvasSkillTask, type CanvasSummary, type DiagnosticEntry, type GenerateRequest, type GenerateResult, type GenerationTask, type GenerationTaskSummary, type HistoryEntry, type HistoryEntryInput, type PptRunRequest, type PptRuntimeStatus, type TemplateCase, type TemplateFavorite, type TemplateListResult, type TemplateRefreshResult, type TemplateSample, type UpdateInfo, type VideoDirectorPlan, type VideoGenerateRequest, type VideoGenerateResult, type VideoHistoryEntry, type VideoTask, type VideoTaskSummary } from '../protocol.ts'
+import { CANVAS_API, CANVAS_SKILL_API, CODE_RENDER_API, CONVERSATION_IMAGE_API, DATA_FOLDER_API, DIAGNOSTICS_API, GALLERY_API, GENERATE_API, HISTORY_API, PROMPT_ENHANCE_API, STORAGE_API, TASK_API, TEMPLATE_FAVORITES_API, TEMPLATES_API, UPDATE_API, VIDEO_API, type CanvasAssetRef, type CanvasDocument, type CanvasFilePreview, type CanvasLayerPlan, type CanvasSkillCatalog, type CanvasSkillConfigApplyRequest, type CanvasSkillConfigApplyResult, type CanvasSkillConfigSaveRequest, type CanvasSkillConfigSaveResult, type CanvasSkillInstallRequest, type CanvasSkillInstallResult, type CanvasSkillLibrary, type CanvasSkillRemoveResult, type CanvasSkillRunRequest, type CanvasSkillTask, type CanvasSummary, type CodeRenderResponse, type CodeTarget, type DiagnosticEntry, type GenerateRequest, type GenerateResult, type GenerationTask, type GenerationTaskSummary, type HistoryEntry, type HistoryEntryInput, type PptRunRequest, type PptRuntimeStatus, type TemplateCase, type TemplateFavorite, type TemplateListResult, type TemplateRefreshResult, type TemplateSample, type UpdateInfo, type VideoDirectorPlan, type VideoGenerateRequest, type VideoGenerateResult, type VideoHistoryEntry, type VideoTask, type VideoTaskSummary } from '../protocol.ts'
 import { activeImageGenLanguage } from './helpers.ts'
 
 /** Error carrying the route's JSON error message. */
@@ -102,11 +102,15 @@ export class ImageGenApi {
       headers: { 'content-type': 'application/json' },
       body: JSON.stringify(request),
     })
-    const body = await readEnvelope<{ ok: true; images: GenerateResult['images']; history?: HistoryEntry[]; historyError?: string }>(response)
+    const body = await readEnvelope<{ ok: true; images: GenerateResult['images']; history?: HistoryEntry[]; historyError?: string; renderer?: 'model' | 'code'; renderSource?: string; degraded?: boolean; degradedReason?: string }>(response)
     return {
       images: body.images,
       ...body.history === undefined ? {} : { history: body.history },
       ...body.historyError === undefined ? {} : { historyError: body.historyError },
+      ...body.renderer === undefined ? {} : { renderer: body.renderer },
+      ...body.renderSource === undefined ? {} : { renderSource: body.renderSource },
+      ...body.degraded === undefined ? {} : { degraded: body.degraded },
+      ...body.degradedReason === undefined ? {} : { degradedReason: body.degradedReason },
     }
   }
 
@@ -129,6 +133,23 @@ export class ImageGenApi {
       ...body.history === undefined ? {} : { history: body.history },
       ...body.historyError === undefined ? {} : { historyError: body.historyError },
     }
+  }
+
+  /**
+   * Preview a code render: pixel size, frame count, and whether this machine
+   * has an ffmpeg to encode with.
+   *
+   * Read-only and free: no model call, no frame drawn. The composer uses it to
+   * warn about a missing dependency BEFORE a chat model is asked to write code
+   * that then cannot be encoded.
+   */
+  async codeProbe(input: { kind: CodeTarget; resolution?: string; aspectRatio?: string; seconds?: number; fps?: number }): Promise<CodeRenderResponse> {
+    const response = await fetch(CODE_RENDER_API.probe, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify(input),
+    })
+    return (await readEnvelope<{ ok: true; probe: CodeRenderResponse }>(response)).probe
   }
 
   async videoTaskSubmit(request: VideoGenerateRequest): Promise<VideoTask> {

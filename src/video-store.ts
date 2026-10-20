@@ -59,6 +59,8 @@ interface StoredEntry {
   channel?: string
   /** The director plan that shaped this clip, when planning ran. */
   plan?: VideoDirectorPlan
+  /** `code` when a chat model wrote the drawing code (absent = model). */
+  renderer?: 'model' | 'code'
 }
 
 /** The index.json shape. */
@@ -169,6 +171,7 @@ function toWire(entry: StoredEntry): VideoHistoryEntry {
     ...entry.channelId === undefined ? {} : { channelId: entry.channelId },
     ...entry.channel === undefined ? {} : { channel: entry.channel },
     ...entry.plan === undefined ? {} : { plan: entry.plan },
+    ...entry.renderer === undefined ? {} : { renderer: entry.renderer },
   }
 }
 
@@ -222,6 +225,7 @@ export async function appendVideoHistory(input: VideoHistoryEntryInput & { files
       ...input.channelId === undefined ? {} : { channelId: input.channelId },
       ...input.channel === undefined ? {} : { channel: input.channel },
       ...input.plan === undefined ? {} : { plan: input.plan },
+      ...input.renderer === undefined ? {} : { renderer: input.renderer },
     }
     const merged = [entry, ...await readIndex()]
     const kept = merged.slice(0, VIDEO_HISTORY_MAX)

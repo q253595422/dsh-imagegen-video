@@ -21,8 +21,10 @@ import { appendHistory } from './history-store.ts'
 import { GenerationTaskQueue } from './task-queue.ts'
 import { VideoTaskQueue, type VideoTask } from './video-task-queue.ts'
 import { recordDiagnostic } from './diagnostics-store.ts'
+import { runCodeRender, type CodeChatCompleter } from './code-render-runtime.ts'
+import { CodeRenderError } from './code-render.ts'
 import type { PromptModelConfig } from './prompt-enhancer.ts'
-import type { ChannelConfig, GeneratedImage, GenerateRequest, GenerateResult, HistoryEntry, HistoryEntryInput, SubscriptionProvider, VideoDirectorPlan, VideoGenerateRequest, VideoGenerateResult, VideoHistoryEntry } from './protocol.ts'
+import type { ChannelConfig, GeneratedImage, GenerateRequest, GenerateResult, HistoryEntry, HistoryEntryInput, SubscriptionProvider, VideoDirectorPlan, VideoGenerateRequest, VideoGenerateResult, VideoHistoryEntry, VideoResolution } from './protocol.ts'
 
 /** A channel with its resolved API key (the settings doc holds the key
  *  separately so redacted reads never expose it). */
@@ -38,6 +40,24 @@ export interface ChannelsView {
 
 export interface HistorySink {
   append(entry: HistoryEntryInput): Promise<HistoryEntry[]>
+}
+
+/**
+ * The DSH host's own conversation model — the one the user already talks to in
+ * the chat panel, NOT a plugin setting.
+ *
+ * Injected by the host entry (which is the only place that owns the `agents` /
+ * `agentDefaultModel` services) so the runtime never composes an agent itself.
+ * When absent the code path falls back to the prompt-enhancement endpoint, so a
+ * minimal host still works — but on a normal DSH install this is what draws.
+ */
+export interface HostChatSeam {
+  /** Whether a host model is currently reachable (services mounted + a model chosen). */
+  available: () => boolean
+  /** The label recorded on the history entry (the model the host will use). */
+  label: () => string
+  /** Run one turn and return the assistant's text. */
+  complete: (options: { system: string; content: string; signal?: AbortSignal }) => Promise<string>
 }
 
 /**
@@ -65,6 +85,12 @@ export class ImageGenerationRuntime {
     private readonly history: HistorySink = { append: appendHistory },
     private readonly subscriptions?: SubscriptionManager,
     private readonly director?: VideoDirectorSeam,
+    /**
+     * The DSH host's own conversation model. Optional so a minimal host (and
+     * every existing test) keeps working; when present it wins over the
+     * prompt-enhancement endpoint for the code path.
+     */
+    private readonly hostChat?: HostChatSeam,
   ) {
     // Every task runs in parallel up to this small host-wide limit; a
     // four-model comparison fits within it in a single wave.
@@ -136,6 +162,13 @@ export class ImageGenerationRuntime {
 
   /** Generate one video: submit, poll, download, then persist the clip. */
   async runVideo(request: VideoGenerateRequest, signal?: AbortSignal): Promise<VideoGenerateResult> {
+    // ---- code path --------------------------------------------------------
+    // `renderer: 'code'` is a different production path, not a different model:
+    // a chat model writes drawing code and this host renders it. It runs
+    // BEFORE channel resolution on purpose — the whole point is that no video
+    // provider (and no video model alias) is needed.
+    if (request.renderer === 'code') return await this.runVideoCode(request, signal)
+
     const view = this.resolve()
     const channel = this.videoChannel(request.model, request.channelId, view)
     if (channel === undefined) {
@@ -245,7 +278,169 @@ export class ImageGenerationRuntime {
     }
   }
 
+  /**
+   * The chat model the code path draws with.
+   *
+   * Preference order matters and is the whole point of this seam: the DSH
+   * host's own conversation model first (the one the user already talks to),
+   * and only then the plugin's prompt-enhancement endpoint. Neither adds a new
+   * setting — there is nothing to configure beyond picking this path.
+   */
+  private codeProvider(): { config: PromptModelConfig; complete: CodeChatCompleter } {
+    const host = this.hostChat
+    if (host !== undefined && host.available()) {
+      return {
+        // A sentinel URL: the host seam is already authenticated, so nothing
+        // here is dialled. It exists because the renderer treats an empty
+        // endpoint as "not configured" and refuses before drawing.
+        config: { apiUrl: HOST_CHAT_ENDPOINT, apiKey: '', model: host.label() },
+        complete: async options => await host.complete({
+          system: options.system,
+          content: options.content,
+          ...options.signal === undefined ? {} : { signal: options.signal },
+        }),
+      }
+    }
+    const seam = this.director
+    if (seam === undefined) {
+      throw new CodeRenderError(
+        '没有可用的对话模型：代码生成需要 DSH 里已接入的模型（或「设置 → 提示词增强模型」）。请配置后重试，或切回模型生成。',
+        'code-no-chat-model',
+      )
+    }
+    return { config: seam.resolveConfig(), complete: seam.complete }
+  }
+
+  /**
+   * Render one clip through the code path and persist it like any other clip.
+   *
+   * The persistence step deliberately mirrors the model path field for field
+   * (mode / prompt / aspectRatio / resolution / seconds / files) and only adds
+   * `renderer: 'code'`. Downstream — the canvas placeholder, the clip history,
+   * favoriting, stitching, the timeline — cannot tell the two apart, which is
+   * the whole requirement.
+   */
+  private async runVideoCode(request: VideoGenerateRequest, signal?: AbortSignal): Promise<VideoGenerateResult> {
+    const provider = this.codeProvider()
+    const config = provider.config
+    const outcome = await runCodeRender(
+      {
+        kind: 'video',
+        prompt: request.prompt,
+        resolution: request.resolution,
+        aspectRatio: request.aspectRatio,
+        seconds: request.seconds,
+        fps: CODE_RENDER_FPS,
+        model: config.model,
+        ...request.renderSource === undefined ? {} : { source: request.renderSource },
+      },
+      config,
+      provider.complete,
+      { ...signal === undefined ? {} : { signal }, persist: false },
+    )
+    const entryId = randomUUID()
+    const duration = outcome.seconds ?? request.seconds
+    try {
+      const history = await appendVideoHistory({
+        id: entryId,
+        createdAt: Date.now(),
+        mode: request.mode,
+        model: config.model,
+        prompt: request.prompt.trim(),
+        aspectRatio: request.aspectRatio,
+        resolution: request.resolution,
+        seconds: duration,
+        files: [{ bytes: outcome.bytes, mime: outcome.kind === 'video' ? 'video/mp4' : 'image/png', duration }],
+        renderer: 'code',
+        ...request.channel === undefined ? {} : { channel: request.channel },
+      })
+      const stored = history.find(entry => entry.id === entryId)
+      return {
+        videos: stored?.videos ?? [],
+        history,
+        renderer: 'code',
+        renderSource: outcome.source,
+        degraded: outcome.degraded,
+        ...outcome.degradedReason === undefined ? {} : { degradedReason: outcome.degradedReason },
+      }
+    } catch (error) {
+      // The render already succeeded; never discard it because the local write
+      // failed. There is no provider URL to fall back to here, so the failure
+      // is reported plainly instead of pretending a clip exists.
+      return {
+        videos: [],
+        historyError: error instanceof Error ? error.message : String(error),
+        renderer: 'code',
+        renderSource: outcome.source,
+        degraded: outcome.degraded,
+        ...outcome.degradedReason === undefined ? {} : { degradedReason: outcome.degradedReason },
+      }
+    }
+  }
+
+  /**
+   * Render one still through the code path and persist it into the image
+   * history — the same store the model path writes, so the canvas uploads it,
+   * the gallery can favorite it, and an edit can reference it.
+   */
+  private async runImageCode(request: GenerateRequest, signal?: AbortSignal): Promise<GenerateResult> {
+    const provider = this.codeProvider()
+    const config = provider.config
+    const { resolution, aspectRatio } = stillShape(request.size, request.quality)
+    const outcome = await runCodeRender(
+      {
+        kind: 'image',
+        prompt: request.prompt,
+        resolution,
+        aspectRatio,
+        model: config.model,
+        ...request.renderSource === undefined ? {} : { source: request.renderSource },
+      },
+      config,
+      provider.complete,
+      { ...signal === undefined ? {} : { signal }, persist: false },
+    )
+    const images: GeneratedImage[] = [{ b64: outcome.bytes.toString('base64'), mime: 'image/png' }]
+    try {
+      const history = await this.history.append({
+        id: randomUUID(),
+        createdAt: Date.now(),
+        mode: request.mode,
+        model: config.model,
+        prompt: request.prompt.trim(),
+        size: `${outcome.width}x${outcome.height}`,
+        quality: 'code',
+        detail: request.detail,
+        n: 1,
+        images,
+        renderer: 'code',
+        ...request.refName === undefined ? {} : { refName: request.refName },
+        ...request.canvas === undefined ? {} : { canvas: request.canvas },
+      })
+      return {
+        images,
+        history,
+        renderer: 'code',
+        renderSource: outcome.source,
+        degraded: outcome.degraded,
+        ...outcome.degradedReason === undefined ? {} : { degradedReason: outcome.degradedReason },
+      }
+    } catch (error) {
+      return {
+        images,
+        historyError: error instanceof Error ? error.message : String(error),
+        renderer: 'code',
+        renderSource: outcome.source,
+        degraded: outcome.degraded,
+        ...outcome.degradedReason === undefined ? {} : { degradedReason: outcome.degradedReason },
+      }
+    }
+  }
+
   async run(request: GenerateRequest, signal?: AbortSignal): Promise<GenerateResult> {
+    // The code path needs no image model, so it is resolved before any channel
+    // lookup: requiring a configured image channel here would be a lie.
+    if (request.renderer === 'code') return await this.runImageCode(request, signal)
     const view = this.resolve()
     const channel = view.channels.find(candidate => candidate.id === request.channelId)
       ?? view.channels.find(candidate => candidate.id === view.defaultChannelId)
@@ -308,6 +503,37 @@ export class ImageGenerationRuntime {
       return [{ b64: row.b64_json, mime, ...row.revisedPrompt === undefined ? {} : { revisedPrompt: row.revisedPrompt } }]
     }))
   }
+}
+
+/**
+ * Stand-in endpoint for the host-model seam.
+ *
+ * The host conversation model is reached through an agent, not HTTP, so there
+ * is no URL to dial. `runCodeRender` refuses to call a model when the endpoint
+ * looks unconfigured, so this sentinel exists purely to say "provider present".
+ */
+const HOST_CHAT_ENDPOINT = 'dsh://host-model'
+
+/**
+ * Frame rate the code path renders at.
+ *
+ * Fixed rather than user-facing: the model path's clip length is provider-
+ * defined, so exposing fps here would add a knob no model path has. Everything
+ * the user DOES choose — aspect ratio, resolution tier, seconds — is honoured.
+ */
+const CODE_RENDER_FPS = 30
+
+/**
+ * Map the panel's image size/quality vocabulary onto a code render.
+ *
+ * The panel speaks `size: 'auto' | '1:1' | '3:4' | ...` and
+ * `quality: 'auto' | '1k' | '2k' | '4k'`; the renderer speaks pixels. 'auto'
+ * falls back to a square, which is what an unset image model would produce.
+ */
+function stillShape(size: string, quality: string): { resolution: VideoResolution; aspectRatio: string } {
+  const aspectRatio = size === 'auto' || size.trim() === '' ? '1:1' : size.trim()
+  const resolution: VideoResolution = quality === '1k' ? '720P' : '1080P'
+  return { resolution, aspectRatio }
 }
 
 /** Decode the request's data-URL references into subscription wire images. */

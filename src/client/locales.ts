@@ -1303,6 +1303,12 @@ export const zh = {
   'image.canvasReadFailed': '读取画布图片失败',
   'canvas.videoMissing': '该片段已不存在',
   'canvas.videoMissingHint': '视频历史被清空或超出上限后，片段文件会被删除。',
+  'canvas.rendererLabel': '生成方式',
+  'canvas.rendererModel': '模型生成',
+  'canvas.rendererCode': '代码生成',
+  'canvas.rendererHint': '用 DSH 里已接入的对话模型写绘图代码，由本机渲染，不需要生图或生视频模型。',
+  'canvas.rendererNoFfmpeg': '本机缺少 ffmpeg：代码生成的视频无法编码，图片仍可生成。可选「模型生成」或先安装 ffmpeg。',
+  'canvas.rendererFailedHint': '可在上方「生成方式」里切回模型生成后重试。',
   'canvas.videoReload': '重试加载',
 } as const
 
@@ -2592,6 +2598,12 @@ export const en: Record<keyof typeof zh, string> = {
   'image.canvasReadFailed': 'Could not read the canvas image',
   'canvas.videoMissing': 'This clip no longer exists',
   'canvas.videoMissingHint': 'The clip file is deleted once the video history is cleared or exceeds its limit.',
+  'canvas.rendererLabel': 'Rendering',
+  'canvas.rendererModel': 'Model',
+  'canvas.rendererCode': 'Code',
+  'canvas.rendererHint': 'Writes drawing code with the model you already use in DSH and renders it on this machine — no image or video model needed.',
+  'canvas.rendererNoFfmpeg': 'ffmpeg is missing on this machine: code videos cannot be encoded (stills still work). Pick Model, or install ffmpeg first.',
+  'canvas.rendererFailedHint': 'Switch Rendering back to Model above and retry.',
   'canvas.videoReload': 'Retry loading',
 }
 
@@ -3883,5 +3895,11 @@ export const ru: Record<keyof typeof zh, string> = {
   'image.canvasReadFailed': 'Не удалось прочитать изображение холста',
   'canvas.videoMissing': 'Этот фрагмент больше не существует',
   'canvas.videoMissingHint': 'Файл фрагмента удаляется после очистки истории видео или превышения её лимита.',
+  'canvas.rendererLabel': 'Способ генерации',
+  'canvas.rendererModel': 'Модель',
+  'canvas.rendererCode': 'Код',
+  'canvas.rendererHint': 'Модель, уже подключённая в DSH, пишет код отрисовки, а рендер идёт на этой машине — модель изображений или видео не нужна.',
+  'canvas.rendererNoFfmpeg': 'На этой машине нет ffmpeg: видео из кода закодировать нельзя (изображения по-прежнему работают). Выберите «Модель» или установите ffmpeg.',
+  'canvas.rendererFailedHint': 'Переключите «Способ генерации» на «Модель» и повторите.',
   'canvas.videoReload': 'Повторить загрузку',
 }

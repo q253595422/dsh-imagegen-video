@@ -33,7 +33,8 @@ import { testStorage, type StorageSyncConfig } from './storage-sync.ts'
 import { checkForUpdate, CURRENT_VERSION, installUpdate, ManualUpdateRequiredError, updateInstallTarget, type UpdateHostContext } from './updater.ts'
 import { IMAGE_PRESETS } from './presets.ts'
 import { clearDiagnostics, listDiagnostics } from './diagnostics-store.ts'
-import { AGENT_IMAGE_API, CANVAS_API, CANVAS_SKILL_API, CONVERSATION_IMAGE_API, DATA_FOLDER_API, DEFAULT_TEMPLATE_SOURCE_ID, DIAGNOSTICS_API, GALLERY_API, GENERATE_API, HISTORY_API, IMAGEGEN_SETTINGS_NAMESPACE, IMAGE_MODEL_API, PRESETS_API, PROMPT_ENHANCE_API, SETTINGS_API, STORAGE_API, SUBSCRIPTION_API, SUBSCRIPTION_PROVIDERS, TASK_API, TEMPLATE_FAVORITES_API, TEMPLATES_API, UPDATE_API, USAGE_API, VIDEO_API, isChannelProtocolPreference, isTemplateSourceId, type CanvasAssetRef, type CanvasDocument, type VideoDirectorPlan, type CanvasSkillCatalog, type CanvasSkillConfigApplyRequest, type CanvasSkillConfigApplyResult, type CanvasSkillConfigSaveRequest, type CanvasSkillConfigSaveResult, type CanvasSkillInstallRequest, type CanvasSkillInstallResult, type CanvasSkillLibrary, type CanvasSkillRemoveResult, type CanvasSkillRunRequest, type CanvasSkillTask, type PptRunRequest, type PptRuntimeStatus, type GeneratedImage, type GenerateRequest, type HistoryEntry, type HistoryEntryInput, type ModelMapping, type PresetProviderView, type TemplateFavorite, type TemplateListResult, type TemplateRefreshResult, type TemplateSample, type CanvasVideoTaskMeta, type VideoGenerateRequest, type VideoHistoryEntry } from './protocol.ts'
+import { AGENT_IMAGE_API, CANVAS_API, CANVAS_SKILL_API, CODE_RENDER_API, CONVERSATION_IMAGE_API, DATA_FOLDER_API, DEFAULT_TEMPLATE_SOURCE_ID, DIAGNOSTICS_API, GALLERY_API, GENERATE_API, HISTORY_API, IMAGEGEN_SETTINGS_NAMESPACE, IMAGE_MODEL_API, PRESETS_API, PROMPT_ENHANCE_API, SETTINGS_API, STORAGE_API, SUBSCRIPTION_API, SUBSCRIPTION_PROVIDERS, TASK_API, TEMPLATE_FAVORITES_API, TEMPLATES_API, UPDATE_API, USAGE_API, VIDEO_API, isChannelProtocolPreference, isTemplateSourceId, type CanvasAssetRef, type CanvasDocument, type VideoDirectorPlan, type CanvasSkillCatalog, type CanvasSkillConfigApplyRequest, type CanvasSkillConfigApplyResult, type CanvasSkillConfigSaveRequest, type CanvasSkillConfigSaveResult, type CanvasSkillInstallRequest, type CanvasSkillInstallResult, type CanvasSkillLibrary, type CanvasSkillRemoveResult, type CanvasSkillRunRequest, type CanvasSkillTask, type PptRunRequest, type PptRuntimeStatus, type GeneratedImage, type GenerateRequest, type HistoryEntry, type HistoryEntryInput, type ModelMapping, type PresetProviderView, type TemplateFavorite, type TemplateListResult, type TemplateRefreshResult, type TemplateSample, type CanvasVideoTaskMeta, type VideoGenerateRequest, type VideoHistoryEntry } from './protocol.ts'
+import { probeCodeRender } from './code-render-runtime.ts'
 
 /** Cap on JSON request bodies (settings ops and generate payloads are small). */
 const MAX_JSON_BODY_BYTES = 24 * 1024 * 1024
@@ -422,6 +423,9 @@ function parseGenerateRequest(body: Record<string, unknown>): GenerateRequest | 
     ...typeof body.projectName === 'string' && body.projectName !== '' ? { projectName: body.projectName } : {},
     ...typeof body.slotKey === 'string' && body.slotKey !== '' ? { slotKey: body.slotKey } : {},
     ...typeof body.slotLabel === 'string' && body.slotLabel !== '' ? { slotLabel: body.slotLabel } : {},
+    // Same opt-in as the video route: absent means the image model path.
+    ...body.renderer === 'code' ? { renderer: 'code' as const } : {},
+    ...typeof body.renderSource === 'string' && body.renderSource.trim() !== '' ? { renderSource: body.renderSource } : {},
   }
 }
 
@@ -500,6 +504,10 @@ function parseVideoRequest(
     // behaviour for every existing caller (canvas, storyboard, Agent tools).
     ...body.plan === true ? { plan: true } : {},
     ...parsePlanPreview(body.planPreview) === undefined ? {} : { planPreview: parsePlanPreview(body.planPreview)! },
+    // Second production path: a chat model writes the drawing code and this
+    // host renders it. Absent keeps the historical model-provider behaviour.
+    ...body.renderer === 'code' ? { renderer: 'code' as const } : {},
+    ...typeof body.renderSource === 'string' && body.renderSource.trim() !== '' ? { renderSource: body.renderSource } : {},
   }
 }
 
@@ -2384,6 +2392,39 @@ export function makeRoutes(deps: ImageGenRoutesDeps): WebRoute[] {
         }
         try {
           writeJson(res, 200, { ok: true, plan: await runtime.planVideoRequest(parsed) })
+        } catch (error) {
+          writeJson(res, 200, { ok: false, code: videoCodeOf(error), message: messageOf(error) })
+        }
+      },
+    },
+    {
+      /**
+       * Preview a code render: pixel size, frame count, and whether this
+       * machine can encode a video.
+       *
+       * Read-only by design — no model call, no frame rendered. It exists so
+       * the composer can tell the user "1080x1920, 150 frames" and can warn
+       * about a missing ffmpeg BEFORE a chat model is paid to write code.
+       */
+      kind: 'exact', path: CODE_RENDER_API.probe,
+      handler: async (req, res) => {
+        if (!guard(req, res, 'POST')) return
+        const body = await readJsonBody(req)
+        const kind = body?.kind === 'image' ? 'image' : 'video'
+        const resolution = body?.resolution === '480P' || body?.resolution === '1080P' ? body.resolution : '720P'
+        const aspectRatio = typeof body?.aspectRatio === 'string' && body.aspectRatio.trim() !== '' ? body.aspectRatio.trim() : '16:9'
+        const seconds = typeof body?.seconds === 'number' && Number.isFinite(body.seconds) ? body.seconds : 5
+        const fps = typeof body?.fps === 'number' && Number.isFinite(body.fps) ? body.fps : undefined
+        try {
+          writeJson(res, 200, {
+            ok: true,
+            probe: probeCodeRender({
+              kind,
+              resolution,
+              aspectRatio,
+              ...kind === 'video' ? { seconds, ...fps === undefined ? {} : { fps } } : {},
+            }),
+          })
         } catch (error) {
           writeJson(res, 200, { ok: false, code: videoCodeOf(error), message: messageOf(error) })
         }

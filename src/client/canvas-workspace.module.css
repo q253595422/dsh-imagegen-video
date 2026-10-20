@@ -442,6 +442,14 @@
 
 .nodeStateError { color: var(--dsw-alias-label-error); }
 
+/* A second line inside a failed node: the message says what broke, this says
+   what the user can do about it (e.g. switch the composer back to a model). */
+.nodeStateHint {
+  color: var(--dsw-alias-label-tertiary);
+  font-size: 11px;
+  line-height: 1.4;
+}
+
 .nodeStateError button {
   border: none;
   border-radius: 7px;
@@ -941,6 +949,16 @@
   align-items: center;
   gap: 6px;
 }
+
+/* One line of context under the composer controls: why this path needs
+   something (or does not), in the place the choice was made. */
+.composerHint {
+  font-size: 11px;
+  line-height: 1.45;
+  color: var(--dsw-alias-label-tertiary);
+}
+
+.composerHint[data-renderer-warning] { color: var(--dsw-alias-label-warning, var(--dsw-alias-label-error)); }
 
 .composerControls [data-dsh-select] {
   height: 28px;

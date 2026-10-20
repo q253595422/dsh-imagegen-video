@@ -1837,6 +1837,15 @@ export function CanvasWorkspace(props: CanvasWorkspaceProps): React.JSX.Element 
   // these hold the clip-side choices while `composerKind` picks which path the
   // send button takes.
   const [composerKind, setComposerKind] = useState<'image' | 'video'>('image')
+  /**
+   * Which renderer the NEXT submit uses, per task.
+   *
+   * `model` is the historical path and stays the default. `code` has the
+   * conversation model write drawing code that this host renders — it needs no
+   * image or video provider, which is why every model/channel guard below is
+   * skipped in that mode rather than left to fail at the wire.
+   */
+  const [composerRenderer, setComposerRenderer] = useState<'model' | 'code'>('model')
   const [composerVideoModel, setComposerVideoModel] = useState('')
   const [composerVideoChannelId, setComposerVideoChannelId] = useState('')
   const [composerVideoMode, setComposerVideoMode] = useState<'auto' | VideoMode>('auto')
@@ -1850,6 +1859,29 @@ export function CanvasWorkspace(props: CanvasWorkspaceProps): React.JSX.Element 
   const composerChannelConnected = channelIsConnected(composerChannelId)
   const composerVideoConnected = composerVideoChannelId === '' || channelIsConnected(composerVideoChannelId)
   const videoModelCount = (videoGroups ?? []).reduce((total, group) => total + group.models.length, 0)
+  /**
+   * A pre-flight warning for the code path (today: no ffmpeg).
+   *
+   * Checked when the shape changes rather than at submit time, because the
+   * point is to warn before the user spends a chat call — not to fail after it.
+   */
+  const [composerProbeWarning, setComposerProbeWarning] = useState<string | undefined>(undefined)
+  useEffect(() => {
+    if (composerRenderer !== 'code') { setComposerProbeWarning(undefined); return }
+    let disposed = false
+    void api.codeProbe({
+      kind: composerKind === 'video' ? 'video' : 'image',
+      resolution: composerKind === 'video' ? composerResolution : composerQuality === '1k' ? '720P' : '1080P',
+      aspectRatio: composerKind === 'video' ? composerAspect : composerSize === 'auto' ? '1:1' : composerSize,
+      ...composerKind === 'video' ? { seconds: composerSeconds } : {},
+    }).then(probe => {
+      if (disposed) return
+      // Stills render with the built-in PNG encoder, so a missing ffmpeg only
+      // blocks clips. Saying "it will fail" for an image would be wrong.
+      setComposerProbeWarning(composerKind === 'video' && !probe.ffmpegAvailable ? tt('canvas.rendererNoFfmpeg') : undefined)
+    }).catch(() => { if (!disposed) setComposerProbeWarning(undefined) })
+    return () => { disposed = true }
+  }, [api, composerAspect, composerKind, composerQuality, composerRenderer, composerResolution, composerSeconds, composerSize])
   // Keep the video model valid as channels change (a catalog can be emptied
   // while the canvas stays open).
   const videoGroupsKey = (videoGroups ?? []).map(group => `${group.id}:${group.models.join(',')}`).join('|')
@@ -3262,9 +3294,13 @@ export function CanvasWorkspace(props: CanvasWorkspaceProps): React.JSX.Element 
   const submitVideoComposer = useCallback(async (target: CanvasNode | null): Promise<void> => {
     const current = documentRef.current
     if (current === null || composerBusy) return
-    if (!composerChannelConnected) { setError(tt('canvas.needApi')); onOpenSettings?.(); return }
+    // The code path needs no provider, so neither guard applies to it. Leaving
+    // them in place would make the new path unusable on exactly the machines
+    // it exists for: a canvas with no video model configured.
+    const codeRenderer = composerRenderer === 'code'
+    if (!codeRenderer && !composerChannelConnected) { setError(tt('canvas.needApi')); onOpenSettings?.(); return }
     const groups = videoGroups ?? []
-    if (groups.length === 0) { setError(tt('canvas.videoNoModel')); onOpenSettings?.(); return }
+    if (!codeRenderer && groups.length === 0) { setError(tt('canvas.videoNoModel')); onOpenSettings?.(); return }
     const inputs = target === null ? [] : upstreamNodes(current, target.id)
     const referenceImages = inputs.filter(node => node.type === 'image' && usableAsset(node) !== undefined)
     const upstreamText = inputs
@@ -3276,9 +3312,11 @@ export function CanvasWorkspace(props: CanvasWorkspaceProps): React.JSX.Element 
       if (basePrompt === '') { setError(tt('canvas.videoNeedPrompt')); return }
       // Resolve the video model against the video catalogs (not the image ones):
       // a video alias only exists in `videoModels`.
-      const choice = resolveModelChoice(groups, { channelId: composerVideoChannelId, model: composerVideoModel }, defaultChannelId)
+      const choice = codeRenderer
+        ? { channelId: '', model: '' }
+        : resolveModelChoice(groups, { channelId: composerVideoChannelId, model: composerVideoModel }, defaultChannelId)
       const model = choice.model
-      if (model === '') { setError(tt('canvas.videoNeedModel')); return }
+      if (!codeRenderer && model === '') { setError(tt('canvas.videoNeedModel')); return }
       // The mode comes from the graph unless the user overrode it: 'auto' maps
       // the connected references onto text / image / keyframe, which is the
       // natural canvas behavior (wire an image in and you get image-to-video).
@@ -3296,7 +3334,10 @@ export function CanvasWorkspace(props: CanvasWorkspaceProps): React.JSX.Element 
           : referenceImages.length >= 2
             ? 'keyframe'
             : 'image'
-      const effective: VideoMode = composerVideoMode === 'auto' ? derived : composerVideoMode
+      // A code render draws every frame itself, so the graph's references are
+      // not frames for a provider: text mode is the honest request shape. The
+      // connected prompt text still travels, above.
+      const effective: VideoMode = codeRenderer ? 'text' : composerVideoMode === 'auto' ? derived : composerVideoMode
       // An explicit mode still has to be satisfiable by the graph.
       if (effective === 'image' && referenceImages.length === 0) { setError(tt('canvas.videoNeedReference')); return }
       if (effective === 'keyframe' && referenceImages.length === 0) { setError(tt('canvas.videoNeedKeyframes')); return }
@@ -3344,6 +3385,7 @@ export function CanvasWorkspace(props: CanvasWorkspaceProps): React.JSX.Element 
         resolution: composerResolution,
         seconds: composerSeconds,
         ...(choice.channelId === '' ? {} : { channelId: choice.channelId }),
+        ...codeRenderer ? { renderer: 'code' as const } : {},
         ...frames,
         canvas: {
           canvasId: current.id,
@@ -3368,6 +3410,7 @@ export function CanvasWorkspace(props: CanvasWorkspaceProps): React.JSX.Element 
             status: 'generating', taskId: task.id,
             prompt, model, videoMode: effective,
             aspectRatio: composerAspect, seconds: composerSeconds, resolution: composerResolution,
+            ...codeRenderer ? { renderer: 'code' as const } : {},
             ...(choice.channelId === '' ? {} : { channelId: choice.channelId }),
             ...(referenceImages.length === 0 ? {} : { sourceNodeId: referenceImages[0]!.id }),
           },
@@ -3382,14 +3425,15 @@ export function CanvasWorkspace(props: CanvasWorkspaceProps): React.JSX.Element 
     } finally {
       setComposerBusy(false)
     }
-  }, [api, canvasCenter, castPromptOf, castRefsFor, composerAspect, composerBusy, composerChannelConnected, composerPrompt, composerResolution, composerSeconds, composerVideoChannelId, composerVideoMode, composerVideoModel, defaultChannelId, mutate, onOpenSettings, upstreamNodes, videoGroups])
+  }, [api, canvasCenter, castPromptOf, castRefsFor, composerAspect, composerBusy, composerChannelConnected, composerPrompt, composerRenderer, composerResolution, composerSeconds, composerVideoChannelId, composerVideoMode, composerVideoModel, defaultChannelId, mutate, onOpenSettings, upstreamNodes, videoGroups])
 
   // ----------------------------------------------------------- generation
 
   const submitComposer = useCallback(async (target: CanvasNode | null): Promise<void> => {
     const current = documentRef.current
     if (current === null || composerBusy) return
-    if (!composerChannelConnected) { setError(tt('canvas.needApi')); onOpenSettings?.(); return }
+    const codeRenderer = composerRenderer === 'code'
+    if (!codeRenderer && !composerChannelConnected) { setError(tt('canvas.needApi')); onOpenSettings?.(); return }
     const inputs = target === null ? [] : upstreamNodes(current, target.id)
     const referenceImages = inputs.filter(node => node.type === 'image' && usableAsset(node) !== undefined)
     const upstreamText = inputs
@@ -3404,10 +3448,14 @@ export function CanvasWorkspace(props: CanvasWorkspaceProps): React.JSX.Element 
         ? composerPrompt.trim()
         : (upstreamText.length > 0 ? upstreamText.join('\n') : (annotationPlan?.texts ?? []).join('\n'))
       if (prompt === '') { setError(tt('canvas.needPrompt')); setComposerBusy(false); return }
-      const composerChoice = resolveModelChoice(modelGroups, { channelId: composerChannelId, model: composerModel }, defaultChannelId)
+      const composerChoice = codeRenderer
+        ? { channelId: '', model: '' }
+        : resolveModelChoice(modelGroups, { channelId: composerChannelId, model: composerModel }, defaultChannelId)
       const model = composerChoice.model
-      if (model === '') { setError(tt('canvas.needModel')); setComposerBusy(false); return }
-      const count = Math.min(4, Math.max(1, Math.round(composerCount)))
+      if (!codeRenderer && model === '') { setError(tt('canvas.needModel')); setComposerBusy(false); return }
+      // One chat answer draws one still, so the code path always produces one
+      // node — a count above one would leave placeholders that never fill.
+      const count = codeRenderer ? 1 : Math.min(4, Math.max(1, Math.round(composerCount)))
       // 身份参考：连线是这次输入，钉住的是整部片子的设定。两者合并成一张参考
       // 池，连线排前面（它仍然是编辑的底图），再按 cast.ts 的规则去重。
       const castNodes = castRefsFor(current, referenceImages.map(node => node.id))
@@ -3420,7 +3468,12 @@ export function CanvasWorkspace(props: CanvasWorkspaceProps): React.JSX.Element 
       let image: string | undefined
       let images: string[] | undefined
       let refName: string | undefined
-      if (annotationPlan !== undefined) {
+      // The code path has no provider to hand a reference image to: the model
+      // writes a drawing program, it does not edit the wired picture. Sending
+      // one would only make the request look like an edit it cannot perform.
+      if (codeRenderer) {
+        image = undefined
+      } else if (annotationPlan !== undefined) {
         image = annotationPlan.image
         refName = 'canvas-annotated.png'
         // 标注底图已经占掉一张参考图；身份参考接在后面，最多凑满四张。
@@ -3446,6 +3499,7 @@ export function CanvasWorkspace(props: CanvasWorkspaceProps): React.JSX.Element 
       const request: GenerateRequest = {
         mode: image === undefined ? 'text' : 'edit', model, prompt: finalPrompt, size: composerSize, quality: composerQuality, n: count, detail: '',
         ...(composerChoice.channelId === '' ? {} : { channelId: composerChoice.channelId }),
+        ...codeRenderer ? { renderer: 'code' as const } : {},
         ...(image === undefined ? {} : { image, refName }),
         ...(images === undefined ? {} : { images }),
         canvas: {
@@ -3476,6 +3530,7 @@ export function CanvasWorkspace(props: CanvasWorkspaceProps): React.JSX.Element 
               ...(anchor !== undefined ? { sourceNodeId: anchor.id } : {}),
               ...(annotationPlan === undefined ? {} : { annotationEdit: { sourceNodeId: annotationPlan.sourceNodeId, boxes: annotationPlan.boxes } }),
               prompt: finalPrompt, model,
+              ...codeRenderer ? { renderer: 'code' as const } : {},
               ...(composerChoice.channelId === '' ? {} : { channelId: composerChoice.channelId }),
             },
           })
@@ -3490,7 +3545,7 @@ export function CanvasWorkspace(props: CanvasWorkspaceProps): React.JSX.Element 
     } finally {
       setComposerBusy(false)
     }
-  }, [annotationPlanOf, api, canvasCenter, castPromptOf, castRefsFor, composerBusy, composerChannelConnected, composerChannelId, composerCount, composerModel, composerPrompt, composerQuality, composerSize, defaultChannelId, modelGroups, mutate, onOpenSettings, upstreamNodes])
+  }, [annotationPlanOf, api, canvasCenter, castPromptOf, castRefsFor, composerBusy, composerChannelConnected, composerChannelId, composerCount, composerModel, composerPrompt, composerQuality, composerRenderer, composerSize, defaultChannelId, modelGroups, mutate, onOpenSettings, upstreamNodes])
 
   // ---------------------------------------------------------- task intake
 
@@ -3503,10 +3558,15 @@ export function CanvasWorkspace(props: CanvasWorkspaceProps): React.JSX.Element 
     const metadata = nodeMetadata(node)
     const prompt = (metadata.prompt ?? '').trim()
     if (prompt === '') { setError(tt('canvas.videoNeedPrompt')); return }
+    // A node remembers how it was made, so a retry stays on that path instead
+    // of quietly falling back to a provider the user may not even have.
+    const codeRenderer = metadata.renderer === 'code'
     const groups = videoGroups ?? []
-    const choice = resolveModelChoice(groups, { channelId: metadata.channelId, model: metadata.model }, defaultChannelId)
-    if (choice.model === '') { setError(tt('canvas.videoNeedModel')); return }
-    if (!(choice.channelId === '' || channelIsConnected(choice.channelId))) { setError(tt('canvas.needApi')); onOpenSettings?.(); return }
+    const choice = codeRenderer
+      ? { channelId: '', model: '' }
+      : resolveModelChoice(groups, { channelId: metadata.channelId, model: metadata.model }, defaultChannelId)
+    if (!codeRenderer && choice.model === '') { setError(tt('canvas.videoNeedModel')); return }
+    if (!codeRenderer && !(choice.channelId === '' || channelIsConnected(choice.channelId))) { setError(tt('canvas.needApi')); onOpenSettings?.(); return }
     // Re-send the references the node was built from, so a retry reproduces the
     // same run rather than silently degrading to text-only.
     const frame = metadata.sourceNodeId === undefined
@@ -3514,7 +3574,7 @@ export function CanvasWorkspace(props: CanvasWorkspaceProps): React.JSX.Element 
       : current.nodes.find(item => item.id === metadata.sourceNodeId)
     try {
       const frames: { image?: string; firstFrame?: string; lastFrame?: string; refName?: string } = {}
-      const mode: VideoMode = metadata.videoMode ?? 'text'
+      const mode: VideoMode = codeRenderer ? 'text' : metadata.videoMode ?? 'text'
       if (mode === 'keyframe' && frame !== undefined && frame.type === 'image') {
         const asset = usableAsset(frame)
         if (asset !== undefined) frames.firstFrame = await assetToDataUrl(asset)
@@ -3530,6 +3590,11 @@ export function CanvasWorkspace(props: CanvasWorkspaceProps): React.JSX.Element 
         resolution: (metadata.resolution ?? '720P') as VideoResolution,
         seconds: metadata.seconds ?? 5,
         ...(choice.channelId === '' ? {} : { channelId: choice.channelId }),
+        ...codeRenderer ? { renderer: 'code' as const } : {},
+        // Reuse the drawing source the first run produced: the same pixels, no
+        // second chat call. Without one (the render itself failed) the host
+        // asks the model again, which is the only way to get a new answer.
+        ...codeRenderer && metadata.renderSource !== undefined ? { renderSource: metadata.renderSource } : {},
         ...frames,
         canvas: {
           canvasId: current.id,
@@ -3540,7 +3605,7 @@ export function CanvasWorkspace(props: CanvasWorkspaceProps): React.JSX.Element 
       const task = await api.videoTaskSubmit(request)
       localVideoTaskIds.current.add(task.id)
       processedVideoTasks.current.delete(task.id)
-      patchNode(node.id, { status: 'generating', error: undefined, taskId: task.id, model: choice.model })
+      patchNode(node.id, { status: 'generating', error: undefined, taskId: task.id, model: choice.model, ...codeRenderer ? { renderer: 'code' as const } : {} })
       // A retry produces a NEW clip, so whatever made the old one unloadable no
       // longer applies. Clearing the marker here is what lets the node show the
       // fresh clip when the task lands — without it the node would sit on
@@ -3866,10 +3931,15 @@ export function CanvasWorkspace(props: CanvasWorkspaceProps): React.JSX.Element 
     const metadata = nodeMetadata(node)
     const prompt = (metadata.prompt ?? '').trim()
     if (prompt === '') { setError(tt('canvas.needPrompt')); return }
-    const retryChoice = resolveModelChoice(modelGroups, { channelId: metadata.channelId, model: metadata.model }, defaultChannelId)
+    // Same rule as the clip retry: the node remembers its renderer, and a code
+    // node must not start demanding a provider its user never had.
+    const codeRenderer = metadata.renderer === 'code'
+    const retryChoice = codeRenderer
+      ? { channelId: '', model: '' }
+      : resolveModelChoice(modelGroups, { channelId: metadata.channelId, model: metadata.model }, defaultChannelId)
     const model = retryChoice.model
-    if (model === '') { setError(tt('canvas.needModel')); return }
-    if (!channelIsConnected(retryChoice.channelId)) { setError(tt('canvas.needApi')); onOpenSettings?.(); return }
+    if (!codeRenderer && model === '') { setError(tt('canvas.needModel')); return }
+    if (!codeRenderer && !channelIsConnected(retryChoice.channelId)) { setError(tt('canvas.needApi')); onOpenSettings?.(); return }
     const sourceId = metadata.sourceNodeId
     const sourceNode = sourceId === undefined ? undefined : current.nodes.find(item => item.id === sourceId)
     const directAsset = sourceNode !== undefined && sourceNode.type === 'image' ? usableAsset(sourceNode) : undefined
@@ -3888,7 +3958,10 @@ export function CanvasWorkspace(props: CanvasWorkspaceProps): React.JSX.Element 
       const annotated = sourceNode !== undefined && baseAsset !== undefined && boxes.length > 0
         ? await annotatedReference(sourceNode, boxes).catch(() => undefined)
         : undefined
-      if (annotated !== undefined) {
+      if (codeRenderer) {
+        // A drawing program does not edit the wired picture; see submitComposer.
+        image = undefined
+      } else if (annotated !== undefined) {
         image = annotated.image
         refName = 'canvas-annotated.png'
       } else if (baseAsset !== undefined) {
@@ -3905,6 +3978,10 @@ export function CanvasWorkspace(props: CanvasWorkspaceProps): React.JSX.Element 
       const request: GenerateRequest = {
         mode: image === undefined ? 'text' : 'edit', model, prompt, size: metadata.size ?? 'auto', quality: metadata.quality ?? 'auto', n: 1, detail: '',
         ...(retryChoice.channelId === '' ? {} : { channelId: retryChoice.channelId }),
+        ...codeRenderer ? { renderer: 'code' as const } : {},
+        // Re-render the stored drawing source when there is one; without it
+        // (e.g. the chat call itself failed) the host asks the model again.
+        ...codeRenderer && metadata.renderSource !== undefined ? { renderSource: metadata.renderSource } : {},
         ...(image === undefined ? {} : { image, refName }),
         ...(images === undefined ? {} : { images }),
         canvas: { canvasId: current.id, sourceNodeId: sourceId ?? references[0]?.id, parentNodeId: node.id, placement: 'right' as const },
@@ -3913,9 +3990,10 @@ export function CanvasWorkspace(props: CanvasWorkspaceProps): React.JSX.Element 
       localTaskIds.current.add(task.id)
       patchNode(node.id, {
         status: 'generating', error: undefined, taskId: task.id,
+        ...codeRenderer ? { renderer: 'code' as const } : {},
         // Remember the boxes so the finished image can be composited back onto
         // the clean original (the marker must not survive into the result).
-        ...(annotated !== undefined && sourceNode !== undefined
+        ...(annotated !== undefined && sourceNode !== undefined && !codeRenderer
           ? { annotationEdit: { sourceNodeId: sourceNode.id, boxes: boxes.map(box => box.rect) } }
           : {}),
       })
@@ -4224,6 +4302,9 @@ export function CanvasWorkspace(props: CanvasWorkspaceProps): React.JSX.Element 
               ...nodeMetadata(node),
               status: 'success' as const,
               error: undefined,
+              // Remember what drew it, so a later retry can re-render the same
+              // pixels without paying for another chat answer.
+              ...task.renderSource === undefined ? {} : { renderSource: task.renderSource },
               video: {
                 url: clip.url,
                 mime: clip.mime,
@@ -4287,7 +4368,8 @@ export function CanvasWorkspace(props: CanvasWorkspaceProps): React.JSX.Element 
             const asset = assets[index]
             return asset === undefined
               ? { ...node, metadata: { ...nodeMetadata(node), status: 'error' as const, error: tt('canvas.generateFailed') } }
-              : { ...node, metadata: { ...nodeMetadata(node), asset, status: 'success' as const, error: undefined } }
+              : { ...node, metadata: { ...nodeMetadata(node), asset, status: 'success' as const, error: undefined,
+                  ...task.result?.renderSource === undefined ? {} : { renderSource: task.result.renderSource } } }
           })
           // More results than placeholders: append sibling nodes below the last one.
           const siblings: CanvasNode[] = []
@@ -5532,7 +5614,7 @@ export function CanvasWorkspace(props: CanvasWorkspaceProps): React.JSX.Element 
               : isGenerating || metadata.status === 'idle'
                 ? <div className={css.nodeState} data-video-generating=""><span className={css.nodeSpinner} aria-hidden="true" /><span>{tt('canvas.videoGeneratingNode')}</span></div>
                 : isError
-                  ? <div className={css.nodeStateError} data-video-error="">{metadata.error ?? tt('canvas.generateFailed')}<button type="button" onClick={() => { void retryVideoGeneration(node) }}>{tt('canvas.retry')}</button></div>
+                  ? <div className={css.nodeStateError} data-video-error="">{metadata.error ?? tt('canvas.generateFailed')}{metadata.renderer === 'code' ? <span className={css.nodeStateHint}>{tt('canvas.rendererFailedHint')}</span> : null}<button type="button" onClick={() => { void retryVideoGeneration(node) }}>{tt('canvas.retry')}</button></div>
                   : <div className={css.nodeState} data-video-empty=""><span>{tt('canvas.videoEmptyNode')}</span></div>}
           </div>
         : isFile
@@ -5556,7 +5638,7 @@ export function CanvasWorkspace(props: CanvasWorkspaceProps): React.JSX.Element 
             {isGenerating
               ? <div className={css.nodeState}><span className={css.nodeSpinner} aria-hidden="true" /><span>{tt('canvas.generatingNode')}</span></div>
               : isError
-                ? <div className={css.nodeStateError}>{metadata.error ?? tt('canvas.generateFailed')}<button type="button" onClick={() => { void retryGeneration(node) }}>{tt('canvas.retry')}</button></div>
+                ? <div className={css.nodeStateError}>{metadata.error ?? tt('canvas.generateFailed')}{metadata.renderer === 'code' ? <span className={css.nodeStateHint}>{tt('canvas.rendererFailedHint')}</span> : null}<button type="button" onClick={() => { void retryGeneration(node) }}>{tt('canvas.retry')}</button></div>
                 : hasImage
                   ? <img src={asset.url} alt={node.title} title={tt('canvas.preview.doubleClick')} draggable={false} onDragStart={event => event.preventDefault()} />
                   : <button type="button" className={css.nodeEmpty} onClick={() => imageFileRef.current?.click()}><ToolbarIcon name="image" /><span>{tt('canvas.emptyImageNode')}</span></button>}
@@ -5870,12 +5952,28 @@ export function CanvasWorkspace(props: CanvasWorkspaceProps): React.JSX.Element 
         <span className={css.composerChip}>{tt('canvas.composerLinked', { count: linkedCount })}</span>
       </div> : null}
       <div className={css.composerControls}>
-        {videoModelCount > 0 ? <div className={css.composerKind} role="group" aria-label={tt('canvas.videoKind')}>
+        {/* The kind toggle normally needs a video catalog to be useful. The code
+            path does not, so it stays reachable whenever that path is selected. */}
+        {videoModelCount > 0 || composerRenderer === 'code' ? <div className={css.composerKind} role="group" aria-label={tt('canvas.videoKind')}>
           <button type="button" data-active={composerKind === 'image' ? '' : undefined} onClick={() => { setComposerKind('image') }}>{tt('canvas.kindImage')}</button>
           <button type="button" data-active={composerKind === 'video' ? '' : undefined} onClick={() => { setComposerKind('video') }}>{tt('canvas.kindVideo')}</button>
         </div> : null}
+        {/* Per-task renderer choice. Kept in the ordinary composer row (not a
+            separate dialog or a global setting) so one canvas can run both
+            paths side by side, task by task. */}
+        <ComposerSelect
+          ariaLabel={tt('canvas.rendererLabel')}
+          value={composerRenderer}
+          options={[
+            { value: 'model', label: tt('canvas.rendererModel') },
+            { value: 'code', label: tt('canvas.rendererCode') },
+          ]}
+          onChange={value => setComposerRenderer(value === 'code' ? 'code' : 'model')}
+        />
         {composerKind === 'video' ? <>
-          <ModelPicker
+          {/* With the code path there is no provider to pick: the host's own
+              conversation model writes the drawing code. */}
+          {composerRenderer === 'model' ? <ModelPicker
             groups={videoGroups ?? []}
             value={{ channelId: composerVideoChannelId, model: composerVideoModel }}
             variant="composer"
@@ -5885,7 +5983,7 @@ export function CanvasWorkspace(props: CanvasWorkspaceProps): React.JSX.Element 
             emptyLabel={tt('canvas.videoNoModel')}
             ariaLabel={tt('video.model')}
             onChange={choice => { setComposerVideoChannelId(choice.channelId); setComposerVideoModel(choice.model) }}
-          />
+          /> : null}
           <ComposerSelect
             ariaLabel={tt('canvas.videoModeLabel')}
             value={composerVideoMode}
@@ -5910,7 +6008,7 @@ export function CanvasWorkspace(props: CanvasWorkspaceProps): React.JSX.Element 
             options={(['480P', '720P', '1080P'] as const).map(item => ({ value: item, label: item }))}
             onChange={value => setComposerResolution(value as VideoResolution)}
           />
-        </> : <ModelPicker
+        </> : composerRenderer === 'model' ? <ModelPicker
           groups={modelGroups}
           value={{ channelId: composerChannelId, model: composerModel }}
           variant="composer"
@@ -5920,7 +6018,7 @@ export function CanvasWorkspace(props: CanvasWorkspaceProps): React.JSX.Element 
           emptyLabel={tt('canvas.modelPlaceholder')}
           ariaLabel={tt('canvas.model')}
           onChange={choice => { setComposerChannelId(choice.channelId); setComposerModel(choice.model) }}
-        />}
+        /> : null}
         {composerKind === 'image' ? <>
         <ComposerSelect
           ariaLabel={tt('canvas.size')}
@@ -5945,27 +6043,40 @@ export function CanvasWorkspace(props: CanvasWorkspaceProps): React.JSX.Element 
           ]}
           onChange={setComposerQuality}
         />
-        <ComposerSelect
+        {/* The code path renders one still per run (one chat answer, one
+            drawing source), so a count above one would create placeholders
+            that never fill. */}
+        {composerRenderer === 'model' ? <ComposerSelect
           ariaLabel={tt('canvas.count')}
           value={String(composerCount)}
           options={[1, 2, 3, 4].map(item => ({ value: String(item), label: tt('canvas.countUnit', { count: item }) }))}
           onChange={value => setComposerCount(Number(value))}
-        />
+        /> : null}
         </> : null}
         <button
           type="button"
           className={css.composerSend}
           aria-label={tt(composerKind === 'video' ? 'canvas.videoGenerate' : 'canvas.generate')}
           title={tt(composerKind === 'video' ? 'canvas.videoGenerate' : 'canvas.generate')}
-          disabled={composerKind === 'video'
-            ? (!composerVideoConnected || composerBusy || composerVideoModel === '' || composerPrompt.trim() === '')
-            : (!composerChannelConnected || composerBusy || (composerPrompt.trim() === '' && composerTextCount === 0 && composerAnnotationTexts.length === 0))}
+          disabled={composerBusy
+            || (composerKind === 'video'
+              ? (composerRenderer === 'model' && (!composerVideoConnected || composerVideoModel === '')) || composerPrompt.trim() === ''
+              : (composerRenderer === 'model' && !composerChannelConnected)
+                || (composerPrompt.trim() === '' && composerTextCount === 0 && composerAnnotationTexts.length === 0))}
           onClick={() => {
             if (composerKind === 'video') void submitVideoComposer(composerTarget)
             else void submitComposer(composerTarget)
           }}
         >{composerBusy ? <span className={css.nodeSpinner} aria-hidden="true" /> : <ToolbarIcon name="send" />}</button>
       </div>
+      {/* A missing ffmpeg is the one failure the user can fix before paying
+          for a chat call: say it here, with the fix, instead of at render time. */}
+      {composerRenderer === 'code' && composerProbeWarning !== undefined
+        ? <div className={css.composerMeta}><span className={css.composerHint} data-renderer-warning="">{composerProbeWarning}</span></div>
+        : null}
+      {composerRenderer === 'code'
+        ? <div className={css.composerMeta}><span className={css.composerHint}>{tt('canvas.rendererHint')}</span></div>
+        : null}
     </div>
   }
 

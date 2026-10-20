@@ -185,6 +185,11 @@ export class VideoTaskQueue {
     // and it is the whole point of the feature: an invisible plan cannot be
     // inspected or corrected.
     const plan = task.result?.plan
+    // The drawing source is what makes a code-path retry cheap: sending it
+    // back reproduces the same pixels without another chat call. It rides the
+    // summary for the same reason the plan does — the canvas needs it while
+    // polling, and re-reading the history for it would be a second round trip.
+    const renderSource = task.result?.renderSource
     // Surface the finished clip so a polling client can play the result without
     // a second round trip; a video task always produces exactly one clip.
     const clip = task.result?.videos?.[0]
@@ -202,6 +207,7 @@ export class VideoTaskQueue {
       ...clip === undefined ? {} : { resultVideo: clip },
       ...entryId === undefined ? {} : { resultEntryId: entryId },
       ...plan === undefined ? {} : { plan },
+      ...renderSource === undefined ? {} : { renderSource },
     }
   }
 
