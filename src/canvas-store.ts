@@ -390,6 +390,15 @@ function isNode(value: unknown): value is CanvasNode {
     // drop the user's layers. Rejecting here makes the save fail loudly instead.
     if (state.poster !== undefined && !isPosterDocument(state.poster)) return false
     if (state.asset !== undefined && !isAssetRef(state.asset)) return false
+    // Identity anchoring is display metadata, but a malformed one would make the
+    // prompt builder read a role it cannot render. Refusing at save time keeps a
+    // half-written pin out of the document instead of silently ignoring it.
+    if (state.cast !== undefined) {
+      if (state.cast === null || typeof state.cast !== 'object') return false
+      const cast = state.cast as Record<string, unknown>
+      if (cast.role !== 'character' && cast.role !== 'item' && cast.role !== 'style') return false
+      if (cast.name !== undefined && typeof cast.name !== 'string') return false
+    }
     return state.status === undefined || state.status === 'idle' || state.status === 'generating' || state.status === 'success' || state.status === 'error'
   }
   if (node.type === 'video') {

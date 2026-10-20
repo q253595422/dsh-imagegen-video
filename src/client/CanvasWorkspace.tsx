@@ -8,7 +8,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type ChangeEvent, type CSSProperties, type PointerEvent as ReactPointerEvent, type ReactNode } from 'react'
 import { createPortal } from 'react-dom'
 import {
-  Bold, BookOpen, ChevronDown, Copy, Download, Eraser, FileText as FileTextIcon, FolderX, Hand, Image as ImageIcon,
+  Bold, BookOpen, ChevronDown, Copy, Download, Eraser, FileText as FileTextIcon, Film, FolderX, Hand, Image as ImageIcon,
   GitBranch, Keyboard, Layers, Map as MapIcon, Maximize, Maximize2, MousePointer2, Palette, Pencil, Plus, Redo2, Scissors, SendHorizonal, Sparkles, Star,
   SquareDashedMousePointer, Trash2, Type, Undo2, Upload, Wand2, Wallpaper, X,
 } from 'lucide-react'
@@ -16,7 +16,11 @@ import type { CanvasAnnotation, CanvasAssetRef, CanvasConnection, CanvasDocument
 import { VIDEO_DURATIONS } from '../protocol.ts'
 // The stitch order is a SHARED rule: the host builds its ffmpeg concat list with
 // the same function, so the numbers on the badges are the order of the file.
-import { orderIdsByPosition } from '../clip-order.ts'
+import { TimelinePanel, type TimelineClipView } from './TimelinePanel.tsx'
+import type { Timeline } from './timeline.ts'
+import { CastDialog, castLine } from './CastDialog.tsx'
+import { castMembers, castPromptLines, castReferenceIds, ROLE_LABELS } from './cast.ts'
+import { orderByPosition, orderIdsByPosition } from '../clip-order.ts'
 import { defaultStoryboard, MAX_SHOTS, SHOT_SECONDS, nextShotId, shotNodeOf, shotProblem, shotState, storyboardClipIds, storyboardOf, storyboardProgress, nextShotIndex, withAppendedShot, withMovedShot, withRemovedShot, withShot, type ShotState } from './storyboard.ts'
 import { ImageGenApiError, type ImageGenApi } from './api.ts'
 import { errorMessage, tt } from './helpers.ts'
@@ -606,7 +610,7 @@ function rasterizeSketch(strokes: CanvasSketchStroke[], boardWidth: number, boar
   return { dataUrl: canvas.toDataURL('image/png'), width: canvas.width, height: canvas.height }
 }
 
-type ToolbarIconName = 'new' | 'select' | 'pan' | 'image' | 'text' | 'file' | 'sketch' | 'eraser' | 'trash' | 'undo' | 'redo' | 'fit' | 'minimap' | 'background' | 'template' | 'download' | 'duplicate' | 'sparkle' | 'send' | 'close' | 'deleteProject' | 'annotate' | 'removeBg' | 'layers' | 'bold' | 'color' | 'skill' | 'upload' | 'expand' | 'favorite' | 'favoriteFilled' | 'help' | 'workflow'
+type ToolbarIconName = 'new' | 'select' | 'pan' | 'image' | 'text' | 'file' | 'sketch' | 'eraser' | 'trash' | 'undo' | 'redo' | 'fit' | 'minimap' | 'background' | 'template' | 'download' | 'duplicate' | 'sparkle' | 'send' | 'close' | 'deleteProject' | 'annotate' | 'removeBg' | 'layers' | 'bold' | 'color' | 'skill' | 'upload' | 'expand' | 'favorite' | 'favoriteFilled' | 'help' | 'workflow' | 'timeline'
 
 /** Lucide icons (stroke matches the DSH line style); one shared component so
  *  every dock/toolbar icon comes from the same well-drawn set. */
@@ -650,6 +654,8 @@ function ToolbarIcon({ name, size = 16 }: { name: ToolbarIconName; size?: number
     case 'help': return <Keyboard {...common} />
     // 一条连线分叉成三支：这是「整张图按依赖跑」这个动作最短的形状。
     case 'workflow': return <GitBranch {...common} />
+    // 几段胶片并排：时间线是「把已成片的几段排成一条」这个动作。
+    case 'timeline': return <Film {...common} />
   }
 }
 
@@ -1674,6 +1680,14 @@ export function CanvasWorkspace(props: CanvasWorkspaceProps): React.JSX.Element 
   /** Toast action for a specific message: a missing skill the user can install. */
   const [errorAction, setErrorAction] = useState<{ label: string; run: () => void; forError: string } | null>(null)
   const [pendingSkill, setPendingSkill] = useState<{ skill: CanvasSkillDescriptor; nodeIds: string[]; instruction: string } | null>(null)
+  // 时间线编辑面板：打开时带一份初值（选中的视频按画布顺序排好）。
+  const [timelineOpen, setTimelineOpen] = useState(false)
+  /** 打开时间线时选定的片段，按画布顺序。面板只认这一份列表：框选两段就
+   *  是两段，不会把画布上其它成片也拖进来。 */
+  const [timelineNodeIds, setTimelineNodeIds] = useState<string[]>([])
+  const [timelineBusy, setTimelineBusy] = useState(false)
+  /** 正在设置身份参考的图片节点；面板关掉时清空。 */
+  const [castTarget, setCastTarget] = useState<string | null>(null)
   /** Live skill runs: task id -> the target node's toolbar label/id. */
   const [skillRuns, setSkillRuns] = useState<Record<string, SkillRunTrace>>({})
   const [polishBusy, setPolishBusy] = useState<string | null>(null)
@@ -2276,6 +2290,29 @@ export function CanvasWorkspace(props: CanvasWorkspaceProps): React.JSX.Element 
       .filter((node): node is CanvasNode => node !== undefined)
   }, [])
 
+  /**
+   * 这次生成要额外带上的身份参考节点。
+   *
+   * 连线是「这一张的输入」，身份锚定是「这部片子的设定」：即使某个角色这一
+   * 次没有连线，只要它在画布上被钉住，生成就应该带上它。两者的去重规则在
+   * cast.ts 里，与界面无关。
+   */
+  const castRefsFor = useCallback((canvasDocument: CanvasDocument, already: readonly string[]): CanvasNode[] => {
+    const members = castMembers(canvasDocument.nodes)
+    const byId = new Map(canvasDocument.nodes.map(node => [node.id, node]))
+    return castReferenceIds(members, already).flatMap(nodeId => {
+      const node = byId.get(nodeId)
+      return node === undefined ? [] : [node]
+    })
+  }, [])
+
+  /** 身份参考在提示词里的那几句话；没有参考就不加，免得留一行空话。 */
+  const castPromptOf = useCallback((canvasDocument: CanvasDocument, ids: readonly string[]): string => {
+    if (ids.length === 0) return ''
+    const members = castMembers(canvasDocument.nodes)
+    return castPromptLines(members.filter(member => ids.includes(member.nodeId)), castLine).join('\n')
+  }, [])
+
   // --------------------------------------------------------- skills / files
 
   /** Create a file node for an uploaded or produced asset. */
@@ -2465,6 +2502,7 @@ export function CanvasWorkspace(props: CanvasWorkspaceProps): React.JSX.Element 
     skill: CanvasSkillDescriptor,
     nodeIds: string[],
     instruction?: string,
+    extraParams?: Record<string, string>,
   ): Promise<void> => {
     const current = documentRef.current
     if (current === null) return
@@ -2476,6 +2514,9 @@ export function CanvasWorkspace(props: CanvasWorkspaceProps): React.JSX.Element 
       nodeIds,
       ...instruction === undefined || instruction.trim() === '' ? {} : { instruction: instruction.trim() },
       ...skill.id === 'polish.text' ? { params: { style: (instruction ?? '').trim() === '' ? 'formal' : 'custom' } } : {},
+      // A timeline rides along as a JSON string; the host parses it and refuses
+      // a malformed one rather than silently stitching without the trims.
+      ...extraParams === undefined ? {} : { params: extraParams },
     }
     try {
       const task = await api.canvasSkillRun(request)
@@ -3231,8 +3272,8 @@ export function CanvasWorkspace(props: CanvasWorkspaceProps): React.JSX.Element 
       .map(node => nodeMetadata(node).text!.trim())
     setComposerBusy(true)
     try {
-      const prompt = composerPrompt.trim() !== '' ? composerPrompt.trim() : upstreamText.join('\n')
-      if (prompt === '') { setError(tt('canvas.videoNeedPrompt')); return }
+      const basePrompt = composerPrompt.trim() !== '' ? composerPrompt.trim() : upstreamText.join('\n')
+      if (basePrompt === '') { setError(tt('canvas.videoNeedPrompt')); return }
       // Resolve the video model against the video catalogs (not the image ones):
       // a video alias only exists in `videoModels`.
       const choice = resolveModelChoice(groups, { channelId: composerVideoChannelId, model: composerVideoModel }, defaultChannelId)
@@ -3241,11 +3282,20 @@ export function CanvasWorkspace(props: CanvasWorkspaceProps): React.JSX.Element 
       // The mode comes from the graph unless the user overrode it: 'auto' maps
       // the connected references onto text / image / keyframe, which is the
       // natural canvas behavior (wire an image in and you get image-to-video).
-      const derived: VideoMode = referenceImages.length === 0
+      // Identity references widen that: a pinned character does not have to be
+      // wired into every shot, so when nothing is wired but somebody is pinned,
+      // the run becomes reference-mode instead of degrading to text-to-video.
+      const castNodes = castRefsFor(current, referenceImages.map(node => node.id))
+      // 一次最多四张参考图（引擎侧与图像链路一致）：连线的排前面，剩下的名额
+      // 给身份参考。
+      const referencePool = [...referenceImages, ...castNodes].slice(0, 4)
+      const derived: VideoMode = referencePool.length === 0
         ? 'text'
-        : referenceImages.length >= 2
-          ? 'keyframe'
-          : 'image'
+        : referenceImages.length === 0
+          ? 'reference'
+          : referenceImages.length >= 2
+            ? 'keyframe'
+            : 'image'
       const effective: VideoMode = composerVideoMode === 'auto' ? derived : composerVideoMode
       // An explicit mode still has to be satisfiable by the graph.
       if (effective === 'image' && referenceImages.length === 0) { setError(tt('canvas.videoNeedReference')); return }
@@ -3254,7 +3304,12 @@ export function CanvasWorkspace(props: CanvasWorkspaceProps): React.JSX.Element 
         // Explicit text mode with references wired: that is a deliberate choice
         // (the frames are ignored), so no error.
       }
-      const frames: { image?: string; firstFrame?: string; lastFrame?: string; refName?: string } = {}
+      // 身份参考只在真的被送进去时进提示词：说了“参考图 1 是她”却没附图，
+      // 只会让模型凭空发挥。
+      const usedCast = effective === 'reference' ? referencePool : referenceImages
+      const castPrompt = effective === 'reference' ? castPromptOf(current, referencePool.map(node => node.id)) : ''
+      const prompt = castPrompt === '' ? basePrompt : `${basePrompt}\n\n${castPrompt}`
+      const frames: { image?: string; firstFrame?: string; lastFrame?: string; images?: string[]; refName?: string } = {}
       if (effective === 'keyframe') {
         const first = referenceImages[0] !== undefined ? usableAsset(referenceImages[0]!) : undefined
         const last = referenceImages[1] !== undefined ? usableAsset(referenceImages[1]!) : undefined
@@ -3266,6 +3321,18 @@ export function CanvasWorkspace(props: CanvasWorkspaceProps): React.JSX.Element 
         if (base === undefined) { setError(tt('canvas.videoNeedReference')); return }
         frames.image = await assetToDataUrl(base)
         frames.refName = 'canvas-reference.png'
+      } else if (effective === 'reference') {
+        const first = referencePool[0] !== undefined ? usableAsset(referencePool[0]!) : undefined
+        if (first === undefined) { setError(tt('canvas.videoNeedReference')); return }
+        frames.image = await assetToDataUrl(first)
+        frames.refName = 'canvas-reference.png'
+        const extras: string[] = []
+        for (const reference of referencePool.slice(1, 4)) {
+          const asset = usableAsset(reference)
+          if (asset === undefined) continue
+          try { extras.push(await assetToDataUrl(asset)) } catch { /* skip unreadable reference */ }
+        }
+        if (extras.length > 0) frames.images = extras
       }
       const footprint = nodeSizeFromRatio(composerAspect === '9:16' ? '9:16' : composerAspect === '1:1' ? '1:1' : '16:9', IMAGE_NODE_SIZE)
       const placeholderId = newId('node')
@@ -3282,7 +3349,7 @@ export function CanvasWorkspace(props: CanvasWorkspaceProps): React.JSX.Element 
           canvasId: current.id,
           ...(target === null ? {} : { sourceNodeId: target.id }),
           nodeId: placeholderId,
-          ...(referenceImages.length === 0 ? {} : { referenceNodeIds: referenceImages.map(node => node.id) }),
+          ...(usedCast.length === 0 ? {} : { referenceNodeIds: usedCast.map(node => node.id) }),
         },
       }
       const task = await api.videoTaskSubmit(request)
@@ -3315,7 +3382,7 @@ export function CanvasWorkspace(props: CanvasWorkspaceProps): React.JSX.Element 
     } finally {
       setComposerBusy(false)
     }
-  }, [api, canvasCenter, composerAspect, composerBusy, composerChannelConnected, composerPrompt, composerResolution, composerSeconds, composerVideoChannelId, composerVideoMode, composerVideoModel, defaultChannelId, mutate, onOpenSettings, upstreamNodes, videoGroups])
+  }, [api, canvasCenter, castPromptOf, castRefsFor, composerAspect, composerBusy, composerChannelConnected, composerPrompt, composerResolution, composerSeconds, composerVideoChannelId, composerVideoMode, composerVideoModel, defaultChannelId, mutate, onOpenSettings, upstreamNodes, videoGroups])
 
   // ----------------------------------------------------------- generation
 
@@ -3341,19 +3408,34 @@ export function CanvasWorkspace(props: CanvasWorkspaceProps): React.JSX.Element 
       const model = composerChoice.model
       if (model === '') { setError(tt('canvas.needModel')); setComposerBusy(false); return }
       const count = Math.min(4, Math.max(1, Math.round(composerCount)))
-      const baseAsset = referenceImages[0] !== undefined ? usableAsset(referenceImages[0]!) : undefined
-      const finalPrompt = annotationPlan === undefined ? prompt : `${prompt}\n\n${annotationPlan.prompt}`
+      // 身份参考：连线是这次输入，钉住的是整部片子的设定。两者合并成一张参考
+      // 池，连线排前面（它仍然是编辑的底图），再按 cast.ts 的规则去重。
+      const castNodes = castRefsFor(current, referenceImages.map(node => node.id))
+      const castPrompt = castPromptOf(current, castNodes.map(node => node.id))
+      const referencePool = [...referenceImages, ...castNodes]
+      const baseAsset = referencePool[0] !== undefined ? usableAsset(referencePool[0]!) : undefined
+      const finalPrompt = [annotationPlan === undefined ? prompt : `${prompt}\n\n${annotationPlan.prompt}`, castPrompt]
+        .filter(part => part !== '')
+        .join('\n\n')
       let image: string | undefined
       let images: string[] | undefined
       let refName: string | undefined
       if (annotationPlan !== undefined) {
         image = annotationPlan.image
         refName = 'canvas-annotated.png'
+        // 标注底图已经占掉一张参考图；身份参考接在后面，最多凑满四张。
+        const extras: string[] = []
+        for (const node of castNodes) {
+          const asset = usableAsset(node)
+          if (asset === undefined) continue
+          try { extras.push(await assetToDataUrl(asset)) } catch { /* skip unreadable reference */ }
+        }
+        if (extras.length > 0) images = extras.slice(0, 3)
       } else if (baseAsset !== undefined) {
         image = await assetToDataUrl(baseAsset)
         refName = 'canvas-reference.png'
         const extras: string[] = []
-        for (const reference of referenceImages.slice(1, 4)) {
+        for (const reference of referencePool.slice(1, 4)) {
           const asset = usableAsset(reference)
           if (asset === undefined) continue
           try { extras.push(await assetToDataUrl(asset)) } catch { /* skip unreadable reference */ }
@@ -3408,7 +3490,7 @@ export function CanvasWorkspace(props: CanvasWorkspaceProps): React.JSX.Element 
     } finally {
       setComposerBusy(false)
     }
-  }, [annotationPlanOf, api, canvasCenter, composerBusy, composerChannelConnected, composerChannelId, composerCount, composerModel, composerPrompt, composerQuality, composerSize, defaultChannelId, modelGroups, mutate, onOpenSettings, upstreamNodes])
+  }, [annotationPlanOf, api, canvasCenter, castPromptOf, castRefsFor, composerBusy, composerChannelConnected, composerChannelId, composerCount, composerModel, composerPrompt, composerQuality, composerSize, defaultChannelId, modelGroups, mutate, onOpenSettings, upstreamNodes])
 
   // ---------------------------------------------------------- task intake
 
@@ -4015,6 +4097,63 @@ export function CanvasWorkspace(props: CanvasWorkspaceProps): React.JSX.Element 
     workflowAbort.current?.abort()
   }, [])
 
+  /** 打开时间线：把选中的视频按画布位置排好，作为初值。 */
+  const openTimeline = useCallback((): void => {
+    const current = documentRef.current
+    if (current === null) return
+    const clips = current.nodes.filter(node => node.type === 'video'
+      && (nodeMetadata(node).video?.url ?? '') !== ''
+      && (selectedIds.size === 0 || selectedIds.has(node.id)))
+    // 少于两段时按画布顺序自动取全部已成片的视频：拼接本来就至少两段，
+    // 逼用户先框选一次才能用这个功能没有必要。
+    const pool = clips.length >= 2 ? clips : current.nodes.filter(node => node.type === 'video' && (nodeMetadata(node).video?.url ?? '') !== '')
+    if (pool.length < 2) { setError(tt('canvas.storyboard.stitchTooFew')); return }
+    setTimelineNodeIds(orderIdsByPosition(pool))
+    setTimelineOpen(true)
+  }, [selectedIds])
+
+  const timelineClips = useMemo<TimelineClipView[]>(() => {
+    const current = documentRef.current
+    if (current === null || !timelineOpen) return []
+    const byId = new Map(current.nodes.map(node => [node.id, node]))
+    return timelineNodeIds.flatMap(nodeId => {
+      const node = byId.get(nodeId)
+      const video = node === undefined ? undefined : nodeMetadata(node).video
+      // 节点在这期间被删了或成片没了：跳过，而不是渲染一条点不开的空白。
+      if (node === undefined || video === undefined || video.url === '') return []
+      return [{
+        nodeId: node.id,
+        title: node.title,
+        seconds: video.duration ?? 0,
+        src: video.url,
+      }]
+    })
+  }, [document?.revision, timelineOpen, timelineNodeIds])
+
+  /** 时间线提交：转成 params.timeline，走既有拼接链路。 */
+  const submitTimeline = useCallback((timeline: Timeline): void => {
+    const skill = skillCatalog?.skills.find(item => item.id === COMPOSE_SKILL_ID)
+    if (skill === undefined) {
+      setError(skillCatalog === null ? tt('canvas.skills.loading') : (skillCatalog.reason ?? tt('canvas.skills.unknown')))
+      return
+    }
+    setTimelineBusy(true)
+    void startSkillRun(skill, timeline.segments.map(segment => segment.nodeId), undefined, {
+      timeline: JSON.stringify({
+        segments: timeline.segments.map(segment => ({
+          nodeId: segment.nodeId,
+          inPoint: segment.inPoint,
+          ...segment.outPoint === undefined ? {} : { outPoint: segment.outPoint },
+        })),
+        transitions: timeline.transitions,
+        keepAudio: timeline.keepAudio,
+      }),
+    }).finally(() => {
+      setTimelineBusy(false)
+      setTimelineOpen(false)
+    })
+  }, [skillCatalog, startSkillRun])
+
   // Orphan reconciliation: a generating placeholder whose task no longer exists
   // in the host feed (e.g. the host restarted) can never complete on its own.
   useEffect(() => {
@@ -4567,6 +4706,10 @@ export function CanvasWorkspace(props: CanvasWorkspaceProps): React.JSX.Element 
         // which read as "Esc did something invisible and left what I wanted
         // closed still open".
         if (videoPreviewNodeId !== null) { setVideoPreviewNodeId(null); return }
+        // 时间线面板在最上层，Esc 先收它，别顺手把选区清掉。
+        if (timelineOpen) { setTimelineOpen(false); return }
+        // 身份面板同理：它是浮在画布上的设定，收起时不该动画布状态。
+        if (castTarget !== null) { setCastTarget(null); return }
         if (pendingSkill !== null) { setPendingSkill(null); return }
         if (skillMenu !== null) { setSkillMenu(null); return }
         if (polishNode !== null) { setPolishNode(null); return }
@@ -4650,7 +4793,7 @@ export function CanvasWorkspace(props: CanvasWorkspaceProps): React.JSX.Element 
       window.removeEventListener('blur', onBlur)
       window.removeEventListener('paste', onPaste)
     }
-  }, [addAssets, annotateNodeId, api, canvasCenter, copySelection, deleteNode, deleteSelection, duplicateSelection, pasteClipboard, pickerOpen, polishNode, redo, shortcutHelpOpen, skillLibraryOpen, skillMenu, undo, videoPreviewNodeId, pendingSkill])
+  }, [addAssets, annotateNodeId, api, canvasCenter, copySelection, deleteNode, deleteSelection, duplicateSelection, pasteClipboard, pickerOpen, polishNode, redo, shortcutHelpOpen, skillLibraryOpen, skillMenu, undo, videoPreviewNodeId, pendingSkill, timelineOpen, castTarget])
 
   // ------------------------------------------------------ viewport events
 
@@ -5090,6 +5233,8 @@ export function CanvasWorkspace(props: CanvasWorkspaceProps): React.JSX.Element 
   // -------------------------------------------------------------- derived
 
   const nodeById = useMemo(() => new Map((document?.nodes ?? []).map(node => [node.id, node])), [document])
+  /** 正在设置身份参考的节点；节点被删掉时面板自然消失，不留一个悬空面板。 */
+  const castNode = useMemo(() => castTarget === null ? undefined : nodeById.get(castTarget), [castTarget, nodeById])
   /** The file node whose full-screen reader is open, with its asset resolved. */
   const filePreviewNode = useMemo(() => {
     if (filePreviewNodeId === null) return undefined
@@ -5261,6 +5406,12 @@ export function CanvasWorkspace(props: CanvasWorkspaceProps): React.JSX.Element 
         <span className={css.nodeTitle}>{node.title}</span>
         {metadata.videoMode !== undefined ? <span className={css.nodeTag}>{tt(`video.mode.${metadata.videoMode}` as ImageGenKey)}</span> : null}
       </header> : null}
+      {node.type === 'image' && metadata.cast !== undefined ? <span className={css.castBadge} data-cast-badge="">
+        {tt('canvas.cast.badge', {
+          role: tt(ROLE_LABELS[metadata.cast.role]),
+          name: (metadata.cast.name ?? '').trim() !== '' ? metadata.cast.name! : node.title,
+        })}
+      </span> : null}
       {isStoryboard ? (() => {
         const board = storyboardOf(node)
         const progress = storyboardProgress(board, document?.nodes ?? [])
@@ -5869,6 +6020,14 @@ export function CanvasWorkspace(props: CanvasWorkspaceProps): React.JSX.Element 
           items.push({ label: tt('canvas.preview.expand'), icon: 'expand', action: () => openImageNode(node) })
           items.push({ label: tt('poster.title'), icon: 'text', action: () => { if (document !== null) setPosterTarget({ canvasId: document.id, nodeId: node.id }) } })
           items.push({ label: tt('canvas.download'), icon: 'download', action: () => downloadNode(node) })
+          // 身份锚定：同一张图定一次，之后每次生成自动带着它。
+          items.push({
+            label: nodeMetadata(node).cast === undefined ? tt('canvas.cast.pin') : tt('canvas.cast.unpin'),
+            icon: 'favorite',
+            action: nodeMetadata(node).cast === undefined
+              ? () => { setCastTarget(node.id) }
+              : () => { patchNode(node.id, { cast: undefined }); setNotice(tt('canvas.cast.unpinned')) },
+          })
         }
         if (node !== undefined && node.type === 'file' && (assetOf(node)?.url.length ?? 0) > 0) {
           items.push({ label: tt('canvas.skills.fileDownload'), icon: 'download', action: () => downloadFileNode(node) })
@@ -6107,6 +6266,16 @@ export function CanvasWorkspace(props: CanvasWorkspaceProps): React.JSX.Element 
             active={workflowBusy}
             disabled={document === null || document.nodes.length === 0}
             onClick={() => { void runWorkflowFrom([...selectedIds]) }}
+          />
+        </div>
+        <div className={css.dockItem} data-dock-item="" data-label={tt('timeline.open')}>
+          <IconButton
+            name="timeline"
+            size={18}
+            label={tt('timeline.open')}
+            active={timelineOpen}
+            disabled={document === null}
+            onClick={openTimeline}
           />
         </div>
         <div className={css.dockItem} data-dock-item="" data-label={tt('canvas.background')}>
@@ -6371,6 +6540,29 @@ export function CanvasWorkspace(props: CanvasWorkspaceProps): React.JSX.Element 
       })}</span>
       <button type="button" onClick={cancelWorkflow}>{tt('canvas.workflow.stop')}</button>
     </div> : null}
+    {/* 时间线：排序/裁剪/转场都在这里改，提交时把整条时间线交给既有拼接链路。 */}
+    {timelineOpen ? <TimelinePanel
+      clips={timelineClips}
+      busy={timelineBusy}
+      onCancel={() => setTimelineOpen(false)}
+      onSubmit={submitTimeline}
+    /> : null}
+    {/* 身份锚定：给一张图起名字、定角色，钉住它。 */}
+    {castTarget !== null && castNode !== undefined ? <CastDialog
+      title={castNode.title}
+      current={castNode.metadata?.cast}
+      onCancel={() => setCastTarget(null)}
+      onSave={member => {
+        patchNode(castNode.id, { cast: member })
+        setNotice(member === undefined
+          ? tt('canvas.cast.unpinned')
+          : tt('canvas.cast.pinned', {
+              role: tt(ROLE_LABELS[member.role]),
+              name: (member.name ?? '').trim() !== '' ? member.name! : castNode.title,
+            }))
+        setCastTarget(null)
+      }}
+    /> : null}
 
     {posterTarget !== null && document?.id === posterTarget.canvasId ? (() => {
       const source = document.nodes.find(node => node.id === posterTarget.nodeId)

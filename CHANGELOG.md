@@ -5,6 +5,38 @@ Attribution for third-party code is in [NOTICE](./NOTICE).
 
 ## Releases
 
+### 1.12.0 — cut, join, and keep the same face
+
+- **A timeline editor on the canvas.** The dock's new film button lines the
+  finished clips up in canvas reading order, then lets them be reordered,
+  trimmed (in/out point per clip) and joined with a transition. The result is
+  still an ordinary video node, so preview / download / favorite / retry keep
+  working on it.
+- **Trims are clamped to the clip.** An out point past the end of the material
+  is the material's own length, never a read past the last frame; a transition
+  is clamped to half of the shorter clip beside it at *calculation* time, so
+  xfade never receives an offset longer than its input.
+- **Real transitions in ffmpeg.** Hard cuts keep the single `concat` pass; any
+  fade/dissolve switches to a chained `xfade`/`acrossfade` graph with a unified
+  time base on both sides. Audio is optional — turning it off omits the audio
+  chain entirely instead of mapping a silent one.
+- **The editor's total matches the file.** Both sides read
+  `timeline.ts`, so the length shown in the panel is the length that gets
+  written. `pnpm test:timeline` checks the rules offline and
+  `pnpm test:timeline-compose` runs four real ffmpeg renders and measures them.
+- **Identity anchoring.** Any image node can be pinned as a character, item or
+  style with a name. Pinned nodes join every later image and video generation
+  as references automatically, and the prompt gains one sentence saying which
+  reference is whom. Connecting a node still wins for *this* run; the pin is the
+  film's standing definition and is de-duplicated against it (one image sent
+  once, one name sent once).
+- **A pin that only exists on screen is a bug, not a feature.** The pin lives in
+  `metadata.cast` on the node, so it survives a reload and every later run reads
+  the same definition — change the face by re-shooting that one node.
+- **Video mode upgrades rather than degrades.** With nothing wired but a
+  character pinned, an `auto` video run becomes reference-mode instead of
+  quietly falling back to text-to-video.
+
 ### 1.11.0 — the canvas runs the whole chain, not one node
 
 - **A workflow run.** The dock's new branch button walks the graph downstream

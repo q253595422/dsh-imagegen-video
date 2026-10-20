@@ -1,0 +1,220 @@
+/* 时间线编辑面板：底部抽屉，横向排列的素材条。
+   颜色全部走 DSH 语义 token，浅色/深色都自动跟随；不加新的 z-index 档位。 */
+
+.panel {
+  position: absolute;
+  left: 50%;
+  bottom: 20px;
+  transform: translateX(-50%);
+  z-index: var(--z-notice);
+  width: min(760px, 92%);
+  max-height: 60%;
+  display: flex;
+  flex-direction: column;
+  border-radius: 14px;
+  border: 1px solid var(--dsw-alias-border-l1);
+  background: var(--dsw-alias-bg-layer-1);
+  box-shadow: 0 18px 44px rgb(15 23 42 / 24%);
+  overflow: hidden;
+}
+
+.header {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 12px;
+  border-bottom: 1px solid var(--dsw-alias-border-l1);
+  font-size: 13px;
+}
+
+.total {
+  color: var(--dsw-alias-label-secondary);
+  font-variant-numeric: tabular-nums;
+}
+
+.spacer {
+  flex: 1;
+}
+
+.toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  color: var(--dsw-alias-label-secondary);
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.ghost,
+.primary {
+  border-radius: 8px;
+  border: 1px solid var(--dsw-alias-border-l1);
+  background: transparent;
+  color: inherit;
+  padding: 5px 12px;
+  font-size: 12.5px;
+  cursor: pointer;
+}
+
+.primary {
+  border-color: transparent;
+  background: var(--dsw-alias-label-primary);
+  color: var(--dsw-alias-bg-layer-1);
+}
+
+.primary:disabled,
+.ghost:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+.track {
+  list-style: none;
+  margin: 0;
+  padding: 10px 12px 14px;
+  display: flex;
+  gap: 0;
+  overflow-x: auto;
+}
+
+.segment {
+  flex: none;
+  width: 176px;
+  padding: 8px;
+  border-radius: 10px;
+  border: 1px solid var(--dsw-alias-border-l1);
+  background: color-mix(in srgb, var(--dsw-alias-label-primary) 3%, transparent);
+  position: relative;
+  display: flex;
+  gap: 8px;
+  align-items: flex-start;
+}
+
+/* 接缝：挨在两段之间，表示这条边上的转场。 */
+.seam {
+  position: absolute;
+  right: -1px;
+  top: 50%;
+  transform: translate(50%, -50%);
+  display: flex;
+  gap: 3px;
+  padding: 3px;
+  border-radius: 8px;
+  background: var(--dsw-alias-bg-layer-1);
+  border: 1px solid var(--dsw-alias-border-l1);
+  /* 接缝压在相邻两段之上，用内容抬高层，不新开档位。 */
+  z-index: var(--z-content-raised);
+}
+
+.seam select,
+.seam input {
+  font-size: 11px;
+  border-radius: 5px;
+  border: 1px solid var(--dsw-alias-border-l1);
+  background: var(--dsw-alias-bg-layer-1);
+  color: inherit;
+  padding: 1px 3px;
+}
+
+.seam input {
+  width: 46px;
+  font-variant-numeric: tabular-nums;
+}
+
+.index {
+  flex: none;
+  width: 18px;
+  height: 18px;
+  border-radius: 5px;
+  background: var(--dsw-alias-label-primary);
+  color: var(--dsw-alias-bg-layer-1);
+  font-size: 11px;
+  display: grid;
+  place-items: center;
+}
+
+.poster,
+.posterFallback {
+  flex: none;
+  width: 44px;
+  height: 30px;
+  border-radius: 5px;
+  object-fit: cover;
+  background: color-mix(in srgb, var(--dsw-alias-label-primary) 10%, transparent);
+}
+
+.body {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+
+.title {
+  font-size: 12px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.meta {
+  display: flex;
+  gap: 8px;
+  font-size: 11px;
+  color: var(--dsw-alias-label-secondary);
+  font-variant-numeric: tabular-nums;
+}
+
+.dim {
+  opacity: 0.7;
+}
+
+.trim {
+  display: flex;
+  gap: 6px;
+  margin-top: 2px;
+}
+
+.trim label {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  font-size: 10px;
+  color: var(--dsw-alias-label-secondary);
+}
+
+.trim input {
+  width: 56px;
+  font-size: 11px;
+  border-radius: 5px;
+  border: 1px solid var(--dsw-alias-border-l1);
+  background: var(--dsw-alias-bg-layer-1);
+  color: inherit;
+  padding: 1px 4px;
+  font-variant-numeric: tabular-nums;
+}
+
+.actions {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.actions button {
+  width: 20px;
+  height: 18px;
+  border-radius: 4px;
+  border: 1px solid var(--dsw-alias-border-l1);
+  background: transparent;
+  color: inherit;
+  font-size: 11px;
+  line-height: 1;
+  cursor: pointer;
+  padding: 0;
+}
+
+.actions button:disabled {
+  opacity: 0.35;
+  cursor: not-allowed;
+}

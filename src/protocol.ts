@@ -8,7 +8,7 @@
 export const IMAGEGEN_SETTINGS_NAMESPACE = 'dsh-imagegen'
 
 /** Published package version shared by the host updater and the client UI. */
-export const PLUGIN_VERSION = '1.11.0'
+export const PLUGIN_VERSION = '1.12.0'
 
 /** Same-origin route family (loopback-only, mirroring the dsh-ssh fence). */
 export const SETTINGS_API = {
@@ -839,9 +839,20 @@ export interface ClipComposer {
   /**
    * Stitch clips in the given order into one MP4. `sources` are local file
    * paths, in final play order.
+   *
+   * `trims` and `transitions` are optional so a plain stitch keeps its original
+   * shape; a timeline editor fills them from its own model. Index i of `trims`
+   * belongs to source i, and index i of `transitions` is the seam between
+   * source i and i+1.
    */
   stitch: (input: {
     sources: readonly string[]
+    /** Per-source in-point and length, in seconds; absent = whole clip. */
+    trims?: readonly { start: number; seconds?: number }[]
+    /** Seam kinds, in order; absent = every seam is a hard cut. */
+    transitions?: readonly { kind: 'cut' | 'fade' | 'dissolve'; seconds: number }[]
+    /** False drops audio entirely (a silent film). Defaults to true. */
+    keepAudio?: boolean
     signal?: AbortSignal
     /** Called as the pipeline advances, for the task's `stage` text. */
     onStage?: (stage: 'probe' | 'encode') => void
@@ -1222,7 +1233,29 @@ export interface CanvasVideoRef {
  */
 export type { PosterDocument, PosterImageLayer, PosterLayer, PosterTextLayer } from './poster.ts'
 
+/** What an image node represents when it is pinned as an identity reference. */
+export type CanvasCastRole = 'character' | 'item' | 'style'
+
+/**
+ * Identity anchoring: an image node marked as a cast member.
+ *
+ * The definition lives ON the node rather than in a separate registry, so there
+ * is exactly one place a face can be changed and every later generation picks
+ * it up. Marking is a property of an ordinary image node — no new node type, no
+ * extra document field, and a canvas without one behaves exactly as before.
+ */
+export interface CanvasCastMember {
+  role: CanvasCastRole
+  /** Name used in the prompt ("the character 阿禾"); defaults to the node title. */
+  name?: string
+}
+
 export interface CanvasNodeMetadata {
+  /**
+   * Image nodes: this node is a pinned identity reference. Generation attaches
+   * it (and every other pinned node) as a reference image automatically.
+   */
+  cast?: CanvasCastMember
   /**
    * Image nodes: the editable overlay recipe behind the flattened asset. The
    * asset stays the rendered image, so every existing reader (node body,

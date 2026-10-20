@@ -1352,6 +1352,27 @@
 .contextMenu button:hover { background: var(--dsw-alias-interactive-bg-hover); }
 .contextMenu button[data-danger] { color: var(--dsw-alias-label-error); }
 
+/* 身份锚定角标：贴在图片节点左上角。用星形语义（钉住），不是彩色强调——
+   --dsw-alias-brand-primary 是中性反转色，这里只做底片。 */
+.castBadge {
+  position: absolute;
+  top: 6px;
+  left: 6px;
+  z-index: var(--z-content);
+  max-width: calc(100% - 12px);
+  padding: 2px 8px;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--dsw-alias-label-primary) 78%, transparent);
+  color: var(--dsw-alias-bg-layer-1);
+  font-size: 10.5px;
+  line-height: 1.5;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  pointer-events: none;
+  backdrop-filter: blur(3px);
+}
+
 /* ---------------------------------------------------------- error toast */
 
 .errorToast {

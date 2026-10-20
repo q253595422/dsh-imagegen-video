@@ -168,13 +168,31 @@ function describeTools(found: ToolPair): string {
 
 // ---------------------------------------------------------------- probing
 
-/** What one input contributes to the filtergraph. */
+/**
+ * One input's contribution to the filtergraph.
+ *
+ * `trimStart`/`trimSeconds` turn the input into a slice before it joins the
+ * graph: a timeline segment rarely uses its whole clip, and trimming inside the
+ * filtergraph (rather than in a temp file) keeps the run to a single ffmpeg
+ * invocation.
+ */
 interface ClipProbe {
   file: string
   /** False means a silent track has to be synthesized for this input. */
   hasAudio: boolean
   /** Real length in seconds, when ffprobe reported one. */
   duration?: number
+  /** In-point of this segment, in seconds. */
+  trimStart: number
+  /** Length to keep after the in-point; absent means "to the end". */
+  trimSeconds?: number
+}
+
+/** One seam between two adjacent segments, as the composer receives it. */
+export interface ComposeTransition {
+  kind: 'cut' | 'fade' | 'dissolve'
+  /** Requested overlap, in seconds; `cut` ignores it. */
+  seconds: number
 }
 
 async function probeAudio(ffprobe: string, file: string, signal?: AbortSignal): Promise<boolean> {
@@ -202,41 +220,148 @@ async function probeDuration(ffprobe: string, file: string, signal?: AbortSignal
   return Number.isFinite(seconds) && seconds > 0 ? seconds : undefined
 }
 
-async function probeClip(ffprobe: string, file: string, signal?: AbortSignal): Promise<ClipProbe> {
+async function probeClip(
+  ffprobe: string,
+  file: string,
+  trim: { start: number; seconds?: number },
+  signal?: AbortSignal,
+): Promise<ClipProbe> {
   const hasAudio = await probeAudio(ffprobe, file, signal)
   const duration = await probeDuration(ffprobe, file, signal)
-  return { file, hasAudio, ...duration === undefined ? {} : { duration } }
+  return {
+    file,
+    hasAudio,
+    ...duration === undefined ? {} : { duration },
+    trimStart: Math.max(0, trim.start),
+    ...trim.seconds === undefined ? {} : { trimSeconds: Math.max(0, trim.seconds) },
+  }
 }
 
 // ---------------------------------------------------------------- filtergraph
 
 /**
- * Build the ffmpeg argument vector (contract §5).
+ * Build the ffmpeg argument vector (contract §5, extended for timelines).
  *
- * Each input is normalized to 1280x720/30fps/yuv420p; each input's audio is
- * either reformatted or synthesized at that input's REAL length, so no branch
- * of the graph can ever stall the concat.
+ * Each input is trimmed to its segment, normalized to 1280x720/30fps/yuv420p,
+ * and its audio either reformatted or synthesized at the TRIMMED length, so no
+ * branch of the graph can ever stall the concat.
+ *
+ * Two paths, deliberately:
+ *  - every seam is a hard cut: one `concat` node (cheapest, what the original
+ *    stitch always did), and
+ *  - any seam has a transition: chained `xfade`/`acrossfade`, each taking the
+ *    measured overlap. xfade needs absolute offsets into the growing result, so
+ *    the offset for seam i is the running total minus the overlaps so far — the
+ *    arithmetic lives in `placeTimeline` on the client and is passed in already
+ *    resolved, because the composer must not re-derive (and disagree with) what
+ *    the editor showed the user.
+ *
  * @param sources - local file paths in final play order.
  * @param probes - one probe per source, same order.
  * @param target - output file path.
+ * @param options - transitions (length = sources-1) and whether to keep audio.
  */
-function buildStitchArgs(sources: readonly string[], probes: readonly ClipProbe[], target: string): string[] {
+function buildStitchArgs(
+  sources: readonly string[],
+  probes: readonly ClipProbe[],
+  target: string,
+  options: { transitions?: readonly ComposeTransition[]; keepAudio?: boolean } = {},
+): string[] {
+  const keepAudio = options.keepAudio !== false
+  const transitions = options.transitions ?? []
+  const trimmedSeconds = probes.map(probe => {
+    const available = probe.duration === undefined
+      ? probe.trimSeconds
+      : Math.max(0, probe.duration - probe.trimStart)
+    return probe.trimSeconds === undefined ? available : Math.min(probe.trimSeconds, available ?? probe.trimSeconds)
+  })
+
   const filters: string[] = []
-  const concatInputs: string[] = []
+  let concatInputs = ''
+  const overlapOf = (index: number): number => {
+    const transition = transitions[index]
+    if (transition === undefined || transition.kind === 'cut') return 0
+    const left = trimmedSeconds[index]
+    const right = trimmedSeconds[index + 1]
+    if (left === undefined || right === undefined) return 0
+    // Clamp at build time as well: the guest can hand a duration the inputs
+    // cannot support, and xfade failing on an offset is an unreadable error.
+    return Math.max(0, Math.min(transition.seconds, left / 2 - 0.05, right / 2 - 0.05))
+  }
+  const hasTransition = probes.some((_, index) => overlapOf(index) > 0)
+
   probes.forEach((probe, index) => {
-    filters.push(`[${index}:v]scale=${TARGET_WIDTH}:${TARGET_HEIGHT}:force_original_aspect_ratio=decrease,pad=${TARGET_WIDTH}:${TARGET_HEIGHT}:(ow-iw)/2:(oh-ih)/2,fps=${TARGET_FPS},setsar=1,format=yuv420p[v${index}]`)
+    // `trim` before `setpts` resets the timestamp base; without it the joined
+    // stream keeps each segment's original start time and the result jumps.
+    // Audio needs its own pair (`atrim`/`asetpts`): `trim` outputs video, so
+    // reusing the video chain on an audio pad fails to link at all.
+    const hasTrim = probe.trimStart > 0 || probe.trimSeconds !== undefined
+    const trimRange = `start=${probe.trimStart.toFixed(3)}${probe.trimSeconds === undefined ? '' : `:duration=${probe.trimSeconds.toFixed(3)}`}`
+    const videoTrim = hasTrim ? `trim=${trimRange},setpts=PTS-STARTPTS,` : ''
+    const audioTrim = hasTrim ? `atrim=${trimRange},asetpts=PTS-STARTPTS,` : ''
+    filters.push(`[${index}:v]${videoTrim}scale=${TARGET_WIDTH}:${TARGET_HEIGHT}:force_original_aspect_ratio=decrease,pad=${TARGET_WIDTH}:${TARGET_HEIGHT}:(ow-iw)/2:(oh-ih)/2,fps=${TARGET_FPS},setsar=1,format=yuv420p[v${index}]`)
+    if (!keepAudio) return
     if (probe.hasAudio) {
-      filters.push(`[${index}:a]aformat=sample_rates=${TARGET_SAMPLE_RATE}:channel_layouts=stereo[a${index}]`)
+      filters.push(`[${index}:a]${audioTrim}aformat=sample_rates=${TARGET_SAMPLE_RATE}:channel_layouts=stereo[a${index}]`)
       return
     }
-    if (probe.duration === undefined) {
+    const length = trimmedSeconds[index]
+    if (length === undefined) {
       throw new Error(`cannot determine the length of ${probe.file}, so its silent audio track cannot be bounded`)
     }
     // `d=` is mandatory: an unbounded anullsrc never lets the concat advance.
-    filters.push(`anullsrc=r=${TARGET_SAMPLE_RATE}:cl=stereo:d=${probe.duration.toFixed(3)}[a${index}]`)
+    filters.push(`anullsrc=r=${TARGET_SAMPLE_RATE}:cl=stereo:d=${length.toFixed(3)}[a${index}]`)
   })
-  for (let index = 0; index < probes.length; index += 1) concatInputs.push(`[v${index}][a${index}]`)
-  filters.push(`${concatInputs.join('')}concat=n=${probes.length}:v=1:a=1[v][a]`)
+
+  if (!hasTransition) {
+    for (let index = 0; index < probes.length; index += 1) {
+      concatInputs += keepAudio ? `[v${index}][a${index}]` : `[v${index}]`
+    }
+    filters.push(`${concatInputs}concat=n=${probes.length}:v=1:a=${keepAudio ? 1 : 0}[v]${keepAudio ? '[a]' : ''}`)
+  } else {
+    // Chain the seams: each step takes the previous result and the next input.
+    let videoLabel = 'v0'
+    let audioLabel = keepAudio ? 'a0' : ''
+    let running = trimmedSeconds[0] ?? 0
+    for (let index = 1; index < probes.length; index += 1) {
+      const overlap = overlapOf(index - 1)
+      const videoOut = `vx${index}`
+      if (overlap <= 0) {
+        // A hard cut inside a transition-bearing timeline still has to be
+        // expressed as a concat of two branches; xfade would refuse offset 0.
+        const videoIn = `vc${index}`
+        const audioIn = `ac${index}`
+        if (keepAudio) {
+          filters.push(`[${videoLabel}][v${index}]concat=n=2:v=1:a=0,settb=AVTB[${videoIn}]`)
+          filters.push(`[${audioLabel}][a${index}]concat=n=2:v=0:a=1[${audioIn}]`)
+          audioLabel = audioIn
+        } else {
+          filters.push(`[${videoLabel}][v${index}]concat=n=2:v=1:a=0,settb=AVTB[${videoIn}]`)
+        }
+        videoLabel = videoIn
+        running += trimmedSeconds[index] ?? 0
+      } else {
+        const offset = Math.max(0, running - overlap)
+        // xfade refuses inputs whose timebases differ, and a `concat` branch
+        // yields 1/30 while an untouched single input is still 1/1000000. `settb`
+        // on BOTH sides is what makes a hard cut and a dissolve chainable in the
+        // same graph; without it the second seam fails to configure.
+        filters.push(`[${videoLabel}]settb=AVTB[vtb${index}]`)
+        filters.push(`[v${index}]settb=AVTB[vtb${index}b]`)
+        filters.push(`[vtb${index}][vtb${index}b]xfade=transition=${transitionFilter(transitions[index - 1]!.kind)}:duration=${overlap.toFixed(3)}:offset=${offset.toFixed(3)}[${videoOut}]`)
+        videoLabel = videoOut
+        if (keepAudio) {
+          const audioOut = `ax${index}`
+          filters.push(`[${audioLabel}][a${index}]acrossfade=d=${overlap.toFixed(3)}[${audioOut}]`)
+          audioLabel = audioOut
+        }
+        running += (trimmedSeconds[index] ?? 0) - overlap
+      }
+    }
+    filters.push(`[${videoLabel}]null[v]`)
+    if (keepAudio) filters.push(`[${audioLabel}]anull[a]`)
+  }
+
   return [
     '-y',
     '-hide_banner',
@@ -244,14 +369,21 @@ function buildStitchArgs(sources: readonly string[], probes: readonly ClipProbe[
     ...sources.flatMap(source => ['-i', source]),
     '-filter_complex', filters.join(';'),
     '-map', '[v]',
-    '-map', '[a]',
+    ...keepAudio ? ['-map', '[a]'] : [],
     '-c:v', 'libx264',
     '-preset', 'veryfast',
     '-crf', '20',
-    '-c:a', 'aac',
+    ...keepAudio ? ['-c:a', 'aac'] : ['-an'],
     '-movflags', '+faststart',
     target,
   ]
+}
+
+/** ffmpeg's xfade name for one of our three seam kinds. */
+function transitionFilter(kind: ComposeTransition['kind']): string {
+  // `fade` in xfade is a cross-fade through black; `dissolve` blends pixels.
+  // Both are what a video editor means by those words.
+  return kind === 'fade' ? 'fade' : 'dissolve'
 }
 
 // ---------------------------------------------------------------- urls
@@ -368,17 +500,24 @@ export function createClipComposer(): ClipComposer {
       const { ffmpeg, ffprobe } = requireTools()
       const sources = [...input.sources]
       if (sources.length < 2) throw new Error(`stitching needs at least two clips, got ${sources.length}`)
+      // One trim entry per source, in the same order. Missing entries mean
+      // "the whole clip", which is exactly what a plain stitch always meant.
+      const trims = input.trims ?? []
       input.onStage?.('probe')
       const probes: ClipProbe[] = []
-      for (const source of sources) {
+      for (let index = 0; index < sources.length; index += 1) {
         if (input.signal?.aborted === true) throw new Error('stitch was cancelled')
-        probes.push(await probeClip(ffprobe, source, input.signal))
+        const trim = trims[index] ?? { start: 0 }
+        probes.push(await probeClip(ffprobe, sources[index]!, trim, input.signal))
       }
       input.onStage?.('encode')
       const dir = await fs.mkdtemp(path.join(tmpdir(), 'dsh-compose-'))
       const target = path.join(dir, 'stitched.mp4')
       try {
-        const result = await runProcess(ffmpeg, buildStitchArgs(sources, probes, target), {
+        const result = await runProcess(ffmpeg, buildStitchArgs(sources, probes, target, {
+          ...input.transitions === undefined ? {} : { transitions: input.transitions },
+          ...input.keepAudio === undefined ? {} : { keepAudio: input.keepAudio },
+        }), {
           timeoutMs: STITCH_TIMEOUT_MS,
           ...input.signal === undefined ? {} : { signal: input.signal },
         })

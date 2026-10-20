@@ -194,6 +194,57 @@ const STACK_GAP = 48
 /** Minimum clips one compose run needs: stitching one clip is a no-op. */
 const MIN_COMPOSE_SOURCES = 2
 
+/**
+ * A timeline as the compose run receives it.
+ *
+ * Travels inside `params.timeline` as a JSON string: the skill-run request's
+ * `params` is already a `Record<string, string>` validated by the route, so a
+ * structured field would have needed a second parse path for one caller.
+ */
+interface ComposeTimeline {
+  segments: Array<{ nodeId: string; inPoint: number; outPoint?: number }>
+  transitions: Array<{ kind: 'cut' | 'fade' | 'dissolve'; seconds: number }>
+  keepAudio: boolean
+}
+
+/**
+ * Parse the timeline parameter, refusing anything that would silently change
+ * the film.
+ *
+ * A malformed timeline is NOT ignored: falling back to a plain stitch would
+ * hand the user a video that ignores the trims they set and look like the
+ * editor did nothing. Returning undefined is reserved for "no timeline sent",
+ * which is the ordinary stitch path.
+ */
+function parseTimelineParam(raw: string | undefined): ComposeTimeline | undefined {
+  if (raw === undefined || raw.trim() === '') return undefined
+  let value: unknown
+  try { value = JSON.parse(raw) } catch { throw new Error('the timeline parameter is not valid JSON') }
+  if (value === null || typeof value !== 'object') throw new Error('the timeline parameter is not an object')
+  const record = value as Record<string, unknown>
+  const segments = Array.isArray(record.segments)
+    ? record.segments.flatMap(item => {
+        if (item === null || typeof item !== 'object') return []
+        const segment = item as Record<string, unknown>
+        if (typeof segment.nodeId !== 'string' || segment.nodeId === '') return []
+        const inPoint = typeof segment.inPoint === 'number' && Number.isFinite(segment.inPoint) ? Math.max(0, segment.inPoint) : 0
+        const outPoint = typeof segment.outPoint === 'number' && Number.isFinite(segment.outPoint) ? segment.outPoint : undefined
+        return [{ nodeId: segment.nodeId, inPoint, ...outPoint === undefined || outPoint <= inPoint ? {} : { outPoint } }]
+      })
+    : []
+  if (segments.length === 0) throw new Error('the timeline parameter carries no usable segment')
+  const transitions: ComposeTimeline['transitions'] = Array.isArray(record.transitions)
+    ? record.transitions.flatMap(item => {
+        if (item === null || typeof item !== 'object') return []
+        const transition = item as Record<string, unknown>
+        const kind: ComposeTimeline['transitions'][number]['kind'] = transition.kind === 'fade' || transition.kind === 'dissolve' ? transition.kind : 'cut'
+        const seconds = typeof transition.seconds === 'number' && Number.isFinite(transition.seconds) ? transition.seconds : 0.5
+        return [{ kind, seconds: Math.max(0, seconds) }]
+      })
+    : []
+  return { segments, transitions, keepAudio: record.keepAudio !== false }
+}
+
 /** Chat-model instructions per built-in light action. */
 const POLISH_DIRECTIVES: Record<string, { zh: string; en: string }> = {
   formal: {
@@ -752,7 +803,8 @@ export class SkillRunner {
     }
     this.tasks.set(task.id, task)
     this.pruneTasks()
-    const job = this.enqueue(task, skill, [], request, () => this.stitchClips(task, skill, ordered, composer))
+    const timeline = parseTimelineParam(request.params?.timeline)
+    const job = this.enqueue(task, skill, [], request, () => this.stitchClips(task, skill, ordered, composer, timeline))
     job.catch(error => {
       task.status = 'failed'
       task.error = messageOf(error)
@@ -770,6 +822,7 @@ export class SkillRunner {
     skill: CanvasSkillDescriptor,
     clips: readonly CanvasNode[],
     composer: ClipComposer,
+    timeline?: ComposeTimeline,
   ): Promise<CanvasSkillOutput> {
     const t = this.translate(task.language)
     // Both probes are needed: ffmpeg alone cannot tell an input's length, and a
@@ -794,10 +847,40 @@ export class SkillRunner {
     this.cancellers.set(task.id, { dispose: async () => { controller.abort() } })
     task.stage = t('canvas.skills.composeStageProbe')
     task.phase = 'running'
+    // A timeline is addressed by SEGMENT, not by the order the host re-sorted
+    // the clips into: the user may have reordered segments on the timeline and
+    // the canvas positions then disagree. Each segment carries its own node id,
+    // so its trim is resolved by that id and handed to ffmpeg in play order.
+    const trims = timeline === undefined
+      ? undefined
+      : timeline.segments.map(segment => {
+          const index = clips.findIndex(node => node.id === segment.nodeId)
+          return { start: Math.max(0, segment.inPoint), ...segment.outPoint === undefined ? {} : { seconds: Math.max(0, segment.outPoint - segment.inPoint) } }
+        })
+    // The timeline's own segment order is the play order, so it overrides the
+    // canvas-position sort — but only when it actually mentions every clip.
+    const playOrder = timeline === undefined || trims === undefined ? sources : (() => {
+      const ordered: string[] = []
+      for (const segment of timeline.segments) {
+        const index = clips.findIndex(node => node.id === segment.nodeId)
+        const source = index < 0 ? undefined : sources[index]
+        if (source !== undefined) ordered.push(source)
+      }
+      return ordered.length === sources.length ? ordered : sources
+    })()
+    const orderedTrims = timeline === undefined || trims === undefined
+      ? trims
+      : playOrder.map(source => {
+          const index = sources.indexOf(source)
+          return trims[index] ?? { start: 0 }
+        })
     let stitched: Awaited<ReturnType<ClipComposer['stitch']>>
     try {
       stitched = await composer.stitch({
-        sources,
+        sources: playOrder,
+        ...orderedTrims === undefined ? {} : { trims: orderedTrims },
+        ...timeline === undefined ? {} : { transitions: timeline.transitions },
+        ...timeline === undefined ? {} : { keepAudio: timeline.keepAudio },
         signal: controller.signal,
         onStage: stage => {
           task.stage = stage === 'probe'

@@ -7196,6 +7196,9 @@ await check('E1 client apply mounts the sidebar entry and studio (jsdom)', async
     canvasDocument.nodes = [
       ...canvasDocument.nodes,
       { id: 'node-clip', type: 'video', title: 'clip.mp4', x: 0, y: 1200, width: 260, height: 160, metadata: { video: { url: 'data:video/mp4;base64,AAAA', mime: 'video/mp4', width: 320, height: 240, duration: 2 }, status: 'success' } },
+      // 第二段成片：时间线至少要两段才开得起来，而它是「配了两段就只显示两段」
+      // 那条断言的对象。
+      { id: 'node-clip-2', type: 'video', title: 'clip-2.mp4', x: 300, y: 1200, width: 260, height: 160, metadata: { video: { url: 'data:video/mp4;base64,AAAA', mime: 'video/mp4', width: 320, height: 240, duration: 3 }, status: 'success' } },
     ]
     ecommerceSwitch.click()
     await new Promise(resolve => setTimeout(resolve, 60))
@@ -7205,6 +7208,67 @@ await check('E1 client apply mounts the sidebar entry and studio (jsdom)', async
     await waitForSelector(view, '[data-video-preview]')
     jsdomWindow.dispatchEvent(new jsdomWindow.KeyboardEvent('keydown', { key: 'Escape', bubbles: true }))
     assert.ok(await waitUntil(() => view.querySelector('[data-video-preview]') === null), 'Escape closes the in-canvas video preview')
+
+    // The timeline editor is the door to trims and transitions: it has to be in
+    // the dock, it has to take the canvas clips in canvas order, and Escape has
+    // to close it without clearing the selection behind it (the same rule the
+    // preview above follows).
+    const timelineButton = view.querySelector('[data-dock-item][data-label="时间线编辑"] button')
+    assert.ok(timelineButton !== null, 'the dock carries a timeline entry')
+    timelineButton.dispatchEvent(new jsdomWindow.MouseEvent('click', { bubbles: true }))
+    assert.ok(await waitUntil(() => view.querySelector('[data-timeline-panel]') !== null), 'the timeline entry opens the editor')
+    const timelineSegments = [...view.querySelectorAll('[data-timeline-segment]')]
+    assert.deepEqual(
+      timelineSegments.map(segment => segment.getAttribute('data-timeline-segment')),
+      ['node-clip', 'node-clip-2'],
+      'the timeline lists exactly the canvas clips, in canvas order',
+    )
+    const timelineTotal = view.querySelector('[data-timeline-total]')?.textContent ?? ''
+    assert.ok(timelineTotal.includes('0:05.0'), `the timeline reports the summed length (got "${timelineTotal}")`)
+    jsdomWindow.dispatchEvent(new jsdomWindow.KeyboardEvent('keydown', { key: 'Escape', bubbles: true }))
+    assert.ok(await waitUntil(() => view.querySelector('[data-timeline-panel]') === null), 'Escape closes the timeline editor')
+
+    // Identity anchoring: a right-click pins the image, the dialog names it, the
+    // node shows the pin, and the pin reaches the SAVED document (the whole
+    // point is that a later generation reads it back from there).
+    const castNodeEl = view.querySelector('[data-node-id="node-image"]')
+    assert.ok(castNodeEl !== null, 'the image node is still mounted for the pin')
+    const savesBeforeCast = canvasSaves.length
+    castNodeEl.dispatchEvent(new jsdomWindow.MouseEvent('contextmenu', { bubbles: true, cancelable: true, clientX: 20, clientY: 20 }))
+    assert.ok(await waitUntil(() => view.querySelector('[role="menu"]') !== null), 'the node menu opens')
+    const pinRow = [...view.querySelectorAll('[role="menu"] button[role="menuitem"]')]
+      .find(button => (button.textContent ?? '').includes('钉为身份参考'))
+    assert.ok(pinRow !== undefined, 'the node menu offers the identity pin')
+    pinRow.dispatchEvent(new jsdomWindow.MouseEvent('click', { bubbles: true, cancelable: true }))
+    assert.ok(await waitUntil(() => view.querySelector('[data-cast-dialog]') !== null), 'the pin opens the naming dialog')
+    // The preview must show the sentence the model will actually receive.
+    const castPreview = view.querySelector('[data-cast-preview]')?.textContent ?? ''
+    assert.ok(castPreview.includes('图片节点'), `the dialog previews the prompt line (got "${castPreview}")`)
+    view.querySelector('[data-cast-save]').dispatchEvent(new jsdomWindow.MouseEvent('click', { bubbles: true, cancelable: true }))
+    assert.ok(await waitUntil(() => view.querySelector('[data-cast-badge]') !== null), 'the node shows it is pinned')
+    assert.ok(
+      (view.querySelector('[data-cast-badge]')?.textContent ?? '').includes('图片节点'),
+      'the badge names the pinned identity',
+    )
+    assert.ok(
+      await waitUntil(() => canvasSaves.slice(savesBeforeCast).some(saved =>
+        saved.nodes.some(node => node.id === 'node-image' && node.metadata?.cast?.role === 'character'))),
+      'the pin reaches the saved document',
+    )
+    // Unpinning goes through the same menu and must persist too.
+    castNodeEl.dispatchEvent(new jsdomWindow.MouseEvent('contextmenu', { bubbles: true, cancelable: true, clientX: 20, clientY: 20 }))
+    await waitUntil(() => view.querySelector('[role="menu"]') !== null)
+    const unpinRow = [...view.querySelectorAll('[role="menu"] button[role="menuitem"]')]
+      .find(button => (button.textContent ?? '').includes('取消身份参考'))
+    assert.ok(unpinRow !== undefined, 'a pinned node offers to unpin')
+    const savesBeforeUnpin = canvasSaves.length
+    unpinRow.dispatchEvent(new jsdomWindow.MouseEvent('click', { bubbles: true, cancelable: true }))
+    assert.ok(await waitUntil(() => view.querySelector('[data-cast-badge]') === null), 'unpinning removes the badge')
+    assert.ok(
+      await waitUntil(() => canvasSaves.slice(savesBeforeUnpin).some(saved =>
+        saved.nodes.some(node => node.id === 'node-image' && node.metadata?.cast === undefined))),
+      'unpinning reaches the saved document',
+    )
 
     // (6) The keyboard map has to be REACHABLE. Every binding existed before
     // this round; none of them was discoverable anywhere in the UI, which is

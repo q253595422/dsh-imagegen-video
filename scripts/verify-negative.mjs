@@ -93,6 +93,19 @@ function run (script) {
 function build () {
   // `pnpm build`, not `node node_modules/.bin/tsdown`: pnpm's bin shims are
   // shell scripts, so handing one to `node` is a syntax error, not a build.
+  //
+  // But a machine can have the tree installed WITHOUT having pnpm on its PATH
+  // (a plain `npm install` checkout, or a pnpm-less CI image). Every smoke case
+  // then died in the rebuild with `spawnSync pnpm ENOENT` and the harness
+  // reported HARNESS BROKEN -- its own missing tool presented as if the case
+  // were unprovable. The shim is executable on its own (it is a `sh` script),
+  // so it is the fallback, not the primary: the copy is rebuilt the same way
+  // either way, and only the launcher differs.
+  const shim = join(COPY, 'node_modules', '.bin', 'tsdown')
+  if (existsSync(shim)) {
+    execFileSync(shim, [], { cwd: COPY, encoding: 'utf8', stdio: 'ignore' })
+    return
+  }
   execFileSync('pnpm', ['build'], { cwd: COPY, encoding: 'utf8', stdio: 'ignore' })
 }
 
@@ -916,6 +929,79 @@ const CASES = [
     to: 'for (const [local, exp] of Object.entries(exported)) classMap[local] = exp.name',
     expect: /two builds of the same source tree produced different bytes/,
   },
+  // --------------------------------------------------------------- identity
+  {
+    // 钉住的意义全在于「以后再生成时能找回来」。如果收集时把没成图的节点也算
+    // 进去，参考图就是空字节——上传时静默失败，用户以为镇住了。
+    name: 'a pinned node without a picture is treated as a reference',
+    runner: 'cast',
+    file: 'src/client/cast.ts',
+    from: "    if ((node.metadata?.asset?.url ?? '') === '') continue",
+    to: '    // guard removed',
+    expect: /没成图的节点不算/,
+  },
+  {
+    // 同一张图既连线又被钉住时送两次，参考图名额被吃掉一张，而且有些提供方
+    // 会把它当成两个主体。
+    name: 'a pinned node already in the graph is sent twice',
+    runner: 'cast',
+    file: 'src/client/cast.ts',
+    from: '    if (seen.has(member.nodeId)) continue',
+    to: '    // duplicate guard removed',
+    expect: /连线里已经有的节点不再重复送/,
+  },
+  {
+    // 钉住只改了界面不上保存：刷新一下就没了，所有后续生成也带不上参考。
+    // 这是整个功能最容易�半截的那种错。
+    name: 'pinning an identity never reaches the saved document',
+    runner: 'smoke',
+    file: 'src/client/CanvasWorkspace.tsx',
+    from: '        patchNode(castNode.id, { cast: member })',
+    to: '        void castNode',
+    expect: /the pin reaches the saved document|the node shows it is pinned/,
+  },
+
+  // --------------------------------------------------------------- timeline
+  {
+    // 时间线面板盖在画布上、带自己的输入框；没有 Esc 分支时它只能靠点「关闭」
+    // 退出，而 Esc 会继续往下走清掉选区——面板后面的东西被改掉了，面板还在。
+    name: 'Escape no longer closes the timeline editor',
+    runner: 'smoke',
+    file: 'src/client/CanvasWorkspace.tsx',
+    from: '        if (timelineOpen) { setTimelineOpen(false); return }\n',
+    to: '',
+    expect: /Escape closes the timeline editor|the timeline entry opens the editor/,
+  },
+  {
+    // 转场超过素材一半时 xfade 会拿到比输入还长的偏移，整条命令直接失败。
+    // 夹取是计算期的事，编辑器显示的总时长也靠它；去掉之后两侧都会撒谎。
+    name: 'a transition is allowed to outlast half of the clip beside it',
+    runner: 'timeline',
+    file: 'src/client/timeline.ts',
+    from: '  return Math.max(0, Math.min(wanted, leftSeconds / 2 - 0.05, rightSeconds / 2 - 0.05))',
+    to: '  return wanted',
+    expect: /转场不能超过任一侧素材的一半|素材太短导致一半减余量为负时不返回负重叠/,
+  },
+  {
+    // 删段/重排之后转场列表会短一截。不补硬切，接缝就那么空着：编辑器里
+    // 改不了，合成器按 cut 处理——用户以为设了转场，文件里没有。
+    name: 'the transition list is left short after a segment is removed',
+    runner: 'timeline',
+    file: 'src/client/timeline.ts',
+    from: '    out.push(transitions[index] ?? DEFAULT_TRANSITION)',
+    to: '    if (transitions[index] !== undefined) out.push(transitions[index])',
+    expect: /转场列表不够时补硬切|转场列表按段数裁剪/,
+  },
+  {
+    // 出点存的是用户的意图，素材长度是事实。相信意图会让 ffmpeg 去读不存在
+    // 的帧，而编辑器同时报一个根本不会出现的长度。
+    name: 'an out-point past the end of the clip is trusted',
+    runner: 'timeline',
+    file: 'src/client/timeline.ts',
+    from: '    : Math.max(start, Math.min(segment.outPoint, clipSeconds))',
+    to: '    : segment.outPoint',
+    expect: /出点超过素材长度时按素材长度算/,
+  },
 ]
 
 const RUNNERS = {
@@ -931,6 +1017,10 @@ const RUNNERS = {
   // The workflow planner and run loop are imported straight from source, so
   // this group needs no build: it is pure functions plus a promise loop.
   workflow: { script: 'scripts/smoke-workflow.mjs', build: false },
+  // 时间线规则是纯函数，直接从源码 import，不需要构建。
+  timeline: { script: 'scripts/smoke-timeline.mjs', build: false },
+  // 身份锚定的规则也是纯函数，直接从源码 import。
+  cast: { script: 'scripts/smoke-cast.mjs', build: false },
   // The archive rule, run against a real `pnpm pack`. No rebuild: the archive
   // contents depend on package.json and the tree, not on the built output.
   pack: { script: 'scripts/verify-pack.mjs', build: false },
