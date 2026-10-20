@@ -830,7 +830,11 @@ function submitBody(
   references: DecodedReferences,
 ): Record<string, unknown> {
   const seconds = clampVideoSeconds(request.seconds)
-  const resolution = normalizeVideoResolution(request.model, request.resolution)
+  // Capabilities belong to the UPSTREAM id, not the alias: a channel can map
+  // `seedance-2.0` → `doubao-seedance-2-0-fast-260128`, and the fast id is the
+  // one that rejects 1080p. Using the alias here would miss that narrowing.
+  const wireModel = (request.upstream ?? request.model).trim()
+  const resolution = normalizeVideoResolution(wireModel, request.resolution)
   const familyName = entry.family
 
   if (familyName === 'comemoe') {

@@ -327,6 +327,19 @@ await check('V1c3 Seedance clamps duration and resolution to what the model acce
     const pro = upstream.state.submits[0].body
     assert.equal(pro.duration, 2, '1.0 starts at 2 seconds')
     assert.equal(pro.resolution, '1080p', '1.0 pro accepts 1080p')
+
+    upstream.state.submits.length = 0
+    // A channel alias is whatever the user typed; the capabilities belong to
+    // the upstream id it maps to. Narrowing on the alias would let a 1080P
+    // request through to a fast model and come back as an opaque 400.
+    await generateVideo(
+      { apiUrl: upstream.base, apiKey: 'k' },
+      { mode: 'text', model: 'seedance-fast-hd', upstream: 'doubao-seedance-2-0-fast-260128', prompt: 'p', aspectRatio: '16:9', resolution: '1080P', seconds: 5 },
+      { family: 'seedance' },
+    )
+    const aliased = upstream.state.submits[0].body
+    assert.equal(aliased.model, 'doubao-seedance-2-0-fast-260128', 'the upstream id is what the provider receives')
+    assert.equal(aliased.resolution, '720p', 'capability narrowing follows the upstream id, not the alias')
   } finally {
     await upstream.close()
   }
