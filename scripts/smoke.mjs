@@ -2203,6 +2203,16 @@ await check('C5 image model discovery and configured-model allow-list work', asy
   assert.equal(presets.body.ok, true)
   assert.deepEqual(presets.body.presets.find(preset => preset.id === 'openai-official').models, [{ alias: 'gpt-image-2.5', id: 'gpt-image-2.5' }, { alias: 'gpt-image-2', id: 'gpt-image-2' }])
   assert.deepEqual(presets.body.presets.find(preset => preset.id === 'zhipu-official').models, [{ alias: 'glm-image', id: 'glm-image' }])
+  // The Ark preset is the one that carries BOTH catalogs: a single channel has
+  // to serve Seedream images and Seedance videos, and the ids have to be the
+  // real ones (the family is derived from those ids, not from the alias).
+  const arkPreset = presets.body.presets.find(preset => preset.id === 'volc-ark-seedream')
+  assert.ok(arkPreset.models.some(model => model.id === 'doubao-seedream-5-0-pro-260628'), 'the Ark preset ships the real image id')
+  assert.deepEqual(
+    arkPreset.videoModels.map(model => model.id),
+    ['doubao-seedance-2-0-260128', 'doubao-seedance-2-0-fast-260128', 'doubao-seedance-1-0-pro-250528'],
+    'the Ark preset ships a video catalog',
+  )
   const rejected = await post('/api/dsh-imagegen/tasks/submit', {
     mode: 'text', model: 'not-configured', prompt: 'a cat', size: 'auto', quality: 'auto', n: 1, detail: '',
   })

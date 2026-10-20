@@ -767,6 +767,58 @@ await check('V6 a freshly configured generic video model works through the runti
   }
 })
 
+await check('V6b a channel-alias Seedance model routes and persists through the runtime', async () => {
+  // V1c2/V1c3 drive the engine directly. What a user actually does is pick an
+  // alias off a channel, so this goes through the runtime: alias → upstream
+  // id → family → Ark task path → downloaded clip on disk. The alias
+  // deliberately says "hd" while the upstream id is a 720p-capped fast model,
+  // so a capability check done on the alias would send an invalid tier.
+  const upstream = await startUpstream()
+  upstream.state.script = {
+    submit: { id: 'cgt-runtime' },
+    polls: [
+      { status: 'queued' },
+      { status: 'running' },
+      { status: 'succeeded', content: { video_url: `http://127.0.0.1:${upstream.port}/runtime.mp4` }, duration: 5 },
+    ],
+  }
+  try {
+    const runtime = new host.ImageGenerationRuntime(() => ({
+      channels: [{
+        id: 'ark',
+        preset: 'volc-ark-seedream',
+        name: 'Ark',
+        apiUrl: upstream.base,
+        apiKey: 'k',
+        apiUrlFull: false,
+        models: [],
+        videoModels: [{ alias: 'seedance-hd', id: 'doubao-seedance-2-0-fast-260128' }],
+      }],
+      defaultChannelId: 'ark',
+    }))
+    const result = await runtime.runVideo({
+      mode: 'text',
+      model: 'seedance-hd',
+      prompt: 'a paper boat on a puddle',
+      aspectRatio: '16:9',
+      resolution: '1080P',
+      seconds: 5,
+    })
+    assert.equal(upstream.state.submits.length, 1, 'the Ark create route was used')
+    const body = upstream.state.submits[0].body
+    assert.equal(body.model, 'doubao-seedance-2-0-fast-260128', 'the channel alias maps to the real id')
+    assert.equal(body.resolution, '720p', 'the fast id caps at 720p even though the alias reads "hd"')
+    assert.equal(body.ratio, '16:9')
+    assert.equal(body.watermark, false)
+    assert.equal(upstream.state.polls.length, 3, 'the queued/running states are polled through to a terminal one')
+    assert.equal(result.videos.length, 1)
+    assert.equal(result.videos[0].duration, 5, 'the duration comes from the Ark task body')
+    assert.match(result.videos[0].url, /\/api\/dsh-imagegen\/video\/file\//, 'the clip was persisted and served')
+  } finally {
+    await upstream.close()
+  }
+})
+
 await check('V7 an unknown-family model configured in a channel fails with guidance', async () => {
   const runtime = new host.ImageGenerationRuntime(() => ({
     channels: [{

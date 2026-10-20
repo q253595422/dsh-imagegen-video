@@ -35,7 +35,7 @@ export const IMAGE_PRESETS: PresetProvider[] = [
     id: 'volc-ark-seedream',
     name: '字节 · 火山方舟（Seedream / Seedance）',
     apiUrl: 'https://ark.cn-beijing.volces.com/api/v3',
-    hint: '字节跳动官方接口：Seedream 文生图/图生图 与 Seedance 文生视频/首尾帧；模型 ID 也可换成方舟控制台的推理接入点（ep-…）',
+    hint: '字节跳动官方接口：Seedream 文生图/图生图 与 Seedance 文生视频/首尾帧；模型 ID 请用方舟控制台的 doubao-seedream-* / doubao-seedance-*（协议族按该 ID 判断）',
     models: [
       { alias: 'doubao-seedream-5-0-pro-260628', id: 'doubao-seedream-5-0-pro-260628' },
       { alias: 'doubao-seedream-5-0-260128', id: 'doubao-seedream-5-0-260128' },
