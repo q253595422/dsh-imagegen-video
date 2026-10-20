@@ -199,10 +199,32 @@ function arkPixelSize(ratio: string, quality: string, budget: ArkSizeBudget): st
   const [w, h] = ratio.split(':').map(part => Number.parseFloat(part))
   const aspect = Number.isFinite(w) && Number.isFinite(h) && w > 0 && h > 0 ? w / h : 1
   const target = Math.min(budget.max, Math.max(budget.min, ARK_TIER_PIXELS[quality] ?? ARK_TIER_PIXELS['2k']!))
-  // Solve width × height = target with width / height = aspect, then even it.
-  const height = Math.round(Math.sqrt(target / aspect) / 2) * 2
-  const width = Math.round((height * aspect) / 2) * 2
-  return `${Math.max(2, width)}x${Math.max(2, height)}`
+  // Solve width × height = target with width / height = aspect, then make both
+  // even. Rounding to even can push the product a few pixels OVER the ceiling
+  // (4K at 16:9 lands on 16779264 > 4096²), and Ark rejects that outright, so
+  // the rounded value is a starting point: scan nearby even heights and keep
+  // the closest ratio whose pixel count is genuinely inside the budget.
+  const idealHeight = Math.sqrt(target / aspect)
+  let best: { width: number; height: number; drift: number } | undefined
+  for (let delta = -48; delta <= 48; delta += 2) {
+    const height = Math.max(2, Math.round(idealHeight / 2) * 2 + delta)
+    const width = Math.max(2, Math.round((height * aspect) / 2) * 2)
+    const pixels = width * height
+    if (pixels < budget.min || pixels > budget.max) continue
+    const drift = Math.abs(Math.log((width / height) / aspect))
+    if (best === undefined || drift < best.drift) best = { width, height, drift }
+  }
+  if (best !== undefined) return `${best.width}x${best.height}`
+  // No even pair near the ideal fits (only possible for a very narrow budget):
+  // scale the rounded solution down into range rather than emitting an
+  // out-of-budget size. Both dimensions stay even and the ratio is preserved
+  // to within one pixel.
+  let height = Math.max(2, Math.round(idealHeight / 2) * 2)
+  let width = Math.max(2, Math.round((height * aspect) / 2) * 2)
+  const scale = Math.sqrt(target / (width * height))
+  height = Math.max(2, Math.floor((height * scale) / 2) * 2)
+  width = Math.max(2, Math.floor((width * scale) / 2) * 2)
+  return `${width}x${height}`
 }
 
 /**

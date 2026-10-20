@@ -1081,6 +1081,88 @@ await check('B7 Volcengine Seedream uses Ark size and URL response fields', asyn
   }
 })
 
+await check('B7b Ark Seedream edit path and tier vocabulary match the docs', async () => {
+  // The edit path builds its own body, so `watermark` had to be switched off
+  // in TWO places; a test that only covers text-to-image would miss the one
+  // that stamps every image the user uploads a reference for.
+  const seen = []
+  const seedream = createServer(async (req, res) => {
+    const url = new URL(req.url ?? '/', 'http://127.0.0.1')
+    if (url.pathname === '/v1/images/generations') {
+      const chunks = []
+      for await (const chunk of req) chunks.push(chunk)
+      seen.push({ path: url.pathname, body: JSON.parse(Buffer.concat(chunks).toString('utf8')) })
+      res.writeHead(200, { 'content-type': 'application/json' })
+      res.end(JSON.stringify({ data: [{ url: `http://127.0.0.1:${seedream.address().port}/edited.png` }] }))
+      return
+    }
+    if (url.pathname === '/edited.png') {
+      res.writeHead(200, { 'content-type': 'image/png' })
+      res.end(pngBytes)
+      return
+    }
+    res.writeHead(404)
+    res.end()
+  })
+  await new Promise(resolve => seedream.listen(0, '127.0.0.1', resolve))
+  const base = `http://127.0.0.1:${seedream.address().port}/v1`
+  try {
+    const result = await host.generateImage(
+      { apiUrl: base, apiKey: 'k' },
+      {
+        mode: 'edit',
+        model: 'doubao-seedream-5-0-pro-260628',
+        prompt: 'make it night',
+        size: '1:1',
+        quality: '2k',
+        n: 1,
+        detail: '',
+        image: `data:image/png;base64,${pngBytes.toString('base64')}`,
+      },
+    )
+    assert.equal(result.images.length, 1)
+    // Seedream has no /images/edits endpoint: an edit is a generations call
+    // that carries the reference as a JSON array.
+    assert.equal(seen[0].path, '/v1/images/generations')
+    const edit = seen[0].body
+    assert.equal(edit.watermark, false, 'the edit path must switch the stamp off too')
+    assert.equal(edit.response_format, 'url')
+    assert.ok(Array.isArray(edit.image) && edit.image.length === 1, 'the reference travels as a JSON array')
+    assert.equal(edit.model, 'doubao-seedream-5-0-pro-260628')
+
+    // The tier vocabulary is per model: lite and 4.5 start at 2K, so a 1K ask
+    // is a 400 upstream and has to be snapped up rather than forwarded.
+    seen.length = 0
+    await host.generateImage(
+      { apiUrl: base, apiKey: 'k' },
+      { mode: 'text', model: 'doubao-seedream-4-5-251128', prompt: 'p', size: 'auto', quality: '1k', n: 1, detail: '' },
+    )
+    assert.equal(seen[0].body.size, '2K', '4.5 has no 1K tier')
+    seen.length = 0
+    await host.generateImage(
+      { apiUrl: base, apiKey: 'k' },
+      { mode: 'text', model: 'doubao-seedream-5-0-pro-260628', prompt: 'p', size: 'auto', quality: '1k', n: 1, detail: '' },
+    )
+    assert.equal(seen[0].body.size, '1K', '5.0 pro does have a 1K tier')
+
+    // Rounding to even used to push the product a few pixels over the ceiling
+    // at 4K (16:9 → 16,779,264 > 4096²), which Ark rejects outright.
+    for (const ratio of ['16:9', '9:16', '1:1', '4:3', '3:4', '21:9']) {
+      seen.length = 0
+      await host.generateImage(
+        { apiUrl: base, apiKey: 'k' },
+        { mode: 'text', model: 'doubao-seedream-4-0-250828', prompt: 'p', size: ratio, quality: '4k', n: 1, detail: '' },
+      )
+      const [w, h] = String(seen[0].body.size).split('x').map(Number)
+      assert.ok(Number.isFinite(w) && Number.isFinite(h), `${ratio}: size must be WxH, got ${seen[0].body.size}`)
+      assert.ok(w * h <= 16_777_216, `${ratio}: ${w}x${h} is over the 4096x4096 ceiling`)
+      assert.ok(w * h >= 921_600, `${ratio}: ${w}x${h} is under the 1280x720 floor`)
+    }
+  } finally {
+    await new Promise(resolve => seedream.close(resolve))
+  }
+})
+
 await check('B8 Zhipu GLM-Image uses the official generation contract', async () => {
   const seen = []
   const zhipu = createServer(async (req, res) => {

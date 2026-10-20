@@ -196,7 +196,7 @@ dsh plugin --profile web add ./q253595422-dsh-imagegen-video-1.7.8.tgz
 
 **火山方舟（Seedream / Seedance）** 的生图与生视频可以共用一个渠道（`https://ark.cn-beijing.volces.com/api/v3`），渠道里分别填图片模型与视频模型即可：
 
-- **生图（Seedream）**：方舟的 `size` 只能是档位（`1K`/`1.5K`/`2K`/`3K`/`4K`）**或** `宽x高`，二选一，且没有 `aspect_ratio` 参数。所以选了具体比例时，插件按该模型的像素预算换算出显式的偶数宽高（例如 5.0 pro 在 16:9 / 4K 下是 `2866x1612`），这样比例才真的生效；`auto` 才回落到档位字符串。
+- **生图（Seedream）**：方舟的 `size` 只能是档位（`1K`/`1.5K`/`2K`/`3K`/`4K`）**或** `宽x高`，二选一，且没有 `aspect_ratio` 参数。所以选了具体比例时，插件按该模型的像素预算换算出显式的偶数宽高（例如 5.0 pro 在 16:9 / 4K 下是 `2784x1566`），这样比例才真的生效；`auto` 才回落到档位字符串。
 - **水印**：生图的 `watermark` 默认是 **true**（右下角「AI生成」），插件每次都显式发 `watermark: false`。生视频的默认值是 `false`，插件同样显式发送，不依赖上游默认值。
 - **音轨**：生视频的 `generate_audio` 默认是 **true**（2.5 / 2.0 才有这个字段）；面板没有音轨控制，插件显式发 `false`，1.0 系列则完全不带这个字段。
 - **响应格式**：方舟的 Seedream 用 `response_format: 'url'`，插件随后回源下载；网关版的 Seedream 仍走 `b64_json`。
