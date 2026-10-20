@@ -34,7 +34,7 @@ import {
   recordDiagnostic,
   type DiagnosticPhase,
 } from './diagnostics-store.ts'
-import type { VideoGenerateRequest, VideoMode } from './protocol.ts'
+import type { VideoGenerateRequest, VideoMode, VideoResolution } from './protocol.ts'
 
 /** A video generation failure with a user-presentable message. */
 export class VideoGenError extends Error {
@@ -116,6 +116,9 @@ const POLL_POLICY: Record<string, { intervalMs: number; deadlineMs: number }> = 
   // a slower poll so a long render does not hammer the status endpoint.
   comemoe: { intervalMs: 6_000, deadlineMs: 40 * 60_000 },
   'openai-video': { intervalMs: 5_000, deadlineMs: 20 * 60_000 },
+  // Seedance renders 5s clips in roughly a minute or two, but 1080p/long
+  // durations queue: keep the same interval and a 30-minute ceiling.
+  seedance: { intervalMs: 5_000, deadlineMs: 30 * 60_000 },
   // xAI renders take "up to several minutes"; the default poll cadence is fine,
   // the deadline matches the other async video families.
   xai: { intervalMs: 5_000, deadlineMs: 20 * 60_000 },
@@ -175,6 +178,35 @@ function dataUrlOf(reference: { mime: string; base64: string }): string {
   return `data:${reference.mime};base64,${reference.base64}`
 }
 
+/**
+ * Seedance's accepted durations.
+ *
+ * The panel offers 5 and 10 seconds; 2.x accepts 4-15 and 1.0 accepts 2-12.
+ * A value outside the window is CLAMPED rather than rejected: the panel's own
+ * options are valid on every id, but a caller (Agent tool, graph runner) can
+ * pass anything, and a 400 from the provider explains nothing.
+ */
+function seedanceSeconds(model: string, seconds: number): number {
+  const seedance2 = /seedance[-_.]?2/i.test(model)
+  const min = seedance2 ? 4 : 2
+  const max = seedance2 ? 15 : 12
+  return Math.min(max, Math.max(min, Math.round(seconds)))
+}
+
+/**
+ * Seedance resolutions, lowercase, narrowed for the fast/mini ids.
+ *
+ * `doubao-seedance-2-0-fast-*` and `-mini-*` reject 1080p and 4k upstream, so
+ * asking for 1080P on those would be a guaranteed 400 — downgrade to 720p.
+ */
+function seedanceResolution(model: string, resolution: VideoResolution): string {
+  // The id is `doubao-seedance-2-0-fast-260128`: a minor version sits between
+  // the major and the tier word, so `2-fast` alone never matches.
+  const light = /seedance[-_.]?2(?:[-_.]\d+)*[-_.](?:fast|mini)/i.test(model)
+  if (light) return resolution === '480P' ? '480p' : '720p'
+  return resolution.toLowerCase()
+}
+
 /** Map the panel's video mode onto a family's own mode vocabulary. */
 function familyMode(family: string, mode: VideoMode): string {
   if (family === 'agnes') {
@@ -204,6 +236,8 @@ function endpointUrl(upstream: VideoUpstreamConfig, baseUrl: string, path: strin
  */
 const VIDEO_PATHS: Record<string, { submit: string; status: string }> = {
   xai: { submit: '/videos/generations', status: '/videos/{id}' },
+  // Volcengine Ark's task API: create under the collection, read one by id.
+  seedance: { submit: '/contents/generations/tasks', status: '/contents/generations/tasks/{id}' },
 }
 
 /**
@@ -582,8 +616,13 @@ function readPoll(payload: Record<string, unknown>): PollOutcome {
     ? payload.video as Record<string, unknown>
     : undefined
   // comemoe puts the result at the top level (`url`); Agnes nests it under
-  // `metadata.url`. Accept both regardless of which family we are polling.
-  const urlCandidates = [payload.url, payload.result_url, payload.video_url, metadata?.url, video?.url]
+  // `metadata.url`; Volcengine Ark nests it under `content.video_url` (and
+  // optionally `content.last_frame_url`). Accept every shape regardless of
+  // which family we are polling.
+  const content = payload.content !== null && typeof payload.content === 'object'
+    ? payload.content as Record<string, unknown>
+    : undefined
+  const urlCandidates = [payload.url, payload.result_url, payload.video_url, content?.video_url, metadata?.url, video?.url]
   const url = urlCandidates.find(candidate => typeof candidate === 'string' && candidate.trim() !== '')
   if (['completed', 'succeeded', 'success', 'done', 'finished'].includes(status)) {
     if (typeof url !== 'string') {
@@ -593,9 +632,13 @@ function readPoll(payload: Record<string, unknown>): PollOutcome {
       : typeof metadata?.duration === 'number' ? metadata.duration as number
         : typeof video?.duration === 'number' ? video.duration as number
           : undefined
+    // Ark reports the tail frame separately when `return_last_frame` was set;
+    // it is a still, not the clip, so it is used as a poster rather than as the
+    // result URL.
     const poster = typeof payload.poster === 'string' ? payload.poster
       : typeof metadata?.poster === 'string' ? metadata.poster as string
-        : undefined
+        : typeof content?.last_frame_url === 'string' ? content.last_frame_url
+          : undefined
     return {
       kind: 'done',
       url,
@@ -824,6 +867,45 @@ function submitBody(
       if (references.all.length > 0) body.images = references.all.map(dataUrlOf)
     }
     if (entry.supportsSeed && request.seed !== undefined && Number.isFinite(request.seed)) body.seed = request.seed
+    return body
+  }
+
+  if (familyName === 'seedance') {
+    // Volcengine Ark's own contract (create-video-generation-task): the prompt
+    // and every reference ride in a `content` ARRAY, images carry a `role`,
+    // the ratio field is `ratio` (not aspect_ratio), resolution is lowercase,
+    // duration is an integer number of seconds, and both `watermark` and
+    // `generate_audio` default to TRUE upstream.
+    const wireModelId = (request.upstream ?? request.model).trim()
+    const content: Array<Record<string, unknown>> = [{ type: 'text', text: request.prompt }]
+    const image = (reference: { mime: string; base64: string }, role: string): Record<string, unknown> => ({
+      type: 'image_url',
+      image_url: { url: dataUrlOf(reference) },
+      role,
+    })
+    if (request.mode === 'keyframe') {
+      if (references.all[0] !== undefined) content.push(image(references.all[0], 'first_frame'))
+      if (references.all[1] !== undefined) content.push(image(references.all[1], 'last_frame'))
+    } else if (request.mode === 'reference') {
+      for (const reference of references.all) content.push(image(reference, 'reference_image'))
+    } else if (request.mode === 'image' && references.primary !== undefined) {
+      content.push(image(references.primary, 'first_frame'))
+    }
+    const body: Record<string, unknown> = {
+      model: wireModelId,
+      content,
+      resolution: seedanceResolution(wireModelId, resolution),
+      duration: seedanceSeconds(wireModelId, seconds),
+      // No audio controls exist in the panel, and a clip that unexpectedly
+      // talks (or costs audio tokens) is not what was asked for. Both flags are
+      // sent explicitly because Ark documents `true` as their default.
+      generate_audio: false,
+      watermark: false,
+    }
+    if (entry.aspectRatios.includes(request.aspectRatio)) body.ratio = request.aspectRatio
+    if (entry.supportsSeed && request.seed !== undefined && Number.isFinite(request.seed)) {
+      body.seed = Math.max(-1, Math.min(4_294_967_295, Math.round(request.seed)))
+    }
     return body
   }
 

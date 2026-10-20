@@ -8,7 +8,7 @@
 export const IMAGEGEN_SETTINGS_NAMESPACE = 'dsh-imagegen'
 
 /** Published package version shared by the host updater and the client UI. */
-export const PLUGIN_VERSION = '1.14.0'
+export const PLUGIN_VERSION = '1.15.0'
 
 /** Same-origin route family (loopback-only, mirroring the dsh-ssh fence). */
 export const SETTINGS_API = {
@@ -482,7 +482,7 @@ export type StoredEntryMode = GenerateMode | 'video'
 export type VideoMode = 'text' | 'image' | 'keyframe' | 'reference' | 'compose'
 
 /** Request-shaping family a video model id routes through. */
-export type VideoModelFamily = 'agnes' | 'comemoe' | 'xai' | 'openai-video' | 'unknown'
+export type VideoModelFamily = 'agnes' | 'comemoe' | 'xai' | 'seedance' | 'openai-video' | 'unknown'
 
 /** Video output resolution tier, mapped per family by the engine. */
 export type VideoResolution = '480P' | '720P' | '1080P'

@@ -33,13 +33,21 @@ export interface PresetProvider {
 export const IMAGE_PRESETS: PresetProvider[] = [
   {
     id: 'volc-ark-seedream',
-    name: '字节 · 火山方舟（Seedream）',
+    name: '字节 · 火山方舟（Seedream / Seedance）',
     apiUrl: 'https://ark.cn-beijing.volces.com/api/v3',
-    hint: '字节跳动官方 Seedream 文生图/图生图入口',
+    hint: '字节跳动官方接口：Seedream 文生图/图生图 与 Seedance 文生视频/首尾帧；模型 ID 也可换成方舟控制台的推理接入点（ep-…）',
     models: [
+      { alias: 'doubao-seedream-5-0-pro-260628', id: 'doubao-seedream-5-0-pro-260628' },
+      { alias: 'doubao-seedream-5-0-260128', id: 'doubao-seedream-5-0-260128' },
+      { alias: 'doubao-seedream-4-5-251128', id: 'doubao-seedream-4-5-251128' },
+      { alias: 'doubao-seedream-4-0-250828', id: 'doubao-seedream-4-0-250828' },
       { alias: 'seedream-5.0-pro', id: 'seedream-5.0-pro' },
-      { alias: 'seedream-5.0', id: 'seedream-5.0' },
       { alias: 'seedream-4.0', id: 'seedream-4.0' },
+    ],
+    videoModels: [
+      { alias: 'doubao-seedance-2-0-260128', id: 'doubao-seedance-2-0-260128' },
+      { alias: 'doubao-seedance-2-0-fast-260128', id: 'doubao-seedance-2-0-fast-260128' },
+      { alias: 'doubao-seedance-1-0-pro-250528', id: 'doubao-seedance-1-0-pro-250528' },
     ],
   },
   {

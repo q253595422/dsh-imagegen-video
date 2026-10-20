@@ -55,7 +55,7 @@ function startUpstream() {
   const state = { submits: [], polls: [], downloads: [], script: null }
   const server = createServer((req, res) => {
     const url = new URL(req.url ?? '/', 'http://127.0.0.1')
-    if (req.method === 'POST' && (url.pathname === '/v1/videos' || url.pathname === '/v1/videos/generations')) {
+    if (req.method === 'POST' && (url.pathname === '/v1/videos' || url.pathname === '/v1/videos/generations' || url.pathname === '/v1/contents/generations/tasks')) {
       const chunks = []
       req.on('data', chunk => chunks.push(chunk))
       req.on('end', () => {
@@ -65,6 +65,17 @@ function startUpstream() {
         res.writeHead(200, { 'content-type': 'application/json' })
         res.end(JSON.stringify(script.submit))
       })
+      return
+    }
+    // Ark polls one task by id under the same collection; keep the fake strict
+    // about this path so a wrong status URL fails loudly instead of 404ing
+    // into the generic route below.
+    if (req.method === 'GET' && url.pathname.startsWith('/v1/contents/generations/tasks/')) {
+      state.polls.push({ id: url.pathname.slice('/v1/contents/generations/tasks/'.length), authorization: req.headers.authorization })
+      const list = state.script.polls
+      const index = Math.min(state.polls.length - 1, list.length - 1)
+      res.writeHead(200, { 'content-type': 'application/json' })
+      res.end(JSON.stringify(list[index]))
       return
     }
     if (req.method === 'GET' && url.pathname.startsWith('/v1/videos/')) {
@@ -237,6 +248,85 @@ await check('V1c wan2.2-t2v stays text-only and send standard resolution', async
     const body = upstream.state.submits[0].body
     assert.equal(body.resolution, 'standard', 'wan2.2-t2v only accepts standard')
     assert.ok(!('image_url' in body), 'a text-only model must not receive a reference frame')
+  } finally {
+    await upstream.close()
+  }
+})
+
+await check('V1c2 Volcengine Seedance submits content[] and reads content.video_url', async () => {
+  const upstream = await startUpstream()
+  upstream.state.script = {
+    // ark.cn-beijing.volces.com: create answers `{ id }`, a finished task nests
+    // the clip under `content.video_url` and states its length in `duration`.
+    submit: { id: 'cgt-20260101-abc' },
+    polls: [
+      { id: 'cgt-20260101-abc', status: 'running' },
+      { id: 'cgt-20260101-abc', status: 'succeeded', content: { video_url: `http://127.0.0.1:${upstream.port}/ark/clip.mp4` }, duration: 5 },
+    ],
+  }
+  const png = 'data:image/png;base64,QUJD'
+  try {
+    const result = await generateVideo(
+      { apiUrl: upstream.base, apiKey: 'k' },
+      {
+        mode: 'keyframe',
+        model: 'doubao-seedance-2-0-260128',
+        prompt: 'a lantern floating up',
+        aspectRatio: '9:16',
+        resolution: '1080P',
+        seconds: 5,
+        firstFrame: png,
+        lastFrame: png,
+      },
+      { family: 'seedance' },
+    )
+    assert.equal(result.videos[0].duration, 5, 'the clip length comes from the poll body')
+    const body = upstream.state.submits[0].body
+    assert.equal(body.model, 'doubao-seedance-2-0-260128')
+    assert.equal(body.resolution, '1080p', 'Ark wants a lowercase resolution')
+    assert.equal(body.duration, 5, 'Ark takes an integer number of seconds')
+    assert.equal(body.ratio, '9:16', 'the ratio field is `ratio`, not aspect_ratio')
+    assert.ok(!('prompt' in body), 'Ark has no top-level prompt: it rides in content[]')
+    assert.equal(body.watermark, false, 'the watermark defaults to true upstream, so it must be sent off')
+    assert.equal(body.generate_audio, false, 'a silent clip is what the panel asked for')
+    assert.deepEqual(body.content[0], { type: 'text', text: 'a lantern floating up' })
+    assert.deepEqual(body.content[1], { type: 'image_url', image_url: { url: png }, role: 'first_frame' })
+    assert.deepEqual(body.content[2], { type: 'image_url', image_url: { url: png }, role: 'last_frame' })
+    assert.equal(upstream.state.polls[0].id, 'cgt-20260101-abc', 'the task is polled by its Ark task id')
+    assert.equal(upstream.state.polls[0].authorization, 'Bearer k')
+  } finally {
+    await upstream.close()
+  }
+})
+
+await check('V1c3 Seedance clamps duration and resolution to what the model accepts', async () => {
+  const upstream = await startUpstream()
+  upstream.state.script = {
+    submit: { id: 'cgt-fast' },
+    polls: [{ status: 'succeeded', content: { video_url: `http://127.0.0.1:${upstream.port}/ark/fast.mp4` } }],
+  }
+  try {
+    // 2.0 accepts 4-15s and fast/mini cap at 720p: a 1080P/30s request is a
+    // guaranteed 400 upstream, so it is narrowed here instead of explained away.
+    await generateVideo(
+      { apiUrl: upstream.base, apiKey: 'k' },
+      { mode: 'text', model: 'doubao-seedance-2-0-fast-260128', prompt: 'p', aspectRatio: '1:1', resolution: '1080P', seconds: 30 },
+      { family: 'seedance' },
+    )
+    const fast = upstream.state.submits[0].body
+    assert.equal(fast.duration, 15, '2.x caps at 15 seconds')
+    assert.equal(fast.resolution, '720p', 'fast/mini reject 1080p')
+
+    upstream.state.submits.length = 0
+    // 1.0 accepts 2-12s and documents 480p/720p/1080p.
+    await generateVideo(
+      { apiUrl: upstream.base, apiKey: 'k' },
+      { mode: 'text', model: 'doubao-seedance-1-0-pro-250528', prompt: 'p', aspectRatio: '16:9', resolution: '1080P', seconds: 1 },
+      { family: 'seedance' },
+    )
+    const pro = upstream.state.submits[0].body
+    assert.equal(pro.duration, 2, '1.0 starts at 2 seconds')
+    assert.equal(pro.resolution, '1080p', '1.0 pro accepts 1080p')
   } finally {
     await upstream.close()
   }

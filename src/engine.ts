@@ -159,7 +159,76 @@ function isVolcSeedream(model: string): boolean {
   return /^doubao-seedream(?:-|$)/i.test(model.trim())
 }
 
-/** Volcengine uses `size` for the output tier, not the panel's aspect ratio. */
+/**
+ * Volcengine's own `size` grammar: `size` is EITHER a tier (`1K`/`2K`/`4K`) OR
+ * an explicit `<width>x<height>`, never both, and the pixel form has a
+ * per-model budget. Ark has no aspect-ratio parameter at all, so a tier alone
+ * throws the panel's ratio away — a 16:9 request rendered as 1:1. The pixel
+ * form is the only way to honour what the user picked.
+ */
+interface ArkSizeBudget {
+  /** Lowest total pixel count the model accepts. */
+  min: number
+  /** Highest total pixel count the model accepts. */
+  max: number
+}
+
+/** Documented per-model pixel budgets (width × height), keyed by id prefix. */
+const ARK_SIZE_BUDGETS: ReadonlyArray<{ test: RegExp; budget: ArkSizeBudget }> = [
+  // 5.0 pro / flash: total pixels [1280x720, 2048x2048x1.1025].
+  { test: /^doubao-seedream-5-(?:0|1)-(?:pro|flash)/i, budget: { min: 921_600, max: 4_624_220 } },
+  // 5.0 lite: [2560x1440, 4096x4096].
+  { test: /^doubao-seedream-5-(?:0|1)-lite/i, budget: { min: 3_686_400, max: 16_777_216 } },
+  // 4.5: [2560x1440, 4096x4096].
+  { test: /^doubao-seedream-4-5/i, budget: { min: 3_686_400, max: 16_777_216 } },
+  // 4.0: [1280x720, 4096x4096].
+  { test: /^doubao-seedream-4-0/i, budget: { min: 921_600, max: 16_777_216 } },
+  // 3.0 t2i: [512x512, 2048x2048] and pixel sizes only.
+  { test: /^doubao-seedream-3-0/i, budget: { min: 262_144, max: 4_194_304 } },
+]
+
+/** Total pixels the panel's clarity tier aims for before the budget clamps it. */
+const ARK_TIER_PIXELS: Readonly<Record<string, number>> = {
+  '1k': 1_048_576,
+  '2k': 4_194_304,
+  '4k': 16_777_216,
+}
+
+/** Width/height for a ratio, rounded to even numbers and inside `budget`. */
+function arkPixelSize(ratio: string, quality: string, budget: ArkSizeBudget): string {
+  const [w, h] = ratio.split(':').map(part => Number.parseFloat(part))
+  const aspect = Number.isFinite(w) && Number.isFinite(h) && w > 0 && h > 0 ? w / h : 1
+  const target = Math.min(budget.max, Math.max(budget.min, ARK_TIER_PIXELS[quality] ?? ARK_TIER_PIXELS['2k']!))
+  // Solve width × height = target with width / height = aspect, then even it.
+  const height = Math.round(Math.sqrt(target / aspect) / 2) * 2
+  const width = Math.round((height * aspect) / 2) * 2
+  return `${Math.max(2, width)}x${Math.max(2, height)}`
+}
+
+/**
+ * The `size` an official Ark Seedream model should receive.
+ *
+ * `auto` has no ratio to honour, so it falls back to the tier string (the
+ * documented "let the model choose" form). A known ratio becomes an explicit
+ * pixel size inside that model's budget; an unrecognised ratio model keeps the
+ * historical tier mapping so a new id cannot start failing on a bad string.
+ */
+function arkSeedreamSize(model: string, quality: string, ratio: string): string {
+  const budget = ARK_SIZE_BUDGETS.find(row => row.test.test(model.trim()))?.budget
+  const known = ratio !== '' && ratio !== 'auto' && /^\d+:\d+$/.test(ratio)
+  if (budget !== undefined && known) return arkPixelSize(ratio, quality, budget)
+  // 5.0 pro / flash cap at 2K; everything else keeps the tier vocabulary.
+  if (/^doubao-seedream-5-(?:0|1)-(?:pro|flash)/i.test(model.trim())) {
+    return quality === '1k' ? '1K' : '2K'
+  }
+  // 3.0 t2i documents pixel values only, so give it a square default.
+  if (/^doubao-seedream-3-0/i.test(model.trim())) {
+    return quality === '4k' ? '2048x2048' : '1024x1024'
+  }
+  return quality === '1k' ? '1K' : quality === '4k' ? '4K' : '2K'
+}
+
+/** Kept for the gateway (non-Ark) Seedream path: tier vocabulary only. */
 function seedreamSize(quality: string): string {
   // Seedream 5.0 Pro currently caps at 2K; keep 4K requests valid by
   // degrading them to the highest supported tier instead of sending 4K.
@@ -333,6 +402,7 @@ function effectiveParams(request: GenerateRequest): {
   image_size?: string
   resolution?: string
   response_format?: string
+  watermark?: boolean
 } {
   const model = wireModel(request)
   // dall-e-3 has no quality/detail knobs and only produces one image.
@@ -375,15 +445,17 @@ function effectiveParams(request: GenerateRequest): {
       response_format: 'b64_json',
     }
   }
-  // ByteDance Seedream: the official Volcengine Ark API uses `size` for the
-  // resolution tier (1K / 2K), not the panel's aspect-ratio value. It returns
-  // temporary URLs, so ask Ark for URL output and let the host download it.
-  // Other compatible gateways retain the base64 response fallback.
+  // ByteDance Seedream: the official Volcengine Ark API has no aspect-ratio
+  // parameter and defaults `watermark` to TRUE (a visible "AI生成" stamp), so
+  // an Ark request carries an explicit pixel size for the chosen ratio and
+  // turns the watermark off. Gateways keep the plain tier + base64 fallback.
   if (isSeedream(model)) {
+    const ark = isVolcSeedream(model)
     return {
       model,
-      size: seedreamSize(request.quality),
-      response_format: isVolcSeedream(model) ? 'url' : 'b64_json',
+      size: ark ? arkSeedreamSize(model, request.quality, request.size) : seedreamSize(request.quality),
+      response_format: ark ? 'url' : 'b64_json',
+      ...ark ? { watermark: false } : {},
     }
   }
   // Zhipu's official image API accepts OpenAI-style JSON but uses its own
@@ -878,7 +950,9 @@ async function requestOneImage(
     } else if (isSeedream(params.model)) {
       // Seedream unifies generation and editing on /images/generations; the
       // reference image is a JSON URL / data-URL array, never multipart, and
-      // the protocol natively accepts several references.
+      // the protocol natively accepts several references. Ark also defaults
+      // `watermark` to true, so the edit path must switch it off too — a
+      // generated image silently stamped "AI生成" is not what the panel showed.
       headers['content-type'] = 'application/json'
       body = JSON.stringify({
         model: params.model,
@@ -887,6 +961,7 @@ async function requestOneImage(
         ...params.size !== undefined ? { size: params.size } : {},
         ...params.resolution !== undefined ? { resolution: params.resolution } : {},
         response_format: isVolcSeedream(params.model) ? 'url' : 'b64_json',
+        ...isVolcSeedream(params.model) ? { watermark: false } : {},
       })
     } else {
       const form = new FormData()

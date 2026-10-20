@@ -70,6 +70,21 @@ const ENTRIES: Record<Exclude<VideoModelFamily, 'unknown'>, Omit<VideoCatalogEnt
     supportsSeed: false,
     requiresReference: false,
   },
+  // Volcengine Ark's own task contract: POST /contents/generations/tasks with a
+  // `content` array, poll GET /contents/generations/tasks/{id}, and the finished
+  // clip at `content.video_url`. Durations are 4-15s on 2.x and 2-12s on 1.0,
+  // resolutions are lowercase 480p/720p/1080p.
+  seedance: {
+    label: 'seedance',
+    labelZh: '火山 Seedance',
+    known: true,
+    // `reference` (multi-image) exists on 2.x only; narrowed per model id below.
+    modes: ['text', 'image', 'keyframe'],
+    resolutions: ['480P', '720P', '1080P'],
+    aspectRatios: ['16:9', '9:16', '1:1', '4:3', '3:4'],
+    supportsSeed: true,
+    requiresReference: false,
+  },
   // xAI's own contract, verified against docs.x.ai/developers/rest-api-reference:
   // submit returns `request_id`, the poll carries `video.url` / `video.duration`.
   xai: {
@@ -96,6 +111,17 @@ export function isComemoeVideoModel(model: string): boolean {
   return COMEMOE_VIDEO_MODELS.has(id) || /^comemoe[-_/]/i.test(id)
 }
 
+/**
+ * Whether a model id is Volcengine Ark's Seedance video contract.
+ *
+ * Both the official ids (`doubao-seedance-2-0-260128`) and the shorter gateway
+ * aliases (`seedance-2-0`) are accepted: the family is decided by the request
+ * SHAPE, and both spellings mean the same `/contents/generations/tasks` body.
+ */
+export function isArkSeedanceVideoModel(model: string): boolean {
+  return /^(?:doubao-)?seedance(?:[-_.]|$)/i.test(model.trim())
+}
+
 /** Classify one upstream video model id into its request-shaping family. */
 export function describeVideoModel(model: string): VideoCatalogEntry {
   const id = model.trim()
@@ -105,6 +131,22 @@ export function describeVideoModel(model: string): VideoCatalogEntry {
   // matches that regex too, and the generic family posts to `/videos`, which
   // xAI answers with 404 (it serves `/videos/generations`).
   if (/^grok-imagine-video/i.test(id)) return { family: 'xai', ...ENTRIES.xai }
+  if (isArkSeedanceVideoModel(id)) {
+    // `reference` takes several reference images, which Seedance 2.x supports
+    // and 1.0 does not. Offering it on a 1.0 id would send a body the provider
+    // rejects, so the panel is narrowed here instead.
+    // The fast / mini ids also cap at 720p upstream: a 1080P pick on one of
+    // those is a guaranteed 400, so the tier list is narrowed to match.
+    const base = ENTRIES.seedance
+    const seedance2 = /seedance[-_.]?2/i.test(id)
+    // `doubao-seedance-2-0-fast-260128` carries a minor version between the
+    // major and the tier word, so a bare `2-fast` pattern never matches.
+    const light = /seedance[-_.]?2(?:[-_.]\d+)*[-_.](?:fast|mini)/i.test(id)
+    const resolutions: VideoResolution[] = light ? ['480P', '720P'] : [...base.resolutions]
+    return seedance2
+      ? { family: 'seedance', ...base, resolutions, modes: ['text', 'image', 'keyframe', 'reference'] }
+      : { family: 'seedance', ...base, resolutions }
+  }
   if (isComemoeVideoModel(id)) {
     const base = ENTRIES.comemoe
     // `wan2.2-t2v` is text-only; the rest accept one reference image.
@@ -181,11 +223,32 @@ export function clampVideoSeconds(seconds: number): number {
   return Math.min(30, Math.max(1, rounded))
 }
 
-/** Clamp one resolution to what the family understands. */
+/** Ordered clarity tiers, lowest first. */
+const RESOLUTION_RANK: readonly VideoResolution[] = ['480P', '720P', '1080P']
+
+/**
+ * Clamp one resolution to what the family understands.
+ *
+ * A model whose tier list was narrowed (Seedance fast/mini cap at 720p) must
+ * degrade a too-high request to the best tier it does support — falling back
+ * to the FIRST entry would turn a 1080P ask into 480P and quietly throw away
+ * most of the picture. Requests below the supported floor still snap up to it.
+ */
 export function normalizeVideoResolution(model: string, resolution: string): VideoResolution {
   const entry = describeVideoModel(model)
   const wanted = resolution.trim().toUpperCase()
   const hit = entry.resolutions.find(row => row === wanted)
   if (hit !== undefined) return hit
+  const ceiling = RESOLUTION_RANK.indexOf(wanted as VideoResolution)
+  if (ceiling >= 0) {
+    const below = entry.resolutions.filter(row => RESOLUTION_RANK.indexOf(row) <= ceiling)
+    if (below.length > 0) {
+      return below.reduce((best, row) => (RESOLUTION_RANK.indexOf(row) > RESOLUTION_RANK.indexOf(best) ? row : best))
+    }
+    const above = entry.resolutions.filter(row => RESOLUTION_RANK.indexOf(row) > ceiling)
+    if (above.length > 0) {
+      return above.reduce((best, row) => (RESOLUTION_RANK.indexOf(row) < RESOLUTION_RANK.indexOf(best) ? row : best))
+    }
+  }
   return entry.resolutions[0] ?? '720P'
 }

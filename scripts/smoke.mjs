@@ -1041,9 +1041,18 @@ await check('B7 Volcengine Seedream uses Ark size and URL response fields', asyn
       const body = JSON.parse(Buffer.concat(chunks).toString('utf8'))
       seen.push(body)
       assert.equal(body.model, 'doubao-seedream-5-0-pro-260628')
-      assert.equal(body.size, '2K')
+      // Ark has no aspect-ratio parameter, so a 16:9 pick has to reach the wire
+      // as explicit pixels inside 5.0 pro's [1280x720, 2048x2048x1.1025] budget.
+      const [w, h] = String(body.size).split('x').map(Number)
+      assert.ok(Number.isFinite(w) && Number.isFinite(h), `size must be WxH, got ${body.size}`)
+      assert.ok(w * h >= 921_600 && w * h <= 4_624_220, `pixels outside the budget: ${w}x${h}`)
+      assert.ok(Math.abs(w / h - 16 / 9) < 0.01, `ratio drifted: ${w}x${h}`)
+      assert.equal(w % 2, 0, 'Ark wants even dimensions')
+      assert.equal(h % 2, 0, 'Ark wants even dimensions')
       assert.equal(body.response_format, 'url')
       assert.equal(body.resolution, undefined)
+      // The upstream default is a visible "AI生成" stamp; it must be sent off.
+      assert.equal(body.watermark, false)
       assert.equal(body.prompt, 'a volcano')
       res.writeHead(200, { 'content-type': 'application/json' })
       res.end(JSON.stringify({ data: [{ url: `http://127.0.0.1:${seedream.address().port}/seedream.png` }] }))

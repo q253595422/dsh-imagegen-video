@@ -5,6 +5,46 @@ Attribution for third-party code is in [NOTICE](./NOTICE).
 
 ## Releases
 
+### 1.15.0 — Volcengine Ark, properly
+
+- **Seedream gets the real Ark contract.** The official ids
+  (`doubao-seedream-5-0-pro-260628` and friends) have no `aspect_ratio`
+  parameter at all, and their `size` is EITHER a tier (`1K`/`1.5K`/`2K`/`3K`/
+  `4K`) OR an explicit `WxH` — never both. Sending a bare tier therefore
+  threw the panel's ratio away and a 16:9 request came back square or 1:1.
+  Ark ids now receive explicit even dimensions solved from the chosen ratio
+  inside that model's documented pixel budget (5.0 pro/flash cap at
+  `2048x2048x1.1025`; 4.5 and 5.0 lite at `4096x4096`; 3.0 at `2048x2048`).
+  `auto` still sends the tier string, which is Ark's "you choose" form.
+- **The watermark is turned off explicitly.** Ark documents `watermark: true`
+  as the default, so every Ark request used to come back with a visible
+  "AI生成" stamp in the corner. Both the text-to-image and the edit request
+  now send `watermark: false`. Gateway-shaped Seedream still sends
+  `b64_json`; only the official Ark shape uses `response_format: 'url'`.
+- **Seedance is a first-class video family.** `doubao-seedance-*` ids were
+  being classified as the generic OpenAI-style video endpoint, which posted
+  to `/videos` and never worked. They now speak Ark's own task contract:
+  `POST /contents/generations/tasks`, poll
+  `GET /contents/generations/tasks/{id}`, clip at `content.video_url`.
+  The prompt and every reference ride in a `content` array — images carry a
+  `role` of `first_frame` / `last_frame` / `reference_image` — the ratio field
+  is `ratio`, resolution is lowercase, and duration is an integer.
+- **Values are narrowed where the model would reject them.** Seedance 2.x
+  accepts 4–15 seconds and 1.0 accepts 2–12; the `fast`/`mini` ids cap at
+  720p and reject 1080p and 4k upstream. Requests are clamped to the window
+  and degraded to the best tier the id does support (a 1080P ask on a fast id
+  becomes 720p, not 480p) instead of being sent as a guaranteed 400.
+- **Silent by default, not by accident.** `generate_audio` also defaults to
+  true upstream; the panel has no audio control, so both flags are sent
+  explicitly as `false`.
+- **One channel, both halves.** The built-in preset is now "字节 · 火山方舟
+  （Seedream / Seedance）" with real model ids and a video catalog, so one
+  Ark channel serves images and videos.
+- **Offline coverage.** `B7` asserts the Ark pixel size stays inside the
+  budget, keeps the ratio and is even, plus `watermark: false`; two new
+  `smoke-video` cases cover the Seedance submit body, the poll path and
+  `content.video_url`, and the duration/resolution narrowing.
+
 ### 1.14.0 — draw it in code, render it here
 
 - **A second renderer, chosen per task.** The canvas composer now carries a
