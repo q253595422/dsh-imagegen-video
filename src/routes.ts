@@ -1087,7 +1087,13 @@ export function makeRoutes(deps: ImageGenRoutesDeps): WebRoute[] {
           writeJson(res, 200, { ok: false, code: 'bad-request', message: 'prompt is required' })
           return
         }
-        const resolved = resolveChannelRequest(parsed)
+        // A code render needs no image provider at all, so the channel gate must
+        // not run for it: with zero channels configured the runtime still has a
+        // chat model (the host's) and a local renderer, and refusing here would
+        // reintroduce exactly the dependency this path exists to remove.
+        const resolved = parsed.renderer === 'code'
+          ? { ok: true as const, request: parsed }
+          : resolveChannelRequest(parsed)
         if (!resolved.ok) {
           writeJson(res, 200, { ok: false, code: resolved.code, message: resolved.message })
           return
@@ -1111,7 +1117,10 @@ export function makeRoutes(deps: ImageGenRoutesDeps): WebRoute[] {
         const body = await readJsonBody(req)
         const parsed = body === undefined ? undefined : parseGenerateRequest(body)
         if (parsed === undefined) { writeJson(res, 200, { ok: false, code: 'bad-request', message: 'prompt is required' }); return }
-        const resolved = resolveChannelRequest(parsed)
+        // Same opt-out as GENERATE_API: the code path resolves no channel.
+        const resolved = parsed.renderer === 'code'
+          ? { ok: true as const, request: parsed }
+          : resolveChannelRequest(parsed)
         if (!resolved.ok) {
           writeJson(res, 200, { ok: false, code: resolved.code, message: resolved.message })
           return

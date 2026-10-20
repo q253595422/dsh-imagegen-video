@@ -18,6 +18,7 @@
  * Run: node scripts/smoke-code-render.mjs   (from the package root, after a build)
  */
 import { createServer } from 'node:http'
+import { Readable } from 'node:stream'
 import assert from 'node:assert/strict'
 import { execFileSync } from 'node:child_process'
 import { existsSync, readFileSync, rmSync, statSync } from 'node:fs'
@@ -363,6 +364,58 @@ await check('C8 a request without renderer still goes to the model provider', as
   } finally {
     await new Promise(resolve => upstream.server.close(resolve))
   }
+})
+
+await check('C8b the submit routes do not demand a channel for a code render', async () => {
+  // The whole point of the code path is that no image/video provider exists.
+  // Channel resolution used to run before the runtime branch, so a host with
+  // zero channels answered `no-channels` and the path was unusable exactly
+  // where it should shine. Both submit routes must pass it through.
+  const { makeRoutes, ImageGenerationRuntime } = await import(new URL('../lib/index.js', import.meta.url).href)
+  const chat = scriptedChat(BANNER)
+  const runtime = new ImageGenerationRuntime(
+    () => ({ channels: [], defaultChannelId: '' }),
+    undefined, undefined, undefined,
+    { available: () => true, label: () => 'host-model', complete: async options => await chat.complete(options) },
+  )
+  const routes = makeRoutes({
+    settings: { describe: () => [], mutate: async () => {} },
+    resolve: () => ({ apiUrl: '', apiKey: '' }),
+    resolveChannels: () => ({ channels: [], defaultChannelId: '' }),
+    runtime,
+  })
+  const invoke = async (path, body) => {
+    const route = routes.find(candidate => candidate.path === path)
+    assert.ok(route !== undefined, `route ${path} must exist`)
+    const req = Object.assign(Readable.from([Buffer.from(JSON.stringify(body))]), {
+      method: 'POST', socket: { remoteAddress: '127.0.0.1' }, headers: { host: '127.0.0.1' },
+    })
+    let response
+    await route.handler(req, { writeHead() {}, end(payload) { response = JSON.parse(payload) } })
+    return response
+  }
+
+  const image = await invoke('/api/dsh-imagegen/tasks/submit', {
+    mode: 'text', renderer: 'code', prompt: 'a calm blue card', size: '720P', quality: 'auto', n: 1, detail: '',
+  })
+  assert.equal(image.ok, true, `a code image must queue without channels, got ${JSON.stringify(image)}`)
+  assert.ok(typeof image.task?.id === 'string', 'the route answers with a queued task')
+  assert.equal(image.task.request.renderer, 'code', 'the queued task keeps the marker so retry can reuse it')
+
+  const video = await invoke('/api/dsh-imagegen/video/tasks/submit', {
+    mode: 'text', renderer: 'code', prompt: 'a calm blue clip', aspectRatio: '16:9', resolution: '480P', seconds: 1,
+  })
+  assert.equal(video.ok, true, `a code clip must queue without channels, got ${JSON.stringify(video)}`)
+  assert.ok(typeof video.task?.id === 'string', 'the video route answers with a queued task')
+  assert.equal(video.task.request.renderer, 'code', 'the queued clip keeps the marker')
+
+  // And the guard still holds where it is meant to: a MODEL request with no
+  // channel is still refused, because there is genuinely nothing to call.
+  const model = await invoke('/api/dsh-imagegen/tasks/submit', {
+    mode: 'text', model: 'gpt-image-2', prompt: 'a cat', size: '1:1', quality: '1k', n: 1, detail: '',
+  })
+  assert.equal(model.ok, false, 'a model request still needs a configured channel')
+  assert.equal(model.code, 'no-channels', `expected no-channels, got ${model.code}`)
 })
 
 // C9/C10 drive the DSH host seam directly. The rest of this suite injects a
