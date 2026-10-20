@@ -900,15 +900,18 @@ function submitBody(
       content,
       resolution: seedanceResolution(wireModelId, resolution),
       duration: seedanceSeconds(wireModelId, seconds),
-      // No audio controls exist in the panel, and a clip that unexpectedly
-      // talks (or costs audio tokens) is not what was asked for. Both flags are
-      // sent explicitly because Ark documents `true` as their default.
-      generate_audio: false,
+      // Documented default is false, but sending it keeps the request explicit
+      // and survives a future default change.
       watermark: false,
     }
+    // `generate_audio` exists on 2.5 / 2.0 only. Its documented default is
+    // TRUE, so a silent clip has to say so — and a 1.0 id must not receive the
+    // field at all, because there is no audio track to switch off there.
+    if (!/seedance[-_.]?1/i.test(wireModelId)) body.generate_audio = false
     if (entry.aspectRatios.includes(request.aspectRatio)) body.ratio = request.aspectRatio
     if (entry.supportsSeed && request.seed !== undefined && Number.isFinite(request.seed)) {
-      body.seed = Math.max(-1, Math.min(4_294_967_295, Math.round(request.seed)))
+      // Documented range is [-1, 2147483647] (-1 = random).
+      body.seed = Math.max(-1, Math.min(2_147_483_647, Math.round(request.seed)))
     }
     return body
   }

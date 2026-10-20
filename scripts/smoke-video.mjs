@@ -327,6 +327,14 @@ await check('V1c3 Seedance clamps duration and resolution to what the model acce
     const pro = upstream.state.submits[0].body
     assert.equal(pro.duration, 2, '1.0 starts at 2 seconds')
     assert.equal(pro.resolution, '1080p', '1.0 pro accepts 1080p')
+    assert.ok(!('generate_audio' in pro), '1.0 has no audio track, so the field must not be sent')
+
+    // Modes the id cannot express are dropped rather than offered and rejected.
+    // The tier word is what narrows, so the check uses the undated alias form.
+    const proFast = host.describeVideoModel('seedance-1-0-pro-fast')
+    assert.deepEqual(proFast.modes, ['text', 'image'], '1.0 pro fast has no last frame and no reference images')
+    assert.deepEqual(host.describeVideoModel('doubao-seedance-1-0-pro-250528').modes, ['text', 'image', 'keyframe'], '1.0 pro keeps first/last frame')
+    assert.deepEqual(host.describeVideoModel('doubao-seedance-2-0-260128').modes, ['text', 'image', 'keyframe', 'reference'], '2.x adds multi-reference')
 
     upstream.state.submits.length = 0
     // A channel alias is whatever the user typed; the capabilities belong to

@@ -210,19 +210,27 @@ function arkPixelSize(ratio: string, quality: string, budget: ArkSizeBudget): st
  *
  * `auto` has no ratio to honour, so it falls back to the tier string (the
  * documented "let the model choose" form). A known ratio becomes an explicit
- * pixel size inside that model's budget; an unrecognised ratio model keeps the
- * historical tier mapping so a new id cannot start failing on a bad string.
+ * pixel size inside that model's budget; an unrecognised ratio keeps the
+ * tier mapping so a new id cannot start failing on a bad string.
+ *
+ * The tier lists are NOT interchangeable: 5.0 pro/flash ship 1K/1.5K/2K only,
+ * while lite and 4.5 start at 2K. Sending `1K` to a lite model is a 400, so the
+ * panel's finest tier is snapped UP to the cheapest tier the model documents.
  */
 function arkSeedreamSize(model: string, quality: string, ratio: string): string {
-  const budget = ARK_SIZE_BUDGETS.find(row => row.test.test(model.trim()))?.budget
+  const id = model.trim()
+  const budget = ARK_SIZE_BUDGETS.find(row => row.test.test(id))?.budget
   const known = ratio !== '' && ratio !== 'auto' && /^\d+:\d+$/.test(ratio)
   if (budget !== undefined && known) return arkPixelSize(ratio, quality, budget)
-  // 5.0 pro / flash cap at 2K; everything else keeps the tier vocabulary.
-  if (/^doubao-seedream-5-(?:0|1)-(?:pro|flash)/i.test(model.trim())) {
+  if (/^doubao-seedream-5-(?:0|1)-(?:pro|flash)/i.test(id)) {
     return quality === '1k' ? '1K' : '2K'
   }
+  // 5.0 lite and 4.5 document 2K and up only (lite adds 3K).
+  if (/^doubao-seedream-(?:5-(?:0|1)-lite|4-5)/i.test(id)) {
+    return quality === '4k' ? '4K' : '2K'
+  }
   // 3.0 t2i documents pixel values only, so give it a square default.
-  if (/^doubao-seedream-3-0/i.test(model.trim())) {
+  if (/^doubao-seedream-3-0/i.test(id)) {
     return quality === '4k' ? '2048x2048' : '1024x1024'
   }
   return quality === '1k' ? '1K' : quality === '4k' ? '4K' : '2K'

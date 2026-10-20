@@ -185,7 +185,7 @@ dsh plugin --profile web add ./q253595422-dsh-imagegen-video-1.7.8.tgz
 | 协议族 | 模型示例 | 说明 |
 | --- | --- | --- |
 | Agnes 视频 | `agnes-video-2.5-flash`、`agnes-video-2.5` | 提交 `POST /v1/videos`，轮询 `GET /v1/videos/{id}`，取 `metadata.url`；支持文生视频、首尾帧、多参考图、`seed`。 |
-| 火山 Seedance（方舟） | `doubao-seedance-2-0-260128`、`doubao-seedance-2-0-fast-260128`、`doubao-seedance-1-0-pro-250528` | 方舟原生任务协议：提交 `POST /contents/generations/tasks`，轮询 `GET /contents/generations/tasks/{id}`，成片在 `content.video_url`。提示词与参考图放在 `content` 数组里（参考图带 `role`：`first_frame` / `last_frame` / `reference_image`），比例字段是 `ratio`，分辨率小写，时长 2.x 为 4–15 秒、1.0 为 2–12 秒。`fast` / `mini` 型号上游只到 720p，面板会把 1080P 收敛到 720p 而不是让请求 400。 |
+| 火山 Seedance（方舟） | `doubao-seedance-2-0-260128`、`doubao-seedance-2-0-fast-260128`、`doubao-seedance-1-0-pro-250528` | 方舟原生任务协议：提交 `POST /contents/generations/tasks`，轮询 `GET /contents/generations/tasks/{id}`，成片在 `content.video_url`。提示词与参考图放在 `content` 数组里（参考图带 `role`：`first_frame` / `last_frame` / `reference_image`），比例字段是 `ratio`，分辨率小写。时长：2.x 为 4–15 秒、1.0 为 2–12 秒。分辨率：2.0 支持 480p/720p/1080p/4k，`fast` / `mini` 只到 720p；1.0 为 480p/720p/1080p。1.0 不支持 `reference_image` 角色，`1.0 pro fast` 也不支持尾帧，面板会把这两种模式从该型号上收起来。 |
 | 算力萌 comemoe | `wan2.2-t2v`、`zhimeng-h3-local` | `wan2.2-t2v` 仅文生视频；`zhimeng-h3-local` 支持图生视频。比例只接受 16:9 / 9:16 / 1:1；5 秒片子实测约 9 分钟。 |
 | xAI Grok | `grok-imagine-video-1.5`、`grok-imagine-video-1.5-lite` | 提交 `POST /videos/generations`（注意不是 `/videos`），轮询 `GET /videos/{id}`，取 `video.url` 与 `video.duration`。 |
 | 通用视频 | 其他视频模型 id | 按 OpenAI 兼容视频端点尽力适配；未识别的协议族会明确报错，不会静默发出错误请求。 |
@@ -197,7 +197,8 @@ dsh plugin --profile web add ./q253595422-dsh-imagegen-video-1.7.8.tgz
 **火山方舟（Seedream / Seedance）** 的生图与生视频可以共用一个渠道（`https://ark.cn-beijing.volces.com/api/v3`），渠道里分别填图片模型与视频模型即可：
 
 - **生图（Seedream）**：方舟的 `size` 只能是档位（`1K`/`1.5K`/`2K`/`3K`/`4K`）**或** `宽x高`，二选一，且没有 `aspect_ratio` 参数。所以选了具体比例时，插件按该模型的像素预算换算出显式的偶数宽高（例如 5.0 pro 在 16:9 / 4K 下是 `2866x1612`），这样比例才真的生效；`auto` 才回落到档位字符串。
-- **水印**：方舟的 `watermark` 默认是 **true**（右下角「AI生成」），插件每次都显式发 `watermark: false`。生视频同理，并额外关掉 `generate_audio`（面板没有音轨控制，不想凭空多一条声音）。
+- **水印**：生图的 `watermark` 默认是 **true**（右下角「AI生成」），插件每次都显式发 `watermark: false`。生视频的默认值是 `false`，插件同样显式发送，不依赖上游默认值。
+- **音轨**：生视频的 `generate_audio` 默认是 **true**（2.5 / 2.0 才有这个字段）；面板没有音轨控制，插件显式发 `false`，1.0 系列则完全不带这个字段。
 - **响应格式**：方舟的 Seedream 用 `response_format: 'url'`，插件随后回源下载；网关版的 Seedream 仍走 `b64_json`。
 - **模型 ID**：请填方舟控制台的模型 ID（`doubao-seedream-*` / `doubao-seedance-*`）——协议族是从这个 id 前缀判断的。方舟的**推理接入点**（`ep-…`）目前无法判断协议族：图片会被当成通用渠道、生视频会在提交前直接报「协议族未知」而不是静默发一个形状错误的请求。要在接入点上用，请把该渠道的模型 ID 填成对应的方舟模型 ID。
 

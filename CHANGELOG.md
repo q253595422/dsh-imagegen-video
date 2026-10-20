@@ -31,12 +31,17 @@ Attribution for third-party code is in [NOTICE](./NOTICE).
   is `ratio`, resolution is lowercase, and duration is an integer.
 - **Values are narrowed where the model would reject them.** Seedance 2.x
   accepts 4–15 seconds and 1.0 accepts 2–12; the `fast`/`mini` ids cap at
-  720p and reject 1080p and 4k upstream. Requests are clamped to the window
-  and degraded to the best tier the id does support (a 1080P ask on a fast id
-  becomes 720p, not 480p) instead of being sent as a guaranteed 400.
-- **Silent by default, not by accident.** `generate_audio` also defaults to
-  true upstream; the panel has no audio control, so both flags are sent
-  explicitly as `false`.
+  720p and reject 1080p and 4k upstream, and 1.0 does not accept the
+  `reference_image` role (`1.0 pro fast` also has no last frame). Requests are
+  clamped to the window, degraded to the best tier the id does support (a
+  1080P ask on a fast id becomes 720p, not 480p), and modes the id cannot
+  express are dropped from the panel instead of being sent as a 400.
+- **Silent by default, not by accident.** Seedream's `watermark` defaults to
+  `true` (a visible "AI生成" stamp), so it is sent as `false`. On the video
+  side `watermark` already defaults to `false` but is still sent explicitly,
+  while `generate_audio` — which exists on 2.x and defaults to `true` — is
+  sent as `false`; 1.0 ids do not receive the field at all, since they have no
+  audio track to switch off.
 - **One channel, both halves.** The built-in preset is now "字节 · 火山方舟
   （Seedream / Seedance）" with real model ids and a video catalog, so one
   Ark channel serves images and videos.

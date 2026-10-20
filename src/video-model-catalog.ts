@@ -143,9 +143,14 @@ export function describeVideoModel(model: string): VideoCatalogEntry {
     // major and the tier word, so a bare `2-fast` pattern never matches.
     const light = /seedance[-_.]?2(?:[-_.]\d+)*[-_.](?:fast|mini)/i.test(id)
     const resolutions: VideoResolution[] = light ? ['480P', '720P'] : [...base.resolutions]
+    // 1.0 pro fast supports text-to-video and a single first frame only: the
+    // docs list `last_frame` for 1.0 pro and explicitly not for the fast id, so
+    // offering keyframe mode there would produce a body the provider rejects.
+    const proFast = /seedance[-_.]?1[-_.]?\d+[-_.]?pro[-_.]?fast/i.test(id)
+    const modes: VideoMode[] = proFast ? ['text', 'image'] : [...base.modes]
     return seedance2
-      ? { family: 'seedance', ...base, resolutions, modes: ['text', 'image', 'keyframe', 'reference'] }
-      : { family: 'seedance', ...base, resolutions }
+      ? { family: 'seedance', ...base, resolutions, modes: [...modes, 'reference'] }
+      : { family: 'seedance', ...base, resolutions, modes }
   }
   if (isComemoeVideoModel(id)) {
     const base = ENTRIES.comemoe
