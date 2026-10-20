@@ -12,6 +12,7 @@
 import { randomUUID } from 'node:crypto'
 import { generateImage, ImageGenError, type UpstreamConfig } from './engine.ts'
 import { generateVideo, VideoGenError } from './video-engine.ts'
+import { applyPlan, adoptPlan, planVideo, requirePrompt, VideoPlanError, type ChatCompleter } from './video-director.ts'
 import { describeVideoModel } from './video-model-catalog.ts'
 import { appendVideoHistory } from './video-store.ts'
 import { detectImageMime } from './image-format.ts'
@@ -19,7 +20,9 @@ import { vendorOf, type SubscriptionManager, type SubscriptionReferenceImage } f
 import { appendHistory } from './history-store.ts'
 import { GenerationTaskQueue } from './task-queue.ts'
 import { VideoTaskQueue, type VideoTask } from './video-task-queue.ts'
-import type { ChannelConfig, GeneratedImage, GenerateRequest, GenerateResult, HistoryEntry, HistoryEntryInput, SubscriptionProvider, VideoGenerateRequest, VideoGenerateResult, VideoHistoryEntry } from './protocol.ts'
+import { recordDiagnostic } from './diagnostics-store.ts'
+import type { PromptModelConfig } from './prompt-enhancer.ts'
+import type { ChannelConfig, GeneratedImage, GenerateRequest, GenerateResult, HistoryEntry, HistoryEntryInput, SubscriptionProvider, VideoDirectorPlan, VideoGenerateRequest, VideoGenerateResult, VideoHistoryEntry } from './protocol.ts'
 
 /** A channel with its resolved API key (the settings doc holds the key
  *  separately so redacted reads never expose it). */
@@ -37,6 +40,21 @@ export interface HistorySink {
   append(entry: HistoryEntryInput): Promise<HistoryEntry[]>
 }
 
+/**
+ * Seam for the director planning step: the chat endpoint a plan is written
+ * with, and the call itself.
+ *
+ * Injected rather than imported so the runtime stays free of network policy:
+ * the host entry owns which credentials exist (`resolvePromptModelConfig`), and
+ * a test can supply a scripted completer without a socket.
+ */
+export interface VideoDirectorSeam {
+  /** Resolve the current chat endpoint (the same one prompt enhancement uses). */
+  resolveConfig: () => PromptModelConfig
+  /** Complete one chat turn. */
+  complete: ChatCompleter
+}
+
 export class ImageGenerationRuntime {
   readonly queue: GenerationTaskQueue
   /** Video runs through its own queue: a render takes minutes, not seconds. */
@@ -46,6 +64,7 @@ export class ImageGenerationRuntime {
     private readonly resolve: () => ChannelsView,
     private readonly history: HistorySink = { append: appendHistory },
     private readonly subscriptions?: SubscriptionManager,
+    private readonly director?: VideoDirectorSeam,
   ) {
     // Every task runs in parallel up to this small host-wide limit; a
     // four-model comparison fits within it in a single wave.
@@ -72,6 +91,49 @@ export class ImageGenerationRuntime {
       ?? view.channels[0]
   }
 
+  /**
+   * Resolve the chat endpoint used by the director step.
+   *
+   * Absent on hosts that did not mount prompt enhancement: planning then runs
+   * on the offline backend rather than failing, so video still works.
+   */
+  private directorSeam(): VideoDirectorSeam | undefined {
+    return this.director
+  }
+
+  /**
+   * Run the planning step for one video request.
+   *
+   * Deliberately public and side-effect free (it never renders, never writes
+   * history) so the preview route can show the same plan the submit path will
+   * use, without spending a render.
+   */
+  async planVideoRequest(request: VideoGenerateRequest, signal?: AbortSignal): Promise<VideoDirectorPlan> {
+    const view = this.resolve()
+    const channel = this.videoChannel(request.model, request.channelId, view)
+    const upstream = channel === undefined
+      ? request.model
+      : (channel.videoModels ?? []).find(row => row.alias === request.model)?.id ?? request.model
+    const seam = this.directorSeam()
+    return planVideo(
+      {
+        mode: request.mode,
+        prompt: request.prompt,
+        aspectRatio: request.aspectRatio,
+        resolution: request.resolution,
+        seconds: request.seconds,
+        model: upstream,
+        hasReference: request.image !== undefined
+          || request.firstFrame !== undefined
+          || request.lastFrame !== undefined
+          || (request.images?.length ?? 0) > 0,
+      },
+      seam?.resolveConfig(),
+      seam?.complete,
+      signal,
+    )
+  }
+
   /** Generate one video: submit, poll, download, then persist the clip. */
   async runVideo(request: VideoGenerateRequest, signal?: AbortSignal): Promise<VideoGenerateResult> {
     const view = this.resolve()
@@ -87,9 +149,53 @@ export class ImageGenerationRuntime {
     if (family === 'unknown') {
       throw new VideoGenError(`渠道「${channel.name}」未为模型「${request.model}」配置视频协议族；请在渠道的视频模型中改用受支持的视频模型`, 'video-unknown-model')
     }
+
+    // ---- director step ----------------------------------------------------
+    // Runs BEFORE the engine and its output IS the request: the planned prompt
+    // and parameters are what gets submitted. With planning off the request is
+    // passed through untouched (the historical behaviour).
+    let plan: VideoDirectorPlan | undefined
+    let effective: VideoGenerateRequest = { ...request, upstream }
+    if (request.plan === true) {
+      // A plan the caller already previewed is REUSED rather than re-planned:
+      // the chat model is not deterministic, so re-planning would submit a
+      // different prompt from the one the user just approved. The previewed
+      // plan is re-clamped against this request (it travels over the wire), so
+      // a tampered plan still cannot widen a parameter.
+      try {
+        requirePrompt(request.prompt)
+      } catch (error) {
+        if (error instanceof VideoPlanError) throw error
+        throw new VideoPlanError(error instanceof Error ? error.message : String(error))
+      }
+      const startedAt = Date.now()
+      plan = request.planPreview !== undefined
+        ? adoptPlan(request, upstream)
+        : await this.planVideoRequest(request, signal)
+      if (plan.degraded) {
+        // A degraded plan still renders, but the reason has to survive: it is
+        // the difference between "the chat model is down" and "the chat model
+        // answered nonsense", and nothing else records it.
+        recordDiagnostic({
+          phase: 'video-plan',
+          channel: channel.name,
+          model: request.model,
+          mode: request.mode,
+          url: 'chat/completions',
+          method: 'POST',
+          failureCode: 'video-plan-degraded',
+          message: plan.degradedReason ?? '规划降级为离线模式',
+          requestExcerpt: plan.notes.length > 0 ? plan.notes.join(' · ') : undefined,
+          durationMs: Date.now() - startedAt,
+          hadAuth: (this.directorSeam()?.resolveConfig().apiKey.trim() ?? '') !== '',
+        })
+      }
+      effective = applyPlan(effective, plan)
+    }
+
     const result = await generateVideo(
       { apiUrl: channel.apiUrl, apiKey: channel.apiKey, apiUrlFull: channel.apiUrlFull, protocol: channel.protocol, channelName: channel.name } satisfies UpstreamConfig,
-      { ...request, upstream },
+      effective,
       { ...signal === undefined ? {} : { signal }, family },
     )
     const entryId = randomUUID()
@@ -97,12 +203,12 @@ export class ImageGenerationRuntime {
       const history = await appendVideoHistory({
         id: entryId,
         createdAt: Date.now(),
-        mode: request.mode,
-        model: request.model,
-        prompt: request.prompt,
-        aspectRatio: request.aspectRatio,
-        resolution: request.resolution,
-        seconds: request.seconds,
+        mode: effective.mode,
+        model: effective.model,
+        prompt: effective.prompt,
+        aspectRatio: effective.aspectRatio,
+        resolution: effective.resolution,
+        seconds: effective.seconds,
         files: result.videos.map(video => ({
           bytes: video.bytes,
           mime: video.mime,
@@ -113,10 +219,15 @@ export class ImageGenerationRuntime {
         ...request.refName === undefined ? {} : { refName: request.refName },
         ...channel.id === undefined ? {} : { channelId: channel.id },
         channel: channel.name,
+        ...plan === undefined ? {} : { plan },
       })
       // The engine's bytes are not serializable; hand back the stored URLs.
       const stored = history.find(entry => entry.id === entryId)
-      return { videos: stored?.videos ?? [], history }
+      return {
+        videos: stored?.videos ?? [],
+        history,
+        ...plan === undefined ? {} : { plan },
+      }
     } catch (error) {
       // The render already happened and was paid for, so never discard it just
       // because the local write failed: fall back to the provider's own URL so
@@ -129,6 +240,7 @@ export class ImageGenerationRuntime {
           ...video.poster === undefined ? {} : { poster: video.poster },
         })),
         historyError: error instanceof Error ? error.message : String(error),
+        ...plan === undefined ? {} : { plan },
       }
     }
   }

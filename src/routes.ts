@@ -33,7 +33,7 @@ import { testStorage, type StorageSyncConfig } from './storage-sync.ts'
 import { checkForUpdate, CURRENT_VERSION, installUpdate, ManualUpdateRequiredError, updateInstallTarget, type UpdateHostContext } from './updater.ts'
 import { IMAGE_PRESETS } from './presets.ts'
 import { clearDiagnostics, listDiagnostics } from './diagnostics-store.ts'
-import { AGENT_IMAGE_API, CANVAS_API, CANVAS_SKILL_API, CONVERSATION_IMAGE_API, DATA_FOLDER_API, DEFAULT_TEMPLATE_SOURCE_ID, DIAGNOSTICS_API, GALLERY_API, GENERATE_API, HISTORY_API, IMAGEGEN_SETTINGS_NAMESPACE, IMAGE_MODEL_API, PRESETS_API, PROMPT_ENHANCE_API, SETTINGS_API, STORAGE_API, SUBSCRIPTION_API, SUBSCRIPTION_PROVIDERS, TASK_API, TEMPLATE_FAVORITES_API, TEMPLATES_API, UPDATE_API, USAGE_API, VIDEO_API, isChannelProtocolPreference, isTemplateSourceId, type CanvasAssetRef, type CanvasDocument, type CanvasSkillCatalog, type CanvasSkillConfigApplyRequest, type CanvasSkillConfigApplyResult, type CanvasSkillConfigSaveRequest, type CanvasSkillConfigSaveResult, type CanvasSkillInstallRequest, type CanvasSkillInstallResult, type CanvasSkillLibrary, type CanvasSkillRemoveResult, type CanvasSkillRunRequest, type CanvasSkillTask, type PptRunRequest, type PptRuntimeStatus, type GeneratedImage, type GenerateRequest, type HistoryEntry, type HistoryEntryInput, type ModelMapping, type PresetProviderView, type TemplateFavorite, type TemplateListResult, type TemplateRefreshResult, type TemplateSample, type CanvasVideoTaskMeta, type VideoGenerateRequest, type VideoHistoryEntry } from './protocol.ts'
+import { AGENT_IMAGE_API, CANVAS_API, CANVAS_SKILL_API, CONVERSATION_IMAGE_API, DATA_FOLDER_API, DEFAULT_TEMPLATE_SOURCE_ID, DIAGNOSTICS_API, GALLERY_API, GENERATE_API, HISTORY_API, IMAGEGEN_SETTINGS_NAMESPACE, IMAGE_MODEL_API, PRESETS_API, PROMPT_ENHANCE_API, SETTINGS_API, STORAGE_API, SUBSCRIPTION_API, SUBSCRIPTION_PROVIDERS, TASK_API, TEMPLATE_FAVORITES_API, TEMPLATES_API, UPDATE_API, USAGE_API, VIDEO_API, isChannelProtocolPreference, isTemplateSourceId, type CanvasAssetRef, type CanvasDocument, type VideoDirectorPlan, type CanvasSkillCatalog, type CanvasSkillConfigApplyRequest, type CanvasSkillConfigApplyResult, type CanvasSkillConfigSaveRequest, type CanvasSkillConfigSaveResult, type CanvasSkillInstallRequest, type CanvasSkillInstallResult, type CanvasSkillLibrary, type CanvasSkillRemoveResult, type CanvasSkillRunRequest, type CanvasSkillTask, type PptRunRequest, type PptRuntimeStatus, type GeneratedImage, type GenerateRequest, type HistoryEntry, type HistoryEntryInput, type ModelMapping, type PresetProviderView, type TemplateFavorite, type TemplateListResult, type TemplateRefreshResult, type TemplateSample, type CanvasVideoTaskMeta, type VideoGenerateRequest, type VideoHistoryEntry } from './protocol.ts'
 
 /** Cap on JSON request bodies (settings ops and generate payloads are small). */
 const MAX_JSON_BODY_BYTES = 24 * 1024 * 1024
@@ -496,6 +496,57 @@ function parseVideoRequest(
     ...typeof body.channelId === 'string' && body.channelId !== '' ? { channelId: body.channelId } : {},
     ...channel === undefined ? {} : { channel: channel.name },
     ...typeof body.seed === 'number' && Number.isFinite(body.seed) ? { seed: body.seed } : {},
+    // Explicit opt-in: an absent flag keeps the historical "send as typed"
+    // behaviour for every existing caller (canvas, storyboard, Agent tools).
+    ...body.plan === true ? { plan: true } : {},
+    ...parsePlanPreview(body.planPreview) === undefined ? {} : { planPreview: parsePlanPreview(body.planPreview)! },
+  }
+}
+
+/**
+ * Validate a client-supplied plan the user previewed.
+ *
+ * Structural check only: the semantic clamps (duration ceiling, family aspect
+ * and resolution) run in the director when the plan is adopted, because that
+ * is where the resolved model is known.
+ */
+function parsePlanPreview(value: unknown): VideoDirectorPlan | undefined {
+  if (value === null || typeof value !== 'object') return undefined
+  const raw = value as Record<string, unknown>
+  if (typeof raw.prompt !== 'string' || raw.prompt.trim() === '') return undefined
+  const params = raw.params !== null && typeof raw.params === 'object' ? raw.params as Record<string, unknown> : {}
+  const style = raw.style !== null && typeof raw.style === 'object' ? raw.style as Record<string, unknown> : {}
+  const shots = Array.isArray(raw.shots)
+    ? raw.shots.flatMap((item, index) => {
+      if (item === null || typeof item !== 'object') return []
+      const shot = item as Record<string, unknown>
+      const text = (key: string): string => typeof shot[key] === 'string' ? shot[key] as string : ''
+      return [{
+        index,
+        shot: text('shot'),
+        action: text('action'),
+        camera: text('camera'),
+        seconds: typeof shot.seconds === 'number' && Number.isFinite(shot.seconds) ? shot.seconds : 0,
+      }]
+    }).slice(0, 8)
+    : []
+  return {
+    source: raw.source === 'chat' ? 'chat' : 'heuristic',
+    style: {
+      shotLanguage: typeof style.shotLanguage === 'string' ? style.shotLanguage : '',
+      look: typeof style.look === 'string' ? style.look : '',
+      pacing: typeof style.pacing === 'number' && Number.isFinite(style.pacing) ? style.pacing : 0.5,
+    },
+    shots,
+    prompt: raw.prompt,
+    params: {
+      seconds: typeof params.seconds === 'number' && Number.isFinite(params.seconds) ? params.seconds : 5,
+      aspectRatio: typeof params.aspectRatio === 'string' ? params.aspectRatio : '16:9',
+      resolution: typeof params.resolution === 'string' ? params.resolution : '720P',
+    },
+    notes: Array.isArray(raw.notes) ? raw.notes.filter((note): note is string => typeof note === 'string') : [],
+    degraded: raw.degraded === true,
+    ...typeof raw.degradedReason === 'string' ? { degradedReason: raw.degradedReason } : {},
   }
 }
 
@@ -2306,6 +2357,36 @@ export function makeRoutes(deps: ImageGenRoutesDeps): WebRoute[] {
         if (runtime === undefined) { writeJson(res, 200, { ok: false, code: 'video-unavailable', message: '当前宿主未挂载生成运行时' }); return }
         // VideoTaskSummary omits `result`; submit returns the queued summary.
         writeJson(res, 200, { ok: true, task: runtime.videoQueue.submit(parsed) })
+      },
+    },
+    {
+      /**
+       * Preview the director plan without rendering.
+       *
+       * Submit already plans when `plan: true`, but a render costs minutes: the
+       * user must be able to inspect the shot list and the parameters the
+       * planner chose before spending them. This route runs exactly the same
+       * planning code and returns its output, and nothing else.
+       */
+      kind: 'exact', path: VIDEO_API.plan,
+      handler: async (req, res) => {
+        if (!guard(req, res, 'POST')) return
+        const body = await readJsonBody(req)
+        const parsed = body === undefined ? undefined : parseVideoRequest(body, channelViewOf(), deps)
+        if (parsed === undefined) {
+          writeJson(res, 200, { ok: false, code: 'video-prompt-empty', message: 'prompt is required' })
+          return
+        }
+        const runtime = deps.runtime
+        if (runtime === undefined) {
+          writeJson(res, 200, { ok: false, code: 'video-unavailable', message: '当前宿主未挂载生成运行时' })
+          return
+        }
+        try {
+          writeJson(res, 200, { ok: true, plan: await runtime.planVideoRequest(parsed) })
+        } catch (error) {
+          writeJson(res, 200, { ok: false, code: videoCodeOf(error), message: messageOf(error) })
+        }
       },
     },
     {

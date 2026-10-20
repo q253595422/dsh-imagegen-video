@@ -14,7 +14,7 @@
 
 import { promises as fs } from 'node:fs'
 import path from 'node:path'
-import { VIDEO_API, type VideoHistoryEntry, type VideoHistoryEntryInput, type VideoMode } from './protocol.ts'
+import { VIDEO_API, type VideoDirectorPlan, type VideoHistoryEntry, type VideoHistoryEntryInput, type VideoMode } from './protocol.ts'
 import { imageDataRoot } from './image-storage-path.ts'
 
 /** Cap on retained video entries (clips are large: keep the list short). */
@@ -57,6 +57,8 @@ interface StoredEntry {
   refName?: string
   channelId?: string
   channel?: string
+  /** The director plan that shaped this clip, when planning ran. */
+  plan?: VideoDirectorPlan
 }
 
 /** The index.json shape. */
@@ -166,6 +168,7 @@ function toWire(entry: StoredEntry): VideoHistoryEntry {
     ...entry.refName === undefined ? {} : { refName: entry.refName },
     ...entry.channelId === undefined ? {} : { channelId: entry.channelId },
     ...entry.channel === undefined ? {} : { channel: entry.channel },
+    ...entry.plan === undefined ? {} : { plan: entry.plan },
   }
 }
 
@@ -218,6 +221,7 @@ export async function appendVideoHistory(input: VideoHistoryEntryInput & { files
       ...input.refName === undefined ? {} : { refName: input.refName },
       ...input.channelId === undefined ? {} : { channelId: input.channelId },
       ...input.channel === undefined ? {} : { channel: input.channel },
+      ...input.plan === undefined ? {} : { plan: input.plan },
     }
     const merged = [entry, ...await readIndex()]
     const kept = merged.slice(0, VIDEO_HISTORY_MAX)

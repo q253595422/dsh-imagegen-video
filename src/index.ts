@@ -338,6 +338,7 @@ export { SubscriptionManager, vendorOf, subscriptionOauthRef } from './subscript
 export { generateImage, ImageGenError } from './engine.ts'
 export { generateVideo, VideoGenError, isVideoModel } from './video-engine.ts'
 export { describeVideoModel, DEFAULT_VIDEO_MODELS } from './video-model-catalog.ts'
+export { applyPlan, hasMotion, looksChinese, MAX_PLANNED_PROMPT_CHARS, MAX_PROMPT_CHARS, parsePlanAnswer, planVideo, planVideoLocally, requirePrompt, VideoPlanError, type ChatCompleter, type VideoPlan, type VideoPlanInput } from './video-director.ts'
 export { appendVideoHistory, clearVideoHistory, listVideoHistory, readVideoFile, removeVideoHistory, VIDEO_HISTORY_MAX } from './video-store.ts'
 export { VideoTaskQueue } from './video-task-queue.ts'
 export { promptCharLimit } from './model-catalog.ts'
@@ -784,7 +785,13 @@ export function apply(ctx: Context, config?: Config): (() => void) | void {
   // entry points; Agent tools wait for their task result by default and render
   // images in the tool result instead of injecting a synthetic user message.
   const subscriptions = new SubscriptionManager(ctx)
-  const runtime = new ImageGenerationRuntime(channelsView, undefined, subscriptions)
+  // The video director plans through the same chat endpoint prompt enhancement
+  // uses, so there is no second credential to configure. Resolved per call, so
+  // a settings change takes effect on the next render without a restart.
+  const runtime = new ImageGenerationRuntime(channelsView, undefined, subscriptions, {
+    resolveConfig: () => resolvePromptModelConfig(resolve()),
+    complete: async options => chatComplete(resolvePromptModelConfig(resolve()), options),
+  })
   const pendingConversationImages = new Map<string, ImageAttachmentRef>()
 
   // Host-rendered copy (skill catalog labels, run errors, produced node titles)

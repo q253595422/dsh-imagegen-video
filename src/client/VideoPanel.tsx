@@ -17,7 +17,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { ImageGenApi, ImageGenApiError } from './api.ts'
 import { tt } from './helpers.ts'
 import { videoModelOptions, type ImageGenConfig, type ImageGenScope } from './settings-scope.ts'
-import type { VideoGenerateRequest, VideoHistoryEntry, VideoMode, VideoTask, VideoTaskSummary } from '../protocol.ts'
+import type { VideoDirectorPlan, VideoGenerateRequest, VideoHistoryEntry, VideoMode, VideoTask, VideoTaskSummary } from '../protocol.ts'
 import { VIDEO_ASPECT_RATIOS, VIDEO_DURATIONS, type VideoResolution } from '../protocol.ts'
 import { describeVideoModel, isLikelyVideoModelId } from '../video-model-catalog.ts'
 import { Select } from './Select.tsx'
@@ -133,6 +133,18 @@ export function VideoPanel(props: VideoPanelProps) {
   }, [api, controlled, props.onRefreshTasks])
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  /**
+   * Director planning is ON by default: a one-line request sent verbatim is
+   * exactly the behaviour this feature exists to replace. It stays switchable
+   * because a caller who already wrote a precise shot list should be able to
+   * send it unchanged.
+   */
+  const [planFirst, setPlanFirst] = useState(true)
+  /** The last previewed plan (submit adopts it while the sentence is unchanged). */
+  const [preview, setPreview] = useState<VideoDirectorPlan | null>(null)
+  /** The sentence the shown preview was computed from; a mismatch makes it stale. */
+  const [previewFor, setPreviewFor] = useState('')
+  const [planning, setPlanning] = useState(false)
   /** #38 video parity: the retained record of upstream attempts. */
   const [diagnosticsOpen, setDiagnosticsOpen] = useState(false)
   const [now, setNow] = useState(() => Date.now())
@@ -224,6 +236,16 @@ export function VideoPanel(props: VideoPanelProps) {
     && (mode !== 'reference' || reference !== null)
     && (mode !== 'keyframe' || firstFrame !== null)
 
+  /**
+   * Whether the previewed plan still describes what the composer holds.
+   *
+   * A stale plan must never be submitted: the user changed the sentence after
+   * previewing, so adopting it would render something other than what was
+   * asked for. Parameters are excluded on purpose — the host re-clamps those
+   * against the request, which is the authoritative ceiling.
+   */
+  const previewMatchesInput = preview !== null && previewFor === prompt.trim()
+
   const buildRequest = (): VideoGenerateRequest => ({
     mode,
     model,
@@ -231,11 +253,32 @@ export function VideoPanel(props: VideoPanelProps) {
     aspectRatio,
     resolution,
     seconds,
+    ...planFirst ? { plan: true } : {},
+    // A previewed plan is sent back so the render matches what the user saw:
+    // the chat model is not deterministic, so planning again would submit a
+    // different prompt than the one on screen.
+    ...planFirst && preview !== null && previewMatchesInput ? { planPreview: preview } : {},
     ...mode === 'image' && reference !== null ? { image: reference.dataUrl, refName: reference.name } : {},
     ...mode === 'reference' && reference !== null ? { image: reference.dataUrl, refName: reference.name } : {},
     ...mode === 'keyframe' && firstFrame !== null ? { firstFrame: firstFrame.dataUrl } : {},
     ...mode === 'keyframe' && lastFrame !== null ? { lastFrame: lastFrame.dataUrl } : {},
   })
+
+  /**
+   * Show what the planner would send, without spending a render.
+   *
+   * A preview is stale the moment the request changes, so it is cleared when
+   * the previewed inputs no longer match what the composer holds.
+   */
+  const previewPlan = (): void => {
+    if (!canGenerate) return
+    setPlanning(true)
+    setError(null)
+    void api.videoPlan(buildRequest())
+      .then(plan => { setPreview(plan); setPreviewFor(prompt.trim()) })
+      .catch(err => { setError(err instanceof ImageGenApiError ? err.message : String(err)) })
+      .finally(() => { setPlanning(false) })
+  }
 
   const generate = (): void => {
     if (!canGenerate) return
@@ -459,6 +502,57 @@ export function VideoPanel(props: VideoPanelProps) {
 
           {error !== null ? <p className={css.videoError} role="alert">{error}</p> : null}
 
+          <div className={css.videoPlanBar}>
+            <button
+              type="button"
+              className={css.videoPlanToggle}
+              data-active={planFirst ? '' : undefined}
+              aria-pressed={planFirst}
+              onClick={() => { setPlanFirst(value => !value); setPreview(null); setPreviewFor('') }}
+            >
+              {planFirst ? tt('video.planOn') : tt('video.planOff')}
+            </button>
+            <button
+              type="button"
+              className={css.videoPlanToggle}
+              disabled={!planFirst || !canGenerate || planning}
+              onClick={previewPlan}
+            >
+              {planning ? tt('video.planning') : tt('video.planPreview')}
+            </button>
+            <span className={css.videoHint}>{tt('video.planHint')}</span>
+          </div>
+
+          {preview !== null ? (
+            <div className={css.videoPlanPreview} data-video-plan-preview="">
+              <div className={css.videoPlanHead}>
+                <strong>{tt('video.planTitle')}</strong>
+                <span className={css.videoPlanBadge}>
+                  {preview.source === 'chat' ? tt('video.planSourceChat') : tt('video.planSourceLocal')}
+                </span>
+                <span>
+                  {tt('video.planParams', {
+                    seconds: String(preview.params.seconds),
+                    aspect: preview.params.aspectRatio,
+                    resolution: preview.params.resolution,
+                  })}
+                </span>
+              </div>
+              <ol className={css.videoPlanShots}>
+                {preview.shots.map(shot => (
+                  <li key={shot.index}>
+                    {shot.shot}
+                    {shot.action !== '' ? ` — ${shot.action}` : ''}
+                    {shot.camera !== '' ? `（${shot.camera}）` : ''}
+                  </li>
+                ))}
+              </ol>
+              {preview.notes.length > 0 ? <p className={css.videoHint}>{preview.notes.join(' · ')}</p> : null}
+              {preview.degraded ? <p className={css.videoWarn}>{preview.degradedReason}</p> : null}
+              <p className={css.videoPlanPrompt}>{preview.prompt}</p>
+            </div>
+          ) : null}
+
           <div className={css.videoActions}>
             <button type="button" className={css.videoGenerate} disabled={!canGenerate} onClick={generate}>
               {busy ? tt('video.generating') : tt('video.generate')}
@@ -492,6 +586,16 @@ export function VideoPanel(props: VideoPanelProps) {
                   </div>
                   <p className={css.videoTaskPrompt} title={task.request.prompt}>{task.request.prompt}</p>
                   {task.status === 'failed' && task.error !== undefined ? <p className={css.videoError}>{task.error}</p> : null}
+                  {/* The plan the run actually used: the request prompt above is
+                      what the user typed, this is what the provider received. */}
+                  {task.plan !== undefined ? <p className={css.videoHint} data-video-plan-applied="">
+                    {tt('video.planApplied', {
+                      seconds: String(task.plan.params.seconds),
+                      aspect: task.plan.params.aspectRatio,
+                      resolution: task.plan.params.resolution,
+                    })}
+                    {task.plan.degraded ? ` · ${task.plan.degradedReason ?? ''}` : ''}
+                  </p> : null}
                   {(() => {
                     // One clip shape drives the player and every action, so an
                     // empty url can never show a player without working actions

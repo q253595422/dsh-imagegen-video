@@ -5,6 +5,43 @@ Attribution for third-party code is in [NOTICE](./NOTICE).
 
 ## Releases
 
+### 1.13.0 — the video is directed before it is rendered
+
+- **A planning step before every render.** With the studio's new *Plan first*
+  switch on (the default), a one-line request is no longer forwarded verbatim.
+  A reasoning pass splits it into shots, subject motion, camera work, duration
+  and style, and produces the prompt and parameters the provider actually
+  receives. The finished task, its queue summary and the history entry all
+  carry the plan, so a clip can be explained later without re-running anything.
+- **The plan is the request.** The planned prompt replaces the typed one, and
+  the planned duration / aspect / resolution replace the panel's values. A plan
+  may only NARROW them: a model asking for 30s when the user chose 5s gets 5s,
+  and a frame the family cannot render (4:3 on comemoe) is overruled. A
+  previewed plan that arrives back over the wire is re-clamped before use.
+- **Preview before you pay for a render.** `POST /video/plan` runs the same
+  planning code with no submit, and the studio's *Preview plan* button shows
+  the shots and parameters. Submitting afterwards adopts that exact plan
+  instead of asking the chat model again, so what was previewed is what gets
+  rendered.
+- **Planning degrades, it does not disappear.** No chat model configured, an
+  unreachable endpoint, a timeout, or an answer that is not the agreed JSON all
+  fall back to an offline shot planner. The plan is marked `degraded` with the
+  reason, shown in the panel and recorded under the new `video-plan`
+  diagnostics phase — the raw sentence is never silently submitted.
+- **Inputs are bounded.** An empty prompt is refused with `video-prompt-empty`
+  and one over 4000 characters with `video-prompt-too-long`, both before any
+  submit. A planned prompt is capped at 900 characters.
+- **Prompt structure follows Wan 2.2.** The shot skeleton (style → shot size and
+  lighting → per-shot subject, motion and camera; motion over static scene for
+  image-bearing modes) is the one Wan's own Apache-2.0 `--use_prompt_extend`
+  guide teaches, which is the reference implementation behind the `wan2.2-*`
+  family this plugin routes.
+- **No new credential.** Planning reuses the existing prompt-enhancement chat
+  endpoint (`promptModel` / `promptApiUrl` / `promptApiKey`); blank values reuse
+  the image channel. `pnpm test:director` covers all of the above offline, and
+  an end-to-end run against a real channel was verified: the planning model
+  produced the shot list and the provider rendered from it.
+
 ### 1.12.0 — cut, join, and keep the same face
 
 - **A timeline editor on the canvas.** The dock's new film button lines the

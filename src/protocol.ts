@@ -8,7 +8,7 @@
 export const IMAGEGEN_SETTINGS_NAMESPACE = 'dsh-imagegen'
 
 /** Published package version shared by the host updater and the client UI. */
-export const PLUGIN_VERSION = '1.12.0'
+export const PLUGIN_VERSION = '1.13.0'
 
 /** Same-origin route family (loopback-only, mirroring the dsh-ssh fence). */
 export const SETTINGS_API = {
@@ -167,6 +167,14 @@ export const VIDEO_API = {
   historyClear: '/api/dsh-imagegen/video/history/clear',
   /** Prefix route serving one stored clip: `${file}/<file>`. */
   file: '/api/dsh-imagegen/video/file',
+  /**
+   * Preview the director plan without rendering anything.
+   *
+   * The submit path plans internally and the finished task carries its plan,
+   * so this exists for the one thing a submit cannot do: show the user what
+   * the planner decided BEFORE minutes of render time are spent.
+   */
+  plan: '/api/dsh-imagegen/video/plan',
 } as const
 
 /**
@@ -490,6 +498,8 @@ export interface VideoGenerateResult {
   history?: VideoHistoryEntry[]
   /** Persistence failure after the video was successfully generated. */
   historyError?: string
+  /** The director plan that produced this clip, when planning ran. */
+  plan?: VideoDirectorPlan
 }
 
 /** A client → host video generation request (what the panel collects). */
@@ -529,6 +539,18 @@ export interface VideoGenerateRequest {
   seed?: number
   /** Optional canvas lineage metadata (which canvas started this video). */
   canvas?: CanvasVideoTaskMeta
+  /**
+   * Run the director planning step before rendering. Absent means off: the
+   * prompt is sent exactly as typed, which is the historical behaviour and the
+   * right default for callers that already planned (a replayed task, a test).
+   */
+  plan?: boolean
+  /**
+   * A plan the user already previewed. When present, submit adopts it instead
+   * of calling the chat model again, so the render matches what was shown.
+   * Re-validated host-side against `seconds` / `aspectRatio` / `resolution`.
+   */
+  planPreview?: VideoDirectorPlan
 }
 
 /**
@@ -545,6 +567,50 @@ export interface CanvasVideoTaskMeta {
   nodeId?: string
   /** Upstream image nodes that fed the run (reference / first / last frame). */
   referenceNodeIds?: string[]
+}
+
+/** One shot the director plan proposed. */
+export interface VideoPlanShot {
+  /** 1-based ordinal within the clip. */
+  index: number
+  /** What the camera sees. */
+  shot: string
+  /** What moves in this shot. */
+  action: string
+  /** Camera movement for this shot. */
+  camera: string
+  /** Share of the clip this shot covers, in seconds. */
+  seconds: number
+}
+
+/**
+ * The reasoning step's result: a request-shaped plan plus what it changed.
+ *
+ * Echoed back on the finished task and on the history entry so a clip can be
+ * explained later ("why is this 10s and 9:16?") without re-running the model.
+ */
+export interface VideoDirectorPlan {
+  /** Which backend produced it. */
+  source: 'chat' | 'heuristic'
+  style: {
+    /** Shot size and lighting, e.g. 中景 + 侧光. */
+    shotLanguage: string
+    /** Visual style, e.g. 写实电影感. */
+    look: string
+    /** 0..1: how much happens per second. */
+    pacing: number
+  }
+  shots: VideoPlanShot[]
+  /** The prompt actually sent to the provider. */
+  prompt: string
+  /** The parameters actually used, after clamping to the family. */
+  params: { seconds: number; aspectRatio: string; resolution: string }
+  /** What the planner changed, in user-facing copy. */
+  notes: string[]
+  /** True when a chat answer had to be repaired or replaced. */
+  degraded: boolean
+  /** Why it degraded. */
+  degradedReason?: string
 }
 
 /** One stored video reference as the browser consumes it. */
@@ -574,6 +640,8 @@ export interface VideoHistoryEntry {
   channelId?: string
   /** Channel display name snapshot (survives channel deletion). */
   channel?: string
+  /** The director plan that shaped this clip, when planning ran. */
+  plan?: VideoDirectorPlan
 }
 
 /** A video history entry the client submits for persistence. */
@@ -591,6 +659,8 @@ export interface VideoHistoryEntryInput {
   refName?: string
   channelId?: string
   channel?: string
+  /** Host-filled: the plan that produced this clip, when planning ran. */
+  plan?: VideoDirectorPlan
 }
 
 /** Lifecycle of one host-resident video generation task. */
@@ -636,6 +706,11 @@ export interface VideoTaskSummary extends Omit<VideoTask, 'result'> {
    * without searching the history list.
    */
   resultEntryId?: string
+  /**
+   * The director plan that shaped this run, once the render finished. Lets the
+   * panel show the shot list and the parameters it chose alongside the clip.
+   */
+  plan?: VideoDirectorPlan
 }
 
 /** Origin information carried by a generation started from the canvas. */
@@ -1599,6 +1674,9 @@ export type DiagnosticPhase =
   // "the render never started" and "the status endpoint stopped answering" are
   // different problems, and the image phases cannot express that difference.
   | 'video-submit' | 'video-poll' | 'video-download'
+  // The reasoning step that runs before a submit. Its own phase because a
+  // failed plan is neither a rejected submit nor a failed render.
+  | 'video-plan'
 
 /**
  * One retained upstream attempt (#38). Every string is already redacted

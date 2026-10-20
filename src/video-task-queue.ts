@@ -180,6 +180,11 @@ export class VideoTaskQueue {
     delete request.images
     delete request.firstFrame
     delete request.lastFrame
+    // The plan rides the summary so the panel can show what the reasoning step
+    // decided while the render is still running. It is small (a few strings)
+    // and it is the whole point of the feature: an invisible plan cannot be
+    // inspected or corrected.
+    const plan = task.result?.plan
     // Surface the finished clip so a polling client can play the result without
     // a second round trip; a video task always produces exactly one clip.
     const clip = task.result?.videos?.[0]
@@ -196,6 +201,7 @@ export class VideoTaskQueue {
       ...clip === undefined || clip.url === '' ? {} : { resultUrl: clip.url },
       ...clip === undefined ? {} : { resultVideo: clip },
       ...entryId === undefined ? {} : { resultEntryId: entryId },
+      ...plan === undefined ? {} : { plan },
     }
   }
 
