@@ -1,0 +1,194 @@
+{
+  "d1-nav-tabs": [
+    {
+      "t": "会话",
+      "tag": "button",
+      "role": null,
+      "dataTab": true,
+      "tabindex": null,
+      "native": true,
+      "ariaSelected": null,
+      "aria": "会话"
+    },
+    {
+      "t": "生图",
+      "tag": "button",
+      "role": null,
+      "dataTab": true,
+      "tabindex": null,
+      "native": true,
+      "ariaSelected": null,
+      "aria": "生图"
+    },
+    {
+      "t": "普通生图",
+      "tag": "button",
+      "role": "tab",
+      "dataTab": false,
+      "tabindex": "0",
+      "native": true,
+      "ariaSelected": "true",
+      "aria": ""
+    },
+    {
+      "t": "素材库",
+      "tag": "button",
+      "role": "tab",
+      "dataTab": false,
+      "tabindex": "-1",
+      "native": false,
+      "ariaSelected": "false",
+      "aria": ""
+    },
+    {
+      "t": "无限画布",
+      "tag": "button",
+      "role": "tab",
+      "dataTab": false,
+      "tabindex": "-1",
+      "native": false,
+      "ariaSelected": "false",
+      "aria": ""
+    },
+    {
+      "t": "电商模式预览",
+      "tag": "button",
+      "role": "tab",
+      "dataTab": false,
+      "tabindex": "-1",
+      "native": false,
+      "ariaSelected": "false",
+      "aria": ""
+    },
+    {
+      "t": "图片转 PPT",
+      "tag": "button",
+      "role": "tab",
+      "dataTab": false,
+      "tabindex": "-1",
+      "native": false,
+      "ariaSelected": "false",
+      "aria": ""
+    },
+    {
+      "t": "文生图",
+      "tag": "button",
+      "role": "tab",
+      "dataTab": false,
+      "tabindex": "0",
+      "native": true,
+      "ariaSelected": "true",
+      "aria": ""
+    },
+    {
+      "t": "图生图",
+      "tag": "button",
+      "role": "tab",
+      "dataTab": false,
+      "tabindex": "-1",
+      "native": false,
+      "ariaSelected": "false",
+      "aria": ""
+    },
+    {
+      "t": "生视频",
+      "tag": "button",
+      "role": "tab",
+      "dataTab": false,
+      "tabindex": "-1",
+      "native": false,
+      "ariaSelected": "false",
+      "aria": ""
+    }
+  ],
+  "d2-connected": {
+    "tag": "button",
+    "role": null,
+    "tabindex": null,
+    "nativeFocusable": true,
+    "cursor": "default",
+    "w": 68,
+    "h": 28,
+    "title": "",
+    "parentTag": "span",
+    "parentRole": ""
+  },
+  "d1-generate-btn": {
+    "tag": "button",
+    "tabindex": null,
+    "native": true,
+    "dis": false,
+    "aria": "",
+    "w": 298
+  },
+  "d1-first-stops": [
+    "button:新会话 ⌥ ⌘ N",
+    "button:搜索会话",
+    "button:视图选项",
+    "button:添加工作区",
+    "button:展开其余 7 个会话",
+    "button:新建作图"
+  ],
+  "d3-gear": {
+    "x": 28,
+    "y": 866,
+    "w": 36,
+    "h": 36
+  },
+  "d3-dialog": {
+    "box": {
+      "x": 24,
+      "y": 50,
+      "w": 712,
+      "h": 800
+    },
+    "bottomGap": 50,
+    "vh": 900,
+    "scrollers": [
+      {
+        "tag": "div",
+        "sh": 941,
+        "ch": 746,
+        "pos": "static"
+      }
+    ],
+    "lastVisibleText": "查看和编辑当前可用的快捷键和输入操作",
+    "shot": "254-212-m8d-settings-760.png"
+  },
+  "d3-scroll": {
+    "scrollTop": 195,
+    "sh": 941,
+    "ch": 746,
+    "lastText": "当前版本：0.1.7-rc.2",
+    "lastBottom": 826,
+    "vh": 900,
+    "fullyReachable": true,
+    "shot": "255-213-m8d-settings-760-bottom.png"
+  },
+  "d3-esc": 0,
+  "d4-no-ring": {
+    "count": 2,
+    "stops": [
+      {
+        "i": 4,
+        "tag": "button",
+        "t": "",
+        "aria": "收起参数栏",
+        "outline": "none/3px",
+        "shadow": "none",
+        "cls": "uTF49q_configToggle"
+      },
+      {
+        "i": 6,
+        "tag": "textarea",
+        "t": "",
+        "aria": "",
+        "outline": "none/3px",
+        "shadow": "none",
+        "cls": "uTF49q_prompt"
+      }
+    ],
+    "shot": "256-214-m8d-focus-ring.png"
+  },
+  "pageErrors": []
+}

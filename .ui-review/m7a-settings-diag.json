@@ -1,0 +1,228 @@
+{
+  "n3-update-entry": {
+    "headerText": "VisioWork 普通生图 素材库 无限画布 电商模式预览 图片转 PPT 普通生图 对话 已连接",
+    "updateWidgets": [
+      {
+        "tag": "button",
+        "cls": "VOzbGW_trigger",
+        "text": "设置",
+        "title": ""
+      }
+    ],
+    "mentionsVersion": false,
+    "hasCheckButton": false
+  },
+  "n2-button": {
+    "x": 1538,
+    "y": 83,
+    "pressed": "false",
+    "expanded": "false",
+    "title": "记录仅保存在本机内存中，密钥已脱敏，可直接复制粘贴到 issue。"
+  },
+  "n2-open": {
+    "present": true,
+    "role": null,
+    "ariaModal": null,
+    "label": "诊断日志",
+    "count": 1,
+    "text": "诊断日志2 条记录 刷新 复制全部 清空 × 记录仅保存在本机内存中，密钥已脱敏，可直接复制粘贴到 issue。 generate 16:04:55 11 agnes-image-2.1-flash HTTP 400 22ms req 959B auth POST http://43.136.81.63:8317/v1/images/generations Model agnes-image-2.1-flash is not supported on /v1/images/generations or /v1/images/edits. Use gpt-image-2, grok-imagine-image, grok-imagine-image-quality, or a configured openai-compatibility image model.（HTTP 400 · http://43.136.81.63:83",
+    "buttons": [
+      {
+        "t": "刷新",
+        "a": "",
+        "dis": false
+      },
+      {
+        "t": "复制全部",
+        "a": "",
+        "dis": false
+      },
+      {
+        "t": "清空",
+        "a": "",
+        "dis": false
+      },
+      {
+        "t": "×",
+        "a": "关闭",
+        "dis": false
+      }
+    ],
+    "focus": {
+      "tag": "button",
+      "inside": false
+    },
+    "shot": "224-186-m7a-diagnostics-open.png"
+  },
+  "n2-esc": {
+    "stillOpen": true
+  },
+  "n2-clear-button": {
+    "x": 1524,
+    "y": 33,
+    "dis": false,
+    "text": "清空",
+    "hasConfirmAttr": false
+  },
+  "n2-after-clear": {
+    "panelStill": true,
+    "empty": "诊断日志0 条记录 刷新 复制全部 清空 × 记录仅保存在本机内存中，密钥已脱敏，可直接复制粘贴到 issue。 暂无记录。生成失败后，这里会记录请求地址、HTTP 状态、网络错误码与上游响应。",
+    "dialogs": [],
+    "shot": "225-187-m7a-diagnostics-cleared.png"
+  },
+  "n1-open": {
+    "clicked": true,
+    "state": {
+      "cards": 0,
+      "cardText": [],
+      "bodyTail": "会话 生图 新会话 ⌥ ⌘ N 工作区 DS Bot chajian 新会话 会话标题：在吗 50分钟 `安装 dsh-imagegen-video 仓库` 16小时 `dsh-market 仓库更新` 1天 Explore GitHub repo morluto/rea 3天 dsh-imagegen-video 插件市场收录 4天 展开其余 7 个会话 默认工作区 未分组 历史记录 清空 全部模型 全部比例 A slow sunrise over a dark horizon, warm orange gradient rising 16:9 · 720P · 3s · hy4-preview · 2026-10-21 07:28 A calm deep-blue gradient sky with a warm sun rising over a dark horizon, drawn with simple shapes 文生图 · 1 张 · hy4-preview · 2026-10-21 07:08 两个图片的人物在一起交朋友 16:9 · 720P · 5s · wan"
+    },
+    "shot": "226-188-m7a-settings-collapsed.png"
+  },
+  "n1-header": null,
+  "n4-canvas": {
+    "canvas": true,
+    "text": "il - Anime Skywork MV Thumbnail YouTube Thumbnail - Anime Skywork MV Thumbnail 龙类物种复古百科海报 红绸舞动千年商都广州 夏日牵手回眸电影肖像 #194 Shanghai Calendar-Poster Retro 冷艳缠枝莲宫廷香膏广告 随机 诊断日志0 条记录 刷新 复制全部 清空 × 记录仅保存在本机内存中，密钥已脱敏，可直接复制粘贴到 issue。 暂无记录。生成失败后，这里会记录请求地址、HTTP 状态、网络错误码与上游响应。"
+  },
+  "n4-shortcuts": {
+    "opened": false,
+    "dialogs": [],
+    "shot": "227-190-m7a-canvas-shortcuts.png"
+  },
+  "n4-esc": {
+    "stillOpen": false
+  },
+  "n5-tab-order": [
+    {
+      "tag": "button",
+      "text": "刷新",
+      "aria": "",
+      "ph": "",
+      "role": "",
+      "outline": "auto 2px",
+      "boxShadow": "none",
+      "visible": true
+    },
+    {
+      "tag": "button",
+      "text": "×",
+      "aria": "关闭",
+      "ph": "",
+      "role": "",
+      "outline": "auto 2px",
+      "boxShadow": "none",
+      "visible": true
+    },
+    {
+      "tag": "body",
+      "text": "会话 生图 新会话 ⌥ ⌘ N 工作区 DS Bot",
+      "aria": "",
+      "ph": "",
+      "role": "",
+      "outline": "none 3px",
+      "boxShadow": "none",
+      "visible": true
+    },
+    {
+      "tag": "button",
+      "text": "",
+      "aria": "新建会话",
+      "ph": "",
+      "role": "",
+      "outline": "auto 2px",
+      "boxShadow": "none",
+      "visible": true
+    },
+    {
+      "tag": "button",
+      "text": "",
+      "aria": "收起侧边栏",
+      "ph": "",
+      "role": "",
+      "outline": "solid 2px",
+      "boxShadow": "none",
+      "visible": true
+    },
+    {
+      "tag": "button",
+      "text": "会话",
+      "aria": "会话",
+      "ph": "",
+      "role": "",
+      "outline": "auto 2px",
+      "boxShadow": "none",
+      "visible": true
+    },
+    {
+      "tag": "button",
+      "text": "生图",
+      "aria": "生图",
+      "ph": "",
+      "role": "",
+      "outline": "auto 2px",
+      "boxShadow": "none",
+      "visible": true
+    },
+    {
+      "tag": "button",
+      "text": "新会话 ⌥ ⌘ N",
+      "aria": "新建会话",
+      "ph": "",
+      "role": "",
+      "outline": "auto 2px",
+      "boxShadow": "none",
+      "visible": true
+    },
+    {
+      "tag": "button",
+      "text": "",
+      "aria": "搜索会话",
+      "ph": "",
+      "role": "",
+      "outline": "solid 2px",
+      "boxShadow": "none",
+      "visible": true
+    },
+    {
+      "tag": "button",
+      "text": "",
+      "aria": "视图选项",
+      "ph": "",
+      "role": "",
+      "outline": "solid 2px",
+      "boxShadow": "none",
+      "visible": true
+    },
+    {
+      "tag": "button",
+      "text": "",
+      "aria": "添加工作区",
+      "ph": "",
+      "role": "",
+      "outline": "solid 2px",
+      "boxShadow": "none",
+      "visible": true
+    },
+    {
+      "tag": "button",
+      "text": "展开其余 7 个会话",
+      "aria": "",
+      "ph": "",
+      "role": "",
+      "outline": "auto 2px",
+      "boxShadow": "none",
+      "visible": true
+    }
+  ],
+  "pageErrors": [],
+  "consoleErrors": [
+    {
+      "type": "warning",
+      "text": "[connection] generation is still not ready after 3000ms"
+    },
+    {
+      "type": "warning",
+      "text": "[connection] connection lost, retry #1"
+    }
+  ]
+}

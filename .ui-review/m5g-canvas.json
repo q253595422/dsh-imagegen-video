@@ -1,0 +1,126 @@
+{
+  "result": {
+    "start-nodes": [
+      {
+        "id": "node-9128f934-4bca-4c6a-85ae-2c2106f54d70",
+        "x": 377,
+        "y": 417,
+        "w": 464,
+        "h": 248,
+        "text": "文本节点 A- 20 A+"
+      },
+      {
+        "id": "node-6f394a62-91a9-4be0-979d-a787fe5e497b",
+        "x": 973,
+        "y": 384,
+        "w": 530,
+        "h": 315,
+        "text": "生成配置 已连接 1 个输入节点 把图片节点连线到左侧作为参考图，文本节"
+      }
+    ],
+    "space": {
+      "cursorBefore": "default",
+      "cursorWhileSpace": "default",
+      "viewportClassWhileSpace": "AoVF5G_viewport AoVF5G_selectCursor",
+      "moved": [
+        0,
+        0
+      ]
+    },
+    "ctrl": {
+      "cursorWhileCtrl": "grab",
+      "moved": [
+        120,
+        120
+      ]
+    },
+    "middle": {
+      "moved": [
+        -120,
+        -120
+      ]
+    },
+    "annotation-labels": {
+      "shot": "146-m5g-annotations.png"
+    },
+    "project-btn": {
+      "x": 399,
+      "y": 76,
+      "text": "未命名画布"
+    },
+    "project-list": {
+      "0": {
+        "t": "电商模式预览",
+        "role": ""
+      },
+      "1": {
+        "t": "图片转 PPT",
+        "role": ""
+      },
+      "2": {
+        "t": "★ gone",
+        "role": "option"
+      },
+      "3": {
+        "t": "未命名画布",
+        "role": "option"
+      },
+      "4": {
+        "t": "未命名画布",
+        "role": "option"
+      },
+      "5": {
+        "t": "未命名画布",
+        "role": "option"
+      },
+      "6": {
+        "t": "未命名画布",
+        "role": "option"
+      },
+      "7": {
+        "t": "gone",
+        "role": "option"
+      },
+      "8": {
+        "t": "deck",
+        "role": "option"
+      },
+      "9": {
+        "t": "extract",
+        "role": "option"
+      },
+      "10": {
+        "t": "polish",
+        "role": "option"
+      },
+      "11": {
+        "t": "files",
+        "role": "option"
+      },
+      "12": {
+        "t": "gone",
+        "role": "option"
+      },
+      "13": {
+        "t": "deck",
+        "role": "option"
+      },
+      "14": {
+        "t": "extract",
+        "role": "option"
+      },
+      "shot": "147-m5g-project-list.png"
+    }
+  },
+  "consoleErrors": [
+    {
+      "type": "warning",
+      "text": "[connection] generation is still not ready after 3000ms"
+    },
+    {
+      "type": "warning",
+      "text": "[connection] connection lost, retry #1"
+    }
+  ],
+  "pageErrors": []
+}

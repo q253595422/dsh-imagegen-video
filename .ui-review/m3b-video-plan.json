@@ -1,0 +1,18 @@
+{
+  "consoleErrors": [
+    {
+      "type": "warning",
+      "text": "[connection] generation is still not ready after 3000ms"
+    },
+    {
+      "type": "warning",
+      "text": "[connection] connection lost, retry #1"
+    },
+    {
+      "type": "warning",
+      "text": "[connection] generation is still not ready after 3000ms"
+    }
+  ],
+  "pageErrors": [],
+  "failed": []
+}

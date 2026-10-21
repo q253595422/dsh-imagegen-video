@@ -1,0 +1,116 @@
+{
+  "node-box": {
+    "x": 560,
+    "y": 487,
+    "text": "文本节点 A- 14 A+"
+  },
+  "composer": {
+    "noComposer": true,
+    "shot": "171-131-m5d-composer.png"
+  },
+  "context-menu": [
+    {
+      "cls": "_surface_ri079_1",
+      "role": "menu",
+      "w": 144,
+      "text": "DS Bot chajian 默认工作区 添加工作区…",
+      "items": [
+        "DS Bot",
+        "chajian",
+        "默认工作区",
+        "添加工作区…"
+      ]
+    }
+  ],
+  "skills-panel": {
+    "clicked": true,
+    "popovers": [
+      {
+        "cls": "AoVF5G_skillDialog",
+        "role": "dialog",
+        "w": 638,
+        "text": "技能库管理 在线安装 支持 GitHub 仓库 / 目录 / 单个 SKILL.md、任意 git 地址、zip 压缩包地址；多个地址用换行分隔。安装后宿主动态加载，无需重启。 覆盖已安装的同名技能 刷新 安装 点击选择或拖入 .zip 压缩包 已安装技能（0） 安装目录：/Users/malang/.dsh/skills 本机还没有安装任何技能。可以从仓库链接安装，或上传技能压缩包。 关闭",
+        "items": [
+          "刷新",
+          "安装",
+          "关闭"
+        ]
+      }
+    ],
+    "shot": "173-133-m5d-skills.png"
+  },
+  "workflow-noselect": {
+    "clicked": true,
+    "popovers": [],
+    "text": "VisioWork 普通生图 素材库 无限画布 电商模式预览 图片转 PPT 无限画布 对话 已连接 ★ 未命名画布 未命名画布 已保存 文本节点 A- 14 A+ 生成配置 已连接 1 个输入节点 把图片节点连线到左侧作为参考图，文本节点连线过来作为提示词；选中本节点后在下方输入或改写提示词并生成。 素材库图片 1536×2048 生成配置 已连接 0 个输入节点 把图片节点连线到左侧作为参考图，文本节点连线过来作为提示词；选中本节点后在下方输入或改写提示词并生成。 100% 这条链路上的节点都已经有结果了；选中要重跑的起点再运行",
+    "shot": "174-134-m5d-workflow-noselect.png"
+  },
+  "background-panel": {
+    "clicked": true,
+    "popovers": [
+      {
+        "cls": "AoVF5G_backgroundMenu",
+        "role": "menu",
+        "w": 182,
+        "text": "关闭背景渲染（提升性能） 点阵 网格线 波浪线 滚动方格 点场 互动点阵 浮动线条 流体扰动 液态以太 故障终端 丝绸 星系 上传自定义背景…",
+        "items": [
+          "关闭背景渲染（提升性能）",
+          "点阵",
+          "网格线",
+          "波浪线",
+          "滚动方格",
+          "点场",
+          "互动点阵",
+          "浮动线条",
+          "流体扰动",
+          "液态以太",
+          "故障终端",
+          "丝绸",
+          "星系",
+          "上传自定义背景…"
+        ]
+      }
+    ],
+    "shot": "175-135-m5d-background.png"
+  },
+  "shortcuts": {
+    "popovers": [
+      {
+        "cls": "W4Apla_dialog",
+        "role": "dialog",
+        "w": 720,
+        "text": "键盘快捷键 × 视图 Ctrl/⌘ Space 按住并拖拽平移画布 中键 中键拖拽平移画布 滚轮 以指针为中心缩放 双指 触屏双指捏合缩放 选择 Ctrl/⌘ A 选中全部节点 Shift 拖拽出框选 Shift/⌘ 加选 / 减选 Esc 退出当前工具或清空选择 编辑 Ctrl/⌘ Z 撤销 Ctrl/⌘ Shift Z 重做 Ctrl/⌘ C 复制选中节点 Ctrl/⌘ V 粘贴节点 Ctrl/⌘ D 原地复制一份 Delete 删除选中节点 节点 双击 在空白处新建节点 双击 打开图片预览 / 视频播放 Tab 在节点之间移动焦点，节点工具条随之出现 ? 打开这张快捷键表 在画布上按 ? 随时打开这张表。",
+        "items": [
+          "×"
+        ]
+      }
+    ],
+    "shot": "176-136-m5d-shortcuts.png"
+  },
+  "shortcuts-close": {
+    "x": 1128,
+    "y": 286
+  },
+  "zoom": {
+    "before": "100",
+    "after": "126",
+    "shot": "177-137-m5d-zoom.png"
+  },
+  "minimap-toggle-off": {
+    "clicked": true,
+    "stillOpen": false,
+    "openBtn": true,
+    "shot": "178-138-m5d-minimap-off.png"
+  },
+  "pageErrors": [],
+  "consoleErrors": [
+    {
+      "type": "warning",
+      "text": "[connection] generation is still not ready after 3000ms"
+    },
+    {
+      "type": "warning",
+      "text": "[connection] connection lost, retry #1"
+    }
+  ]
+}

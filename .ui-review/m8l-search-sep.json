@@ -1,0 +1,37 @@
+{
+  "a1-all-inputs": [
+    {
+      "ph": "搜索提示词或模型…",
+      "aria": "搜索提示词或模型…",
+      "w": 244,
+      "x": 22
+    }
+  ],
+  "a2-typed": {
+    "ok": true,
+    "before": 0,
+    "ph": "搜索提示词或模型…"
+  },
+  "a3-after": {
+    "text": "历史记录 清空 全部模型 全部比例 A slow sunrise over a dark horizon, warm orange gradient rising 16:9 · 720P · 3s · hy4-preview · 2026-10-21 07:28 A calm deep-blue gradient sky with a warm sun rising over a dark horizon, drawn with simple shapes 文生图 · 1 张 · hy4-preview · 2026-10-21 07:08 两个图片的人物在一起交朋友 16:9 · 720P ",
+    "hasEmpty": false,
+    "itemCount": 19,
+    "shot": "278-237-m8l-sidebar-search-typed.png"
+  },
+  "b1-sep-dom": {
+    "w": 0,
+    "h": 0,
+    "display": "none",
+    "vis": "visible",
+    "op": "1",
+    "ariaHidden": null,
+    "disabled": false,
+    "tabindex": "0",
+    "canFocus": false,
+    "hitAt279": [
+      "div.pI_x6G_handle",
+      "div.pI_x6G_sidebarCol",
+      "div.pI_x6G_frame"
+    ]
+  }
+}

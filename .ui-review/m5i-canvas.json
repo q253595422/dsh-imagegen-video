@@ -1,0 +1,206 @@
+{
+  "result": {
+    "start": {
+      "nodes": [
+        {
+          "id": "node-9128f",
+          "x": 377,
+          "y": 417,
+          "w": 464,
+          "h": 248,
+          "hasImg": false,
+          "text": "文本节点 A- 20 A+"
+        },
+        {
+          "id": "node-6f394",
+          "x": 973,
+          "y": 384,
+          "w": 530,
+          "h": 315,
+          "hasImg": false,
+          "text": "生成配置 已连接 1 个输入节点 把图片节点连线到左"
+        }
+      ],
+      "del": {
+        "disabled": false,
+        "opacity": "1",
+        "cursor": "pointer",
+        "cls": "AoVF5G_iconButton"
+      }
+    },
+    "after-new": {
+      "nodes": [
+        {
+          "id": "node-84f39",
+          "x": 420,
+          "y": 467,
+          "w": 280,
+          "h": 150,
+          "hasImg": false,
+          "text": "文本节点 A- 14 A+"
+        },
+        {
+          "id": "node-c1d0c",
+          "x": 780,
+          "y": 447,
+          "w": 320,
+          "h": 190,
+          "hasImg": false,
+          "text": "生成配置 已连接 1 个输入节点 把图片节点连线到左"
+        }
+      ],
+      "del": {
+        "disabled": false,
+        "opacity": "1",
+        "cursor": "pointer",
+        "cls": "AoVF5G_iconButton"
+      }
+    },
+    "del-click": {
+      "hit": {
+        "x": 588,
+        "y": 76,
+        "disabled": false
+      },
+      "del": null
+    },
+    "delete-confirm": {
+      "dialogs": [],
+      "bodyTail": "27 设置 VisioWork 普通生图 素材库 无限画布 电商模式预览 图片转 PPT 无限画布 对话 已连接 未命名画布 未命名画布 已保存 文本节点 A- 14 A+ 生成配置 已连接 1 个输入节点 把图片节点连线到左侧作为参考图，文本节点连线过来作为提示词；选中本节点后在下方输入或改写提示词并生成。 100%",
+      "shot": "152-m5i-delete-confirm.png"
+    },
+    "menu-素材库": {
+      "x": 698,
+      "y": 804
+    },
+    "picker": {
+      "visible": true,
+      "options": 4,
+      "selected": 0,
+      "text": "添加图片 × 上传 历史记录 素材库 AI 生成 A vertical 9:16 composition at 1080x1440 resolution, featuring an exception"
+    },
+    "first-option": {
+      "x": 678,
+      "y": 540,
+      "w": 165
+    },
+    "after-pick": {
+      "after": {
+        "dialogsVisible": 1,
+        "dlgText": "添加图片 × 上传 历史记录 素材库 AI 生成 A vertical 9:16 composition at 1080x1440 resolution, featuring an exceptionally graceful girl e",
+        "dlgButtons": [
+          "×",
+          "上传",
+          "历史记录",
+          "素材库",
+          "AI 生成",
+          "A vertical 9:16 composition at 1080x1440 resolution, featuring an exceptionally graceful girl emerging from a 3D transparent glass smartphone screen displaying Xiaohongshu (Little Red Book) social media posts. She is captured mid-motion, breaking through the glass barrier into reality with a dynamic, natural pose that adheres to anatomical structure. One foot extends powerfully toward the viewer in an exaggerated 3D perspective, creating intense depth and immersion as if she is stepping out of the digital world. The edges of the phone screen are shattered with realistic, fine glass cracks and digital particle effects. Glowing pixel fragments and light particles scatter outward around her movement direction, forming a futuristic \"digital screen-break\" visual spectacle with cinematic spatial layering. The background features a soft gradient blending warm beige, soft pink, and dreamy purple tones, accented with golden-pink sunset light spots and cinematic soft-light rendering. The style merges Pixar animation aesthetics with semi-realism, showcasing ultra-detailed materials, soft depth of field, and movie-quality lighting. Rendered in 8K ultra-high definition, optimized for social media display.\nsensenova-u1.5-lite · 1/1",
+          "A realistic screenshot of a Douyin livestream interface featuring a beautiful, curvaceous woman with a voluptuous figure streaming live. The screen includes typical Douyin UI elements like a gift box icon, viewer count, and chat comments on the sides. She is wearing a form-fitting outfit that accentuates her full bust and hourglass silhouette, with soft studio lighting highlighting her features. Modern smartphone aspect ratio, high quality, photorealistic style.\nagnes-image-2.5-flash · 1/1",
+          "35mm film photography, warm vintage Japanese onsen ryokan aesthetic, soft ambient wooden lantern lighting mixed with gentle natural window light, subtle film grain, gentle color shift, high atmosphere editorial style, intimate medium shot, early 20s beautiful Chinese female idol with ultra-realistic delicate refined Chinese features, seductive almond-shaped fox eyes with natural double eyelids, high nose bridge, small sharp V-shaped jawline, flawless porcelain skin with warm ivory undertone, visible subtle skin texture and micro pores, soft natural makeup with dewy glow, subtle rosy flush on cheeks, natural soft pink lips slightly parted, long dark brown hair tied in a loose low bun with some messy strands falling around face and neck, wearing a loose white yukata deliberately slipped off one shoulder and loosely tied at the waist, the fabric slightly open revealing smooth skin and subtle cleavage, barefoot, seductive relaxed sitting pose on the edge of a traditional wooden engawa veranda at a vintage onsen ryokan, body slightly turned toward the camera, one leg bent with foot resting on the wooden floor, the other leg gently dangling, one hand lightly holding the yukata collar, the other hand resting on the wooden floor behind her for support, softly arched back to gently accentuate curves, intensely seductive yet gentle and inviting gaze straight at the viewer with soft doe eyes full of quiet temptation and warmth, warm wooden interior with paper sliding doors and distant steaming hot spring in soft focus, gentle rim lighting highlighting skin and fabric texture, authentic vintage film color grading with warm tones, extremely sharp yet soft skin rendering, natural hair strands, realistic fabric wrinkles and drape on the yukata, no plastic skin, no digital over-sharpening, no airbrushing, no blemishes, no moles, no oily skin, no watermark, no text, authentic 35mm film Japanese onsen ryokan atmosphere\nsensenova-u1.5-lite · 1/1"
+        ]
+      },
+      "nodes": [
+        {
+          "id": "node-ef857",
+          "x": 420,
+          "y": 467,
+          "w": 280,
+          "h": 150,
+          "hasImg": false,
+          "text": "文本节点 A- 14 A+"
+        },
+        {
+          "id": "node-eaad6",
+          "x": 780,
+          "y": 447,
+          "w": 320,
+          "h": 190,
+          "hasImg": false,
+          "text": "生成配置 已连接 1 个输入节点 把图片节点连线到左"
+        }
+      ],
+      "delta": 0,
+      "shot": "153-m5i-after-pick.png"
+    },
+    "confirm-btn": {
+      "t": "加入画布",
+      "x": 1244,
+      "y": 650
+    },
+    "after-confirm": {
+      "nodes": [
+        {
+          "id": "node-ef857",
+          "x": 420,
+          "y": 467,
+          "w": 280,
+          "h": 150,
+          "hasImg": false,
+          "text": "文本节点 A- 14 A+"
+        },
+        {
+          "id": "node-eaad6",
+          "x": 780,
+          "y": 447,
+          "w": 320,
+          "h": 190,
+          "hasImg": false,
+          "text": "生成配置 已连接 1 个输入节点 把图片节点连线到左"
+        },
+        {
+          "id": "node-dca16",
+          "x": 840,
+          "y": 422,
+          "w": 200,
+          "h": 240,
+          "hasImg": true,
+          "text": "素材库图片 1536×2048"
+        }
+      ],
+      "shot": "154-m5i-after-confirm.png"
+    },
+    "image-node": {
+      "x": 940,
+      "y": 506
+    },
+    "annotate-labels": [
+      "标注：在图片上画框，自动挂上提示词卡片"
+    ],
+    "annotate-mode": {
+      "hit": {
+        "x": 708,
+        "y": 679,
+        "disabled": false
+      },
+      "mode": {
+        "text": "",
+        "shotNote": "annotation mode"
+      },
+      "shot": "155-m5i-annotate.png"
+    },
+    "favorite": {
+      "before": {
+        "active": null,
+        "pressed": null,
+        "label": "收藏画布",
+        "cls": "AoVF5G_iconButton",
+        "svgFill": "none"
+      },
+      "after": null
+    },
+    "projects": {
+      "text": "★ 未命名画布"
+    }
+  },
+  "consoleErrors": [
+    {
+      "type": "warning",
+      "text": "[connection] generation is still not ready after 3000ms"
+    },
+    {
+      "type": "warning",
+      "text": "[connection] connection lost, retry #1"
+    }
+  ],
+  "pageErrors": []
+}

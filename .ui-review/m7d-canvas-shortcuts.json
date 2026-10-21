@@ -1,0 +1,93 @@
+{
+  "q1-canvas-state": {
+    "nav": {
+      "x": 894,
+      "y": 28,
+      "n": 1
+    },
+    "state": {
+      "canvasRootPresent": true,
+      "title": "VisioWork",
+      "hasProjectPicker": false,
+      "projectName": "",
+      "head": "VisioWork 普通生图 素材库 无限画布 电商模式预览 图片转 PPT 无限画布 对话 已连接 加载中… 100%"
+    }
+  },
+  "q2-before": {
+    "open": false,
+    "box": null,
+    "tag": null,
+    "role": null,
+    "modal": null,
+    "label": null,
+    "inBodyChild": null,
+    "text": "",
+    "groups": [],
+    "focus": {
+      "tag": "button",
+      "inside": false
+    }
+  },
+  "q3-question": {
+    "open": true,
+    "box": {
+      "w": 718,
+      "h": 55,
+      "x": 441,
+      "y": 259
+    },
+    "tag": "header",
+    "role": null,
+    "modal": null,
+    "label": null,
+    "inBodyChild": false,
+    "text": "键盘快捷键 ×",
+    "groups": [
+      "键盘快捷键"
+    ],
+    "focus": {
+      "tag": "button",
+      "inside": false
+    },
+    "shot": "232-195-m7d-canvas-shortcuts.png"
+  },
+  "q3-question-esc": {
+    "open": false,
+    "box": null,
+    "tag": null,
+    "role": null,
+    "modal": null,
+    "label": null,
+    "inBodyChild": null,
+    "text": "",
+    "groups": [],
+    "focus": {
+      "tag": "button",
+      "inside": false
+    }
+  },
+  "q3-f1": {
+    "open": true,
+    "box": {
+      "w": 718,
+      "h": 55,
+      "x": 441,
+      "y": 259
+    },
+    "tag": "header",
+    "role": null,
+    "modal": null,
+    "label": null,
+    "inBodyChild": false,
+    "text": "键盘快捷键 ×",
+    "groups": [
+      "键盘快捷键"
+    ],
+    "focus": {
+      "tag": "button",
+      "inside": false
+    },
+    "shot": "233-196-m7d-canvas-shortcuts-f1.png"
+  },
+  "pageErrors": []
+}

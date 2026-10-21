@@ -1,0 +1,208 @@
+{
+  "result": {
+    "projects-before": {
+      "tag": "BUTTON",
+      "role": "",
+      "value": "未命名画布",
+      "text": "未命名画布"
+    },
+    "after-create": {
+      "vp": {
+        "x": 297,
+        "y": 100,
+        "w": 1286,
+        "h": 883
+      },
+      "save": "保存中…",
+      "zoom": "100",
+      "nodes": [
+        {
+          "id": "node-9128f93",
+          "x": 420,
+          "y": 467,
+          "w": 280,
+          "h": 150,
+          "text": "文本节点 A- 14 A+",
+          "outLeft": false,
+          "outTop": false,
+          "outRight": false,
+          "outBottom": false
+        },
+        {
+          "id": "node-6f394a6",
+          "x": 780,
+          "y": 447,
+          "w": 320,
+          "h": 190,
+          "text": "生成配置 已连接 1 个输入节点 把图片节点连线到左侧作为参",
+          "outLeft": false,
+          "outTop": false,
+          "outRight": false,
+          "outBottom": false
+        }
+      ],
+      "shot": "133-m5e-new-canvas.png"
+    },
+    "projects-after-create": {
+      "value": "",
+      "text": "未命名画布"
+    },
+    "pan-mode": {
+      "active": "",
+      "hostActive": null,
+      "cursor": "grab"
+    },
+    "pan-hand-result": {
+      "before": [
+        [
+          420,
+          467
+        ],
+        [
+          780,
+          447
+        ]
+      ],
+      "after": [
+        [
+          280,
+          397
+        ],
+        [
+          640,
+          377
+        ]
+      ],
+      "zoom": [
+        "100",
+        "100"
+      ],
+      "shot": "134-m5e-pan-hand.png"
+    },
+    "pan-space-result": {
+      "cursorWhileSpace": {
+        "cursor": "default"
+      },
+      "before": [
+        [
+          280,
+          397
+        ],
+        [
+          640,
+          377
+        ]
+      ],
+      "after": [
+        [
+          280,
+          397
+        ],
+        [
+          640,
+          377
+        ]
+      ]
+    },
+    "node-target": {
+      "x": 609,
+      "y": 435,
+      "w": 464,
+      "h": 248,
+      "text": "文本节点 A- 14 A+"
+    },
+    "node-toolbar": {
+      "0": {
+        "aria": "加粗",
+        "x": 745,
+        "y": 431
+      },
+      "1": {
+        "aria": "文字颜色",
+        "x": 783,
+        "y": 431
+      },
+      "2": {
+        "aria": "技能",
+        "x": 497,
+        "y": 368
+      },
+      "3": {
+        "aria": "AI 润色",
+        "x": 550,
+        "y": 368
+      },
+      "4": {
+        "aria": "创建副本 (Ctrl+D)",
+        "x": 618,
+        "y": 368
+      },
+      "5": {
+        "aria": "删除",
+        "x": 671,
+        "y": 368
+      },
+      "6": {
+        "aria": "创建副本 (Ctrl+D)",
+        "x": 1187,
+        "y": 335
+      },
+      "7": {
+        "aria": "删除",
+        "x": 1240,
+        "y": 335
+      },
+      "shot": "135-m5e-node-selected.png"
+    },
+    "font-size": {
+      "before": {
+        "fs": "14px",
+        "lh": "21.7px"
+      },
+      "after": {
+        "fs": "20px",
+        "lh": "31px"
+      }
+    },
+    "color-popover": {
+      "0": {
+        "cls": "AoVF5G_colorRow",
+        "text": "",
+        "swatches": 8
+      },
+      "shot": "136-m5e-color.png"
+    },
+    "node-skills": {
+      "cls": "AoVF5G_skillMenu",
+      "role": "menu",
+      "text": "运行技能 在「文本节点」上运行技能 内置动作 文本润色 按风格改写文本节点：更正式 / 更口语 / 更短 / 扩写，或自定义指令 轻量 图片描述 用视觉模型读出图片内容，产出文本节点（可用作提示词） 轻量 内容抽取 把文件或图片里的文字抽成文本节点（文本 / 代码 / OOXML 文档 / PDF） 轻量 拼接视频 把选中的多段视频按画布位置（从上到下、从左到右）首尾拼成一条视频 本机执行 图片转可编辑 PPT 技能「image-to-",
+      "items": [
+        "文本润色\n按风格改写文本节点：更正式 / 更口语 / 更短 / 扩写，或自定义指令",
+        "图片描述\n用视觉模型读出图片内容，产出文本节点（可用作提示词）",
+        "内容抽取\n把文件或图片里的文字抽成文本节点（文本 / 代码 / OOXML 文档 / PDF）",
+        "拼接视频\n把选中的多段视频按画布位置（从上到下、从左到右）首尾拼成一条视频",
+        "图片转可编辑 PPT\n技能「image-to-editable-ppt」还没安装，点击安装即可使用",
+        "去安装"
+      ],
+      "shot": "137-m5e-node-skills.png"
+    },
+    "projects-now": {
+      "value": "",
+      "text": "未命名画布"
+    },
+    "delete-confirm": {
+      "skipped": "draw count unchanged"
+    }
+  },
+  "consoleErrors": [
+    {
+      "type": "warning",
+      "text": "[connection] generation is still not ready after 3000ms"
+    },
+    {
+      "type": "warning",
+      "text": "[connection] connection lost, retry #1"
+    }
+  ],
+  "pageErrors": []
+}

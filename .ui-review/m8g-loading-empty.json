@@ -1,0 +1,73 @@
+{
+  "g1-prompt": {
+    "ok": true
+  },
+  "g1-t0.4": {
+    "btnText": "生成中…",
+    "btnDis": true,
+    "btnBox": {
+      "t": 948,
+      "h": 36
+    },
+    "busyEl": {
+      "tag": "span",
+      "cls": "uTF49q_spinner"
+    },
+    "resultText": null,
+    "tail": " 3:4 标准竖图 4:3 标准横图 9:16 竖屏 2:3 竖图 3:2 横图 16:9 宽屏 21:9 超宽屏 清晰度 自动 1K 2K 4K 生成数量 1 张 2 张 3 张 4 张 细节 自动 标准 高清 透传参数，部分 gpt-image-2 网关支持；官方接口请保持「自动」 渠道 / 模型 11 / agnes-image-2.1-flash 多模型对比 生成中… 生成任务 0 ⌄ 诊断日志 正在加入生成队列… 已用时 0s",
+    "shot": "263-221-m8g-img-loading-0-4s.png"
+  },
+  "g1-t1.8": {
+    "btnText": "开始生成",
+    "btnDis": false,
+    "btnBox": {
+      "t": 948,
+      "h": 36
+    },
+    "busyEl": {
+      "tag": "span",
+      "cls": "eG4Exq_spinner"
+    },
+    "resultText": null,
+    "tail": "尺寸 自动 1:1 方图 3:4 标准竖图 4:3 标准横图 9:16 竖屏 2:3 竖图 3:2 横图 16:9 宽屏 21:9 超宽屏 清晰度 自动 1K 2K 4K 生成数量 1 张 2 张 3 张 4 张 细节 自动 标准 高清 透传参数，部分 gpt-image-2 网关支持；官方接口请保持「自动」 渠道 / 模型 11 / agnes-image-2.1-flash 多模型对比 开始生成 生成任务 0 ⌄ 诊断日志 灵感案例",
+    "shot": "264-222-m8g-img-loading-1-8s.png"
+  },
+  "g1-t5.8": {
+    "btnText": "开始生成",
+    "btnDis": false,
+    "btnBox": {
+      "t": 948,
+      "h": 36
+    },
+    "busyEl": null,
+    "resultText": null,
+    "tail": "itorial Collage Poster Pixar 3D Character Design Sheet Pixar 3D Character Design Sheet AP Calculus 学习表信息图 界面交互设计图 #067 Decorative Retro Commercial Illustration A 轮市场规模幻灯片 信息图可视化设计 精致女孩背后的网贷真相 SB-055 满版冲击格 虚构电影五十六帧极致拼贴 随机",
+    "shot": "265-223-m8g-img-after-5-8s.png"
+  },
+  "g2-btn": {
+    "x": 994,
+    "y": 28,
+    "text": "电商模式预览"
+  },
+  "g2-t0.6": {
+    "btnText": null,
+    "btnDis": null,
+    "btnBox": null,
+    "busyEl": null,
+    "resultText": "套图结果 新商品 确认生成后，每张图片的任务状态和结果会按用途显示在这里",
+    "tail": "名称（必填） 参数信息 (可选) AI 帮写 参数选择 平台 通用 文案语言 中文 类目 通用商品 比例 1:1 套图结构 可多选 主图 1 卖点图 2 场景图 2 细节图 1 规格图 使用图 参考图设置（可选） ⌄ 生成设置 11 / agnes-image-2.1-flash 自动 1K 2K 4K 将生成 6 张套图 生成套图预览 套图结果 新商品 确认生成后，每张图片的任务状态和结果会按用途显示在这里 生成任务 0 ⌄ 诊断日志",
+    "shot": "266-224-m8g-video-plan-0-6s.png"
+  },
+  "g2-t3": {
+    "btnText": null,
+    "btnDis": null,
+    "btnBox": null,
+    "busyEl": null,
+    "resultText": "套图结果 新商品 确认生成后，每张图片的任务状态和结果会按用途显示在这里",
+    "tail": "名称（必填） 参数信息 (可选) AI 帮写 参数选择 平台 通用 文案语言 中文 类目 通用商品 比例 1:1 套图结构 可多选 主图 1 卖点图 2 场景图 2 细节图 1 规格图 使用图 参考图设置（可选） ⌄ 生成设置 11 / agnes-image-2.1-flash 自动 1K 2K 4K 将生成 6 张套图 生成套图预览 套图结果 新商品 确认生成后，每张图片的任务状态和结果会按用途显示在这里 生成任务 0 ⌄ 诊断日志",
+    "shot": "267-225-m8g-video-plan-3s.png"
+  },
+  "g3-ratios": {},
+  "g3-zero-target": null,
+  "pageErrors": []
+}

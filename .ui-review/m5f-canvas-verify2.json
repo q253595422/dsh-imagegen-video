@@ -1,0 +1,147 @@
+{
+  "r1-toggle-metrics": [
+    {
+      "text": "图片",
+      "box": {
+        "w": 32,
+        "h": 24
+      },
+      "scrollH": 34,
+      "clientH": 24,
+      "whiteSpace": "normal",
+      "wordBreak": "normal",
+      "lineHeight": "normal",
+      "fontSize": "12px",
+      "padding": "0px 10px",
+      "textRects": [
+        {
+          "w": 12,
+          "h": 15,
+          "y": 714
+        },
+        {
+          "w": 12,
+          "h": 15,
+          "y": 731
+        }
+      ],
+      "lines": 2,
+      "wrapped": true
+    },
+    {
+      "text": "视频",
+      "box": {
+        "w": 32,
+        "h": 24
+      },
+      "scrollH": 34,
+      "clientH": 24,
+      "whiteSpace": "normal",
+      "wordBreak": "normal",
+      "lineHeight": "normal",
+      "fontSize": "12px",
+      "padding": "0px 10px",
+      "textRects": [
+        {
+          "w": 12,
+          "h": 15,
+          "y": 714
+        },
+        {
+          "w": 12,
+          "h": 15,
+          "y": 731
+        }
+      ],
+      "lines": 2,
+      "wrapped": true
+    }
+  ],
+  "r2-before": {
+    "hasSelector": true,
+    "nodes": 6,
+    "name": "未命名画布"
+  },
+  "r2-after": {
+    "clicked": true,
+    "state": {
+      "nodes": 6,
+      "name": "未命名画布",
+      "hasEmpty": false,
+      "text": "VisioWork 普通生图 素材库 无限画布 电商模式预览 图片转 PPT 无限画布 对话 已连接 未命名画布 未命名画布 保存中… 文本节点 A- 14 A+ 生成配置 已连接 1 个输入节点 把图片节点连线到左侧作为参考图，文本节点连线过来作为提示词；选中本节点后在下方输入或改写提示词并生成。 100%"
+    },
+    "shot": "186-146-m5f-new-canvas.png"
+  },
+  "r2-project-list": [
+    {
+      "w": 180,
+      "text": "收藏夹（3） ★ 未命名画布 ★ 未命名画布 ★ gone 其他画布（1424） 未命名画布 未命名画布 未命名画布 未命名画布 未命名画布 未命名画布 gone deck extract polish files gone deck extract polish files gone deck extract polish files gone deck extract polish files gone deck extract polish files gone deck extract polish files gone deck extract polish files gone d",
+      "items": [
+        "★ 未命名画布",
+        "★ 未命名画布",
+        "★ gone",
+        "未命名画布",
+        "未命名画布",
+        "未命名画布",
+        "未命名画布",
+        "未命名画布",
+        "未命名画布",
+        "gone",
+        "deck",
+        "extract",
+        "polish",
+        "files",
+        "gone",
+        "deck",
+        "extract",
+        "polish",
+        "files",
+        "gone"
+      ]
+    }
+  ],
+  "r3-blank-point": {
+    "x": 747,
+    "y": 762
+  },
+  "r3-double-click": {
+    "menus": [
+      {
+        "text": "添加文本节点 添加画板节点 分镜 添加图片节点 添加文件节点 上传文件 添加配置节点"
+      }
+    ],
+    "nodes": 6,
+    "shot": "188-148-m5f-doubleclick.png"
+  },
+  "r4-config-nodes": [
+    {
+      "x": 940,
+      "y": 463,
+      "w": 320
+    },
+    {
+      "x": 940,
+      "y": 463,
+      "w": 320
+    }
+  ],
+  "r4-two-selected": {
+    "composer": false,
+    "connected": [
+      "已连接 1 个输入节点",
+      "已连接 0 个输入节点"
+    ],
+    "shot": "189-149-m5f-two-config.png"
+  },
+  "pageErrors": [],
+  "consoleErrors": [
+    {
+      "type": "warning",
+      "text": "[connection] generation is still not ready after 3000ms"
+    },
+    {
+      "type": "warning",
+      "text": "[connection] connection lost, retry #1"
+    }
+  ]
+}

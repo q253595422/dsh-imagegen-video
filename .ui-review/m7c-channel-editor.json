@@ -1,0 +1,260 @@
+{
+  "p1-edit-click": {
+    "x": 1064,
+    "y": 527,
+    "n": 3
+  },
+  "p1-editor": {
+    "text": "AI 生图（dsh-imagegen） 3 个渠道 · 8 个模型 ▾ 配置概览 点击状态卡或分组标题查看详情；每次只展开一个区域。 核心配置已就绪 渠道与模型 3/3 可用 提示词增强 agnes-2.5-flash 存储同步 已关闭 图片转 PPT PPTX 画布技能 已启用 通用设置 已启用 渠道 填写各渠道的 API 地址与密钥即可使用对应模型 3/3 可用 ⌃ ★ 11 密钥已设置 · 3 个模型 编辑 删除 22 密钥已设置 · 4 个模型 编辑 删除 https://comemoe.com/v1 密钥已设置 · 1 个模型 编辑 删除 默认生图模型 普通生图、无限画布、电商和 Agent 未指定模型时优先使用它；侧栏生图入口始终保留。 agnes-image-2.1-flash + 添加提供方 + 添加自定义渠道 提示词增强模型 用于将简短描述扩写为更完整的生图提示词；留空的地址和密钥会复用生图配置。 agnes-2.5-flash ⌄ 对象存储同步 图片保存到本地后，异步上传一份到 S3 兼容对象存储（腾讯云 COS / 阿里云 OSS / 七牛云 S3 / MinIO / R2 等） 已关闭 ⌄ 图片转可编辑 PPT 直接使用上游 skill 与 editppt，不额外设计转换流程。 PPTX ⌄ 无限画布技能 提示：把 image-to-editable-ppt 之类的技能装到 ~/.dsh/skills 后，即可在画布上把图片变成可编辑 PPT。 已启用 ⌄ 通用设置 插件总开关、Agent 播报与生图权限 已启用 ⌄ 放弃修改 保存 渠道 · 11 改动将随卡片底部「保存」一起生效 × 显示名称 认证方式 API Key API 地址 接口协议 自动检测 自动：完整 URL 以 /chat/completions 结尾时使用 Chat 协议；也可以手动指定。 完整 URL API 密钥 密钥已设置 清除密钥 显示密钥 模型目录 重新检测 连通 ✓ · 3 个候选 agnes-image-2.1-flash 未知协议 · 未知协议，按通用 OpenAI 协议尝试 编辑 × agnes-image-2.5-flash 未知协议 · 未知协议，按通用 OpenAI 协议尝试 已生成 2 次 编辑 × step-image-edit-2 未知协议 · 未知协议，按通用 OpenAI 协议尝试 编辑 × 图片模型候选（点击加入） agnes-image-2.1-flash 未知协议，按通用 OpenAI 协议尝试 agnes-image-2.5-flash 未知协议，按通用 OpenAI 协议尝试 step-image-edit-2 未知协议，按通用 OpenAI 协议尝试 视频模型 视频走异步提交+轮询协议，与图片模型分开配置。填入模型 id（如 agnes-video-2.5-flash、wan2.2-t2v、zhimeng-h3-local）即可。 该渠道还没有视频模型；可点下方「添加常用视频模型」或手动填写。 添加 添加常用视频模型 添加 从其他渠道复制… 复制 默认 删除此渠道",
+    "hasTest": false,
+    "fields": [
+      {
+        "tag": "input",
+        "type": "text",
+        "ph": "未命名渠道",
+        "val": "11",
+        "dis": false,
+        "aria": "",
+        "name": ""
+      },
+      {
+        "tag": "input",
+        "type": "text",
+        "ph": "https://api.example.com/v1",
+        "val": "http://43.136.",
+        "dis": false,
+        "aria": "",
+        "name": ""
+      },
+      {
+        "tag": "input",
+        "type": "checkbox",
+        "ph": "",
+        "val": "on",
+        "dis": false,
+        "aria": "",
+        "name": ""
+      },
+      {
+        "tag": "input",
+        "type": "password",
+        "ph": "已配置 — 输入新值可替换",
+        "val": "",
+        "dis": false,
+        "aria": "",
+        "name": ""
+      },
+      {
+        "tag": "input",
+        "type": "checkbox",
+        "ph": "",
+        "val": "on",
+        "dis": false,
+        "aria": "",
+        "name": ""
+      },
+      {
+        "tag": "input",
+        "type": "checkbox",
+        "ph": "",
+        "val": "on",
+        "dis": false,
+        "aria": "",
+        "name": ""
+      },
+      {
+        "tag": "input",
+        "type": "checkbox",
+        "ph": "",
+        "val": "on",
+        "dis": false,
+        "aria": "",
+        "name": ""
+      },
+      {
+        "tag": "input",
+        "type": "text",
+        "ph": "视频模型 id",
+        "val": "",
+        "dis": false,
+        "aria": "",
+        "name": ""
+      },
+      {
+        "tag": "input",
+        "type": "text",
+        "ph": "输入模型 id，例如 qwen-image",
+        "val": "",
+        "dis": false,
+        "aria": "",
+        "name": ""
+      }
+    ],
+    "buttons": [
+      {
+        "t": "AI 生图（dsh-imagegen） ",
+        "a": "收起: AI 生图（dsh-imagegen）",
+        "dis": false
+      },
+      {
+        "t": "渠道与模型 3/3 可用",
+        "a": "",
+        "dis": false
+      },
+      {
+        "t": "提示词增强 agnes-2.5-flas",
+        "a": "",
+        "dis": false
+      },
+      {
+        "t": "存储同步 已关闭",
+        "a": "",
+        "dis": false
+      },
+      {
+        "t": "图片转 PPT PPTX",
+        "a": "",
+        "dis": false
+      },
+      {
+        "t": "画布技能 已启用",
+        "a": "",
+        "dis": false
+      },
+      {
+        "t": "通用设置 已启用",
+        "a": "",
+        "dis": false
+      },
+      {
+        "t": "渠道 填写各渠道的 API 地址与密钥即",
+        "a": "",
+        "dis": false
+      },
+      {
+        "t": "★ 11 密钥已设置 · 3 个模型",
+        "a": "",
+        "dis": false
+      },
+      {
+        "t": "编辑",
+        "a": "",
+        "dis": false
+      },
+      {
+        "t": "删除",
+        "a": "",
+        "dis": false
+      },
+      {
+        "t": "22 密钥已设置 · 4 个模型",
+        "a": "",
+        "dis": false
+      },
+      {
+        "t": "编辑",
+        "a": "",
+        "dis": false
+      },
+      {
+        "t": "删除",
+        "a": "",
+        "dis": false
+      },
+      {
+        "t": "https://comemoe.com/",
+        "a": "",
+        "dis": false
+      },
+      {
+        "t": "编辑",
+        "a": "",
+        "dis": false
+      },
+      {
+        "t": "删除",
+        "a": "",
+        "dis": false
+      },
+      {
+        "t": "agnes-image-2.1-flas",
+        "a": "",
+        "dis": false
+      },
+      {
+        "t": "+ 添加提供方",
+        "a": "",
+        "dis": false
+      },
+      {
+        "t": "+ 添加自定义渠道",
+        "a": "",
+        "dis": false
+      },
+      {
+        "t": "提示词增强模型 用于将简短描述扩写为更完",
+        "a": "",
+        "dis": false
+      },
+      {
+        "t": "对象存储同步 图片保存到本地后，异步上传",
+        "a": "",
+        "dis": false
+      },
+      {
+        "t": "图片转可编辑 PPT 直接使用上游 sk",
+        "a": "",
+        "dis": false
+      },
+      {
+        "t": "无限画布技能 提示：把 image-to",
+        "a": "",
+        "dis": false
+      },
+      {
+        "t": "通用设置 插件总开关、Agent 播报与",
+        "a": "",
+        "dis": false
+      },
+      {
+        "t": "放弃修改",
+        "a": "",
+        "dis": true
+      }
+    ],
+    "shot": "230-193-m7b-channel-editor.png"
+  },
+  "p4-footer": {
+    "barTag": "div",
+    "position": "sticky",
+    "bg": "color(srgb 1 1 1 / 0.94)",
+    "scroller": {
+      "tag": "div",
+      "scrollH": 1140,
+      "clientH": 852
+    },
+    "bodyTextBehindBar": "DIV"
+  },
+  "p3-clear-and-save": {
+    "clearedFrom": "http://43.136.81.63:8317/v1",
+    "now": ""
+  },
+  "p3-after-save": {
+    "clicked": {
+      "x": 1131,
+      "y": 858,
+      "n": 1
+    },
+    "state": {
+      "alerts": [],
+      "toasts": [
+        "Model agnes-image-2.1-flash is not supported on /v1/images/generations or /v1/images/edits. Use gpt-image-2, grok-imagin",
+        "Model agnes-image-2.1-flash is not supported on /v1/images/generations or /v1/images/edits. Use gpt-image-2, grok-imagin"
+      ],
+      "hasRequired": false,
+      "tail": "模型 编辑 删除 默认生图模型 普通生图、无限画布、电商和 Agent 未指定模型时优先使用它；侧栏生图入口始终保留。 agnes-image-2.1-flash + 添加提供方 + 添加自定义渠道 提示词增强模型 用于将简短描述扩写为更完整的生图提示词；留空的地址和密钥会复用生图配置。 agnes-2.5-flash ⌄ 对象存储同步 图片保存到本地后，异步上传一份到 S3 兼容对象存储（腾讯云 COS / 阿里云 OSS / 七牛云 S3 / MinIO / R2 等） 已关闭 ⌄ 图片转可编辑 PPT 直接使用上游 skill 与 editppt，不额外设计转换流程。 PPTX ⌄ 无限画布技能 提示：把 image-to-editable-ppt 之类的技能装到 ~/.dsh/skills 后，即可在画布上把图片变成可编辑 PPT。 已启用 ⌄ 通用设置 插件总开关、Agent 播报与生图权限 已启用 ⌄ 放弃修改 保存"
+    },
+    "shot": "231-194-m7b-channel-save-validate.png"
+  },
+  "pageErrors": []
+}

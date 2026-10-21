@@ -1,0 +1,254 @@
+{
+  "l0-open": {
+    "opened": true,
+    "workspacePresent": true
+  },
+  "l1-empty": {
+    "text": "IMAGE → PPTX 图片转可编辑 PPT 还原已有图片中的文字、图形与版式，输出可编辑的 PowerPoint。 PPT 配置 幻灯片图片 0/12 ＋ 上传幻灯片图片 拖入或选择 PNG / JPG / WebP，最多12张，每张20MB 按顺序生成幻灯片，可点击缩略图预览。 文字识别方式 使用已配置的 PaddleOCR 本次使用离线文字检测 PaddleOCR 可改善文字内容和字号还原；离线模式不识别文字内容，由模型重建。 请先在生图配置中安装 skill、运行环境，并启用技能与长任务。 生成可编辑 PPT 转换可能耗时数分钟，并使用宿主模型及已配置的图像 API / OCR 服务；复杂页面可能需要更久。 转换结果 0 个任务 PPTX 把图片变成可以修改的幻灯片 上传图片，或从生图结果点击「生成可编辑 PPT」。图片顺序就是幻灯片顺序。",
+    "layout": {
+      "root": {
+        "x": 296,
+        "y": 52,
+        "w": 1288,
+        "h": 932
+      },
+      "sidebar": {
+        "x": 314,
+        "y": 163,
+        "w": 300,
+        "h": 803
+      },
+      "main": {
+        "x": 630,
+        "y": 163,
+        "w": 936,
+        "h": 803
+      }
+    },
+    "uploadZone": {
+      "x": 333,
+      "y": 214,
+      "w": 262,
+      "h": 154,
+      "text": "＋ 上传幻灯片图片 拖入或选择 PNG / JPG / WebP，最多12张，每张20MB"
+    },
+    "convert": {
+      "dis": true,
+      "text": "生成可编辑 PPT",
+      "title": "",
+      "ariaDis": null
+    },
+    "radios": [
+      {
+        "name": "ppt-ocr",
+        "checked": false,
+        "label": "使用已配置的 PaddleOCR",
+        "dis": false,
+        "inFieldset": false
+      },
+      {
+        "name": "ppt-ocr",
+        "checked": true,
+        "label": "本次使用离线文字检测",
+        "dis": false,
+        "inFieldset": false
+      }
+    ],
+    "emptyBlock": "转换结果 0 个任务 PPTX 把图片变成可以修改的幻灯片 上传图片，或从生图结果点击「生成可编辑 PPT」。图片顺序就是幻灯片顺序。",
+    "note": "还原已有图片中的文字、图形与版式，输出可编辑的 PowerPoint。",
+    "shot": "215-177-m6i-ppt-empty.png"
+  },
+  "l5-dialog": {
+    "clicked": true,
+    "state": {
+      "dialogs": [
+        {
+          "label": "图片转 PPT 配置",
+          "modal": "true",
+          "w": 802,
+          "text": "图片转 PPT 配置 × 直接使用上游 skill 与 editppt，不额外设计转换流程。 image-to-editable-ppt ↗ 安装官方 skill 安装 / 修复运行环境 检查运行环境 需要 Python 3.10+。安装按钮会将上游 CLI 和依赖安装到插件独立环境；首次安装需要联网。",
+          "buttons": [
+            {
+              "t": "×",
+              "dis": false
+            },
+            {
+              "t": "安装官方 skill",
+              "dis": false
+            },
+            {
+              "t": "安装 / 修复运行环境",
+              "dis": true
+            },
+            {
+              "t": "检查运行环境",
+              "dis": false
+            }
+          ],
+          "fields": []
+        }
+      ],
+      "focus": {
+        "tag": "button",
+        "text": "×"
+      }
+    },
+    "shot": "216-178-m6i-ppt-config-dialog.png"
+  },
+  "l5-esc": {
+    "dialogs": 0,
+    "focusInsideDialog": false
+  },
+  "l2-upload": {
+    "up": {
+      "ok": true,
+      "used": {
+        "i": 1,
+        "accept": "image/png,image/jpeg,image/webp",
+        "multiple": true,
+        "hidden": true
+      }
+    },
+    "state": {
+      "count": 2,
+      "countLabel": "幻灯片图片 2/12",
+      "items": [
+        {
+          "i": 0,
+          "name": "65-m0-workspace.png",
+          "nameTitle": "65-m0-workspace.png",
+          "imgLoaded": true,
+          "imgBox": {
+            "w": 110,
+            "h": 88
+          },
+          "btns": [
+            {
+              "a": "",
+              "t": "",
+              "dis": false
+            },
+            {
+              "a": "向前移动一页",
+              "t": "←",
+              "dis": true
+            },
+            {
+              "a": "向后移动一页",
+              "t": "→",
+              "dis": false
+            },
+            {
+              "a": "移除",
+              "t": "×",
+              "dis": false
+            }
+          ]
+        },
+        {
+          "i": 1,
+          "name": "66-m0-ws-menu.png",
+          "nameTitle": "66-m0-ws-menu.png",
+          "imgLoaded": true,
+          "imgBox": {
+            "w": 110,
+            "h": 88
+          },
+          "btns": [
+            {
+              "a": "",
+              "t": "",
+              "dis": false
+            },
+            {
+              "a": "向前移动一页",
+              "t": "←",
+              "dis": false
+            },
+            {
+              "a": "向后移动一页",
+              "t": "→",
+              "dis": true
+            },
+            {
+              "a": "移除",
+              "t": "×",
+              "dis": false
+            }
+          ]
+        }
+      ],
+      "convert": {
+        "dis": true,
+        "text": "生成可编辑 PPT"
+      },
+      "errors": []
+    },
+    "shot": "217-179-m6i-ppt-two-images.png"
+  },
+  "l3-arrow": {
+    "x": 398,
+    "y": 345,
+    "dis": false,
+    "label": "向后移动一页"
+  },
+  "l3-after-move": {
+    "before": [
+      "65-m0-workspace.png",
+      "66-m0-ws-menu.png"
+    ],
+    "after": {
+      "order": [
+        "66-m0-ws-menu.png",
+        "65-m0-workspace.png"
+      ],
+      "numbers": [
+        "1",
+        "2"
+      ],
+      "firstArrowDis": true,
+      "errors": []
+    },
+    "shot": "218-180-m6i-ppt-reordered.png"
+  },
+  "l4-bad-type": {
+    "bad": {
+      "ok": true,
+      "used": {
+        "i": 1,
+        "accept": "image/png,image/jpeg,image/webp",
+        "multiple": true,
+        "hidden": true
+      }
+    },
+    "state": {
+      "count": 2,
+      "alerts": [
+        {
+          "t": "图片无效，请使用不超过20MB的 PNG / JPG / WebP。",
+          "live": null
+        }
+      ],
+      "anyToast": []
+    },
+    "shot": "219-181-m6i-ppt-bad-type.png"
+  },
+  "l6-convert-gate": {
+    "dis": true,
+    "title": "",
+    "text": "生成可编辑 PPT",
+    "setupNote": "请先在生图配置中安装",
+    "tail": "的 PaddleOCR 本次使用离线文字检测 PaddleOCR 可改善文字内容和字号还原；离线模式不识别文字内容，由模型重建。 请先在生图配置中安装 skill、运行环境，并启用技能与长任务。 生成可编辑 PPT 转换可能耗时数分钟，并使用宿主模型及已配置的图像 API / OCR 服务；复杂页面可能需要更久。 图片无效，请使用不超过20MB的 PNG / JPG / WebP。 转换结果 0 个任务 PPTX 把图片变成可以修改的幻灯片 上传图片，或从生图结果点击「生成可编辑 PPT」。图片顺序就是幻灯片顺序。"
+  },
+  "pageErrors": [],
+  "consoleErrors": [
+    {
+      "type": "warning",
+      "text": "[connection] generation is still not ready after 3000ms"
+    },
+    {
+      "type": "warning",
+      "text": "[connection] connection lost, retry #1"
+    }
+  ]
+}

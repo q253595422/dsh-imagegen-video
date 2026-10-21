@@ -1,0 +1,149 @@
+{
+  "findings": [
+    {
+      "step": "sidebar/tabs-exist",
+      "ok": true,
+      "tabs": ""
+    },
+    {
+      "step": "panel/mounted",
+      "ok": true,
+      "htmlAttr": ""
+    },
+    {
+      "step": "shell/header",
+      "ok": true,
+      "note": "{\"rect\":{\"x\":280,\"w\":1320,\"h\":1000},\"navCount\":5,\"headerButtons\":[\"普通生图\",\"素材库\",\"无限画布\",\"电商模式预览\",\"图片转 PPT\",\"对话\",\"已连接\"],\"active\":[\"普通生图\",\"文生图\"]}",
+      "shot": "09-m1-shell-full.png"
+    },
+    {
+      "step": "nav/普通生图",
+      "ok": true,
+      "changed": false,
+      "activeNow": [
+        "普通生图",
+        "文生图"
+      ],
+      "shot": "10-m1-nav-普通生图.png"
+    },
+    {
+      "step": "nav/素材库",
+      "ok": true,
+      "changed": false,
+      "activeNow": [
+        "普通生图",
+        "文生图"
+      ],
+      "shot": "11-m1-nav-素材库.png"
+    },
+    {
+      "step": "nav/无限画布",
+      "ok": true,
+      "changed": false,
+      "activeNow": [
+        "普通生图",
+        "文生图"
+      ],
+      "shot": "12-m1-nav-无限画布.png"
+    },
+    {
+      "step": "nav/电商模式预览",
+      "ok": true,
+      "changed": false,
+      "activeNow": [
+        "普通生图",
+        "文生图"
+      ],
+      "shot": "13-m1-nav-电商模式预览.png"
+    },
+    {
+      "step": "nav/图片转 PPT",
+      "ok": true,
+      "changed": false,
+      "activeNow": [
+        "普通生图",
+        "文生图"
+      ],
+      "shot": "14-m1-nav-图片转PPT.png"
+    },
+    {
+      "step": "shell/resizer",
+      "ok": true,
+      "note": "{\"w\":0,\"h\":0,\"role\":\"separator\",\"tabindex\":\"0\"}"
+    },
+    {
+      "step": "shell/chat-toggle",
+      "ok": true,
+      "note": "{\"label\":\"对话\",\"pressed\":\"false\",\"active\":false}"
+    },
+    {
+      "step": "shell/chat-toggle-after",
+      "ok": true,
+      "state": {
+        "pressed": "true",
+        "active": false
+      },
+      "resizer": true,
+      "shot": "15-m1-chat-toggled.png"
+    },
+    {
+      "step": "shell/resizer-keyboard",
+      "ok": false,
+      "widths": [
+        1320,
+        1320
+      ],
+      "overflow": {
+        "scrollW": 1600,
+        "clientW": 1600,
+        "bodyScrollW": 1600
+      },
+      "shot": "16-m1-resizer-max.png"
+    },
+    {
+      "step": "shell/config-collapse-buttons",
+      "ok": true,
+      "note": "[{\"label\":\"收起参数栏\",\"title\":\"收起参数栏\",\"w\":28,\"x\":568}]"
+    },
+    {
+      "step": "sidebar/tabs-state",
+      "ok": true,
+      "note": "{\"text\":\"会话 生图\",\"items\":[{\"k\":\"session\",\"sel\":null,\"active\":false},{\"k\":\"image\",\"sel\":null,\"active\":true}]}",
+      "shot": "17-m1-sidebar-history.png"
+    },
+    {
+      "step": "sidebar/history",
+      "ok": true,
+      "note": "{\"text\":\"历史记录\\n清空\\n全部模型\\n全部比例\\nA slow sunrise over a dark horizon, warm orange gradient rising\\n16:9 · 720P · 3s · hy4-preview · 2026-10-21 07:28\\nA calm deep-blue gradient sky with a warm sun rising over a dark horizon, drawn with simple shapes\\n文生图 · 1 张 · hy4-preview · 2026-10-21 07:08\\n两个图片的人物在一起交朋友\\n16:9 · 720P \",\"cardGuess\":0,\"search\":true,\"selects\":[]}"
+    },
+    {
+      "step": "sidebar/search",
+      "ok": false,
+      "note": "eval threw: TypeError: Cannot read properties of undefined (reading 'set')\n    at <anonymous>:7:79\n    at <anonymous>:13:9"
+    },
+    {
+      "step": "sidebar/session-tab",
+      "ok": true,
+      "historyHostVisible": false,
+      "panelStillMounted": true,
+      "htmlActive": null,
+      "shot": "18-m1-sidebar-session-tab.png"
+    }
+  ],
+  "consoleErrors": [
+    {
+      "type": "warning",
+      "text": "[connection] generation is still not ready after 3000ms"
+    },
+    {
+      "type": "warning",
+      "text": "[connection] connection lost, retry #1"
+    },
+    {
+      "type": "warning",
+      "text": "[connection] generation is still not ready after 3000ms"
+    }
+  ],
+  "pageErrors": [],
+  "failedRequests": []
+}

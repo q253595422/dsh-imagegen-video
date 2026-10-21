@@ -1,0 +1,83 @@
+{
+  "c2-gear": {
+    "x": 140,
+    "y": 869,
+    "label": "设置"
+  },
+  "c2-dialog": {
+    "none": true,
+    "roleCount": 0,
+    "modals": 0,
+    "shot": "249-207-m8c-settings-760.png"
+  },
+  "c2-scroll-bottom": {
+    "noRef": true,
+    "shot": "250-208-m8c-settings-760-bottom.png"
+  },
+  "c2-esc-closed": false,
+  "c3-prompt": {
+    "len": 576,
+    "h": 120,
+    "scrollH": 706,
+    "maxLength": -1,
+    "overflowY": "auto",
+    "resize": "vertical"
+  },
+  "c3-prompt-after": {
+    "h": 120,
+    "scrollH": 706,
+    "counter": "",
+    "counterFound": false,
+    "genBelowFold": false,
+    "pageScrollH": 1000,
+    "docOverflowX": false,
+    "shot": "251-209-m8c-long-prompt.png"
+  },
+  "c3-ecom-name": {
+    "tag": "input",
+    "ph": "商品名称（必填）",
+    "len": 72,
+    "w": 248,
+    "h": 38,
+    "scrollW": 886,
+    "pageOverflowX": false,
+    "shot": "252-210-m8c-long-ecom-name.png"
+  },
+  "c4-tab-order": {
+    "seq": [
+      "button:对话·ring",
+      "button:已连接·ring",
+      "button:收起参数栏",
+      "button:文生图·ring",
+      "textarea:描述你想要的画面，例如：一只戴着宇航员头",
+      "button:模板库·ring",
+      "button:自动·ring",
+      "button:1:1 方图·ring",
+      "button:3:4 标准竖图·ring",
+      "button:4:3 标准横图·ring",
+      "button:9:16 竖屏·ring",
+      "button:2:3 竖图·ring",
+      "button:3:2 横图·ring",
+      "button:16:9 宽屏·ring",
+      "button:21:9 超宽屏·ring",
+      "button:自动·ring",
+      "button:1K·ring",
+      "button:2K·ring",
+      "button:4K·ring",
+      "button:1 张·ring",
+      "button:2 张·ring",
+      "button:3 张·ring",
+      "button:4 张·ring",
+      "button:自动·ring"
+    ],
+    "shot": "253-211-m8c-tab-order.png"
+  },
+  "c4-summary": {
+    "steps": 24,
+    "anyRing": true,
+    "noRingStops": 2,
+    "zeroSizeStops": 0,
+    "bodyStops": 0
+  },
+  "pageErrors": []
+}

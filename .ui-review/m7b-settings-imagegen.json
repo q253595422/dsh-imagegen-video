@@ -1,0 +1,297 @@
+{
+  "o0-dialog": {
+    "dialogs": 1,
+    "labels": [
+      ""
+    ],
+    "items": [
+      "会话",
+      "生图",
+      "插件",
+      "清空",
+      "全部模型",
+      "全部比例",
+      "设置",
+      "chajian",
+      "标准模式",
+      "完全权限",
+      "普通生图",
+      "素材库",
+      "无限画布",
+      "电商模式预览",
+      "图片转 PPT",
+      "对话",
+      "已连接",
+      "文生图",
+      "图生图",
+      "生视频"
+    ]
+  },
+  "o1-page": {
+    "clicked": true,
+    "state": {
+      "cardPresent": true,
+      "summaryBadge": "核心配置已就绪",
+      "summaryHint": [
+        "配置",
+        "配置",
+        "配置",
+        "配置",
+        "就绪",
+        "配置"
+      ],
+      "text": "设置 通用设置 模型 内置插件 生图配置 Agent 预设 打开配置文件 关闭 AI 生图（dsh-imagegen） 3 个渠道 · 8 个模型 ▾ 配置概览 点击状态卡或分组标题查看详情；每次只展开一个区域。 核心配置已就绪 渠道与模型 3/3 可用 提示词增强 agnes-2.5-flash 存储同步 已关闭 图片转 PPT PPTX 画布技能 已启用 通用设置 已启用 渠道 填写各渠道的 API 地址与密钥即可使用对应模型 3/3 可用 ⌃ ★ 11 密钥已设置 · 3 个模型 编辑 删除 22 密钥已设置 · 4 个模型 编辑 删除 https://comemoe.com/v1 密钥已设置 · 1 个模型 编辑 删除 默认生图模型 普通生图、无限画布、电商和 Agent 未指定模型时优先使用它；侧栏生图入口始终保留。 agnes-image-2.1-flash + 添加提供方 + 添加自定义渠道 提示词增强模型 用于将简短描述扩写为更完整的生图提示词；留空的地址和密钥会复用生图配置。 agnes-2.5-flash ⌄ 对象存储同步 图片保存到本地后，异步上传一份到 S3 兼容对象存储（腾讯云 COS / 阿里云 OSS / 七牛云 S3 / MinIO / R2 等） 已关闭 ⌄ 图片转可编辑 PPT 直接使用上游 skill 与 editppt，不额外设计转换流程。 PPTX ⌄ 无限画布技能 提示：把 image-to-editable-ppt 之类的技能装到 ~/.dsh/skills 后，即可在画布上把图片变成可编辑 PPT。 已启用 ⌄ 通用设置 插件总开关、Agent 播报与生图权限 已启用 ⌄ 放弃修改 保存",
+      "sections": [
+        {
+          "id": "",
+          "open": false,
+          "head": "AI 生图（dsh-imagegen） 3 个渠道 · 8 个模型 ▾",
+          "expanded": "true"
+        },
+        {
+          "id": "",
+          "open": false,
+          "head": "渠道与模型 3/3 可用",
+          "expanded": null
+        },
+        {
+          "id": "",
+          "open": true,
+          "head": "渠道 填写各渠道的 API 地址与密钥即可使用对应模型 3/3 可用 ⌃",
+          "expanded": "true"
+        },
+        {
+          "id": "",
+          "open": false,
+          "head": "提示词增强模型 用于将简短描述扩写为更完整的生图提示词；留空的地址和密钥会复用生图配置。 agnes-2.5-flash",
+          "expanded": "false"
+        },
+        {
+          "id": "",
+          "open": false,
+          "head": "对象存储同步 图片保存到本地后，异步上传一份到 S3 兼容对象存储（腾讯云 COS / 阿里云 OSS / 七牛云 S3",
+          "expanded": "false"
+        },
+        {
+          "id": "",
+          "open": false,
+          "head": "图片转可编辑 PPT 直接使用上游 skill 与 editppt，不额外设计转换流程。 PPTX ⌄",
+          "expanded": "false"
+        },
+        {
+          "id": "",
+          "open": false,
+          "head": "无限画布技能 提示：把 image-to-editable-ppt 之类的技能装到 ~/.dsh/skills 后，即可",
+          "expanded": "false"
+        },
+        {
+          "id": "",
+          "open": false,
+          "head": "通用设置 插件总开关、Agent 播报与生图权限 已启用 ⌄",
+          "expanded": "false"
+        }
+      ],
+      "buttons": [
+        {
+          "t": "通用设置",
+          "a": "",
+          "dis": false
+        },
+        {
+          "t": "模型",
+          "a": "",
+          "dis": false
+        },
+        {
+          "t": "内置插件",
+          "a": "",
+          "dis": false
+        },
+        {
+          "t": "生图配置",
+          "a": "",
+          "dis": false
+        },
+        {
+          "t": "Agent 预设",
+          "a": "",
+          "dis": false
+        },
+        {
+          "t": "打开配置文件",
+          "a": "",
+          "dis": false
+        },
+        {
+          "t": "关闭",
+          "a": "",
+          "dis": false
+        },
+        {
+          "t": "AI 生图（dsh-imagegen） ",
+          "a": "收起: AI 生图（dsh-imagegen）",
+          "dis": false
+        },
+        {
+          "t": "渠道与模型 3/3 可用",
+          "a": "",
+          "dis": false
+        },
+        {
+          "t": "提示词增强 agnes-2.5-flas",
+          "a": "",
+          "dis": false
+        },
+        {
+          "t": "存储同步 已关闭",
+          "a": "",
+          "dis": false
+        },
+        {
+          "t": "图片转 PPT PPTX",
+          "a": "",
+          "dis": false
+        },
+        {
+          "t": "画布技能 已启用",
+          "a": "",
+          "dis": false
+        },
+        {
+          "t": "通用设置 已启用",
+          "a": "",
+          "dis": false
+        },
+        {
+          "t": "渠道 填写各渠道的 API 地址与密钥即",
+          "a": "",
+          "dis": false
+        },
+        {
+          "t": "★ 11 密钥已设置 · 3 个模型",
+          "a": "",
+          "dis": false
+        },
+        {
+          "t": "编辑",
+          "a": "",
+          "dis": false
+        },
+        {
+          "t": "删除",
+          "a": "",
+          "dis": false
+        },
+        {
+          "t": "22 密钥已设置 · 4 个模型",
+          "a": "",
+          "dis": false
+        },
+        {
+          "t": "编辑",
+          "a": "",
+          "dis": false
+        },
+        {
+          "t": "删除",
+          "a": "",
+          "dis": false
+        },
+        {
+          "t": "https://comemoe.com/",
+          "a": "",
+          "dis": false
+        },
+        {
+          "t": "编辑",
+          "a": "",
+          "dis": false
+        },
+        {
+          "t": "删除",
+          "a": "",
+          "dis": false
+        },
+        {
+          "t": "agnes-image-2.1-flas",
+          "a": "",
+          "dis": false
+        },
+        {
+          "t": "+ 添加提供方",
+          "a": "",
+          "dis": false
+        },
+        {
+          "t": "+ 添加自定义渠道",
+          "a": "",
+          "dis": false
+        },
+        {
+          "t": "提示词增强模型 用于将简短描述扩写为更完",
+          "a": "",
+          "dis": false
+        },
+        {
+          "t": "对象存储同步 图片保存到本地后，异步上传",
+          "a": "",
+          "dis": false
+        },
+        {
+          "t": "图片转可编辑 PPT 直接使用上游 sk",
+          "a": "",
+          "dis": false
+        }
+      ],
+      "hasTest": false,
+      "hasVersion": false,
+      "versionHit": []
+    },
+    "shot": "228-191-m7b-settings-imagegen.png"
+  },
+  "o2-channel-head": {
+    "x": 894,
+    "y": 191,
+    "text": "AI 生图（dsh-imagegen） 3 个渠道 · 8 个模型 ▾",
+    "expanded": "true"
+  },
+  "o2-channel-open": {
+    "text": "AI 生图（dsh-imagegen） 3 个渠道 · 8 个模型 ▾",
+    "hasTest": false,
+    "channelRows": [],
+    "buttons": [
+      {
+        "t": "AI 生图（dsh-imagegen） 3 ",
+        "a": "展开: AI 生图（dsh-imagegen）",
+        "dis": false
+      }
+    ],
+    "inputs": [],
+    "shot": "229-192-m7b-settings-channels.png"
+  },
+  "o4-layering": {
+    "diagnosticsStillMounted": false,
+    "diagnosticsZ": null,
+    "dialogs": [
+      {
+        "label": "",
+        "z": "1"
+      }
+    ]
+  },
+  "o5-esc": {
+    "bigDialogs": 0,
+    "diagnostics": false
+  },
+  "pageErrors": [],
+  "consoleErrors": [
+    {
+      "type": "warning",
+      "text": "[connection] generation is still not ready after 3000ms"
+    },
+    {
+      "type": "warning",
+      "text": "[connection] connection lost, retry #1"
+    }
+  ]
+}

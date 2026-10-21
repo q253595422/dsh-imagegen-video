@@ -1,0 +1,226 @@
+{
+  "findings": [
+    {
+      "step": "gallery/enter",
+      "ok": true,
+      "state": {
+        "heading": "VisioWork",
+        "textHead": "VisioWork 普通生图 素材库 无限画布 电商模式预览 图片转 PPT 素材库 对话 已连接 分类 全部素材 4 文生图 3 图生图 1 agnes-image-2.1-flash 0 agnes-image-2.5-flash 1 step-image-edit-2 0 gpt-image-2 0 gpt-image-2.5 0 gpt-image-2.5-sunburst 0 gpt-image-2.5-flare 0 zhimeng-qwen-image 0 sensenova-u1.5-lite 3 画面比例 全部素材 1:1 3:4 4:3 16:9 按生成模式、模型和比例筛选素材 全部素材· 共 4 幅 上传素材 选择作品 ▦ 瀑布流 ▤ 整齐网格 最新发布 打开文件夹 清空素材库 文生图 加入对话 加入画布 D A vertical 9:16 composition at 1080x1440 resolution, featuring an exceptionally graceful girl emerging from a 3D transparent glass smartphone screen displaying Xiaohongshu (Little Red Book) social media posts. She is captured mid-motion, breaking through the glass barrier into reality with a dynamic, natural pose that adheres t",
+        "loading": false,
+        "emptyMatch": null,
+        "chipsAll": [
+          "普通生图",
+          "素材库",
+          "无限画布",
+          "电商模式预览",
+          "图片转 PPT",
+          "对话",
+          "已连接",
+          "全部素材\n4",
+          "文生图\n3",
+          "图生图\n1",
+          "agnes-image-2.1-flash\n0",
+          "agnes-image-2.5-flash\n1",
+          "step-image-edit-2\n0",
+          "gpt-image-2\n0",
+          "gpt-image-2.5\n0",
+          "gpt-image-2.5-sunburst\n0",
+          "gpt-image-2.5-flare\n0",
+          "zhimeng-qwen-image\n0",
+          "sensenova-u1.5-lite\n3",
+          "全部素材",
+          "1:1",
+          "3:4",
+          "4:3",
+          "16:9",
+          "上传素材",
+          "选择作品",
+          "▦ 瀑布流",
+          "▤ 整齐网格",
+          "最新发布",
+          "打开文件夹",
+          "清空素材库",
+          "文生图",
+          "加入对话",
+          "加入画布",
+          "编辑",
+          "×",
+          "文生图",
+          "加入对话",
+          "加入画布",
+          "编辑",
+          "×",
+          "文生图",
+          "加入对话",
+          "加入画布",
+          "编辑",
+          "×",
+          "图生图",
+          "加入对话",
+          "加入画布",
+          "编辑"
+        ],
+        "imgs": 4,
+        "videos": 0,
+        "figures": 0,
+        "cards": 0
+      },
+      "shot": "88-m4-gallery-enter.png"
+    },
+    {
+      "step": "gallery/settled",
+      "ok": true,
+      "state": {
+        "heading": "VisioWork",
+        "textHead": "VisioWork 普通生图 素材库 无限画布 电商模式预览 图片转 PPT 素材库 对话 已连接 分类 全部素材 4 文生图 3 图生图 1 agnes-image-2.1-flash 0 agnes-image-2.5-flash 1 step-image-edit-2 0 gpt-image-2 0 gpt-image-2.5 0 gpt-image-2.5-sunburst 0 gpt-image-2.5-flare 0 zhimeng-qwen-image 0 sensenova-u1.5-lite 3 画面比例 全部素材 1:1 3:4 4:3 16:9 按生成模式、模型和比例筛选素材 全部素材· 共 4 幅 上传素材 选择作品 ▦ 瀑布流 ▤ 整齐网格 最新发布 打开文件夹 清空素材库 文生图 加入对话 加入画布 D A vertical 9:16 composition at 1080x1440 resolution, featuring an exceptionally graceful girl emerging from a 3D transparent glass smartphone screen displaying Xiaohongshu (Little Red Book) social media posts. She is captured mid-motion, breaking through the glass barrier into reality with a dynamic, natural pose that adheres t",
+        "loading": false,
+        "emptyMatch": null,
+        "chipsAll": [
+          "普通生图",
+          "素材库",
+          "无限画布",
+          "电商模式预览",
+          "图片转 PPT",
+          "对话",
+          "已连接",
+          "全部素材\n4",
+          "文生图\n3",
+          "图生图\n1",
+          "agnes-image-2.1-flash\n0",
+          "agnes-image-2.5-flash\n1",
+          "step-image-edit-2\n0",
+          "gpt-image-2\n0",
+          "gpt-image-2.5\n0",
+          "gpt-image-2.5-sunburst\n0",
+          "gpt-image-2.5-flare\n0",
+          "zhimeng-qwen-image\n0",
+          "sensenova-u1.5-lite\n3",
+          "全部素材",
+          "1:1",
+          "3:4",
+          "4:3",
+          "16:9",
+          "上传素材",
+          "选择作品",
+          "▦ 瀑布流",
+          "▤ 整齐网格",
+          "最新发布",
+          "打开文件夹",
+          "清空素材库",
+          "文生图",
+          "加入对话",
+          "加入画布",
+          "编辑",
+          "×",
+          "文生图",
+          "加入对话",
+          "加入画布",
+          "编辑",
+          "×",
+          "文生图",
+          "加入对话",
+          "加入画布",
+          "编辑",
+          "×",
+          "图生图",
+          "加入对话",
+          "加入画布",
+          "编辑"
+        ],
+        "imgs": 4,
+        "videos": 0,
+        "figures": 0,
+        "cards": 0
+      },
+      "shot": "89-m4-gallery-settled.png"
+    },
+    {
+      "step": "gallery/left-filters",
+      "ok": true,
+      "note": "[\"全部素材\",\"1:1\",\"3:4\",\"4:3\",\"16:9\"]"
+    },
+    {
+      "step": "gallery/count",
+      "ok": true,
+      "note": "{\"countText\":[],\"imgs\":4,\"plus\":[]}"
+    },
+    {
+      "step": "gallery/filter/全部素材",
+      "ok": true,
+      "note": "{\"imgs\":4,\"videos\":0,\"emptyMatch\":null}",
+      "shot": "90-m4-filter-全部素材.png"
+    },
+    {
+      "step": "gallery/filter/1:1",
+      "ok": true,
+      "note": "{\"imgs\":0,\"videos\":0,\"emptyMatch\":null}",
+      "shot": "91-m4-filter-1-1.png"
+    },
+    {
+      "step": "gallery/filter/3:4",
+      "ok": true,
+      "note": "{\"imgs\":0,\"videos\":0,\"emptyMatch\":null}",
+      "shot": "92-m4-filter-3-4.png"
+    },
+    {
+      "step": "gallery/filter/4:3",
+      "ok": true,
+      "note": "{\"imgs\":0,\"videos\":0,\"emptyMatch\":null}",
+      "shot": "93-m4-filter-4-3.png"
+    },
+    {
+      "step": "gallery/filter/16:9",
+      "ok": true,
+      "note": "{\"imgs\":0,\"videos\":0,\"emptyMatch\":null}",
+      "shot": "94-m4-filter-16-9.png"
+    },
+    {
+      "step": "gallery/search-input",
+      "ok": false,
+      "note": "null"
+    },
+    {
+      "step": "gallery/card-actions",
+      "ok": true,
+      "note": "[\"展开右侧对话\",\"已连接\",\"收起参数栏\",\"把本地图保存进素材库，画布随时可用\",\"瀑布流\",\"整齐网格\",\"排序\",\"在系统的文件管理器中打开图片保存目录（~/.dsh/dsh-imagegen）\"]"
+    },
+    {
+      "step": "gallery/favorite",
+      "ok": false,
+      "note": "{\"before\":\"\",\"after\":\"\"}",
+      "shot": "95-m4-favorite.png"
+    },
+    {
+      "step": "gallery/narrow-900",
+      "ok": true,
+      "overflow": {
+        "scrollW": 900,
+        "clientW": 900,
+        "bodyScrollW": 900
+      },
+      "shot": "96-m4-narrow900.png"
+    },
+    {
+      "step": "gallery/narrow-700",
+      "ok": true,
+      "overflow": {
+        "scrollW": 700,
+        "clientW": 700,
+        "bodyScrollW": 700
+      },
+      "shot": "97-m4-narrow700.png"
+    }
+  ],
+  "consoleErrors": [
+    {
+      "type": "warning",
+      "text": "[connection] generation is still not ready after 3000ms"
+    },
+    {
+      "type": "warning",
+      "text": "[connection] connection lost, retry #1"
+    }
+  ],
+  "pageErrors": [],
+  "failed": []
+}

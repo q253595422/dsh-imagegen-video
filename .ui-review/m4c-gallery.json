@@ -1,0 +1,169 @@
+{
+  "result": {
+    "before": {
+      "imgs": 4,
+      "header": "VisioWork",
+      "countText": "共 4 幅"
+    },
+    "left-rail-dom": {
+      "colText": "分类 全部素材 4 文生图 3 图生图 1 agnes-image-2.1-flash 0 agnes-image-2.5-flash 1 step-image-edit-2 0 gpt-image-2 0 gpt-image-2.5 0 gpt-image-2.5-sunburst 0 gpt-image-2.5-flare 0 zhimeng-qwen-image 0 sensenova-u1",
+      "clickable": [
+        {
+          "t": "",
+          "tag": "BUTTON",
+          "role": ""
+        },
+        {
+          "t": "全部素材 4",
+          "tag": "BUTTON",
+          "role": ""
+        },
+        {
+          "t": "文生图 3",
+          "tag": "BUTTON",
+          "role": ""
+        },
+        {
+          "t": "图生图 1",
+          "tag": "BUTTON",
+          "role": ""
+        },
+        {
+          "t": "agnes-image-2.1-flash 0",
+          "tag": "BUTTON",
+          "role": ""
+        },
+        {
+          "t": "agnes-image-2.5-flash 1",
+          "tag": "BUTTON",
+          "role": ""
+        },
+        {
+          "t": "step-image-edit-2 0",
+          "tag": "BUTTON",
+          "role": ""
+        },
+        {
+          "t": "gpt-image-2 0",
+          "tag": "BUTTON",
+          "role": ""
+        },
+        {
+          "t": "gpt-image-2.5 0",
+          "tag": "BUTTON",
+          "role": ""
+        },
+        {
+          "t": "gpt-image-2.5-sunburst 0",
+          "tag": "BUTTON",
+          "role": ""
+        },
+        {
+          "t": "gpt-image-2.5-flare 0",
+          "tag": "BUTTON",
+          "role": ""
+        },
+        {
+          "t": "zhimeng-qwen-image 0",
+          "tag": "BUTTON",
+          "role": ""
+        },
+        {
+          "t": "sensenova-u1.5-lite 3",
+          "tag": "BUTTON",
+          "role": ""
+        },
+        {
+          "t": "全部素材",
+          "tag": "BUTTON",
+          "role": ""
+        },
+        {
+          "t": "1:1",
+          "tag": "BUTTON",
+          "role": ""
+        },
+        {
+          "t": "3:4",
+          "tag": "BUTTON",
+          "role": ""
+        },
+        {
+          "t": "4:3",
+          "tag": "BUTTON",
+          "role": ""
+        },
+        {
+          "t": "16:9",
+          "tag": "BUTTON",
+          "role": ""
+        }
+      ]
+    },
+    "zero-model-tap": {
+      "hit": false,
+      "hitInfo": null
+    },
+    "zero-model-state": {
+      "count": {
+        "imgs": 4,
+        "header": "VisioWork",
+        "countText": "共 4 幅"
+      },
+      "text": "VisioWork\n普通生图\n素材库\n无限画布\n电商模式预览\n图片转 PPT\n素材库\n对话\n已连接\n分类\n全部素材\n4\n文生图\n3\n图生图\n1\nagnes-image-2.1-flash\n0\nagnes-image-2.5-flash\n1\nstep-image-edit-2\n0\ngpt-image-2\n0\ngpt-image-2.5\n0\ngpt-image-2.5-sunburst\n0\ngpt-image-2.5-flare\n0\nzhimeng-qwen-image\n0\nsensenova-u1.5-lite\n3\n画面比例\n全部素材\n1:1\n3:4\n4:3\n16:9\n按生成模式、模型和比例筛选素材\n全部素材· 共 4 幅\n上传素材\n选择作品\n▦ 瀑布流\n▤ 整齐网格\n最新发布\n打开文件夹\n清空素材库\n文生图\n加入对话\n加入画布\nD\nA vertical 9:16 composition a",
+      "shot": "106-m4c-zero-model.png"
+    },
+    "edit-btn": {
+      "x": 702,
+      "y": 630
+    },
+    "edit-dialog": {
+      "dialogs": [],
+      "focusedTag": "INPUT",
+      "focusedPh": "标签，用逗号分隔",
+      "shot": "107-m4c-edit-tag.png"
+    },
+    "edit-after-esc": {
+      "text": "VisioWork\n普通生图\n素材库\n无限画布\n电商模式预览\n图片转 PPT\n素材库\n对话\n已连接\n分类\n全部素材\n4\n文生图\n3\n图生图\n1\nagnes-image-2.1-flash\n0\nagnes-image-2.5-flash\n1\nstep-image-edit-2\n0\ngpt-image-2\n0\ngpt-image-2.5\n0\ngpt-image-2.5-sunburst\n0\ngpt-i"
+    },
+    "preview-target": {
+      "x": 784,
+      "y": 357,
+      "tag": "BUTTON"
+    },
+    "preview-open": {
+      "layerCount": 2,
+      "text": "",
+      "imgs": 0,
+      "buttons": [],
+      "shot": "108-m4c-preview.png"
+    },
+    "preview-after-esc": {
+      "viewVisible": true,
+      "imgs": 4
+    },
+    "remove-btn": {
+      "x": 906,
+      "y": 612,
+      "title": "移出素材库"
+    },
+    "remove-click": {
+      "stillCount": "共 3 幅",
+      "confirmish": [],
+      "alert": [],
+      "shot": "109-m4c-remove.png"
+    }
+  },
+  "consoleErrors": [
+    {
+      "type": "warning",
+      "text": "[connection] generation is still not ready after 3000ms"
+    },
+    {
+      "type": "warning",
+      "text": "[connection] connection lost, retry #1"
+    }
+  ],
+  "pageErrors": [],
+  "failed": []
+}

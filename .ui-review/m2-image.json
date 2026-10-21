@@ -1,0 +1,225 @@
+{
+  "findings": [
+    {
+      "step": "text2img/config-groups",
+      "ok": true,
+      "note": "[{\"title\":\"\",\"btns\":[{\"t\":\"文生图\",\"active\":true,\"disabled\":false,\"rect\":{\"w\":85,\"h\":28}},{\"t\":\"图生图\",\"active\":false,\"disabled\":false,\"rect\":{\"w\":85,\"h\":28}},{\"t\":\"生视频\",\"active\":false,\"disabled\":false,\"rect\":{\"w\":85,\"h\":28}}]},{\"title\":\"\",\"btns\":[{\"t\":\"模板库\",\"active\":false,\"disabled\":false,\"rect\":{\"w\":80,\"h\":26}},{\"t\":\"增强\",\"active\":false,\"disabled\":true,\"rect\":{\"w\":48,\"h\":26}}]},{\"title\":\"\",\"btns\":[{\"t\":\"自动\",\"active\":false,\"disabled\":false,\"rect\":{\"w\":87,\"h\":24}},{\"t\":\"1:1 方图\",\"active\":false,\"disabled\":false,\"rect\":{\"w\":87,\"h\":24}},{\"t\":\"3:4 标准竖图\",\"active\":false,\"disabled\":false,\"rect\":{\"w\":87,\"h\":24}},{\"t\":\"4:3 标准横图\",\"active\":false,\"disabled\":false,\"rect\":{\"w\":87,\"h\":24}},{\"t\":\"9:16 竖屏\",\"active\":false,\"disabled\":false,\"rect\":{\"w\":87,\"h\":24}},{\"t\":\"2:3 竖图\",\"active\":false,\"disabled\":false,\"rect\":{\"w\":87,\"h\":24}},{\"t\":\"3:2 横图\",\"active\":false,\"disabled\":false,\"rect\":{\"w\":87,\"h\":24}},{\"t\":\"16:9 宽屏\",\"active\":false,\"disabled\":false,\"rect\":{\"w\":87,\"h\":24}},{\"t\":\"21:9 超宽屏\",\"active\":false,\"disabled\":false,\"rect\":{\"w\":87,\"h\":24}},{\"t\":\"自动\",\"active\":false,\"disabled\":false,\"rect\":{\"w\":40,\"h\":24}},{\"t\":\"1K\",\"active\":false,\"disabled\":false,\"rect\":{\"w\":29,\"h\":24}},{\"t\":\"2K\",\"active\":false,\"disabled\":false,\"rect\":{\"w\":31,\"h\":24}},{\"t\":\"4K\",\"active\":false,\"disabled\":false,\"rect\":{\"w\":32,\"h\":24}},{\"t\":\"1 张\",\"active\":false,\"disabled\":false,\"rect\":{\"w\":37,\"h\":24}},{\"t\":\"2 张\",\"active\":false,\"disabled\":false,\"rect\":{\"w\":39,\"h\":24}},{\"t\":\"3 张\",\"active\":false,\"disabled\":false,\"rect\":{\"w\":39,\"h\":24}},{\"t\":\"4 张\",\"active\":false,\"disabled\":false,\"rect\":{\"w\":39,\"h\":24}},{\"t\":\"自动\",\"active\":false,\"disabled\":false,\"rect\":{\"w\":40,\"h\":24}},{\"t\":\"标准\",\"active\":false,\"disabled\":false,\"rect\":{\"w\":40,\"h\":24}},{\"t\":\"高清\",\"active\":false,\"disabled\":false,\"rect\":{\"w\":40,\"h\":24}}]}]",
+      "shot": "33-m2-text2img-config.png"
+    },
+    {
+      "step": "text2img/size-options",
+      "ok": true,
+      "note": "[\"自动\",\"1:1 方图\",\"3:4 标准竖图\",\"4:3 标准横图\",\"9:16 竖屏\",\"2:3 竖图\",\"3:2 横图\",\"16:9 宽屏\",\"21:9 超宽屏\",\"自动\",\"自动\"]"
+    },
+    {
+      "step": "text2img/size-click-each",
+      "ok": true,
+      "note": "[{\"label\":\"自动\",\"selected\":[\"文生图\"]},{\"label\":\"1:1 方图\",\"selected\":[\"文生图\"]},{\"label\":\"3:4 标准竖图\",\"selected\":[\"文生图\"]},{\"label\":\"4:3 标准横图\",\"selected\":[\"文生图\"]},{\"label\":\"9:16 竖屏\",\"selected\":[\"文生图\"]},{\"label\":\"2:3 竖图\",\"selected\":[\"文生图\"]},{\"label\":\"3:2 横图\",\"selected\":[\"文生图\"]},{\"label\":\"16:9 宽屏\",\"selected\":[\"文生图\"]},{\"label\":\"21:9 超宽屏\",\"selected\":[\"文生图\"]},{\"label\":\"自动\",\"selected\":[\"文生图\"]},{\"label\":\"自动\",\"selected\":[\"文生图\"]}]",
+      "shot": "34-m2-text2img-size-last.png"
+    },
+    {
+      "step": "text2img/param-groups",
+      "ok": true,
+      "note": "[{\"g\":\"清晰度\",\"state\":{\"btns\":[{\"t\":\"自动\",\"active\":false},{\"t\":\"1K\",\"active\":false},{\"t\":\"2K\",\"active\":false},{\"t\":\"4K\",\"active\":false}]}},{\"g\":\"生成数量\",\"state\":{\"btns\":[{\"t\":\"1 张\",\"active\":false},{\"t\":\"2 张\",\"active\":false},{\"t\":\"3 张\",\"active\":false},{\"t\":\"4 张\",\"active\":false}]}},{\"g\":\"细节\",\"state\":{\"btns\":[{\"t\":\"自动\",\"active\":false},{\"t\":\"标准\",\"active\":false},{\"t\":\"高清\",\"active\":false}]}}]"
+    },
+    {
+      "step": "text2img/count-4",
+      "ok": true,
+      "selected": [
+        "文生图"
+      ],
+      "shot": "35-m2-text2img-count4.png"
+    },
+    {
+      "step": "text2img/enhance-initial",
+      "ok": true,
+      "note": "{\"text\":\"增强\",\"pressed\":null,\"active\":false,\"disabled\":true,\"title\":\"使用已配置的对话模型扩写提示词\",\"aria\":null}"
+    },
+    {
+      "step": "text2img/enhance-after",
+      "ok": true,
+      "note": "{\"text\":\"增强\",\"pressed\":null,\"active\":false}",
+      "shot": "36-m2-text2img-enhance-on.png"
+    },
+    {
+      "step": "template-library/open",
+      "ok": true,
+      "note": "{\"rect\":{\"x\":0,\"y\":0,\"w\":1600,\"h\":1000},\"title\":\"提示词模板库\",\"cats\":[\"刷新本库\",\"缓存全部图片\",\"精选案例库\",\"沧河案例库\",\"手绘模板库\",\"Prompt/Signal\",\"GPT Image 2 案例库\",\"Prompt 图集\",\"多模态提示词\",\"YouArt 2.5\",\"全部\",\"★ 收藏\",\"历史记录\",\"全部\",\"重试\"],\"cards\":0,\"hasSearch\":true,\"empty\":false}",
+      "shot": "37-m2-template-library.png"
+    },
+    {
+      "step": "template-library/empty-search",
+      "ok": true,
+      "note": "{\"text\":\"提示词模板库 刷新本库 缓存全部图片 精选案例库 沧河案例库 手绘模板库 Prompt/Signal GPT Image 2 案例库 Prompt 图集 多模态提示词 YouArt 2.5 全部 ★ 收藏 历史记录 精选案例库 全部 全部 模板库加载失败：Failed to fetch 重试 模板与图片来自各来源站点，\"}",
+      "shot": "38-m2-template-empty.png"
+    },
+    {
+      "step": "template-library/esc-close",
+      "ok": true
+    },
+    {
+      "step": "edit/enter",
+      "ok": true,
+      "note": "{\"selected\":[\"普通生图\",\"图生图\"],\"uploadHint\":[\"参考图片\",\"点击或拖拽上传多张图片\",\"支持多选、拖拽或粘贴图片\"]}",
+      "shot": "39-m2-edit-panel.png"
+    },
+    {
+      "step": "edit/reference-area",
+      "ok": true,
+      "note": "{\"drop\":[],\"fileInputs\":[{\"accept\":\"image/png,image/jpeg,image/webp,image/gif\",\"multiple\":true}],\"notice\":[]}"
+    },
+    {
+      "step": "compare/find-toggle",
+      "ok": true,
+      "note": "{\"tag\":\"INPUT\",\"type\":\"checkbox\",\"checked\":false,\"role\":null,\"labelHasFor\":false}"
+    },
+    {
+      "step": "compare/after-toggle",
+      "ok": true,
+      "note": "{\"modelPickers\":0,\"text\":\"VisioWork 普通生图 素材库 无限画布 电商模式预览 图片转 PPT 普通生图 对话 已连接 文生图 图生图 生视频 模板库 增强 0 尺寸 自动 1:1 方图 3:4 标准竖图 4:3 标准横图 9:16 竖屏 2:3 竖图 3:2 横图 16:9 宽屏 21:9 超宽屏 清晰度 自动 1K 2K 4K 生成数量 1 张 2 张 3 张 4 张 细节 自动 标准 高清 透传参数，部分 g\"}",
+      "shot": "40-m2-compare-on.png"
+    },
+    {
+      "step": "model/picker",
+      "ok": true,
+      "note": "{\"sels\":[],\"custom\":[{\"tag\":\"BUTTON\",\"text\":\"11 / agnes-image-2.1-flash\"}]}"
+    }
+  ],
+  "consoleErrors": [
+    {
+      "type": "warning",
+      "text": "[connection] generation is still not ready after 3000ms"
+    },
+    {
+      "type": "warning",
+      "text": "[connection] connection lost, retry #1"
+    },
+    {
+      "type": "warning",
+      "text": "[connection] generation is still not ready after 3000ms"
+    },
+    {
+      "type": "warning",
+      "text": "initial Session restoration failed: SessionCreateError: session create failed: gateway/internal: client api: session/create failed: Failed to fetch\n    at ClientSessions.create (http://127.0.0.1:4790/plugins/??@q253595422/dsh-imagegen-video/client.js,@deepseek-ai/dsh-typert-registry/client.js,@deepseek-ai/dsh-client-connection/client.js,@deepseek-ai/dsh-api-workspace-controller/client.js,@deepseek-ai/dsh-api-session-controller/client.js,@deepseek-ai/dsh-client-ui-directory-picker-native/client.j"
+    },
+    {
+      "type": "warning",
+      "text": "[connection] connection lost, retry #1"
+    },
+    {
+      "type": "warning",
+      "text": "initial Session restoration failed: SessionCreateError: session create failed: gateway/internal: client api: session/create failed: Failed to fetch\n    at ClientSessions.create (http://127.0.0.1:4790/plugins/??@q253595422/dsh-imagegen-video/client.js,@deepseek-ai/dsh-typert-registry/client.js,@deepseek-ai/dsh-client-connection/client.js,@deepseek-ai/dsh-api-workspace-controller/client.js,@deepseek-ai/dsh-api-session-controller/client.js,@deepseek-ai/dsh-client-ui-directory-picker-native/client.j"
+    },
+    {
+      "type": "warning",
+      "text": "[connection] connection lost, retry #2"
+    },
+    {
+      "type": "warning",
+      "text": "[connection] connection lost, retry #3"
+    },
+    {
+      "type": "warning",
+      "text": "[connection] connection lost, retry #4"
+    },
+    {
+      "type": "warning",
+      "text": "[connection] connection lost, retry #5"
+    },
+    {
+      "type": "warning",
+      "text": "[connection] connection lost, retry #6"
+    },
+    {
+      "type": "warning",
+      "text": "[connection] connection lost, retry #7"
+    },
+    {
+      "type": "warning",
+      "text": "[connection] connection lost, retry #8"
+    }
+  ],
+  "pageErrors": [],
+  "failed": [
+    {
+      "url": "11620.117",
+      "error": "net::ERR_EMPTY_RESPONSE"
+    },
+    {
+      "url": "11620.123",
+      "error": "net::ERR_CONNECTION_REFUSED"
+    },
+    {
+      "url": "11620.122",
+      "error": "net::ERR_CONNECTION_REFUSED"
+    },
+    {
+      "url": "11620.121",
+      "error": "net::ERR_CONNECTION_REFUSED"
+    },
+    {
+      "url": "11620.137",
+      "error": "net::ERR_CONNECTION_REFUSED"
+    },
+    {
+      "url": "11620.138",
+      "error": "net::ERR_CONNECTION_REFUSED"
+    },
+    {
+      "url": "11620.139",
+      "error": "net::ERR_CONNECTION_REFUSED"
+    },
+    {
+      "url": "11620.140",
+      "error": "net::ERR_CONNECTION_REFUSED"
+    },
+    {
+      "url": "11620.141",
+      "error": "net::ERR_CONNECTION_REFUSED"
+    },
+    {
+      "url": "11620.142",
+      "error": "net::ERR_CONNECTION_REFUSED"
+    },
+    {
+      "url": "11620.143",
+      "error": "net::ERR_CONNECTION_REFUSED"
+    },
+    {
+      "url": "11620.144",
+      "error": "net::ERR_CONNECTION_REFUSED"
+    },
+    {
+      "url": "11620.90",
+      "error": "net::ERR_INCOMPLETE_CHUNKED_ENCODING"
+    },
+    {
+      "url": "11620.135",
+      "error": "net::ERR_CONNECTION_REFUSED"
+    },
+    {
+      "url": "11620.136",
+      "error": "net::ERR_CONNECTION_REFUSED"
+    },
+    {
+      "url": "11620.155",
+      "error": "net::ERR_CONNECTION_REFUSED"
+    },
+    {
+      "url": "11620.156",
+      "error": "net::ERR_CONNECTION_REFUSED"
+    },
+    {
+      "url": "11620.157",
+      "error": "net::ERR_CONNECTION_REFUSED"
+    },
+    {
+      "url": "11620.158",
+      "error": "net::ERR_CONNECTION_REFUSED"
+    },
+    {
+      "url": "11620.160",
+      "error": "net::ERR_CONNECTION_REFUSED"
+    }
+  ]
+}

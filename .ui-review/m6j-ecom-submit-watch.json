@@ -1,0 +1,171 @@
+{
+  "m0-before-preview": {
+    "sum": "将生成 1 张套图",
+    "dis": false
+  },
+  "m1-preview-page": {
+    "present": true,
+    "text": "VisioWork 普通生图 素材库 无限画布 电商模式预览 图片转 PPT 电商模式预览 对话 已连接 主图参考图 必选 · 商品主体图,最多 4 张 0/4 上传商品图（必选，最多 4 张：主体 / 包装 / 细节） PNG / JPG / WEBP，不超过 10MB 风格参考图 (可选,最多 1 张) 0/1 只传风格、光影、构图、氛围,不能更换商品主体。 ＋ 上传风格参考图 商品名称（必填） 参数信息 (可选) AI 帮写 参数选择 平台 通用 文案语言 中文 类目 通用商品 比例 1:1 套图结构 可多选 主图 1 卖点图 场景图 细节图 规格图 使用图 参考图设置（可选） ⌄ 生成设置 11 / agnes-image-2.1-flash 自动 1K 2K 4K 预计生成 1 张图片 主图 ×1 锚定生成：先出主图，其余图片自动参考主图，保证整套同款 未上传商品图：主图将按文字描述生成并作为锚定基准，建议先上传商品主图获得更高一致性 确认生成整套图片 取消 生成前预览 每张图的提示词都可以在生成前修改 取消 主图 自动生成 · 可直接修改 AI 润色 生成任务 0 ⌄ 诊断日志",
+    "buttons": [
+      {
+        "t": "普通生图",
+        "dis": false
+      },
+      {
+        "t": "素材库",
+        "dis": false
+      },
+      {
+        "t": "无限画布",
+        "dis": false
+      },
+      {
+        "t": "电商模式预览",
+        "dis": false
+      },
+      {
+        "t": "图片转 PPT",
+        "dis": false
+      },
+      {
+        "t": "对话",
+        "dis": false
+      },
+      {
+        "t": "已连接",
+        "dis": false
+      },
+      {
+        "t": "上传商品图（必选，最多 4 张：",
+        "dis": false
+      },
+      {
+        "t": "＋ 上传风格参考图",
+        "dis": false
+      },
+      {
+        "t": "AI 帮写",
+        "dis": false
+      },
+      {
+        "t": "通用",
+        "dis": false
+      },
+      {
+        "t": "中文",
+        "dis": false
+      },
+      {
+        "t": "通用商品",
+        "dis": false
+      },
+      {
+        "t": "1:1",
+        "dis": false
+      },
+      {
+        "t": "主图 1",
+        "dis": false
+      },
+      {
+        "t": "卖点图",
+        "dis": false
+      },
+      {
+        "t": "场景图",
+        "dis": false
+      },
+      {
+        "t": "细节图",
+        "dis": false
+      },
+      {
+        "t": "规格图",
+        "dis": false
+      },
+      {
+        "t": "使用图",
+        "dis": false
+      }
+    ],
+    "shot": "220-182-m6j-ecom-pre-preview.png"
+  },
+  "m2-confirm": {
+    "x": 445,
+    "y": 940,
+    "dis": false,
+    "text": "确认生成整套图片"
+  },
+  "m3-samples": [
+    {
+      "t": 0,
+      "text": "套图结果 0/1 已完成 导出清单 新商品 主图 0/1 重新生成 主图 生成中",
+      "imgs": 0,
+      "imgSrc": "",
+      "stateWords": [
+        "已完成",
+        "生成中"
+      ]
+    },
+    {
+      "t": 5,
+      "text": "套图结果 0/1 已完成 · 1 张失败 导出清单 新商品 主图 0/1 重新生成 主图 失败 · Model agnes-image-2.1-flash is not supported on /v1/images/generations or /v1/images/edits. Use gpt-image-2, grok-imagine-image, grok-imagine-image-quality, or a configured openai-compatibility image model.（HTTP 400 · http://43.136.81.63:8317/v1/images/generations）",
+      "imgs": 0,
+      "imgSrc": "",
+      "stateWords": [
+        "已完成",
+        "失败"
+      ]
+    }
+  ],
+  "m4-failure": {
+    "tail": "VisioWork 普通生图 素材库 无限画布 电商模式预览 图片转 PPT 电商模式预览 对话 已连接 主图参考图 必选 · 商品主体图,最多 4 张 0/4 上传商品图（必选，最多 4 张：主体 / 包装 / 细节） PNG / JPG / WEBP，不超过 10MB 风格参考图 (可选,最多 1 张) 0/1 只传风格、光影、构图、氛围,不能更换商品主体。 ＋ 上传风格参考图 商品名称（必填） 参数信息 (可选) AI 帮写 参数选择 平台 通用 文案语言 中文 类目 通用商品 比例 1:1 套图结构 可多选 主图 1 卖点图 场景图 细节图 规格图 使用图 参考图设置（可选） ⌄ 生成设置 11 / agnes-image-2.1-flash 自动 1K 2K 4K 将生成 1 张套图 生成套图预览 套图结果 0/1 已完成 · 1 张失败 导出清单 新商品 主图 0/1 重新生成 主图 失败 · Model agnes-image-2.1-flash is not supported on /v1/images/generations or /v1/images/edits. Use gpt-image-2, grok-imagine-image, grok-imagine-image-quality, or a configured openai-compatibility image model.（HTTP 400 · http://43.136.81.63:8317/v1/images/generations） 生成任务 0 ⌄ 诊断日志",
+    "alerts": [],
+    "shot": "222-184-m6j-ecom-failure.png"
+  },
+  "m5-diagnostics": [
+    {
+      "tag": "section",
+      "role": "",
+      "modal": null,
+      "w": 974,
+      "text": "套图结果 0/1 已完成 · 1 张失败 导出清单 新商品 主图 0/1 重新生成 主图 失败 · Model agnes-image-2.1-flash is not supported on /v1/images/generations or /v1/images/edits. Use gpt-image-2, grok-imagine-image, grok-imagine-image-quality, or a configured openai-compatibility image model.（HTTP 400 · http://43.136.81.63:8317/v1/images/generations） 生成任务 0 ⌄ 诊断日志"
+    },
+    {
+      "tag": "section",
+      "role": "",
+      "modal": null,
+      "w": 493,
+      "text": "主图 0/1 重新生成 主图 失败 · Model agnes-image-2.1-flash is not supported on /v1/images/generations or /v1/images/edits. Use gpt-image-2, grok-imagine-image, grok-imagine-image-quality, or a configured openai-compatibility image model.（HTTP 400 · http://43.136.81.63:8317/v1/images/generations）"
+    },
+    {
+      "tag": "section",
+      "role": "",
+      "modal": null,
+      "w": 176,
+      "text": "生成任务 0 ⌄ 诊断日志"
+    },
+    {
+      "tag": "section",
+      "role": "",
+      "modal": null,
+      "w": 1296,
+      "text": "诊断日志2 条记录 刷新 复制全部 清空 × 记录仅保存在本机内存中，密钥已脱敏，可直接复制粘贴到 issue。 generate 16:04:55 11 agnes-image-2.1-flash HTTP 400 22ms req 959B auth POST http://43.136.81.63:8317/v1/images/generations Model agnes-image-2.1-flash is not supported on /v1/images/generations or /v1/images/edits. Use gpt-image-2, grok-imagine-image, grok-imagine-image-quality, or a configured openai-compatibility image model.（HTTP 400 · http://43.136.81.63:8317/v1/images/generations） 上游响应 请求内容 generate 16:04:51 11 agnes-image-2.1-flash HTTP 400 85ms req 959B auth POST http://43.136.81.63:8317/v1/images/generations Model agnes-image-2.1-flash is not supported on /v1/images/generations or /v1/images/edits. Use gpt-image-2, grok-imagine-image, grok-imagine-image-quality, or a configured openai-compatibility image model.（HTTP 400 · htt"
+    }
+  ],
+  "pageErrors": [],
+  "consoleErrors": [
+    {
+      "type": "warning",
+      "text": "[connection] generation is still not ready after 3000ms"
+    },
+    {
+      "type": "warning",
+      "text": "[connection] connection generation was not ready within 15000ms; cancelling generation"
+    },
+    {
+      "type": "warning",
+      "text": "[connection] connection lost, retry #1"
+    }
+  ]
+}

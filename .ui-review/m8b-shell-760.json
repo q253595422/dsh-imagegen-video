@@ -1,0 +1,160 @@
+{
+  "r1-rail-760": {
+    "rails": [
+      {
+        "w": 56,
+        "h": 900,
+        "text": "新会话 ⌥ ⌘ N 工作区 DS Bot chajian 新会话 会话标题：在吗 1小时 `安装 dsh-imagegen-video 仓库` 17小时 `dsh-market 仓库更新` 1天 Explore GitHub repo mo"
+      }
+    ],
+    "verticalText": []
+  },
+  "r2-nav-760": [
+    {
+      "t": "",
+      "w": 34,
+      "h": 34,
+      "lines": null,
+      "whiteSpace": "nowrap",
+      "scrollW": 34,
+      "clientW": 34
+    },
+    {
+      "t": "",
+      "w": 34,
+      "h": 34,
+      "lines": null,
+      "whiteSpace": "nowrap",
+      "scrollW": 34,
+      "clientW": 34
+    },
+    {
+      "t": "普通生图",
+      "w": 78,
+      "h": 28,
+      "lines": null,
+      "whiteSpace": "nowrap",
+      "scrollW": 78,
+      "clientW": 78
+    },
+    {
+      "t": "素材库",
+      "w": 65,
+      "h": 28,
+      "lines": null,
+      "whiteSpace": "nowrap",
+      "scrollW": 65,
+      "clientW": 65
+    },
+    {
+      "t": "无限画布",
+      "w": 78,
+      "h": 28,
+      "lines": null,
+      "whiteSpace": "nowrap",
+      "scrollW": 78,
+      "clientW": 78
+    },
+    {
+      "t": "电商模式预览",
+      "w": 109,
+      "h": 28,
+      "lines": null,
+      "whiteSpace": "nowrap",
+      "scrollW": 109,
+      "clientW": 109
+    },
+    {
+      "t": "图片转 PPT",
+      "w": 93,
+      "h": 28,
+      "lines": null,
+      "whiteSpace": "nowrap",
+      "scrollW": 93,
+      "clientW": 93
+    },
+    {
+      "t": "文生图",
+      "w": 209,
+      "h": 28,
+      "lines": 2,
+      "whiteSpace": "nowrap",
+      "scrollW": 209,
+      "clientW": 209
+    },
+    {
+      "t": "图生图",
+      "w": 209,
+      "h": 28,
+      "lines": 2,
+      "whiteSpace": "nowrap",
+      "scrollW": 209,
+      "clientW": 209
+    },
+    {
+      "t": "生视频",
+      "w": 209,
+      "h": 28,
+      "lines": 2,
+      "whiteSpace": "nowrap",
+      "scrollW": 209,
+      "clientW": 209
+    }
+  ],
+  "r3-settings-btn": {
+    "x": 28,
+    "y": 866,
+    "label": "设置",
+    "text": ""
+  },
+  "r3-dialog-760": {
+    "count": 1,
+    "vw": 760,
+    "boxes": [
+      {
+        "label": "",
+        "x": 24,
+        "w": 712,
+        "h": 800,
+        "right": 736,
+        "overRight": false,
+        "scrollH": 800,
+        "clientH": 800,
+        "innerOverflowX": true
+      }
+    ],
+    "backdrop": true,
+    "shot": "246-205-m8b-settings-760.png"
+  },
+  "r3-save-visible": {
+    "noSave": true,
+    "buttons": [
+      "通用设置",
+      "模型",
+      "内置插件",
+      "生图配置",
+      "Agent 预设",
+      "打开配置文件",
+      "关闭",
+      "工作区内修改",
+      "中文",
+      "浅色",
+      "深色",
+      "跟随系统",
+      "",
+      ""
+    ]
+  },
+  "r4-diag-760": {
+    "w": 680,
+    "h": 875,
+    "x": 68,
+    "overRight": false,
+    "overLeft": false,
+    "scrollH": 873,
+    "clientH": 873,
+    "text": "诊断日志0 条记录 刷新 复制全部 清空 × 记录仅保存在本机内存中，密钥已脱敏，可直接复制粘贴到 issue。 暂无记录。生成失败后，这里会记录请求地址、HTTP 状态、网络错误码与上游响应。",
+    "shot": "247-206-m8b-diagnostics-760.png"
+  },
+  "pageErrors": []
+}

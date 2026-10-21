@@ -1,0 +1,290 @@
+{
+  "canvas-open": {
+    "ok": false,
+    "state": {
+      "text": "VisioWork 普通生图 素材库 无限画布 电商模式预览 图片转 PPT 无限画布 对话 已连接 ★ 未命名画布 未命名画布 已保存 文本节点 A- 14 A+ 生成配置 已连接 1 个输入节点 把图片节点连线到左侧作为参考图，文本节点连线过来作为提示词；选中本节点后在下方输入或改写提示词并生成。 素材库图片 1536×2048 100%",
+      "loading": false,
+      "saved": "已保存",
+      "nodeClasses": [
+        "AoVF5G_node",
+        "AoVF5G_nodeGlow",
+        "AoVF5G_nodeHeader",
+        "AoVF5G_nodeBody"
+      ],
+      "nodeCount": 9,
+      "canvasRoot": [
+        "div.AoVF5G_viewport",
+        "div.AoVF5G_minimapViewport"
+      ]
+    },
+    "shot": "167-127-m5c-canvas-open.png"
+  },
+  "after-loading": {
+    "waitedMs": 0,
+    "state": {
+      "text": "VisioWork 普通生图 素材库 无限画布 电商模式预览 图片转 PPT 无限画布 对话 已连接 ★ 未命名画布 未命名画布 已保存 文本节点 A- 14 A+ 生成配置 已连接 1 个输入节点 把图片节点连线到左侧作为参考图，文本节点连线过来作为提示词；选中本节点后在下方输入或改写提示词并生成。 素材库图片 1536×2048 100%",
+      "loading": false,
+      "saved": "已保存",
+      "nodeClasses": [
+        "AoVF5G_node",
+        "AoVF5G_nodeGlow",
+        "AoVF5G_nodeHeader",
+        "AoVF5G_nodeBody"
+      ],
+      "nodeCount": 9,
+      "canvasRoot": [
+        "div.AoVF5G_viewport",
+        "div.AoVF5G_minimapViewport"
+      ]
+    },
+    "shot": "168-128-m5c-after-loading.png"
+  },
+  "canvas-topbar": [
+    {
+      "tag": "button",
+      "text": "普通生图",
+      "title": "",
+      "aria": "",
+      "disabled": false,
+      "x": 700
+    },
+    {
+      "tag": "button",
+      "text": "素材库",
+      "title": "",
+      "aria": "",
+      "disabled": false,
+      "x": 784
+    },
+    {
+      "tag": "button",
+      "text": "无限画布",
+      "title": "",
+      "aria": "",
+      "disabled": false,
+      "x": 855
+    },
+    {
+      "tag": "button",
+      "text": "电商模式预览",
+      "title": "",
+      "aria": "",
+      "disabled": false,
+      "x": 939
+    },
+    {
+      "tag": "button",
+      "text": "图片转 PPT",
+      "title": "",
+      "aria": "",
+      "disabled": false,
+      "x": 1054
+    },
+    {
+      "tag": "button",
+      "text": "对话",
+      "title": "展开右侧对话",
+      "aria": "",
+      "disabled": false,
+      "x": 1442
+    },
+    {
+      "tag": "button",
+      "text": "已连接",
+      "title": "",
+      "aria": "已连接",
+      "disabled": false,
+      "x": 1516
+    },
+    {
+      "tag": "button",
+      "text": "★ 未命名画布",
+      "title": "★ 未命名画布",
+      "aria": "画布项目",
+      "disabled": false,
+      "x": 309
+    },
+    {
+      "tag": "button",
+      "text": "",
+      "title": "新建画布",
+      "aria": "新建画布",
+      "disabled": false,
+      "x": 497
+    },
+    {
+      "tag": "button",
+      "text": "",
+      "title": "取消收藏",
+      "aria": "取消收藏",
+      "disabled": false,
+      "x": 535
+    },
+    {
+      "tag": "button",
+      "text": "",
+      "title": "删除画布",
+      "aria": "删除画布",
+      "disabled": false,
+      "x": 573
+    },
+    {
+      "tag": "button",
+      "text": "未命名画布",
+      "title": "双击重命名",
+      "aria": "",
+      "disabled": false,
+      "x": 611
+    }
+  ],
+  "canvas-dom": [
+    {
+      "tag": "div",
+      "cls": "uTF49q_panel",
+      "w": 1320,
+      "h": 1000,
+      "kids": [
+        {
+          "tag": "header",
+          "cls": "uTF49q_panelHeader",
+          "w": 1288,
+          "h": 28,
+          "kids": [
+            {
+              "tag": "span",
+              "cls": "uTF49q_panelHeading",
+              "w": 110,
+              "h": 22,
+              "kids": []
+            },
+            {
+              "tag": "div",
+              "cls": "IGXKoa_container",
+              "w": 455,
+              "h": 28,
+              "kids": []
+            },
+            {
+              "tag": "span",
+              "cls": "uTF49q_panelHeaderActions",
+              "w": 142,
+              "h": 28,
+              "kids": []
+            }
+          ]
+        },
+        {
+          "tag": "div",
+          "cls": "uTF49q_studio",
+          "w": 1288,
+          "h": 932,
+          "kids": [
+            {
+              "tag": "div",
+              "cls": "uTF49q_generation",
+              "w": 1288,
+              "h": 932,
+              "kids": []
+            }
+          ]
+        }
+      ]
+    }
+  ],
+  "add-image": {
+    "clicked": false,
+    "state": {
+      "text": "VisioWork 普通生图 素材库 无限画布 电商模式预览 图片转 PPT 无限画布 对话 已连接 ★ 未命名画布 未命名画布 已保存 文本节点 A- 14 A+ 生成配置 已连接 1 个输入节点 把图片节点连线到左侧作为参考图，文本节点连线过来作为提示词；选中本节点后在下方输入或改写提示词并生成。 素材库图片 1536×2048 100%",
+      "loading": false,
+      "saved": "已保存",
+      "nodeClasses": [
+        "AoVF5G_node",
+        "AoVF5G_nodeGlow",
+        "AoVF5G_nodeHeader",
+        "AoVF5G_nodeBody"
+      ],
+      "nodeCount": 9,
+      "canvasRoot": [
+        "div.AoVF5G_viewport",
+        "div.AoVF5G_minimapViewport"
+      ]
+    },
+    "shot": "169-129-m5c-add-image.png"
+  },
+  "image-node-detail": {
+    "cls": "AoVF5G_nodeGlow",
+    "text": "",
+    "buttons": [],
+    "inputs": []
+  },
+  "empty-title-present": {
+    "hasEmptyTitle": false,
+    "hasEmptyHint": false
+  },
+  "add-config": {
+    "clicked": true,
+    "state": {
+      "text": "VisioWork 普通生图 素材库 无限画布 电商模式预览 图片转 PPT 无限画布 对话 已连接 ★ 未命名画布 未命名画布 保存中… 文本节点 A- 14 A+ 生成配置 已连接 1 个输入节点 把图片节点连线到左侧作为参考图，文本节点连线过来作为提示词；选中本节点后在下方输入或改写提示词并生成。 素材库图片 1536×2048 生成配置 已连接 0 个输入节点 把图片节点连线到左侧作为参考图，文本节点连线过来作为提示词；选中本节点后在下方输入或改写提示词并生成。 100% 图片 视频 模型生成 11 / agnes-image-2.1-flash 自动比例 自动清晰度 1 张",
+      "loading": false,
+      "saved": "保存中…",
+      "nodeClasses": [
+        "AoVF5G_node",
+        "AoVF5G_nodeGlow",
+        "AoVF5G_nodeHeader",
+        "AoVF5G_nodeBody"
+      ],
+      "nodeCount": 12,
+      "canvasRoot": [
+        "div.AoVF5G_viewport",
+        "div.AoVF5G_minimapViewport"
+      ]
+    },
+    "shot": "170-130-m5c-add-config.png"
+  },
+  "config-detail": {
+    "text": "生成配置 已连接 1 个输入节点 把图片节点连线到左侧作为参考图，文本节点连线过来作为提示词；选中本节点后在下方输入或改写提示词并生成。",
+    "buttons": [
+      {
+        "t": "",
+        "title": "创建副本 (Ctrl+D)",
+        "dis": false,
+        "aria": ""
+      },
+      {
+        "t": "",
+        "title": "删除",
+        "dis": false,
+        "aria": ""
+      }
+    ],
+    "selects": [],
+    "inputs": []
+  },
+  "final": {
+    "text": "VisioWork 普通生图 素材库 无限画布 电商模式预览 图片转 PPT 无限画布 对话 已连接 ★ 未命名画布 未命名画布 已保存 文本节点 A- 14 A+ 生成配置 已连接 1 个输入节点 把图片节点连线到左侧作为参考图，文本节点连线过来作为提示词；选中本节点后在下方输入或改写提示词并生成。 素材库图片 1536×2048 生成配置 已连接 0 个输入节点 把图片节点连线到左侧作为参考图，文本节点连线过来作为提示词；选中本节点后在下方输入或改写提示词并生成。 100% 图片 视频 模型生成 11 / agnes-image-2.1-flash 自动比例 自动清晰度 1 张",
+    "loading": false,
+    "saved": "已保存",
+    "nodeClasses": [
+      "AoVF5G_node",
+      "AoVF5G_nodeGlow",
+      "AoVF5G_nodeHeader",
+      "AoVF5G_nodeBody"
+    ],
+    "nodeCount": 12,
+    "canvasRoot": [
+      "div.AoVF5G_viewport",
+      "div.AoVF5G_minimapViewport"
+    ]
+  },
+  "pageErrors": [],
+  "consoleErrors": [
+    {
+      "type": "warning",
+      "text": "[connection] generation is still not ready after 3000ms"
+    },
+    {
+      "type": "warning",
+      "text": "[connection] connection lost, retry #1"
+    }
+  ]
+}

@@ -1,0 +1,458 @@
+{
+  "findings": [
+    {
+      "step": "video/enter",
+      "ok": true,
+      "text": "VisioWork 普通生图 素材库 无限画布 电商模式预览 图片转 PPT 普通生图 对话 已连接 文生视频 诊断日志 视频描述 视频模型 agnes-video-2.5-flash 画面比例 16:9 9:16 1:1 4:3 3:4 分辨率 720P 时长（秒） 5 10 先规划（开） 预览规划 生成前先把一句话拆成镜头、运镜、时长与风格，并落到实际参数。 生成视频 视频渲染较慢，页面关闭后任务仍会在宿主继续执行。",
+      "shot": "44-m3-video-enter.png"
+    },
+    {
+      "step": "video/mode-文生视频",
+      "ok": true,
+      "note": "[{\"t\":\"文生视频\",\"aria\":null,\"bg\":\"rgb(255, 255, 255)\",\"bc\":\"rgb(15, 17, 21)\",\"cls\":\"uTF49q_videoModeButton\"},{\"t\":\"图生视频\",\"aria\":null,\"bg\":\"rgba(0, 0, 0, 0)\",\"bc\":\"rgb(97, 102, 107)\",\"cls\":\"uTF49q_videoModeButton\"},{\"t\":\"首尾帧\",\"aria\":null,\"bg\":\"rgba(0, 0, 0, 0)\",\"bc\":\"rgb(97, 102, 107)\",\"cls\":\"uTF49q_videoModeButton\"},{\"t\":\"参考图\",\"aria\":null,\"bg\":\"rgba(0, 0, 0, 0)\",\"bc\":\"rgb(97, 102, 107)\",\"cls\":\"uTF49q_videoModeButton\"}]",
+      "shot": "45-m3-video-mode-0.png"
+    },
+    {
+      "step": "video/mode-图生视频",
+      "ok": true,
+      "note": "[{\"t\":\"文生视频\",\"aria\":null,\"bg\":\"rgba(0, 0, 0, 0)\",\"bc\":\"rgb(97, 102, 107)\",\"cls\":\"uTF49q_videoModeButton\"},{\"t\":\"图生视频\",\"aria\":null,\"bg\":\"rgb(255, 255, 255)\",\"bc\":\"rgb(15, 17, 21)\",\"cls\":\"uTF49q_videoModeButton\"},{\"t\":\"首尾帧\",\"aria\":null,\"bg\":\"rgba(0, 0, 0, 0)\",\"bc\":\"rgb(97, 102, 107)\",\"cls\":\"uTF49q_videoModeButton\"},{\"t\":\"参考图\",\"aria\":null,\"bg\":\"rgba(0, 0, 0, 0)\",\"bc\":\"rgb(97, 102, 107)\",\"cls\":\"uTF49q_videoModeButton\"}]",
+      "shot": "46-m3-video-mode-1.png"
+    },
+    {
+      "step": "video/mode-首尾帧",
+      "ok": true,
+      "note": "[{\"t\":\"文生视频\",\"aria\":null,\"bg\":\"rgba(0, 0, 0, 0)\",\"bc\":\"rgb(97, 102, 107)\",\"cls\":\"uTF49q_videoModeButton\"},{\"t\":\"图生视频\",\"aria\":null,\"bg\":\"rgba(0, 0, 0, 0)\",\"bc\":\"rgb(97, 102, 107)\",\"cls\":\"uTF49q_videoModeButton\"},{\"t\":\"首尾帧\",\"aria\":null,\"bg\":\"rgb(255, 255, 255)\",\"bc\":\"rgb(15, 17, 21)\",\"cls\":\"uTF49q_videoModeButton\"},{\"t\":\"参考图\",\"aria\":null,\"bg\":\"rgba(0, 0, 0, 0)\",\"bc\":\"rgb(97, 102, 107)\",\"cls\":\"uTF49q_videoModeButton\"}]",
+      "shot": "47-m3-video-mode-2.png"
+    },
+    {
+      "step": "video/mode-参考图",
+      "ok": true,
+      "note": "[{\"t\":\"文生视频\",\"aria\":null,\"bg\":\"rgba(0, 0, 0, 0)\",\"bc\":\"rgb(97, 102, 107)\",\"cls\":\"uTF49q_videoModeButton\"},{\"t\":\"图生视频\",\"aria\":null,\"bg\":\"rgba(0, 0, 0, 0)\",\"bc\":\"rgb(97, 102, 107)\",\"cls\":\"uTF49q_videoModeButton\"},{\"t\":\"首尾帧\",\"aria\":null,\"bg\":\"rgba(0, 0, 0, 0)\",\"bc\":\"rgb(97, 102, 107)\",\"cls\":\"uTF49q_videoModeButton\"},{\"t\":\"参考图\",\"aria\":null,\"bg\":\"rgb(255, 255, 255)\",\"bc\":\"rgb(15, 17, 21)\",\"cls\":\"uTF49q_videoModeButton\"}]",
+      "shot": "48-m3-video-mode-3.png"
+    },
+    {
+      "step": "video/mode-拼接合成",
+      "ok": false,
+      "note": "[{\"t\":\"文生视频\",\"aria\":null,\"bg\":\"rgba(0, 0, 0, 0)\",\"bc\":\"rgb(97, 102, 107)\",\"cls\":\"uTF49q_videoModeButton\"},{\"t\":\"图生视频\",\"aria\":null,\"bg\":\"rgba(0, 0, 0, 0)\",\"bc\":\"rgb(97, 102, 107)\",\"cls\":\"uTF49q_videoModeButton\"},{\"t\":\"首尾帧\",\"aria\":null,\"bg\":\"rgba(0, 0, 0, 0)\",\"bc\":\"rgb(97, 102, 107)\",\"cls\":\"uTF49q_videoModeButton\"},{\"t\":\"参考图\",\"aria\":null,\"bg\":\"rgb(255, 255, 255)\",\"bc\":\"rgb(15, 17, 21)\",\"cls\":\"uTF49q_videoModeButton\"}]",
+      "shot": "49-m3-video-mode-4.png"
+    },
+    {
+      "step": "video/submit-button",
+      "ok": true,
+      "note": "{\"x\":940,\"y\":549,\"text\":\"生成视频\",\"disabled\":true}"
+    },
+    {
+      "step": "video/disabled-click",
+      "ok": true,
+      "notice": [],
+      "note": "按钮本来禁用",
+      "shot": "50-m3-video-disabled.png"
+    },
+    {
+      "step": "video/plan-toggle",
+      "ok": true,
+      "note": "{\"text\":\"先规划（开）\",\"pressed\":\"true\",\"cls\":\"uTF49q_videoPlanToggle\"}"
+    },
+    {
+      "step": "video/prompt-typed",
+      "ok": true,
+      "value": "a cat stretching on a windowsill, afternoon light, slow push in",
+      "shot": "51-m3-video-prompt.png"
+    },
+    {
+      "step": "video/plan-preview",
+      "ok": true,
+      "disabled": true,
+      "notice": [],
+      "text": "VisioWork 普通生图 素材库 无限画布 电商模式预览 图片转 PPT 普通生图 对话 已连接 文生视频 图生视频 首尾帧 参考图 诊断日志 视频描述 参考图 选择图片 该模式需要一张参考图 视频模型 agnes-video-2.5-flash 画面比例 16:9 9:16 1:1 4:3 3:4 分辨率 480P 720P 1080P 时长（秒） 5 10 先规划（开） 预览规划 生成前先把一句话拆成镜头、运镜、时长与风格，并落到实际参数。 生成视频 视频渲染较慢，页面关闭后任务仍会在宿主继续执行。",
+      "shot": "52-m3-video-plan-preview.png"
+    },
+    {
+      "step": "video/history",
+      "ok": false,
+      "note": "找不到「视频历史」按钮"
+    },
+    {
+      "step": "video/narrow-900",
+      "ok": true,
+      "overflow": {
+        "scrollW": 900,
+        "clientW": 900,
+        "bodyScrollW": 900
+      },
+      "shot": "53-m3-video-narrow900.png"
+    }
+  ],
+  "modes": [
+    {
+      "mode": "文生视频",
+      "clicked": true,
+      "state": {
+        "btns": [
+          {
+            "t": "文生视频",
+            "aria": null,
+            "bg": "rgb(255, 255, 255)",
+            "bc": "rgb(15, 17, 21)",
+            "cls": "uTF49q_videoModeButton"
+          },
+          {
+            "t": "图生视频",
+            "aria": null,
+            "bg": "rgba(0, 0, 0, 0)",
+            "bc": "rgb(97, 102, 107)",
+            "cls": "uTF49q_videoModeButton"
+          },
+          {
+            "t": "首尾帧",
+            "aria": null,
+            "bg": "rgba(0, 0, 0, 0)",
+            "bc": "rgb(97, 102, 107)",
+            "cls": "uTF49q_videoModeButton"
+          },
+          {
+            "t": "参考图",
+            "aria": null,
+            "bg": "rgba(0, 0, 0, 0)",
+            "bc": "rgb(97, 102, 107)",
+            "cls": "uTF49q_videoModeButton"
+          }
+        ],
+        "fileInputs": 0,
+        "hasPrompt": true,
+        "buttons": [
+          "普通生图",
+          "素材库",
+          "无限画布",
+          "电商模式预览",
+          "图片转 PPT",
+          "对话",
+          "已连接",
+          "文生图",
+          "图生图",
+          "生视频",
+          "文生视频",
+          "图生视频",
+          "首尾帧",
+          "参考图",
+          "诊断日志",
+          "agnes-video-2.5-flash",
+          "16:9",
+          "9:16",
+          "1:1",
+          "4:3",
+          "3:4",
+          "480P",
+          "720P",
+          "1080P",
+          "5",
+          "10",
+          "先规划（开）",
+          "预览规划",
+          "生成视频"
+        ]
+      }
+    },
+    {
+      "mode": "图生视频",
+      "clicked": true,
+      "state": {
+        "btns": [
+          {
+            "t": "文生视频",
+            "aria": null,
+            "bg": "rgba(0, 0, 0, 0)",
+            "bc": "rgb(97, 102, 107)",
+            "cls": "uTF49q_videoModeButton"
+          },
+          {
+            "t": "图生视频",
+            "aria": null,
+            "bg": "rgb(255, 255, 255)",
+            "bc": "rgb(15, 17, 21)",
+            "cls": "uTF49q_videoModeButton"
+          },
+          {
+            "t": "首尾帧",
+            "aria": null,
+            "bg": "rgba(0, 0, 0, 0)",
+            "bc": "rgb(97, 102, 107)",
+            "cls": "uTF49q_videoModeButton"
+          },
+          {
+            "t": "参考图",
+            "aria": null,
+            "bg": "rgba(0, 0, 0, 0)",
+            "bc": "rgb(97, 102, 107)",
+            "cls": "uTF49q_videoModeButton"
+          }
+        ],
+        "fileInputs": 1,
+        "hasPrompt": true,
+        "buttons": [
+          "普通生图",
+          "素材库",
+          "无限画布",
+          "电商模式预览",
+          "图片转 PPT",
+          "对话",
+          "已连接",
+          "文生图",
+          "图生图",
+          "生视频",
+          "文生视频",
+          "图生视频",
+          "首尾帧",
+          "参考图",
+          "诊断日志",
+          "选择图片",
+          "agnes-video-2.5-flash",
+          "16:9",
+          "9:16",
+          "1:1",
+          "4:3",
+          "3:4",
+          "480P",
+          "720P",
+          "1080P",
+          "5",
+          "10",
+          "先规划（开）",
+          "预览规划",
+          "生成视频"
+        ]
+      }
+    },
+    {
+      "mode": "首尾帧",
+      "clicked": true,
+      "state": {
+        "btns": [
+          {
+            "t": "文生视频",
+            "aria": null,
+            "bg": "rgba(0, 0, 0, 0)",
+            "bc": "rgb(97, 102, 107)",
+            "cls": "uTF49q_videoModeButton"
+          },
+          {
+            "t": "图生视频",
+            "aria": null,
+            "bg": "rgba(0, 0, 0, 0)",
+            "bc": "rgb(97, 102, 107)",
+            "cls": "uTF49q_videoModeButton"
+          },
+          {
+            "t": "首尾帧",
+            "aria": null,
+            "bg": "rgb(255, 255, 255)",
+            "bc": "rgb(15, 17, 21)",
+            "cls": "uTF49q_videoModeButton"
+          },
+          {
+            "t": "参考图",
+            "aria": null,
+            "bg": "rgba(0, 0, 0, 0)",
+            "bc": "rgb(97, 102, 107)",
+            "cls": "uTF49q_videoModeButton"
+          }
+        ],
+        "fileInputs": 2,
+        "hasPrompt": true,
+        "buttons": [
+          "普通生图",
+          "素材库",
+          "无限画布",
+          "电商模式预览",
+          "图片转 PPT",
+          "对话",
+          "已连接",
+          "文生图",
+          "图生图",
+          "生视频",
+          "文生视频",
+          "图生视频",
+          "首尾帧",
+          "参考图",
+          "诊断日志",
+          "选择图片",
+          "agnes-video-2.5-flash",
+          "16:9",
+          "9:16",
+          "1:1",
+          "4:3",
+          "3:4",
+          "480P",
+          "720P",
+          "1080P",
+          "5",
+          "10",
+          "先规划（开）",
+          "预览规划",
+          "生成视频"
+        ]
+      }
+    },
+    {
+      "mode": "参考图",
+      "clicked": true,
+      "state": {
+        "btns": [
+          {
+            "t": "文生视频",
+            "aria": null,
+            "bg": "rgba(0, 0, 0, 0)",
+            "bc": "rgb(97, 102, 107)",
+            "cls": "uTF49q_videoModeButton"
+          },
+          {
+            "t": "图生视频",
+            "aria": null,
+            "bg": "rgba(0, 0, 0, 0)",
+            "bc": "rgb(97, 102, 107)",
+            "cls": "uTF49q_videoModeButton"
+          },
+          {
+            "t": "首尾帧",
+            "aria": null,
+            "bg": "rgba(0, 0, 0, 0)",
+            "bc": "rgb(97, 102, 107)",
+            "cls": "uTF49q_videoModeButton"
+          },
+          {
+            "t": "参考图",
+            "aria": null,
+            "bg": "rgb(255, 255, 255)",
+            "bc": "rgb(15, 17, 21)",
+            "cls": "uTF49q_videoModeButton"
+          }
+        ],
+        "fileInputs": 1,
+        "hasPrompt": true,
+        "buttons": [
+          "普通生图",
+          "素材库",
+          "无限画布",
+          "电商模式预览",
+          "图片转 PPT",
+          "对话",
+          "已连接",
+          "文生图",
+          "图生图",
+          "生视频",
+          "文生视频",
+          "图生视频",
+          "首尾帧",
+          "参考图",
+          "诊断日志",
+          "选择图片",
+          "agnes-video-2.5-flash",
+          "16:9",
+          "9:16",
+          "1:1",
+          "4:3",
+          "3:4",
+          "480P",
+          "720P",
+          "1080P",
+          "5",
+          "10",
+          "先规划（开）",
+          "预览规划",
+          "生成视频"
+        ]
+      }
+    },
+    {
+      "mode": "拼接合成",
+      "clicked": false,
+      "state": {
+        "btns": [
+          {
+            "t": "文生视频",
+            "aria": null,
+            "bg": "rgba(0, 0, 0, 0)",
+            "bc": "rgb(97, 102, 107)",
+            "cls": "uTF49q_videoModeButton"
+          },
+          {
+            "t": "图生视频",
+            "aria": null,
+            "bg": "rgba(0, 0, 0, 0)",
+            "bc": "rgb(97, 102, 107)",
+            "cls": "uTF49q_videoModeButton"
+          },
+          {
+            "t": "首尾帧",
+            "aria": null,
+            "bg": "rgba(0, 0, 0, 0)",
+            "bc": "rgb(97, 102, 107)",
+            "cls": "uTF49q_videoModeButton"
+          },
+          {
+            "t": "参考图",
+            "aria": null,
+            "bg": "rgb(255, 255, 255)",
+            "bc": "rgb(15, 17, 21)",
+            "cls": "uTF49q_videoModeButton"
+          }
+        ],
+        "fileInputs": 1,
+        "hasPrompt": true,
+        "buttons": [
+          "普通生图",
+          "素材库",
+          "无限画布",
+          "电商模式预览",
+          "图片转 PPT",
+          "对话",
+          "已连接",
+          "文生图",
+          "图生图",
+          "生视频",
+          "文生视频",
+          "图生视频",
+          "首尾帧",
+          "参考图",
+          "诊断日志",
+          "选择图片",
+          "agnes-video-2.5-flash",
+          "16:9",
+          "9:16",
+          "1:1",
+          "4:3",
+          "3:4",
+          "480P",
+          "720P",
+          "1080P",
+          "5",
+          "10",
+          "先规划（开）",
+          "预览规划",
+          "生成视频"
+        ]
+      }
+    }
+  ],
+  "consoleErrors": [
+    {
+      "type": "warning",
+      "text": "[connection] generation is still not ready after 3000ms"
+    },
+    {
+      "type": "warning",
+      "text": "[connection] connection lost, retry #1"
+    },
+    {
+      "type": "warning",
+      "text": "[connection] generation is still not ready after 3000ms"
+    }
+  ],
+  "pageErrors": [],
+  "failed": [
+    {
+      "url": "http://127.0.0.1:4790/api/dsh-imagegen/templates/image/prompt-signal/https%3A%2F%2Fraw.githubusercontent.com%2Ffreestylefly%2Fawesome-gpt-image-2%2Fmain%2Fdata%2Fimages%2Fcase216.png",
+      "status": 404
+    }
+  ]
+}

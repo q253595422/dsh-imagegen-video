@@ -1,0 +1,284 @@
+{
+  "v5-topbar-names": [
+    {
+      "tag": "span",
+      "text": "★ 未命名画布",
+      "x": 320,
+      "w": 76
+    },
+    {
+      "tag": "button",
+      "text": "未命名画布",
+      "x": 611,
+      "w": 87
+    }
+  ],
+  "config-nodes": [
+    {
+      "x": 976,
+      "y": 449,
+      "w": 402
+    },
+    {
+      "x": 976,
+      "y": 449,
+      "w": 402
+    }
+  ],
+  "v3-composer-one": {
+    "present": true,
+    "ph": "描述要生成的图片；也可把文本节点连线过来作为提示词…",
+    "buttons": [
+      {
+        "t": "图片",
+        "w": 32,
+        "h": 24,
+        "title": ""
+      },
+      {
+        "t": "视频",
+        "w": 32,
+        "h": 24,
+        "title": ""
+      },
+      {
+        "t": "模型生成",
+        "w": 48,
+        "h": 28,
+        "title": "模型生成"
+      },
+      {
+        "t": "11\n/\nagnes-ima",
+        "w": 210,
+        "h": 28,
+        "title": "11 · agnes-image-2.1-fla"
+      },
+      {
+        "t": "自动比例",
+        "w": 48,
+        "h": 28,
+        "title": "自动比例"
+      },
+      {
+        "t": "自动清晰度",
+        "w": 53,
+        "h": 28,
+        "title": "自动清晰度"
+      },
+      {
+        "t": "1 张",
+        "w": 37,
+        "h": 28,
+        "title": "1 张"
+      },
+      {
+        "t": "",
+        "w": 34,
+        "h": 34,
+        "title": "生成图片"
+      }
+    ],
+    "shot": "179-139-m5e-composer-one.png"
+  },
+  "v2-composer-two": {
+    "present": true,
+    "ph": "描述要生成的图片；也可把文本节点连线过来作为提示词…",
+    "buttons": [
+      {
+        "t": "图片",
+        "w": 32,
+        "h": 24,
+        "title": ""
+      },
+      {
+        "t": "视频",
+        "w": 32,
+        "h": 24,
+        "title": ""
+      },
+      {
+        "t": "模型生成",
+        "w": 48,
+        "h": 28,
+        "title": "模型生成"
+      },
+      {
+        "t": "11\n/\nagnes-ima",
+        "w": 210,
+        "h": 28,
+        "title": "11 · agnes-image-2.1-fla"
+      },
+      {
+        "t": "自动比例",
+        "w": 48,
+        "h": 28,
+        "title": "自动比例"
+      },
+      {
+        "t": "自动清晰度",
+        "w": 53,
+        "h": 28,
+        "title": "自动清晰度"
+      },
+      {
+        "t": "1 张",
+        "w": 37,
+        "h": 28,
+        "title": "1 张"
+      },
+      {
+        "t": "",
+        "w": 34,
+        "h": 34,
+        "title": "生成图片"
+      }
+    ],
+    "shot": "180-140-m5e-composer-two.png"
+  },
+  "v2-selection-count": {
+    "handles": 5,
+    "selected": 2,
+    "text": [
+      "已连接 1 个输入节点",
+      "已连接 0 个输入节点"
+    ]
+  },
+  "v4-tab-trace": [
+    {
+      "tag": "button",
+      "title": "创建副本 (Ctrl+D)",
+      "text": "",
+      "aria": "创建副本 (Ctrl+D)",
+      "inNode": true,
+      "w": 38,
+      "h": 38
+    },
+    {
+      "tag": "button",
+      "title": "删除",
+      "text": "",
+      "aria": "删除",
+      "inNode": true,
+      "w": 38,
+      "h": 38
+    },
+    {
+      "tag": "button",
+      "title": "选择 / 移动节点",
+      "text": "",
+      "aria": "选择 / 移动节点",
+      "inNode": false,
+      "w": 34,
+      "h": 34
+    },
+    {
+      "tag": "button",
+      "title": "拖动画布（空格 / Ctrl + 拖动）",
+      "text": "",
+      "aria": "拖动画布（空格 / Ctrl + 拖动）",
+      "inNode": false,
+      "w": 34,
+      "h": 34
+    },
+    {
+      "tag": "button",
+      "title": "添加图片",
+      "text": "",
+      "aria": "添加图片",
+      "inNode": false,
+      "w": 34,
+      "h": 34
+    },
+    {
+      "tag": "button",
+      "title": "添加文本",
+      "text": "",
+      "aria": "添加文本",
+      "inNode": false,
+      "w": 34,
+      "h": 34
+    },
+    {
+      "tag": "button",
+      "title": "添加画板（手绘草图生图）",
+      "text": "",
+      "aria": "添加画板（手绘草图生图）",
+      "inNode": false,
+      "w": 34,
+      "h": 34
+    },
+    {
+      "tag": "button",
+      "title": "添加文件节点",
+      "text": "",
+      "aria": "添加文件节点",
+      "inNode": false,
+      "w": 34,
+      "h": 34
+    },
+    {
+      "tag": "button",
+      "title": "添加配置节点",
+      "text": "",
+      "aria": "添加配置节点",
+      "inNode": false,
+      "w": 34,
+      "h": 34
+    },
+    {
+      "tag": "button",
+      "title": "分镜",
+      "text": "",
+      "aria": "分镜",
+      "inNode": false,
+      "w": 34,
+      "h": 34
+    },
+    {
+      "tag": "button",
+      "title": "模板库（选择提示词生成文本+配置节点）",
+      "text": "",
+      "aria": "模板库（选择提示词生成文本+配置节点）",
+      "inNode": false,
+      "w": 34,
+      "h": 34
+    },
+    {
+      "tag": "button",
+      "title": "技能库",
+      "text": "",
+      "aria": "技能库",
+      "inNode": false,
+      "w": 34,
+      "h": 34
+    }
+  ],
+  "v1-new-canvas": {
+    "clicked": true,
+    "state": {
+      "text": "VisioWork 普通生图 素材库 无限画布 电商模式预览 图片转 PPT 无限画布 对话 已连接 未命名画布 未命名画布 已保存 文本节点 A- 14 A+ 生成配置 已连接 1 个输入节点 把图片节点连线到左侧作为参考图，文本节点连线过来作为提示词；选中本节点后在下方输入或改写提示词并生成。 100%",
+      "hasEmptyTitle": false,
+      "hasEmptyHint": false,
+      "nodes": 6
+    },
+    "shot": "182-142-m5e-empty-canvas.png"
+  },
+  "v1-blank-context": [
+    {
+      "w": 176,
+      "text": "添加图片 添加文本节点 添加画板节点 分镜 粘贴 (Ctrl+V) 适应全部内容"
+    }
+  ],
+  "v1-double-click-menu": [],
+  "pageErrors": [],
+  "consoleErrors": [
+    {
+      "type": "warning",
+      "text": "[connection] generation is still not ready after 3000ms"
+    },
+    {
+      "type": "warning",
+      "text": "[connection] connection lost, retry #1"
+    }
+  ]
+}

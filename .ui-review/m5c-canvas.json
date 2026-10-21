@@ -1,0 +1,181 @@
+{
+  "result": {
+    "ready": {
+      "ready": true,
+      "state": {
+        "viewport": {
+          "x": 297,
+          "y": 100,
+          "w": 1286,
+          "h": 883
+        },
+        "save": "已保存",
+        "nodes": [
+          {
+            "id": "node-8be29044-6275-464c-b0c9-bff8f3723cbf",
+            "x": 906,
+            "y": 533,
+            "w": 14,
+            "h": 8,
+            "text": "文本节点 A- 14 A+",
+            "offLeft": -609,
+            "offTop": -433,
+            "clipped": false
+          },
+          {
+            "id": "node-44664522-d5a4-41b9-b3f5-f046bccfa5b7",
+            "x": 924,
+            "y": 532,
+            "w": 16,
+            "h": 10,
+            "text": "生成配置 已连接 1 个输入节点 把图片节点连线到左侧作为参考图，文本节点连线过",
+            "offLeft": -627,
+            "offTop": -432,
+            "clipped": false
+          }
+        ],
+        "zoomTxt": [
+          "5%"
+        ]
+      },
+      "shot": "119-m5c-ready.png"
+    },
+    "fit": {
+      "x": 371,
+      "y": 947
+    },
+    "after-fit": {
+      "viewport": {
+        "x": 297,
+        "y": 100,
+        "w": 1286,
+        "h": 883
+      },
+      "save": "保存中…",
+      "nodes": [
+        {
+          "id": "node-8be29044-6275-464c-b0c9-bff8f3723cbf",
+          "x": 377,
+          "y": 417,
+          "w": 464,
+          "h": 248,
+          "text": "文本节点 A- 14 A+",
+          "offLeft": -80,
+          "offTop": -317,
+          "clipped": false
+        },
+        {
+          "id": "node-44664522-d5a4-41b9-b3f5-f046bccfa5b7",
+          "x": 973,
+          "y": 384,
+          "w": 530,
+          "h": 315,
+          "text": "生成配置 已连接 1 个输入节点 把图片节点连线到左侧作为参考图，文本节点连线过",
+          "offLeft": -676,
+          "offTop": -284,
+          "clipped": false
+        }
+      ],
+      "zoomTxt": [
+        "166%"
+      ],
+      "shot": "120-m5c-fit.png"
+    },
+    "wheel": {
+      "in": [
+        "208%"
+      ],
+      "out": [
+        "132%"
+      ],
+      "nodeW": [
+        583,
+        369
+      ]
+    },
+    "slider": {
+      "x": 394,
+      "y": 939,
+      "w": 96,
+      "h": 16
+    },
+    "slider-both-ends": {
+      "min": [
+        "5%"
+      ],
+      "max": [
+        "500%"
+      ],
+      "shot": "121-m5c-slider-max.png"
+    },
+    "pan": {
+      "before": [
+        [
+          377,
+          417
+        ],
+        [
+          973,
+          384
+        ]
+      ],
+      "after": [
+        [
+          377,
+          417
+        ],
+        [
+          973,
+          384
+        ]
+      ],
+      "shot": "122-m5c-pan.png"
+    },
+    "minimap": {
+      "x": 311,
+      "y": 771,
+      "w": 220,
+      "h": 150,
+      "html": "<div class=\"AoVF5G_minimapCanvas\"><div class=\"AoVF5G_minimapNode AoVF5G_minimapText \" style=\"left: 67.1429px; top: 65.5462px; width: 35.2941px; height: 18.9076px;\"></div><div class=\"AoVF5G_minimapNode"
+    },
+    "minimap-click": {
+      "before": [
+        [
+          377,
+          417
+        ],
+        [
+          973,
+          384
+        ]
+      ],
+      "after": [
+        [
+          -477,
+          -69
+        ],
+        [
+          119,
+          -102
+        ]
+      ],
+      "shot": "123-m5c-minimap.png"
+    },
+    "close-minimap": {
+      "x": 335,
+      "y": 947
+    },
+    "minimap-gone": null
+  },
+  "consoleErrors": [
+    {
+      "type": "warning",
+      "text": "[connection] generation is still not ready after 3000ms"
+    },
+    {
+      "type": "warning",
+      "text": "[connection] connection lost, retry #1"
+    }
+  ],
+  "pageErrors": []
+}

@@ -1,0 +1,117 @@
+{
+  "result": {
+    "node-overlap": {
+      "nodes": [
+        {
+          "t": "文本节点 A- 14 A+",
+          "x": 420,
+          "y": 467,
+          "w": 280,
+          "h": 150,
+          "hasImg": false
+        },
+        {
+          "t": "生成配置 已连接 1 个输入",
+          "x": 780,
+          "y": 447,
+          "w": 320,
+          "h": 190,
+          "hasImg": false
+        },
+        {
+          "t": "素材库图片 1536×204",
+          "x": 840,
+          "y": 422,
+          "w": 200,
+          "h": 240,
+          "hasImg": true
+        }
+      ],
+      "overlapping": [
+        {
+          "a": "生成配置 已连接 1 个输入",
+          "b": "素材库图片 1536×204",
+          "overlapW": 200,
+          "overlapH": 190,
+          "pctOfA": 63,
+          "pctOfB": 100
+        }
+      ],
+      "shot": "157-m5k-overlap.png"
+    },
+    "handles": [
+      {
+        "x": 420,
+        "y": 542,
+        "w": 7,
+        "h": 7,
+        "host": "文本节点 A- 14 A"
+      },
+      {
+        "x": 780,
+        "y": 542,
+        "w": 7,
+        "h": 7,
+        "host": "生成配置 已连接 1 个"
+      },
+      {
+        "x": 840,
+        "y": 542,
+        "w": 7,
+        "h": 7,
+        "host": "素材库图片 1536×2"
+      }
+    ],
+    "connect-target": {
+      "x": 940,
+      "y": 542,
+      "t": "生成配置 已连接 1 个输入"
+    },
+    "connect-list": {
+      "from": "文本节点 A- 14 A",
+      "to": "生成配置 已连接 1 个输入",
+      "hitsBefore": 1,
+      "hitsAfter": 2,
+      "shot": "158-m5k-connected.png"
+    },
+    "project-btn": {
+      "x": 399,
+      "y": 76,
+      "tag": "BUTTON",
+      "expanded": "false",
+      "haspopup": "listbox"
+    },
+    "project-dropdown": {
+      "open": true,
+      "expanded": "true",
+      "box": {
+        "w": 180,
+        "h": 278
+      },
+      "scrollH": 43077,
+      "optionCount": 1425,
+      "hasSearch": false,
+      "names": [
+        "★ 未命名画布",
+        "★ gone",
+        "未命名画布",
+        "gone",
+        "deck",
+        "extract"
+      ],
+      "dupNames": 1417,
+      "shot": "159-m5k-project-dropdown.png"
+    }
+  },
+  "consoleErrors": [
+    {
+      "type": "warning",
+      "text": "[connection] generation is still not ready after 3000ms"
+    },
+    {
+      "type": "warning",
+      "text": "[connection] connection lost, retry #1"
+    }
+  ],
+  "pageErrors": []
+}

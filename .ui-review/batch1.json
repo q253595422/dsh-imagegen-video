@@ -1,0 +1,80 @@
+{
+  "findings": [
+    {
+      "step": "shell",
+      "shot": "01-shell-disclaimer.png",
+      "disclaimer": null
+    },
+    {
+      "step": "shell",
+      "shot": "02-shell-full.png",
+      "metrics": {
+        "view": {
+          "w": 1320,
+          "h": 1000
+        },
+        "header": {
+          "h": 28
+        },
+        "scrollW": 1320,
+        "clientW": 1320,
+        "docOverflow": false
+      }
+    },
+    {
+      "step": "shell/empty",
+      "shot": "02-shell-full.png",
+      "resultArea": "no-empty-copy"
+    },
+    {
+      "step": "text/prompt",
+      "shot": "03-text-prompt-filled.png",
+      "value": "",
+      "errors": []
+    },
+    {
+      "step": "text/counter",
+      "shot": "04-text-counter.png",
+      "counterBlock": "模板库\n增强\n0"
+    },
+    {
+      "step": "text/ratio",
+      "shot": "05-text-ratio-169.png",
+      "selected": [
+        "生图"
+      ],
+      "errors": []
+    },
+    {
+      "step": "text/quality",
+      "shot": "06-text-quality-4k.png",
+      "errors": []
+    },
+    {
+      "step": "text/count",
+      "shot": "07-text-count-4.png",
+      "errors": []
+    },
+    {
+      "step": "text/detail",
+      "shot": "08-text-detail-hd.png",
+      "errors": []
+    }
+  ],
+  "consoleErrors": [
+    {
+      "type": "warning",
+      "text": "[connection] generation is still not ready after 3000ms"
+    },
+    {
+      "type": "warning",
+      "text": "[connection] connection lost, retry #1"
+    },
+    {
+      "type": "warning",
+      "text": "[connection] generation is still not ready after 3000ms"
+    }
+  ],
+  "pageErrors": [],
+  "failedRequests": []
+}

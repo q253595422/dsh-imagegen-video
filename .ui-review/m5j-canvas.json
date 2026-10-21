@@ -1,0 +1,26 @@
+{
+  "result": {
+    "project-button": {
+      "x": 399,
+      "y": 76
+    },
+    "project-dropdown": {
+      "shot": "156-m5j-project-dropdown.png"
+    },
+    "project-scroll": null,
+    "topbar": {
+      "topBar": "★ 未命名画布 未命名画布 已保存 文本节点 A- 14 A+ 生成配置 已连接 1 个输入节点 把图片节点连线到左侧作为参考图，文本节点连线过来作为提示词；选中本节点后在下方输入"
+    }
+  },
+  "consoleErrors": [
+    {
+      "type": "warning",
+      "text": "[connection] generation is still not ready after 3000ms"
+    },
+    {
+      "type": "warning",
+      "text": "[connection] connection lost, retry #1"
+    }
+  ],
+  "pageErrors": []
+}

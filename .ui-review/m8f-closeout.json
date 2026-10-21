@@ -1,0 +1,92 @@
+{
+  "f1-ppt-tab": {
+    "tabText": "\"图片转 PPT\"",
+    "textContent": "\"图片转 PPT\"",
+    "w": 93,
+    "h": 28,
+    "walk": [
+      {
+        "d": 0,
+        "tag": "button",
+        "cls": "",
+        "text": "图片转 PPT",
+        "cw": 93,
+        "sw": 93,
+        "w": 93,
+        "ov": "visible",
+        "to": "clip",
+        "ws": "nowrap",
+        "flex": "1",
+        "maxW": "none"
+      }
+    ],
+    "rects": [
+      {
+        "l": 556,
+        "r": 623,
+        "w": 67
+      }
+    ],
+    "textOverflowsBox": false,
+    "shot": "260-218-m8f-ppt-tab-760.png"
+  },
+  "f2-inner-tabs": [
+    {
+      "t": "文生图",
+      "sel": "true",
+      "ti": "0",
+      "tag": "button"
+    },
+    {
+      "t": "图生图",
+      "sel": "false",
+      "ti": "-1",
+      "tag": "button"
+    },
+    {
+      "t": "生视频",
+      "sel": "false",
+      "ti": "-1",
+      "tag": "button"
+    }
+  ],
+  "f2-arrow-trail": [
+    {
+      "t": "图生图",
+      "sel": "true",
+      "ti": "0"
+    },
+    {
+      "t": "会话\n生图\n新会",
+      "sel": null,
+      "ti": null
+    }
+  ],
+  "f2-selected": [
+    {
+      "t": "文生图",
+      "sel": "false",
+      "ti": "-1"
+    },
+    {
+      "t": "图生图",
+      "sel": "false",
+      "ti": "-1"
+    },
+    {
+      "t": "生视频",
+      "sel": "true",
+      "ti": "0"
+    }
+  ],
+  "f3-settings-open": 0,
+  "f3-versions": {
+    "versions": [],
+    "pluginVersionShown": false,
+    "versionLeaves": [],
+    "hasCheckUpdate": false,
+    "textLen": 14264,
+    "shot": "261-219-m8f-settings-version.png"
+  },
+  "pageErrors": []
+}

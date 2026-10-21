@@ -1,0 +1,104 @@
+{
+  "initial": {
+    "loading": true,
+    "text": "VisioWork 普通生图 素材库 无限画布 电商模式预览 图片转 PPT 无限画布 对话 已连接 加载中… 100%",
+    "nodeish": 0,
+    "menus": [],
+    "dialogs": [],
+    "shot": "161-121-m5b-initial.png"
+  },
+  "after-4s": {
+    "loading": false,
+    "text": "VisioWork 普通生图 素材库 无限画布 电商模式预览 图片转 PPT 无限画布 对话 已连接 ★ 未命名画布 未命名画布 已保存 文本节点 A- 14 A+ 生成配置 已连接 1 个输入节点 把图片节点连线到左侧作为参考图，文本节点连线过来作为提示词；选中本节点后在下方输入或改写提示词并生成。 素材库图片 1536×2048 100%",
+    "nodeish": 7,
+    "menus": [],
+    "dialogs": []
+  },
+  "topbar": [],
+  "project-switcher": {
+    "clicked": {
+      "tag": "button",
+      "title": "",
+      "cls": ""
+    },
+    "state": {
+      "loading": false,
+      "text": "VisioWork 普通生图 素材库 无限画布 电商模式预览 图片转 PPT 普通生图 对话 已连接 文生图 图生图 生视频 模板库 增强 0 尺寸 自动 1:1 方图 3:4 标准竖图 4:3 标准横图 9:16 竖屏 2:3 竖图 3:2 横图 16:9 宽屏 21:9 超宽屏 清晰度 自动 1K 2K 4K 生成数量 1 张 2 张 3 张 4 张 细节 自动 标准 高清 透传参数，部分 gpt-image-2 网关支持；官方接口请保持「自动」 渠道 / 模型 11 / agnes-image-2.1-flash 多模型对比 开始生成 灵感案例 雅致图案四款时尚单品设计 给怪物换颜色 过度思考超现实街头 Campaign #225 Textured Cut-Paper Collage Storybook Profile / Avatar - Editorial Portrait with Retro Headphones Profile / Avatar - Editorial Portrait with Retro Headphones IG-011 前后变化对比信息图 成都吃货暴走手绘美食地图 终结者机器人淘宝详情页 Monochrome Studio Portrait Grid 《短歌行》诗词意境图 主题海报版式设计 E-commerce Main Image - Fa",
+      "nodeish": 0,
+      "menus": [],
+      "dialogs": []
+    },
+    "shot": "162-122-m5b-project-switcher.png"
+  },
+  "add-image-node": {
+    "clicked": false,
+    "state": {
+      "loading": false,
+      "text": "VisioWork 普通生图 素材库 无限画布 电商模式预览 图片转 PPT 普通生图 对话 已连接 文生图 图生图 生视频 模板库 增强 0 尺寸 自动 1:1 方图 3:4 标准竖图 4:3 标准横图 9:16 竖屏 2:3 竖图 3:2 横图 16:9 宽屏 21:9 超宽屏 清晰度 自动 1K 2K 4K 生成数量 1 张 2 张 3 张 4 张 细节 自动 标准 高清 透传参数，部分 gpt-image-2 网关支持；官方接口请保持「自动」 渠道 / 模型 11 / agnes-image-2.1-flash 多模型对比 开始生成 灵感案例 雅致图案四款时尚单品设计 给怪物换颜色 过度思考超现实街头 Campaign #225 Textured Cut-Paper Collage Storybook Profile / Avatar - Editorial Portrait with Retro Headphones Profile / Avatar - Editorial Portrait with Retro Headphones IG-011 前后变化对比信息图 成都吃货暴走手绘美食地图 终结者机器人淘宝详情页 Monochrome Studio Portrait Grid 《短歌行》诗词意境图 主题海报版式设计 E-commerce Main Image - Fa",
+      "nodeish": 0,
+      "menus": [],
+      "dialogs": []
+    },
+    "shot": "163-123-m5b-add-image-node.png"
+  },
+  "image-node-controls": {
+    "noNode": true,
+    "sample": 0
+  },
+  "add-text-node": {
+    "clicked": false,
+    "state": {
+      "loading": false,
+      "text": "VisioWork 普通生图 素材库 无限画布 电商模式预览 图片转 PPT 普通生图 对话 已连接 文生图 图生图 生视频 模板库 增强 0 尺寸 自动 1:1 方图 3:4 标准竖图 4:3 标准横图 9:16 竖屏 2:3 竖图 3:2 横图 16:9 宽屏 21:9 超宽屏 清晰度 自动 1K 2K 4K 生成数量 1 张 2 张 3 张 4 张 细节 自动 标准 高清 透传参数，部分 gpt-image-2 网关支持；官方接口请保持「自动」 渠道 / 模型 11 / agnes-image-2.1-flash 多模型对比 开始生成 灵感案例 雅致图案四款时尚单品设计 给怪物换颜色 过度思考超现实街头 Campaign #225 Textured Cut-Paper Collage Storybook Profile / Avatar - Editorial Portrait with Retro Headphones Profile / Avatar - Editorial Portrait with Retro Headphones IG-011 前后变化对比信息图 成都吃货暴走手绘美食地图 终结者机器人淘宝详情页 Monochrome Studio Portrait Grid 《短歌行》诗词意境图 主题海报版式设计 E-commerce Main Image - Fa",
+      "nodeish": 0,
+      "menus": [],
+      "dialogs": []
+    },
+    "shot": "164-124-m5b-add-text-node.png"
+  },
+  "text-node-input": {
+    "ph": "描述你想要的画面，例如：一只戴着宇航员头盔的橘猫，在月球上举起望远镜，水彩风格，柔和光线…",
+    "cls": "uTF49q_prompt",
+    "tag": "textarea"
+  },
+  "after-typing": {
+    "loading": false,
+    "text": "VisioWork 普通生图 素材库 无限画布 电商模式预览 图片转 PPT 普通生图 对话 已连接 文生图 图生图 生视频 模板库 增强 9 尺寸 自动 1:1 方图 3:4 标准竖图 4:3 标准横图 9:16 竖屏 2:3 竖图 3:2 横图 16:9 宽屏 21:9 超宽屏 清晰度 自动 1K 2K 4K 生成数量 1 张 2 张 3 张 4 张 细节 自动 标准 高清 透传参数，部分 gpt-image-2 网关支持；官方接口请保持「自动」 渠道 / 模型 11 / agnes-image-2.1-flash 多模型对比 开始生成 灵感案例 雅致图案四款时尚单品设计 给怪物换颜色 过度思考超现实街头 Campaign #225 Textured Cut-Paper Collage Storybook Profile / Avatar - Editorial Portrait with Retro Headphones Profile / Avatar - Editorial Portrait with Retro Headphones IG-011 前后变化对比信息图 成都吃货暴走手绘美食地图 终结者机器人淘宝详情页 Monochrome Studio Portrait Grid 《短歌行》诗词意境图 主题海报版式设计 E-commerce Main Image - Fa",
+    "nodeish": 0,
+    "menus": [],
+    "dialogs": [],
+    "shot": "165-125-m5b-text-typed.png"
+  },
+  "add-config-node": {
+    "clicked": false,
+    "state": {
+      "loading": false,
+      "text": "VisioWork 普通生图 素材库 无限画布 电商模式预览 图片转 PPT 普通生图 对话 已连接 文生图 图生图 生视频 模板库 增强 9 尺寸 自动 1:1 方图 3:4 标准竖图 4:3 标准横图 9:16 竖屏 2:3 竖图 3:2 横图 16:9 宽屏 21:9 超宽屏 清晰度 自动 1K 2K 4K 生成数量 1 张 2 张 3 张 4 张 细节 自动 标准 高清 透传参数，部分 gpt-image-2 网关支持；官方接口请保持「自动」 渠道 / 模型 11 / agnes-image-2.1-flash 多模型对比 开始生成 灵感案例 雅致图案四款时尚单品设计 给怪物换颜色 过度思考超现实街头 Campaign #225 Textured Cut-Paper Collage Storybook Profile / Avatar - Editorial Portrait with Retro Headphones Profile / Avatar - Editorial Portrait with Retro Headphones IG-011 前后变化对比信息图 成都吃货暴走手绘美食地图 终结者机器人淘宝详情页 Monochrome Studio Portrait Grid 《短歌行》诗词意境图 主题海报版式设计 E-commerce Main Image - Fa",
+      "nodeish": 0,
+      "menus": [],
+      "dialogs": []
+    },
+    "shot": "166-126-m5b-add-config-node.png"
+  },
+  "config-node-controls": {
+    "noNode": true
+  },
+  "final": {
+    "loading": false,
+    "text": "VisioWork 普通生图 素材库 无限画布 电商模式预览 图片转 PPT 普通生图 对话 已连接 文生图 图生图 生视频 模板库 增强 9 尺寸 自动 1:1 方图 3:4 标准竖图 4:3 标准横图 9:16 竖屏 2:3 竖图 3:2 横图 16:9 宽屏 21:9 超宽屏 清晰度 自动 1K 2K 4K 生成数量 1 张 2 张 3 张 4 张 细节 自动 标准 高清 透传参数，部分 gpt-image-2 网关支持；官方接口请保持「自动」 渠道 / 模型 11 / agnes-image-2.1-flash 多模型对比 开始生成 灵感案例 雅致图案四款时尚单品设计 给怪物换颜色 过度思考超现实街头 Campaign #225 Textured Cut-Paper Collage Storybook Profile / Avatar - Editorial Portrait with Retro Headphones Profile / Avatar - Editorial Portrait with Retro Headphones IG-011 前后变化对比信息图 成都吃货暴走手绘美食地图 终结者机器人淘宝详情页 Monochrome Studio Portrait Grid 《短歌行》诗词意境图 主题海报版式设计 E-commerce Main Image - Fa",
+    "nodeish": 0,
+    "menus": [],
+    "dialogs": []
+  },
+  "pageErrors": [],
+  "consoleErrors": [
+    {
+      "type": "warning",
+      "text": "[connection] generation is still not ready after 3000ms"
+    },
+    {
+      "type": "warning",
+      "text": "[connection] connection lost, retry #1"
+    }
+  ]
+}

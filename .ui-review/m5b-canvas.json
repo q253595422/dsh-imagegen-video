@@ -1,0 +1,228 @@
+{
+  "result": {
+    "initial": {
+      "viewport": {
+        "x": 297,
+        "y": 100,
+        "w": 1286,
+        "h": 883
+      },
+      "nodes": [],
+      "zoomTxt": [
+        "100%"
+      ],
+      "shot": "114-m5b-nodes-initial.png"
+    },
+    "fit": {
+      "x": 371,
+      "y": 947
+    },
+    "after-fit": {
+      "viewport": {
+        "x": 297,
+        "y": 100,
+        "w": 1286,
+        "h": 883
+      },
+      "nodes": [
+        {
+          "id": "node-8be29044-6275-464c-b0c9-bff8f3723cbf",
+          "kind": "",
+          "x": 260,
+          "y": 376,
+          "w": 280,
+          "h": 150,
+          "text": "文本节点 A- 14 A+",
+          "clipped": true
+        },
+        {
+          "id": "node-44664522-d5a4-41b9-b3f5-f046bccfa5b7",
+          "kind": "",
+          "x": 620,
+          "y": 356,
+          "w": 320,
+          "h": 190,
+          "text": "生成配置 已连接 1 个输入节点 把图片节点连线到左侧作为参考图，文本节点连线过来作为提示词；选中本",
+          "clipped": false
+        }
+      ],
+      "zoomTxt": [
+        "100%"
+      ],
+      "shot": "115-m5b-nodes-fit.png"
+    },
+    "wheel-in": {
+      "viewport": {
+        "x": 297,
+        "y": 100,
+        "w": 1286,
+        "h": 883
+      },
+      "nodes": [
+        {
+          "id": "node-8be29044-6275-464c-b0c9-bff8f3723cbf",
+          "kind": "",
+          "x": 85,
+          "y": 333,
+          "w": 352,
+          "h": 189,
+          "text": "文本节点 A- 14 A+",
+          "clipped": true
+        },
+        {
+          "id": "node-44664522-d5a4-41b9-b3f5-f046bccfa5b7",
+          "kind": "",
+          "x": 538,
+          "y": 308,
+          "w": 402,
+          "h": 239,
+          "text": "生成配置 已连接 1 个输入节点 把图片节点连线到左侧作为参考图，文本节点连线过来作为提示词；选中本",
+          "clipped": false
+        }
+      ],
+      "zoomTxt": [
+        "126%"
+      ]
+    },
+    "wheel-out": {
+      "viewport": {
+        "x": 297,
+        "y": 100,
+        "w": 1286,
+        "h": 883
+      },
+      "nodes": [
+        {
+          "id": "node-8be29044-6275-464c-b0c9-bff8f3723cbf",
+          "kind": "",
+          "x": 399,
+          "y": 410,
+          "w": 223,
+          "h": 119,
+          "text": "文本节点 A- 14 A+",
+          "clipped": false
+        },
+        {
+          "id": "node-44664522-d5a4-41b9-b3f5-f046bccfa5b7",
+          "kind": "",
+          "x": 685,
+          "y": 394,
+          "w": 255,
+          "h": 151,
+          "text": "生成配置 已连接 1 个输入节点 把图片节点连线到左侧作为参考图，文本节点连线过来作为提示词；选中本",
+          "clipped": false
+        }
+      ],
+      "zoomTxt": [
+        "80%"
+      ],
+      "shot": "116-m5b-wheel-out.png"
+    },
+    "slider": {
+      "x": 394,
+      "y": 939,
+      "w": 96,
+      "h": 16
+    },
+    "slider-min": {
+      "viewport": {
+        "x": 297,
+        "y": 100,
+        "w": 1286,
+        "h": 883
+      },
+      "nodes": [
+        {
+          "id": "node-8be29044-6275-464c-b0c9-bff8f3723cbf",
+          "kind": "",
+          "x": 906,
+          "y": 533,
+          "w": 14,
+          "h": 8,
+          "text": "文本节点 A- 14 A+",
+          "clipped": false
+        },
+        {
+          "id": "node-44664522-d5a4-41b9-b3f5-f046bccfa5b7",
+          "kind": "",
+          "x": 924,
+          "y": 532,
+          "w": 16,
+          "h": 10,
+          "text": "生成配置 已连接 1 个输入节点 把图片节点连线到左侧作为参考图，文本节点连线过来作为提示词；选中本",
+          "clipped": false
+        }
+      ],
+      "zoomTxt": [
+        "5%"
+      ]
+    },
+    "pan": {
+      "before": {
+        "x": 297,
+        "y": 100,
+        "w": 1286,
+        "h": 883
+      },
+      "after": {
+        "x": 297,
+        "y": 100,
+        "w": 1286,
+        "h": 883
+      },
+      "nodeMoved": [
+        0,
+        0
+      ],
+      "shot": "117-m5b-pan.png"
+    },
+    "minimap": {
+      "x": 311,
+      "y": 771,
+      "w": 220,
+      "h": 150
+    },
+    "minimap-click": {
+      "before": [
+        [
+          377,
+          417
+        ],
+        [
+          973,
+          384
+        ]
+      ],
+      "after": [
+        [
+          -621,
+          -161
+        ],
+        [
+          -25,
+          -194
+        ]
+      ],
+      "zoom": [
+        "166%"
+      ],
+      "shot": "118-m5b-minimap-click.png"
+    },
+    "doc-overflow": {
+      "scrollW": 1600,
+      "clientW": 1600,
+      "bodyScrollW": 1600
+    }
+  },
+  "consoleErrors": [
+    {
+      "type": "warning",
+      "text": "[connection] generation is still not ready after 3000ms"
+    },
+    {
+      "type": "warning",
+      "text": "[connection] connection lost, retry #1"
+    }
+  ],
+  "pageErrors": []
+}

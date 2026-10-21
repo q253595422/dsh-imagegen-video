@@ -1,0 +1,148 @@
+{
+  "g3-empty-name-button": {
+    "dis": true,
+    "title": "",
+    "ariaDisabled": null,
+    "x": 445,
+    "y": 965,
+    "w": 298,
+    "h": 38
+  },
+  "g3-after-click-disabled": {
+    "anyHint": false,
+    "tail": "风格、光影、构图、氛围,不能更换商品主体。 ＋ 上传风格参考图 商品名称（必填） 参数信息 (可选) AI 帮写 参数选择 平台 通用 文案语言 中文 类目 通用商品 比例 1:1 套图结构 可多选 主图 1 卖点图 2 场景图 2 细节图 1 规格图 使用图 参考图设置（可选） ⌄ 生成设置 11 / agnes-image-2.1-flash 自动 1K 2K 4K 将生成 6 张套图 生成套图预览 套图结果 新商品 确认生成后，每张图片的任务状态和结果会按用途显示在这里",
+    "tooltips": [],
+    "shot": "201-161-m6d-ecom-disabled-submit.png"
+  },
+  "g4-after-name": {
+    "typed": "测试商品-陶瓷马克杯",
+    "state": {
+      "disabled": false,
+      "sum": "将生成 6 张套图"
+    },
+    "shot": "202-162-m6d-ecom-name-filled.png"
+  },
+  "g1-chips": [
+    {
+      "name": "主图",
+      "inViewport": true,
+      "before": {
+        "text": "主图 1",
+        "active": true,
+        "bg": "rgb(15, 17, 21)",
+        "color": "rgb(255, 255, 255)"
+      },
+      "after": {
+        "text": "主图",
+        "active": false,
+        "bg": "rgb(255, 255, 255)",
+        "color": "rgb(15, 17, 21)"
+      },
+      "sumBefore": "将生成 6 张套图",
+      "sumAfter": "将生成 5 张套图"
+    },
+    {
+      "name": "卖点图",
+      "inViewport": true,
+      "before": {
+        "text": "卖点图 2",
+        "active": true,
+        "bg": "rgb(15, 17, 21)",
+        "color": "rgb(255, 255, 255)"
+      },
+      "after": {
+        "text": "卖点图",
+        "active": false,
+        "bg": "rgb(255, 255, 255)",
+        "color": "rgb(15, 17, 21)"
+      },
+      "sumBefore": "将生成 5 张套图",
+      "sumAfter": "将生成 3 张套图"
+    },
+    {
+      "name": "场景图",
+      "inViewport": true,
+      "before": {
+        "text": "场景图 2",
+        "active": true,
+        "bg": "rgb(15, 17, 21)",
+        "color": "rgb(255, 255, 255)"
+      },
+      "after": {
+        "text": "场景图",
+        "active": false,
+        "bg": "rgb(255, 255, 255)",
+        "color": "rgb(15, 17, 21)"
+      },
+      "sumBefore": "将生成 3 张套图",
+      "sumAfter": "将生成 1 张套图"
+    },
+    {
+      "name": "细节图",
+      "inViewport": true,
+      "before": {
+        "text": "细节图 1",
+        "active": true,
+        "bg": "rgb(15, 17, 21)",
+        "color": "rgb(255, 255, 255)"
+      },
+      "after": {
+        "text": "细节图",
+        "active": false,
+        "bg": "rgb(255, 255, 255)",
+        "color": "rgb(15, 17, 21)"
+      },
+      "sumBefore": "将生成 1 张套图",
+      "sumAfter": ""
+    },
+    {
+      "name": "规格图",
+      "inViewport": true,
+      "before": {
+        "text": "规格图",
+        "active": false,
+        "bg": "rgb(255, 255, 255)",
+        "color": "rgb(15, 17, 21)"
+      },
+      "after": {
+        "text": "规格图 1",
+        "active": true,
+        "bg": "rgb(15, 17, 21)",
+        "color": "rgb(255, 255, 255)"
+      },
+      "sumBefore": "",
+      "sumAfter": "将生成 1 张套图"
+    },
+    {
+      "name": "使用图",
+      "inViewport": true,
+      "before": {
+        "text": "使用图",
+        "active": false,
+        "bg": "rgb(255, 255, 255)",
+        "color": "rgb(15, 17, 21)"
+      },
+      "after": {
+        "text": "使用图 1",
+        "active": true,
+        "bg": "rgb(15, 17, 21)",
+        "color": "rgb(255, 255, 255)"
+      },
+      "sumBefore": "将生成 1 张套图",
+      "sumAfter": "将生成 2 张套图"
+    }
+  ],
+  "g2-style-input": {
+    "before": 2,
+    "after": {
+      "count": 2,
+      "dialog": [],
+      "accept": [
+        "",
+        "image/png,image/jpeg,image/webp,image/gif"
+      ]
+    },
+    "shot": "204-164-m6d-ecom-style-upload.png"
+  },
+  "pageErrors": []
+}

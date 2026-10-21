@@ -1,0 +1,109 @@
+{
+  "result": {
+    "initial": {
+      "imgs": 4,
+      "countText": "共 4 幅",
+      "empty": [],
+      "tail": [
+        "D",
+        "全身照",
+        "sensenova-u1.5-lite · auto · 2026-10-13 00:28",
+        "编辑",
+        "×"
+      ],
+      "selectedRows": []
+    },
+    "zero-row": {
+      "x": 446,
+      "y": 291,
+      "text": "agnes-image-2.1-flash 0",
+      "tag": "BUTTON",
+      "role": "",
+      "aria": ""
+    },
+    "zero-model-after": {
+      "imgs": 0,
+      "countText": "共 0 幅",
+      "empty": [
+        "素材库还是空的，把喜欢的图片加入进来吧"
+      ],
+      "tail": [
+        "▤ 整齐网格",
+        "最新发布",
+        "打开文件夹",
+        "清空素材库",
+        "素材库还是空的，把喜欢的图片加入进来吧"
+      ],
+      "selectedRows": [],
+      "shot": "110-m4d-zero-model.png"
+    },
+    "good-row": {
+      "x": 446,
+      "y": 563,
+      "text": "sensenova-u1.5-lite 3",
+      "tag": "BUTTON",
+      "role": "",
+      "aria": ""
+    },
+    "good-model-after": {
+      "imgs": 3,
+      "countText": "共 3 幅",
+      "empty": [],
+      "tail": [
+        "D",
+        "全身照",
+        "sensenova-u1.5-lite · auto · 2026-10-13 00:28",
+        "编辑",
+        "×"
+      ],
+      "selectedRows": [],
+      "shot": "111-m4d-good-model.png"
+    },
+    "mode-row": {
+      "x": 446,
+      "y": 257,
+      "text": "图生图 1",
+      "tag": "BUTTON",
+      "role": "",
+      "aria": ""
+    },
+    "mode-after": {
+      "imgs": 1,
+      "countText": "共 1 幅",
+      "empty": [],
+      "tail": [
+        "D",
+        "全身照",
+        "sensenova-u1.5-lite · auto · 2026-10-13 00:28",
+        "编辑",
+        "×"
+      ],
+      "selectedRows": [],
+      "shot": "112-m4d-mode-filter.png"
+    },
+    "back-to-all": {
+      "imgs": 4,
+      "countText": "共 4 幅",
+      "empty": [],
+      "tail": [
+        "D",
+        "全身照",
+        "sensenova-u1.5-lite · auto · 2026-10-13 00:28",
+        "编辑",
+        "×"
+      ],
+      "selectedRows": []
+    }
+  },
+  "consoleErrors": [
+    {
+      "type": "warning",
+      "text": "[connection] generation is still not ready after 3000ms"
+    },
+    {
+      "type": "warning",
+      "text": "[connection] connection lost, retry #1"
+    }
+  ],
+  "pageErrors": []
+}

@@ -1,0 +1,184 @@
+{
+  "e1-layout": {
+    "viewW": 1320,
+    "resultPanel": {
+      "x": 611,
+      "w": 972
+    },
+    "nameInput": {
+      "w": 248,
+      "x": 321
+    },
+    "docOverflow": {
+      "scrollW": 1600,
+      "clientW": 1600
+    },
+    "shot": "193-151-m6b-ecom-layout.png"
+  },
+  "e1-heading-wrap": [
+    {
+      "t": "普通生图",
+      "w": 78,
+      "lines": 2,
+      "y": 14
+    },
+    {
+      "t": "素材库",
+      "w": 65,
+      "lines": 2,
+      "y": 14
+    },
+    {
+      "t": "无限画布",
+      "w": 78,
+      "lines": 2,
+      "y": 14
+    },
+    {
+      "t": "图片转 PPT",
+      "w": 93,
+      "lines": 2,
+      "y": 14
+    },
+    {
+      "t": "电商模式预览",
+      "w": 109,
+      "lines": 2,
+      "y": 14
+    },
+    {
+      "t": "上传商品图（必选，最多 4 张：主体 / 包装 / 细节）",
+      "w": 222,
+      "lines": 2,
+      "y": 203
+    },
+    {
+      "t": "只传风格、光影、构图、氛围,不能更换商品主体。",
+      "w": 248,
+      "lines": 2,
+      "y": 351
+    },
+    {
+      "t": "规格图",
+      "w": 79,
+      "lines": 2,
+      "y": 1074
+    },
+    {
+      "t": "使用图",
+      "w": 79,
+      "lines": 2,
+      "y": 1074
+    },
+    {
+      "t": "生成套图预览",
+      "w": 298,
+      "lines": 2,
+      "y": 946
+    },
+    {
+      "t": "新商品",
+      "w": 58,
+      "lines": 2,
+      "y": 69
+    },
+    {
+      "t": "确认生成后，每张图片的任务状态和结果会按用途显示在这里",
+      "w": 936,
+      "lines": 4,
+      "y": 113
+    }
+  ],
+  "e2-upload-5": {
+    "ok": true,
+    "count": 2,
+    "cdpError": null
+  },
+  "e2-after": {
+    "counter": "0/4",
+    "hasWarn": true,
+    "warnText": "商模式预览 对话 已连接 主图参考图 必选 · 商品主体图,最多 4 张 0/4 上传商品图（必选，最多 4 张：主体 / 包装 / 细节） P",
+    "thumbs": 0,
+    "shot": "194-152-m6b-ecom-upload5.png"
+  },
+  "e3-upload-2": {
+    "ok": true,
+    "count": 2,
+    "cdpError": null
+  },
+  "e3-after": {
+    "counter": "0/1",
+    "hasWarn": true,
+    "warnText": "商模式预览 对话 已连接 主图参考图 必选 · 商品主体图,最多 4 张 2/4 商品主体 × 商品主体 × ＋ 上传素材 风格参考图 (可选,",
+    "shot": "195-153-m6b-ecom-style2.png"
+  },
+  "e4-button": {
+    "t": "生成套图预览",
+    "dis": true,
+    "aria": null,
+    "title": "",
+    "x": 445,
+    "y": 965
+  },
+  "e4-after-click": {
+    "text": "VisioWork 普通生图 素材库 无限画布 电商模式预览 图片转 PPT 电商模式预览 对话 已连接 主图参考图 必选 · 商品主体图,最多 4 张 2/4 商品主体 × 商品主体 × ＋ 上传素材 风格参考图 (可选,最多 1 张) 0/1 只传风格、光影、构图、氛围,不能更换商品主体。 ＋ 上传风格参考图 商品名称（必填） 参数信息 (可选) AI 帮写 参数选择 平台 通用 文案语言 中文 类目 通用商品 比例 1:1 套图结构 可多选 主图 1 卖点图 2 场景图 2 细节图 1 规格图 使用图 参考图设置（可选） ⌄ 生成设置 11 / agnes-image-2.1-flash 自动 1K 2K 4K 将生成 6 张套图 生成套图预览 套图结果 新商品 确认生成后，每张图片的任务状态和结果会按用途显示在这里",
+    "invalid": null,
+    "hasErr": true,
+    "errText": " ＋ 上传风格参考图 商品名称（必填） 参数信息 (可选) AI 帮写 参数选择 平台 通用 文案语言 中文 类目 ",
+    "shot": "196-154-m6b-ecom-empty-submit.png"
+  },
+  "e5-ai-button-empty-name": {
+    "dis": false,
+    "x": 533,
+    "y": 632
+  },
+  "e5-after-ai": {
+    "text": "VisioWork 普通生图 素材库 无限画布 电商模式预览 图片转 PPT 电商模式预览 对话 已连接 主图参考图 必选 · 商品主体图,最多 4 张 2/4 商品主体 × 商品主体 × ＋ 上传素材 风格参考图 (可选,最多 1 张) 0/1 只传风格、光影、构图、氛围,不能更换商品主体。 ＋ 上传风格参考图 商品名称（必填） 参数信息 (可选) AI 整理中… 参数选择 平台 通用 文案语言 中文 类目 通用商品 比例 1:1 套图结构 可多选 主图 1 卖点图 2 场景图 2 细节图 1 规格图 使用图 参考图设置（可选） ⌄ 生成设置 11 / agnes-image-2.1-flash 自动 1K 2K 4K 将生成 6 张套图 生成套图预览 套图结果 新商品 确认生成后，每张图片的任务状态和结果会按用途显示在这里",
+    "dlg": [],
+    "textareaValue": "",
+    "hasErr": false,
+    "shot": "197-155-m6b-ecom-ai-help.png"
+  },
+  "e6-before": {
+    "sum": "将生成 6 张套图",
+    "chips": [
+      {
+        "t": "主图 1",
+        "aria": "",
+        "title": "主图：干净背景，突出商品主体"
+      },
+      {
+        "t": "卖点图 2",
+        "aria": "",
+        "title": "卖点图：用画面展示商品核心卖点"
+      },
+      {
+        "t": "场景图 2",
+        "aria": "",
+        "title": "场景图：真实生活或使用场景"
+      },
+      {
+        "t": "细节图 1",
+        "aria": "",
+        "title": "细节图：材质、结构或工艺特写"
+      },
+      {
+        "t": "规格图",
+        "aria": "",
+        "title": "规格图：尺寸、容量或参数展示"
+      },
+      {
+        "t": "使用图",
+        "aria": "",
+        "title": "使用图：人物上手或穿戴效果"
+      }
+    ]
+  },
+  "e6-sellpoint-clicks": {
+    "after1": "将生成 6 张套图",
+    "after2": "将生成 6 张套图",
+    "chipAfter2": "卖点图 2",
+    "shot": "198-156-m6b-ecom-structure.png"
+  },
+  "error": "Error: eval threw: SyntaxError: Unexpected token '-'\n    at Object.evaluate (file:///Users/malang/chajian/dsh-imagegen-video/.ui-review/harness.mjs:103:13)\n    at async file:///Users/malang/chajian/dsh-imagegen-video/.ui-review/m6b-ecom-behaviour.mjs:207:22"
+}

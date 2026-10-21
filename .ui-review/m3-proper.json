@@ -1,0 +1,420 @@
+{
+  "findings": [
+    {
+      "step": "video/enter",
+      "ok": true,
+      "state": {
+        "modes": [
+          {
+            "t": "文生视频",
+            "bg": "rgb(255, 255, 255)",
+            "bc": "rgb(15, 17, 21)",
+            "aria": null
+          },
+          {
+            "t": "图生视频",
+            "bg": "rgba(0, 0, 0, 0)",
+            "bc": "rgb(97, 102, 107)",
+            "aria": null
+          },
+          {
+            "t": "首尾帧",
+            "bg": "rgba(0, 0, 0, 0)",
+            "bc": "rgb(97, 102, 107)",
+            "aria": null
+          },
+          {
+            "t": "参考图",
+            "bg": "rgba(0, 0, 0, 0)",
+            "bc": "rgb(97, 102, 107)",
+            "aria": null
+          }
+        ],
+        "hints": [],
+        "planning": false,
+        "hasPlanCard": false,
+        "gen": {
+          "dis": true,
+          "cursor": "not-allowed"
+        },
+        "text": "VisioWork 普通生图 素材库 无限画布 电商模式预览 图片转 PPT 普通生图 对话 已连接 文生视频 图生视频 首尾帧 参考图 诊断日志 视频描述 视频模型 agnes-video-2.5-flash 画面比例 16:9 9:16 1:1 4:3 3:4 分辨率 480P 720P 1080P 时长（秒） 5 10 先规划（开） 预览规划 生成前先把一句话拆成镜头、运镜、时长与风格，并落到实际参数。 生成视频 视频渲染较慢，页面关闭后任务仍会在宿主继续执行。"
+      },
+      "shot": "69-m3-enter.png"
+    },
+    {
+      "step": "video/mode/文生视频",
+      "ok": true,
+      "state": {
+        "modes": [
+          {
+            "t": "文生视频",
+            "bg": "rgb(255, 255, 255)",
+            "bc": "rgb(15, 17, 21)",
+            "aria": null
+          },
+          {
+            "t": "图生视频",
+            "bg": "rgba(0, 0, 0, 0)",
+            "bc": "rgb(97, 102, 107)",
+            "aria": null
+          },
+          {
+            "t": "首尾帧",
+            "bg": "rgba(0, 0, 0, 0)",
+            "bc": "rgb(97, 102, 107)",
+            "aria": null
+          },
+          {
+            "t": "参考图",
+            "bg": "rgba(0, 0, 0, 0)",
+            "bc": "rgb(97, 102, 107)",
+            "aria": null
+          }
+        ],
+        "hints": [],
+        "planning": false,
+        "hasPlanCard": false,
+        "gen": {
+          "dis": true,
+          "cursor": "not-allowed"
+        },
+        "text": "VisioWork 普通生图 素材库 无限画布 电商模式预览 图片转 PPT 普通生图 对话 已连接 文生视频 图生视频 首尾帧 参考图 诊断日志 视频描述 视频模型 agnes-video-2.5-flash 画面比例 16:9 9:16 1:1 4:3 3:4 分辨率 480P 720P 1080P 时长（秒） 5 10 先规划（开） 预览规划 生成前先把一句话拆成镜头、运镜、时长与风格，并落到实际参数。 生成视频 视频渲染较慢，页面关闭后任务仍会在宿主继续执行。"
+      },
+      "shot": "70-m3-mode-文生视频.png"
+    },
+    {
+      "step": "video/mode/图生视频",
+      "ok": true,
+      "state": {
+        "modes": [
+          {
+            "t": "文生视频",
+            "bg": "rgba(0, 0, 0, 0)",
+            "bc": "rgb(97, 102, 107)",
+            "aria": null
+          },
+          {
+            "t": "图生视频",
+            "bg": "rgb(255, 255, 255)",
+            "bc": "rgb(15, 17, 21)",
+            "aria": null
+          },
+          {
+            "t": "首尾帧",
+            "bg": "rgba(0, 0, 0, 0)",
+            "bc": "rgb(97, 102, 107)",
+            "aria": null
+          },
+          {
+            "t": "参考图",
+            "bg": "rgba(0, 0, 0, 0)",
+            "bc": "rgb(97, 102, 107)",
+            "aria": null
+          }
+        ],
+        "hints": [
+          "该模式需要一张参考图"
+        ],
+        "planning": false,
+        "hasPlanCard": false,
+        "gen": {
+          "dis": true,
+          "cursor": "not-allowed"
+        },
+        "text": "VisioWork 普通生图 素材库 无限画布 电商模式预览 图片转 PPT 普通生图 对话 已连接 文生视频 图生视频 首尾帧 参考图 诊断日志 视频描述 参考图 选择图片 该模式需要一张参考图 视频模型 agnes-video-2.5-flash 画面比例 16:9 9:16 1:1 4:3 3:4 分辨率 480P 720P 1080P 时长（秒） 5 10 先规划（开） 预览规划 生成前先把一句话拆成镜头、运镜、时长与风格，并落到实际参数。 生成视频 视频渲染较慢，页面关闭后任务仍会在宿主继续执行。"
+      },
+      "shot": "71-m3-mode-图生视频.png"
+    },
+    {
+      "step": "video/mode/首尾帧",
+      "ok": true,
+      "state": {
+        "modes": [
+          {
+            "t": "文生视频",
+            "bg": "rgba(0, 0, 0, 0)",
+            "bc": "rgb(97, 102, 107)",
+            "aria": null
+          },
+          {
+            "t": "图生视频",
+            "bg": "rgba(0, 0, 0, 0)",
+            "bc": "rgb(97, 102, 107)",
+            "aria": null
+          },
+          {
+            "t": "首尾帧",
+            "bg": "rgb(255, 255, 255)",
+            "bc": "rgb(15, 17, 21)",
+            "aria": null
+          },
+          {
+            "t": "参考图",
+            "bg": "rgba(0, 0, 0, 0)",
+            "bc": "rgb(97, 102, 107)",
+            "aria": null
+          }
+        ],
+        "hints": [
+          "至少需要一张首帧"
+        ],
+        "planning": false,
+        "hasPlanCard": false,
+        "gen": {
+          "dis": true,
+          "cursor": "not-allowed"
+        },
+        "text": "VisioWork 普通生图 素材库 无限画布 电商模式预览 图片转 PPT 普通生图 对话 已连接 文生视频 图生视频 首尾帧 参考图 诊断日志 视频描述 首帧 选择图片 尾帧 选择图片 首尾帧模式至少需要一张首帧 视频模型 agnes-video-2.5-flash 画面比例 16:9 9:16 1:1 4:3 3:4 分辨率 480P 720P 1080P 时长（秒） 5 10 先规划（开） 预览规划 生成前先把一句话拆成镜头、运镜、时长与风格，并落到实际参数。 生成视频 视频渲染较慢，页面关闭后任务仍会在宿主继续执行。"
+      },
+      "shot": "72-m3-mode-首尾帧.png"
+    },
+    {
+      "step": "video/mode/参考图",
+      "ok": true,
+      "state": {
+        "modes": [
+          {
+            "t": "文生视频",
+            "bg": "rgba(0, 0, 0, 0)",
+            "bc": "rgb(97, 102, 107)",
+            "aria": null
+          },
+          {
+            "t": "图生视频",
+            "bg": "rgba(0, 0, 0, 0)",
+            "bc": "rgb(97, 102, 107)",
+            "aria": null
+          },
+          {
+            "t": "首尾帧",
+            "bg": "rgba(0, 0, 0, 0)",
+            "bc": "rgb(97, 102, 107)",
+            "aria": null
+          },
+          {
+            "t": "参考图",
+            "bg": "rgb(255, 255, 255)",
+            "bc": "rgb(15, 17, 21)",
+            "aria": null
+          }
+        ],
+        "hints": [
+          "该模式需要一张参考图"
+        ],
+        "planning": false,
+        "hasPlanCard": false,
+        "gen": {
+          "dis": true,
+          "cursor": "not-allowed"
+        },
+        "text": "VisioWork 普通生图 素材库 无限画布 电商模式预览 图片转 PPT 普通生图 对话 已连接 文生视频 图生视频 首尾帧 参考图 诊断日志 视频描述 参考图 选择图片 该模式需要一张参考图 视频模型 agnes-video-2.5-flash 画面比例 16:9 9:16 1:1 4:3 3:4 分辨率 480P 720P 1080P 时长（秒） 5 10 先规划（开） 预览规划 生成前先把一句话拆成镜头、运镜、时长与风格，并落到实际参数。 生成视频 视频渲染较慢，页面关闭后任务仍会在宿主继续执行。"
+      },
+      "shot": "73-m3-mode-参考图.png"
+    },
+    {
+      "step": "video/gen-disabled-i2v",
+      "ok": true,
+      "note": "{\"x\":940,\"y\":549,\"dis\":true,\"title\":\"\"}"
+    },
+    {
+      "step": "video/gen-click-disabled",
+      "ok": true,
+      "state": {
+        "modes": [
+          {
+            "t": "文生视频",
+            "bg": "rgba(0, 0, 0, 0)",
+            "bc": "rgb(97, 102, 107)",
+            "aria": null
+          },
+          {
+            "t": "图生视频",
+            "bg": "rgba(0, 0, 0, 0)",
+            "bc": "rgb(97, 102, 107)",
+            "aria": null
+          },
+          {
+            "t": "首尾帧",
+            "bg": "rgba(0, 0, 0, 0)",
+            "bc": "rgb(97, 102, 107)",
+            "aria": null
+          },
+          {
+            "t": "参考图",
+            "bg": "rgb(255, 255, 255)",
+            "bc": "rgb(15, 17, 21)",
+            "aria": null
+          }
+        ],
+        "hints": [
+          "该模式需要一张参考图"
+        ],
+        "planning": false,
+        "hasPlanCard": false,
+        "gen": {
+          "dis": true,
+          "cursor": "not-allowed"
+        },
+        "text": "VisioWork 普通生图 素材库 无限画布 电商模式预览 图片转 PPT 普通生图 对话 已连接 文生视频 图生视频 首尾帧 参考图 诊断日志 视频描述 参考图 选择图片 该模式需要一张参考图 视频模型 agnes-video-2.5-flash 画面比例 16:9 9:16 1:1 4:3 3:4 分辨率 480P 720P 1080P 时长（秒） 5 10 先规划（开） 预览规划 生成前先把一句话拆成镜头、运镜、时长与风格，并落到实际参数。 生成视频 视频渲染较慢，页面关闭后任务仍会在宿主继续执行。"
+      },
+      "shot": "74-m3-gen-click-disabled.png"
+    },
+    {
+      "step": "video/gen-empty-prompt",
+      "ok": true,
+      "note": "{\"x\":940,\"y\":455,\"dis\":true,\"title\":\"\"}"
+    },
+    {
+      "step": "video/prompt-typed",
+      "ok": true,
+      "value": "a cat stretching on a windowsill, afternoon light, slow push in",
+      "shot": "75-m3-prompt.png"
+    },
+    {
+      "step": "video/plan-toggle",
+      "ok": true,
+      "note": "{\"t\":\"先规划（开）\",\"pressed\":\"true\",\"role\":null}"
+    },
+    {
+      "step": "video/plan-toggle-off",
+      "ok": true,
+      "note": "先规划（关）|aria=false",
+      "shot": "76-m3-plan-off.png"
+    },
+    {
+      "step": "video/plan-preview-btn",
+      "ok": true,
+      "note": "{\"x\":462,\"y\":410,\"dis\":false}"
+    },
+    {
+      "step": "video/plan-preview/T+1.5s",
+      "ok": true,
+      "state": {
+        "modes": [
+          {
+            "t": "文生视频",
+            "bg": "rgb(255, 255, 255)",
+            "bc": "rgb(15, 17, 21)",
+            "aria": null
+          },
+          {
+            "t": "图生视频",
+            "bg": "rgba(0, 0, 0, 0)",
+            "bc": "rgb(97, 102, 107)",
+            "aria": null
+          },
+          {
+            "t": "首尾帧",
+            "bg": "rgba(0, 0, 0, 0)",
+            "bc": "rgb(97, 102, 107)",
+            "aria": null
+          },
+          {
+            "t": "参考图",
+            "bg": "rgba(0, 0, 0, 0)",
+            "bc": "rgb(97, 102, 107)",
+            "aria": null
+          }
+        ],
+        "hints": [],
+        "planning": true,
+        "hasPlanCard": false,
+        "gen": {
+          "dis": false,
+          "cursor": "pointer"
+        },
+        "text": "VisioWork 普通生图 素材库 无限画布 电商模式预览 图片转 PPT 普通生图 对话 已连接 文生视频 图生视频 首尾帧 参考图 诊断日志 视频描述 视频模型 agnes-video-2.5-flash 画面比例 16:9 9:16 1:1 4:3 3:4 分辨率 480P 720P 1080P 时长（秒） 5 10 先规划（开） 规划中… 生成前先把一句话拆成镜头、运镜、时长与风格，并落到实际参数。 生成视频 视频渲染较慢，页面关闭后任务仍会在宿主继续执行。"
+      },
+      "shot": "77-m3-plan-loading.png"
+    },
+    {
+      "step": "video/plan-preview/T+7.5s",
+      "ok": true,
+      "state": {
+        "modes": [
+          {
+            "t": "文生视频",
+            "bg": "rgb(255, 255, 255)",
+            "bc": "rgb(15, 17, 21)",
+            "aria": null
+          },
+          {
+            "t": "图生视频",
+            "bg": "rgba(0, 0, 0, 0)",
+            "bc": "rgb(97, 102, 107)",
+            "aria": null
+          },
+          {
+            "t": "首尾帧",
+            "bg": "rgba(0, 0, 0, 0)",
+            "bc": "rgb(97, 102, 107)",
+            "aria": null
+          },
+          {
+            "t": "参考图",
+            "bg": "rgba(0, 0, 0, 0)",
+            "bc": "rgb(97, 102, 107)",
+            "aria": null
+          }
+        ],
+        "hints": [],
+        "planning": false,
+        "hasPlanCard": true,
+        "gen": {
+          "dis": false,
+          "cursor": "pointer"
+        },
+        "text": "VisioWork 普通生图 素材库 无限画布 电商模式预览 图片转 PPT 普通生图 对话 已连接 文生视频 图生视频 首尾帧 参考图 诊断日志 视频描述 视频模型 agnes-video-2.5-flash 画面比例 16:9 9:16 1:1 4:3 3:4 分辨率 480P 720P 1080P 时长（秒） 5 10 先规划（开） 预览规划 生成前先把一句话拆成镜头、运镜、时长与风格，并落到实际参数。 镜头规划 对话模型 5s · 16:9 · 720P medium close-up of a cat on a windowsill — the cat arches its back and extends its front paws forward in a slow stretch, tail lifting gently, then relaxes slightly while maintaining the pose（slow push-in toward the cat's face over 5 seconds） photorealistic, natural afternoon lighting, shallow depth of field. Medium close-up of a cat on a windowsill, soft backlight"
+      },
+      "shot": "78-m3-plan-result.png"
+    },
+    {
+      "step": "video/model-trigger",
+      "ok": true,
+      "note": "{\"x\":477,\"y\":371,\"text\":\"agnes-video-2.5-flash\",\"expanded\":\"false\",\"haspopup\":\"listbox\"}"
+    },
+    {
+      "step": "video/model-open",
+      "ok": true,
+      "note": "{\"expanded\":null,\"listbox\":true,\"optionCount\":5,\"options\":[{\"t\":\"agnes-video-2.5-flash\",\"sel\":\"true\"},{\"t\":\"agnes-video-2.5\",\"sel\":\"false\"},{\"t\":\"zhimeng-h3-local\",\"sel\":\"false\"},{\"t\":\"wan2.2-t2v\",\"sel\":\"false\"},{\"t\":\"zhimeng-scene-product-video\",\"sel\":\"false\"}],\"bodyText\":[\"agnes-video-2.5-flash · 2026-10-13 21:50 奥特曼大战美女丰满的 16:9 · 720P · 5s · \",\"agnes-video-2.5-flash 画面比例 16:9 9:16 1:1 4:3 3:4 分辨率 480P 720P 1080P 时长\",\"agnes-video-2.5-flash agnes-video-2.5 https://comemoe.com/v1 zhimeng-h3\"]}",
+      "shot": "79-m3-model-open.png"
+    },
+    {
+      "step": "video/history-entry",
+      "ok": true,
+      "note": "{\"inPanel\":[],\"inBody\":[]}"
+    },
+    {
+      "step": "video/narrow-900",
+      "ok": true,
+      "overflow": {
+        "scrollW": 900,
+        "clientW": 900,
+        "bodyScrollW": 900
+      },
+      "shot": "80-m3-narrow900.png"
+    },
+    {
+      "step": "video/narrow-700",
+      "ok": true,
+      "overflow": {
+        "scrollW": 700,
+        "clientW": 700,
+        "bodyScrollW": 700
+      },
+      "shot": "81-m3-narrow700.png"
+    }
+  ],
+  "consoleErrors": [
+    {
+      "type": "warning",
+      "text": "[connection] generation is still not ready after 3000ms"
+    },
+    {
+      "type": "warning",
+      "text": "[connection] connection lost, retry #1"
+    }
+  ],
+  "pageErrors": [],
+  "failed": []
+}

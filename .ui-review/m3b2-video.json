@@ -1,0 +1,220 @@
+{
+  "findings": [
+    {
+      "k": "A/prompt-value",
+      "v": "a cat stretching on a windowsill, slow push in"
+    },
+    {
+      "k": "A/before",
+      "v": {
+        "planning": false,
+        "hasPlan": false,
+        "hint": "",
+        "calls": [
+          "/api/dsh-imagegen/video/tasks/list",
+          "/api/dsh-imagegen/video/tasks/list",
+          "/api/dsh-imagegen/video/tasks/list"
+        ],
+        "gen": {
+          "dis": false
+        }
+      }
+    },
+    {
+      "k": "A/preview-btn",
+      "v": {
+        "x": 462,
+        "y": 410,
+        "dis": false,
+        "text": "预览规划"
+      }
+    },
+    {
+      "k": "A/T+1500",
+      "v": {
+        "planning": true,
+        "hasPlan": false,
+        "hint": "",
+        "calls": [
+          "/api/dsh-imagegen/video/tasks/list",
+          "/api/dsh-imagegen/video/plan",
+          "/api/dsh-imagegen/video/tasks/list"
+        ],
+        "gen": {
+          "dis": false
+        }
+      }
+    },
+    {
+      "k": "A/T+5500",
+      "v": {
+        "planning": false,
+        "hasPlan": true,
+        "hint": "",
+        "calls": [
+          "/api/dsh-imagegen/video/plan",
+          "/api/dsh-imagegen/video/tasks/list",
+          "/api/dsh-imagegen/video/tasks/list"
+        ],
+        "gen": {
+          "dis": false
+        }
+      }
+    },
+    {
+      "k": "A/shot",
+      "v": "56-m3b2-A-t2v.png"
+    },
+    {
+      "k": "B/prompt-value",
+      "v": "a cat stretching on a windowsill, slow push in"
+    },
+    {
+      "k": "B/before",
+      "v": {
+        "planning": false,
+        "hasPlan": true,
+        "hint": "该模式需要一张参考图",
+        "calls": [
+          "/api/dsh-imagegen/video/tasks/list",
+          "/api/dsh-imagegen/video/tasks/list",
+          "/api/dsh-imagegen/video/tasks/list"
+        ],
+        "gen": {
+          "dis": true
+        }
+      }
+    },
+    {
+      "k": "B/preview-btn",
+      "v": {
+        "x": 462,
+        "y": 504,
+        "dis": true,
+        "text": "预览规划"
+      }
+    },
+    {
+      "k": "B/T+1500",
+      "v": {
+        "planning": false,
+        "hasPlan": true,
+        "hint": "该模式需要一张参考图",
+        "calls": [
+          "/api/dsh-imagegen/video/tasks/list",
+          "/api/dsh-imagegen/video/tasks/list",
+          "/api/dsh-imagegen/video/tasks/list"
+        ],
+        "gen": {
+          "dis": true
+        }
+      }
+    },
+    {
+      "k": "B/T+5500",
+      "v": {
+        "planning": false,
+        "hasPlan": true,
+        "hint": "该模式需要一张参考图",
+        "calls": [
+          "/api/dsh-imagegen/video/tasks/list",
+          "/api/dsh-imagegen/video/tasks/list",
+          "/api/dsh-imagegen/video/tasks/list"
+        ],
+        "gen": {
+          "dis": true
+        }
+      }
+    },
+    {
+      "k": "B/shot",
+      "v": "57-m3b2-B-i2v-nofile.png"
+    },
+    {
+      "k": "C/inject-file",
+      "v": {
+        "ok": true,
+        "accept": "image/png,image/jpeg,image/webp"
+      }
+    },
+    {
+      "k": "C/after-inject",
+      "v": {
+        "planning": false,
+        "hasPlan": true,
+        "hint": "该模式需要一张参考图",
+        "calls": [
+          "/api/dsh-imagegen/video/tasks/list",
+          "/api/dsh-imagegen/video/tasks/list",
+          "/api/dsh-imagegen/video/tasks/list"
+        ],
+        "gen": {
+          "dis": false
+        }
+      }
+    },
+    {
+      "k": "C/shot",
+      "v": "58-m3b2-C-i2v-withfile.png"
+    },
+    {
+      "k": "C/preview-btn",
+      "v": {
+        "x": 462,
+        "y": 624,
+        "dis": false,
+        "text": "预览规划"
+      }
+    },
+    {
+      "k": "C/T+1500",
+      "v": {
+        "planning": true,
+        "hasPlan": true,
+        "hint": "该模式需要一张参考图",
+        "calls": [
+          "/api/dsh-imagegen/video/tasks/list",
+          "/api/dsh-imagegen/video/plan",
+          "/api/dsh-imagegen/video/tasks/list"
+        ],
+        "gen": {
+          "dis": false
+        }
+      }
+    },
+    {
+      "k": "C/T+5500",
+      "v": {
+        "planning": false,
+        "hasPlan": true,
+        "hint": "该模式需要一张参考图",
+        "calls": [
+          "/api/dsh-imagegen/video/plan",
+          "/api/dsh-imagegen/video/tasks/list",
+          "/api/dsh-imagegen/video/tasks/list"
+        ],
+        "gen": {
+          "dis": false
+        }
+      }
+    },
+    {
+      "k": "C/shot2",
+      "v": "59-m3b2-C-plan.png"
+    },
+    {
+      "k": "model-control",
+      "v": {
+        "chain": [
+          "span",
+          "button",
+          "div",
+          "div",
+          "section"
+        ],
+        "hasSelect": false,
+        "selects": 0
+      }
+    }
+  ]
+}

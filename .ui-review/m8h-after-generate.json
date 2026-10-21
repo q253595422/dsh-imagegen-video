@@ -1,0 +1,69 @@
+{
+  "h0-before": {
+    "btn": "开始生成",
+    "dis": false,
+    "taskLine": "生成任务 0 ⌄",
+    "taskCards": 0,
+    "bigImgs": 11,
+    "errMatch": [],
+    "lastText": "n-Light Portrait C-27 那不勒斯黄 她转身、微笑、离开 信息图可视化设计 五一劳动节手举牌创意设计集 Scandinavian Cookbook Recipe Spread Scandinavian Cookbook Recipe Spread 高端肉类海鲜品牌英雄图 #252 Soft Crayon & Sumi-e Cat Storybook 过度思考超现实街头 Campaign 灰度3D角色动作参考图 五一劳动节手举牌创意设计集 随机 DS Bot chajian 默认工作区 添加工作区…"
+  },
+  "h0-btn": {
+    "x": 445,
+    "y": 966
+  },
+  "h1-t0.4": {
+    "btn": "生成中…",
+    "dis": true,
+    "taskLine": "生成任务 0 ⌄",
+    "taskCards": 0,
+    "bigImgs": 0,
+    "errMatch": [],
+    "lastText": "话 已连接 文生图 图生图 生视频 模板库 增强 29 尺寸 自动 1:1 方图 3:4 标准竖图 4:3 标准横图 9:16 竖屏 2:3 竖图 3:2 横图 16:9 宽屏 21:9 超宽屏 清晰度 自动 1K 2K 4K 生成数量 1 张 2 张 3 张 4 张 细节 自动 标准 高清 透传参数，部分 gpt-image-2 网关支持；官方接口请保持「自动」 渠道 / 模型 11 / agnes-image-2.1-flash 多模型对比 生成中… 生成任务 0 ⌄ 诊断日志 正在加入生成队列… 已用时 0s",
+    "shot": "268-227-m8h-gen-0-4s.png"
+  },
+  "h2-t2": {
+    "btn": "开始生成",
+    "dis": false,
+    "taskLine": "生成任务 0 ⌄",
+    "taskCards": 0,
+    "bigImgs": 11,
+    "errMatch": [],
+    "lastText": "yful Modernist Collage Character 信息图可视化设计 信息图可视化设计 锁住人，只换衣服 大唐玄武门之变的朋友圈 涂鸦速写风AI建造者大师 信息图可视化设计 E-commerce Main Image - 3D Footstool Mesh Comparison E-commerce Main Image - 3D Footstool Mesh Comparison Nature Keynote / 自然科普 主题海报版式设计 Super Famicom Poster Style 随机",
+    "shot": "269-228-m8h-gen-2s.png"
+  },
+  "h3-t6": {
+    "btn": "开始生成",
+    "dis": false,
+    "taskLine": "生成任务 0 ⌄",
+    "taskCards": 0,
+    "bigImgs": 11,
+    "errMatch": [],
+    "lastText": "yful Modernist Collage Character 信息图可视化设计 信息图可视化设计 锁住人，只换衣服 大唐玄武门之变的朋友圈 涂鸦速写风AI建造者大师 信息图可视化设计 E-commerce Main Image - 3D Footstool Mesh Comparison E-commerce Main Image - 3D Footstool Mesh Comparison Nature Keynote / 自然科普 主题海报版式设计 Super Famicom Poster Style 随机",
+    "shot": "270-229-m8h-gen-6s.png"
+  },
+  "h4-t12": {
+    "btn": "开始生成",
+    "dis": false,
+    "taskLine": "生成任务 0 ⌄",
+    "taskCards": 0,
+    "bigImgs": 11,
+    "errMatch": [],
+    "lastText": "yful Modernist Collage Character 信息图可视化设计 信息图可视化设计 锁住人，只换衣服 大唐玄武门之变的朋友圈 涂鸦速写风AI建造者大师 信息图可视化设计 E-commerce Main Image - 3D Footstool Mesh Comparison E-commerce Main Image - 3D Footstool Mesh Comparison Nature Keynote / 自然科普 主题海报版式设计 Super Famicom Poster Style 随机",
+    "shot": "271-230-m8h-gen-12s.png"
+  },
+  "h5-task-panel": {
+    "shot": "272-231-m8h-task-panel.png"
+  },
+  "pageErrors": [],
+  "consoleErrors": [
+    {
+      "type": "warning",
+      "text": "[connection] generation is still not ready after 3000ms"
+    },
+    {
+      "type": "warning",
+      "text": "[connection] connection lost, retry #1"
+    }
+  ]
+}

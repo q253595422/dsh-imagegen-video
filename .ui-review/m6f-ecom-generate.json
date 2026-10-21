@@ -1,0 +1,238 @@
+{
+  "i1-ref-button": {
+    "x": 445,
+    "y": 700,
+    "expanded": "false",
+    "text": "参考图设置（可选） ⌄"
+  },
+  "i1-ref-open": {
+    "expanded": "true",
+    "section": "参考图设置（可选） ⌃ 主图 商品主体 卖点图 商品主体 场景图 商品主体 细节图 细节/角度 生成设置 11 / agnes-image-2.1-flash 自动 1K 2K 4K 将生成 6 张套图 生成套图预览 套图结果 新商品 确认生成后，每张图片的任务状态和结果会按用途显示在这里",
+    "checkboxes": [],
+    "radios": [],
+    "shot": "206-168-m6f-ecom-ref-settings.png"
+  },
+  "i2-before-submit": {
+    "sum": "将生成 1 张套图",
+    "disabled": false,
+    "chips": [
+      {
+        "t": "主图 1"
+      },
+      {
+        "t": "卖点图"
+      },
+      {
+        "t": "场景图"
+      },
+      {
+        "t": "细节图"
+      },
+      {
+        "t": "规格图"
+      },
+      {
+        "t": "使用图"
+      }
+    ],
+    "shot": "207-169-m6f-ecom-one-image.png"
+  },
+  "i2-submit-button": {
+    "x": 445,
+    "y": 965,
+    "dis": false
+  },
+  "i2-timeline": [
+    {
+      "t": 0,
+      "states": [
+        "取消",
+        "取消"
+      ],
+      "result": "",
+      "tasks": []
+    },
+    {
+      "t": 3,
+      "states": [
+        "取消",
+        "取消"
+      ],
+      "result": "",
+      "tasks": []
+    },
+    {
+      "t": 6,
+      "states": [
+        "取消",
+        "取消"
+      ],
+      "result": "",
+      "tasks": []
+    },
+    {
+      "t": 9,
+      "states": [
+        "取消",
+        "取消"
+      ],
+      "result": "",
+      "tasks": []
+    },
+    {
+      "t": 12,
+      "states": [
+        "取消",
+        "取消"
+      ],
+      "result": "",
+      "tasks": []
+    },
+    {
+      "t": 15,
+      "states": [
+        "取消",
+        "取消"
+      ],
+      "result": "",
+      "tasks": []
+    },
+    {
+      "t": 18,
+      "states": [
+        "取消",
+        "取消"
+      ],
+      "result": "",
+      "tasks": []
+    },
+    {
+      "t": 21,
+      "states": [
+        "取消",
+        "取消"
+      ],
+      "result": "",
+      "tasks": []
+    },
+    {
+      "t": 24,
+      "states": [
+        "取消",
+        "取消"
+      ],
+      "result": "",
+      "tasks": []
+    },
+    {
+      "t": 27,
+      "states": [
+        "取消",
+        "取消"
+      ],
+      "result": "",
+      "tasks": []
+    },
+    {
+      "t": 30,
+      "states": [
+        "取消",
+        "取消"
+      ],
+      "result": "",
+      "tasks": []
+    },
+    {
+      "t": 33,
+      "states": [
+        "取消",
+        "取消"
+      ],
+      "result": "",
+      "tasks": []
+    },
+    {
+      "t": 36,
+      "states": [
+        "取消",
+        "取消"
+      ],
+      "result": "",
+      "tasks": []
+    },
+    {
+      "t": 39,
+      "states": [
+        "取消",
+        "取消"
+      ],
+      "result": "",
+      "tasks": []
+    },
+    {
+      "t": 42,
+      "states": [
+        "取消",
+        "取消"
+      ],
+      "result": "",
+      "tasks": []
+    },
+    {
+      "t": 45,
+      "states": [
+        "取消",
+        "取消"
+      ],
+      "result": "",
+      "tasks": []
+    },
+    {
+      "t": 48,
+      "states": [
+        "取消",
+        "取消"
+      ],
+      "result": "",
+      "tasks": []
+    },
+    {
+      "t": 51,
+      "states": [
+        "取消",
+        "取消"
+      ],
+      "result": "",
+      "tasks": []
+    },
+    {
+      "t": 54,
+      "states": [
+        "取消",
+        "取消"
+      ],
+      "result": "",
+      "tasks": []
+    },
+    {
+      "t": 57,
+      "states": [
+        "取消",
+        "取消"
+      ],
+      "result": "",
+      "tasks": []
+    }
+  ],
+  "pageErrors": [],
+  "consoleErrors": [
+    {
+      "type": "warning",
+      "text": "[connection] generation is still not ready after 3000ms"
+    },
+    {
+      "type": "warning",
+      "text": "[connection] connection lost, retry #1"
+    }
+  ]
+}

@@ -1,0 +1,21 @@
+{
+  "diagBtn": {
+    "x": 1538,
+    "y": 83
+  },
+  "panel": {
+    "text": "诊断日志3 条记录 刷新 复制全部 清空 × 记录仅保存在本机内存中，密钥已脱敏，可直接复制粘贴到 issue。 generate 17:10:55 11 agnes-image-2.1-flash HTTP 400 87ms req 74B auth POST http://43.136.81.63:8317/v1/images/generations Model agnes-image-2.1-flash is not supported on /v1/images/generations or /v1/images/edits. Use gpt-image-2, grok-imagine-image, grok-imagine-image-quality, or a configured openai-compatibility image model.（HTTP 400 · http://43.136.81.63:8317/v1/images/generations） 上游响应 请求内容 generate 17:07:43 11 agnes-image-2.1-flash HTTP 400 87ms req 74B auth POST http://43.136.81.63:8317/v1/images/generations Model agnes-image-2.1-flash is not supported on /v1/images/generations or /v1/images/edits. Use gpt-image-2, grok-imagine-image, grok-imagine-image-quality, or a configured openai-compatibility image model.（HTTP 400 · http://43.136.81.63:8317/v1/images/generations） 上游响应 请求内容 generate 17:03:36 11 agnes-image-2.1-flash HTTP"
+  },
+  "shot": "273-232-m8i-diag-after-silent-fail.png",
+  "console": [
+    {
+      "type": "warning",
+      "text": "[connection] generation is still not ready after 3000ms"
+    },
+    {
+      "type": "warning",
+      "text": "[connection] connection lost, retry #1"
+    }
+  ],
+  "pageErrors": []
+}

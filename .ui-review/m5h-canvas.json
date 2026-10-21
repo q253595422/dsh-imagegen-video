@@ -1,0 +1,127 @@
+{
+  "result": {
+    "a11y-unnamed": {
+      "total": 34,
+      "unnamedCount": 0,
+      "unnamed": [],
+      "named": 34
+    },
+    "rename-target": {
+      "x": 655,
+      "y": 76,
+      "t": "未命名画布"
+    },
+    "rename-after-dblclick": {
+      "tag": "INPUT",
+      "value": "未命名画布",
+      "ph": "",
+      "editable": true,
+      "role": "",
+      "shot": "148-m5h-rename.png"
+    },
+    "favorite": {
+      "before": {
+        "active": null,
+        "pressed": null,
+        "cls": "AoVF5G_iconButton"
+      },
+      "after": null
+    },
+    "delete-dialog": {
+      "dialogs": [],
+      "bodyHasConfirm": false,
+      "shot": "149-m5h-delete-dialog.png"
+    },
+    "image-menu": {
+      "text": "本地图片 素材库 历史记录 AI生成 添加视频",
+      "items": [
+        {
+          "t": "本地图片",
+          "x": 620,
+          "y": 757,
+          "w": 156
+        },
+        {
+          "t": "素材库",
+          "x": 620,
+          "y": 788,
+          "w": 156
+        },
+        {
+          "t": "历史记录",
+          "x": 620,
+          "y": 819,
+          "w": 156
+        },
+        {
+          "t": "AI生成",
+          "x": 620,
+          "y": 850,
+          "w": 156
+        },
+        {
+          "t": "添加视频",
+          "x": 620,
+          "y": 881,
+          "w": 156
+        }
+      ]
+    },
+    "gallery-picker": {
+      "text": "添加图片 × 上传 历史记录 素材库 AI 生成 A vertical 9:16 composition at 1080x1440 resolution, featuring an exceptionally graceful girl emerging from a 3D transparent glass smartphone screen displaying Xiaohongshu (Little Red Book) socia",
+      "options": 4,
+      "imgs": 4,
+      "buttons": [
+        "×",
+        "上传",
+        "历史记录",
+        "素材库",
+        "AI 生成",
+        "A vertical 9:16 composition at 1080x1440 resolution, featuring an exceptionally graceful girl emerging from a 3D transparent glass smartphone screen displaying Xiaohongshu (Little Red Book) social media posts. She is captured mid-motion, breaking through the glass barrier into reality with a dynamic, natural pose that adheres to anatomical structure. One foot extends powerfully toward the viewer in an exaggerated 3D perspective, creating intense depth and immersion as if she is stepping out of the digital world. The edges of the phone screen are shattered with realistic, fine glass cracks and digital particle effects. Glowing pixel fragments and light particles scatter outward around her movement direction, forming a futuristic \"digital screen-break\" visual spectacle with cinematic spatial layering. The background features a soft gradient blending warm beige, soft pink, and dreamy purple tones, accented with golden-pink sunset light spots and cinematic soft-light rendering. The style merges Pixar animation aesthetics with semi-realism, showcasing ultra-detailed materials, soft depth of field, and movie-quality lighting. Rendered in 8K ultra-high definition, optimized for social media display.\nsensenova-u1.5-lite · 1/1",
+        "A realistic screenshot of a Douyin livestream interface featuring a beautiful, curvaceous woman with a voluptuous figure streaming live. The screen includes typical Douyin UI elements like a gift box icon, viewer count, and chat comments on the sides. She is wearing a form-fitting outfit that accentuates her full bust and hourglass silhouette, with soft studio lighting highlighting her features. Modern smartphone aspect ratio, high quality, photorealistic style.\nagnes-image-2.5-flash · 1/1",
+        "35mm film photography, warm vintage Japanese onsen ryokan aesthetic, soft ambient wooden lantern lighting mixed with gentle natural window light, subtle film grain, gentle color shift, high atmosphere editorial style, intimate medium shot, early 20s beautiful Chinese female idol with ultra-realistic delicate refined Chinese features, seductive almond-shaped fox eyes with natural double eyelids, high nose bridge, small sharp V-shaped jawline, flawless porcelain skin with warm ivory undertone, visible subtle skin texture and micro pores, soft natural makeup with dewy glow, subtle rosy flush on cheeks, natural soft pink lips slightly parted, long dark brown hair tied in a loose low bun with some messy strands falling around face and neck, wearing a loose white yukata deliberately slipped off one shoulder and loosely tied at the waist, the fabric slightly open revealing smooth skin and subtle cleavage, barefoot, seductive relaxed sitting pose on the edge of a traditional wooden engawa veranda at a vintage onsen ryokan, body slightly turned toward the camera, one leg bent with foot resting on the wooden floor, the other leg gently dangling, one hand lightly holding the yukata collar, the other hand resting on the wooden floor behind her for support, softly arched back to gently accentuate curves, intensely seductive yet gentle and inviting gaze straight at the viewer with soft doe eyes full of quiet temptation and warmth, warm wooden interior with paper sliding doors and distant steaming hot spring in soft focus, gentle rim lighting highlighting skin and fabric texture, authentic vintage film color grading with warm tones, extremely sharp yet soft skin rendering, natural hair strands, realistic fabric wrinkles and drape on the yukata, no plastic skin, no digital over-sharpening, no airbrushing, no blemishes, no moles, no oily skin, no watermark, no text, authentic 35mm film Japanese onsen ryokan atmosphere\nsensenova-u1.5-lite · 1/1"
+      ],
+      "shot": "150-m5h-gallery-picker.png"
+    },
+    "picker-closed": {
+      "dialogsLeft": 1
+    },
+    "nodes-with-image": {
+      "0": {
+        "id": "node-9128f",
+        "x": 377,
+        "y": 417,
+        "w": 464,
+        "h": 248,
+        "text": "文本节点 A- 20 A+"
+      },
+      "1": {
+        "id": "node-6f394",
+        "x": 973,
+        "y": 384,
+        "w": 530,
+        "h": 315,
+        "text": "生成配置 已连接 1 个输入节点 把图片节点连线到左侧作为参考图"
+      },
+      "shot": "151-m5h-image-node.png"
+    },
+    "image-node-pos": null,
+    "connect-labels": [
+      "拖到其他节点建立连线",
+      "拖到其他节点建立连线；点击直接添加下一节点",
+      "拖到其他节点建立连线",
+      "拖到其他节点建立连线；点击直接添加下一节点"
+    ]
+  },
+  "consoleErrors": [
+    {
+      "type": "warning",
+      "text": "[connection] generation is still not ready after 3000ms"
+    },
+    {
+      "type": "warning",
+      "text": "[connection] connection lost, retry #1"
+    }
+  ],
+  "pageErrors": []
+}

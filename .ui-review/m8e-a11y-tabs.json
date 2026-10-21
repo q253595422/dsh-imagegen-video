@@ -1,0 +1,82 @@
+{
+  "e1-focus-selected": {
+    "ok": true,
+    "ti": "0",
+    "tag": "button"
+  },
+  "e1-arrow-trail": [
+    "普通生图(sel=true,ti=0)",
+    "素材库(sel=true,ti=0)",
+    "无限画布(sel=true,ti=0)",
+    "电商模式预览(sel=true,ti=0)",
+    "无限画布(sel=true,ti=0)"
+  ],
+  "e1-selected-after": [
+    {
+      "t": "普通生图",
+      "sel": "false",
+      "ti": "-1"
+    },
+    {
+      "t": "素材库",
+      "sel": "false",
+      "ti": "-1"
+    },
+    {
+      "t": "无限画布",
+      "sel": "true",
+      "ti": "0"
+    },
+    {
+      "t": "电商模式预览",
+      "sel": "false",
+      "ti": "-1"
+    },
+    {
+      "t": "图片转PPT",
+      "sel": "false",
+      "ti": "-1"
+    }
+  ],
+  "e1-focus-unselected": {
+    "focused": true,
+    "ti": "-1"
+  },
+  "e1-after-enter": {
+    "active": {
+      "tag": "button",
+      "role": "tab",
+      "ti": "-1",
+      "sel": "false",
+      "t": "素材库",
+      "aria": "",
+      "x": 784,
+      "y": 14
+    },
+    "workspace": {
+      "tab": "VisioWork 普通生图 素材库 无限画布 电商模式预览 图片转 PPT 无限画布 对话 已连接 未命名画布 未命名画布 已保存 文本节点 A- 14 A+"
+    }
+  },
+  "e2-inner-tabs": {
+    "trail": [
+      "素材库(sel=false,ti=-1)",
+      "无限画布(sel=true,ti=0)"
+    ],
+    "all": []
+  },
+  "e3-version": {
+    "none": true,
+    "shot": "258-216-m8e-settings-version.png"
+  },
+  "e4-connected-click": {
+    "before": 14234,
+    "after": 14234,
+    "opened": {
+      "count": 0,
+      "texts": [],
+      "tail": " 电商模式预览 图片转 PPT 无限画布 对话 已连接 未命名画布 未命名画布 已保存 文本节点 A- 14 A+ 生成配置 已连接 1 个输入节点 把图片节点连线到左侧作为参考图，文本节点连线过来作为提示词；选中本节点后在下方输入或改写提示词并生成。 生成配置 已连接 0 个输入节点 把图片节点连线到左侧作为参考图，文本节点连线过来作为提示词；选中本节点后在下方输入或改写提示词并生成。 100%"
+    },
+    "shot": "259-217-m8e-connected.png"
+  },
+  "pageErrors": []
+}

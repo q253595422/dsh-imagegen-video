@@ -1,0 +1,44 @@
+{
+  "v0-enter": {
+    "text": "VisioWork 普通生图 素材库 无限画布 电商模式预览 图片转 PPT 普通生图 对话 已连接 文生视频 图生视频 首尾帧 参考图 诊断日志 视频描述 视频模型 agnes-video-2.5-flash 画面比例 16:9 9:16 1:1 4:3 3:4 分辨率 480P 720P 1080P 时长（秒） 5 10 先规划（开） 预览规划 生成前先把一句话拆成镜头、运镜、时长与风格，并落"
+  },
+  "v1-btn": {
+    "x": 940,
+    "y": 455,
+    "text": "生成视频"
+  },
+  "v2-t0.8": {
+    "btn": "取消",
+    "err": [],
+    "tail": "ash 画面比例 16:9 9:16 1:1 4:3 3:4 分辨率 480P 720P 1080P 时长（秒） 5 10 先规划（开） 预览规划 生成前先把一句话拆成镜头、运镜、时长与风格，并落到实际参数。 生成视频 视频渲染较慢，页面关闭后任务仍会在宿主继续执行。 本次生成 agnes-video-2.5-flash 生成中 已用时 0s 取消 a cat stretching, slow push in 生成任务 0 ⌄ 诊断日志",
+    "shot": "274-233-m8j-video-0-8s.png"
+  },
+  "v3-t5": {
+    "btn": null,
+    "err": [
+      "失败",
+      "HTTP 503"
+    ],
+    "tail": "tching, slow push in No available channel for model agnes-video-2.5-flash under group default (distributor) (request id: 202610210914196558228458268d9d6cBIcrv1P)（HTTP 503 · https://api.closeai.hk/v1/videos） 生成任务 0 ⌄ 诊断日志",
+    "shot": "275-234-m8j-video-5s.png"
+  },
+  "v4-t11": {
+    "btn": null,
+    "err": [
+      "失败",
+      "HTTP 503"
+    ],
+    "tail": "tching, slow push in No available channel for model agnes-video-2.5-flash under group default (distributor) (request id: 202610210914196558228458268d9d6cBIcrv1P)（HTTP 503 · https://api.closeai.hk/v1/videos） 生成任务 0 ⌄ 诊断日志",
+    "shot": "276-235-m8j-video-11s.png"
+  },
+  "console": [
+    {
+      "type": "warning",
+      "text": "[connection] generation is still not ready after 3000ms"
+    },
+    {
+      "type": "warning",
+      "text": "[connection] connection lost, retry #1"
+    }
+  ]
+}

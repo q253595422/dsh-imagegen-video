@@ -1,0 +1,189 @@
+{
+  "f1-file-inputs": [
+    {
+      "i": 0,
+      "accept": "",
+      "multiple": true,
+      "near": "完全权限",
+      "hidden": true
+    },
+    {
+      "i": 1,
+      "accept": "image/png,image/jpeg,image/webp,image/gif",
+      "multiple": true,
+      "near": "主图参考图 必选 · 商品主体图,最多 4 张 0/4 上传商品图（必选，最多 4 张：主体 / 包装 / 细节） PN",
+      "hidden": true
+    }
+  ],
+  "f5-wrapped": [
+    {
+      "t": "必选 · 商品主体图,最多 4 张",
+      "lines": 2,
+      "box": "133x17",
+      "lineH": 13,
+      "y": 121
+    },
+    {
+      "t": "0/4",
+      "lines": 3,
+      "box": "33x18",
+      "lineH": 13,
+      "y": 130
+    },
+    {
+      "t": "上传商品图（必选，最多 4 张：主体 / 包装 / 细节）",
+      "lines": 2,
+      "box": "222x36",
+      "lineH": 15,
+      "y": 203
+    },
+    {
+      "t": "(可选,最多 1 张)",
+      "lines": 3,
+      "box": "81x17",
+      "lineH": 13,
+      "y": 326
+    },
+    {
+      "t": "0/1",
+      "lines": 2,
+      "box": "32x18",
+      "lineH": 13,
+      "y": 324
+    },
+    {
+      "t": "只传风格、光影、构图、氛围,不能更换商品主体。",
+      "lines": 2,
+      "box": "248x35",
+      "lineH": 13,
+      "y": 351
+    },
+    {
+      "t": "(可选)",
+      "lines": 3,
+      "box": "31x17",
+      "lineH": 13,
+      "y": 638
+    }
+  ],
+  "f2-input-index": {
+    "mainIdx": 1,
+    "styleIdx": -1,
+    "total": 2
+  },
+  "f2-set-5": {
+    "ok": true,
+    "err": null
+  },
+  "f2-state": {
+    "counters": [
+      "4/4",
+      "0/1"
+    ],
+    "thumbs": 4,
+    "sum": "将生成 6 张套图",
+    "warn": true,
+    "toast": [
+      "生成失败：最多上传 4 张商品图"
+    ],
+    "shot": "199-158-m6c-ecom-main5.png"
+  },
+  "f3-skip": {
+    "reason": "no style input",
+    "meta": [
+      {
+        "i": 0,
+        "accept": "",
+        "multiple": true,
+        "near": "完全权限",
+        "hidden": true
+      },
+      {
+        "i": 1,
+        "accept": "image/png,image/jpeg,image/webp,image/gif",
+        "multiple": true,
+        "near": "主图参考图 必选 · 商品主体图,最多 4 张 0/4 上传商品图（必选，最多 4 张：主体 / 包装 / 细节） PN",
+        "hidden": true
+      }
+    ]
+  },
+  "f4-chips": [
+    {
+      "name": "卖点图",
+      "before": {
+        "active": true,
+        "pressed": null,
+        "text": "卖点图 2",
+        "bg": "rgb(15, 17, 21)"
+      },
+      "after": {
+        "active": true,
+        "pressed": null,
+        "text": "卖点图 2",
+        "bg": "rgb(15, 17, 21)"
+      },
+      "sum": "将生成 6 张套图"
+    },
+    {
+      "name": "场景图",
+      "before": {
+        "active": true,
+        "pressed": null,
+        "text": "场景图 2",
+        "bg": "rgb(15, 17, 21)"
+      },
+      "after": {
+        "active": true,
+        "pressed": null,
+        "text": "场景图 2",
+        "bg": "rgb(15, 17, 21)"
+      },
+      "sum": "将生成 6 张套图"
+    },
+    {
+      "name": "细节图",
+      "before": {
+        "active": true,
+        "pressed": null,
+        "text": "细节图 1",
+        "bg": "rgb(15, 17, 21)"
+      },
+      "after": {
+        "active": true,
+        "pressed": null,
+        "text": "细节图 1",
+        "bg": "rgb(15, 17, 21)"
+      },
+      "sum": "将生成 6 张套图"
+    },
+    {
+      "name": "主图",
+      "before": {
+        "active": true,
+        "pressed": null,
+        "text": "主图 1",
+        "bg": "rgb(15, 17, 21)"
+      },
+      "after": {
+        "active": true,
+        "pressed": null,
+        "text": "主图 1",
+        "bg": "rgb(15, 17, 21)"
+      },
+      "sum": "将生成 6 张套图"
+    }
+  ],
+  "f4-final-state": {
+    "counters": [
+      "4/4",
+      "0/1"
+    ],
+    "thumbs": 4,
+    "sum": "将生成 6 张套图",
+    "warn": true,
+    "toast": [
+      "生成失败：最多上传 4 张商品图"
+    ]
+  },
+  "pageErrors": []
+}
