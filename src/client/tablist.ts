@@ -25,14 +25,24 @@ export function tabIndexFor(active: boolean): 0 | -1 {
  * already mounted and switching is cheap -- there is nothing an extra Enter
  * press would protect.
  *
- * @param event - the keyboard event; only `key`, `preventDefault` and
- *   `currentTarget` are read, so any React synthetic event fits.
+ * The event is STOPPED, not just defaulted away. A tablist sits inside the
+ * host GUI, which has its own window-level arrow-key handling (the sidebar's
+ * roving focus, the chat-width resizer). `preventDefault()` only cancels the
+ * browser's own behaviour, so the key kept bubbling and the host moved focus
+ * out of the tablist right after the tab switched -- visible on the secondary
+ * row (文生图 / 图生图 / 生视频) as "the arrows change the tab, then focus is
+ * gone". Arrow keys pressed inside a tablist have no other meaning, so ending
+ * the event here is the correct contract.
+ *
+ * @param event - the keyboard event; only `key`, `preventDefault`,
+ *   `stopPropagation` (when present) and `currentTarget` are read, so any React
+ *   synthetic event fits.
  * @param options.count - how many tabs the list has.
  * @param options.index - the position of the tab the event came from.
  * @param options.select - applies the new selection (same call the click makes).
  */
 export function onTablistKeyDown(
-  event: { key: string; preventDefault: () => void; currentTarget: unknown },
+  event: { key: string; preventDefault: () => void; stopPropagation?: () => void; currentTarget: unknown },
   options: { count: number; index: number; select: (index: number) => void },
 ): void {
   const { count, index, select } = options
@@ -44,6 +54,7 @@ export function onTablistKeyDown(
           : -1
   if (next < 0) return
   event.preventDefault()
+  event.stopPropagation?.()
   select(next)
   // The roving tabIndex leaves every unselected tab at -1, so focus has to
   // travel with the selection; otherwise the user is stranded on a tab that is
