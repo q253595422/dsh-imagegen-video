@@ -5,6 +5,34 @@ Attribution for third-party code is in [NOTICE](./NOTICE).
 
 ## Releases
 
+### 1.15.1 — 火山适配的收口修复
+
+- **Ark pixel sizes stay inside the budget.** At 4K / 16:9 the solved
+  `2866x1612` rounds up to 16,779,264 pixels, 2048 over the 4096² ceiling, and
+  the provider rejects it. The height is now scanned near the target for an
+  even pair that is both legal and nearest the requested ratio, with a scale
+  fallback when none exists. lite and 4.5 also get their own tier floor
+  (`2560x1440`, not 5.0 pro's `1280x720`), so 1K stops being refused there.
+- **Capabilities are read from the upstream id, not the alias.** A channel can
+  map `seedance-hd` to `doubao-seedance-2-0-fast-260128`, and the 720p ceiling
+  belongs to the latter. Both the engine and the panel described the alias, so
+  the panel offered 1080P and the submit got a 400. `resolveVideoModelId`
+  resolves the id first; the resolution fallback also stops collapsing 1080P to
+  480P (it now picks the highest tier at or below the request).
+- **The `ep-…` claim was wrong** and is corrected in the README, the preset
+  hint and the release notes: the family comes from the model id prefix, so an
+  inference endpoint is refused before submit instead of being sent a
+  malformed body.
+- **A `renderer: code` submit no longer demands a channel.** Code rendering
+  needs no image/video channel, but both submit routes validated one and
+  refused the request before rendering started.
+- **Code detection no longer uses a method whitelist.** A model writing
+  `ctx.fillRect(...)` — a method this renderer does not have — had the whole
+  answer filed as prose and silently replaced with the fallback title card,
+  hiding the actual problem. Any `ctx.<method>(` now counts as code and the
+  executor reports `code-runtime` with the method name; a prose answer also
+  quotes what the model said, so a refusal is distinguishable from a wrong API.
+
 ### 1.15.0 — Volcengine Ark, properly
 
 - **Seedream gets the real Ark contract.** The official ids
