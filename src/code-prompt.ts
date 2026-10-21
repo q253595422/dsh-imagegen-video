@@ -125,9 +125,17 @@ export function readGeneratedCode(answer: string): { ok: true; source: string } 
     .replace(/```\s*$/,'')
     .trim()
   const hasFunction = /function\s+render\s*\(|(?:const|let|var)\s+render\s*=/.test(cleaned)
-  const hasCalls = /ctx\.(background|rect|roundRect|circle|line|text|gradient)\s*\(/.test(cleaned)
+  // Any method on the drawing context counts. A whitelist here looked safer but
+  // misread real answers: a model that calls `ctx.fillRect(...)` (an API this
+  // renderer does not have) produced code, and the whitelist filed it as prose
+  // and quietly replaced it with the title card. Let the executor report the
+  // unknown method as `code-runtime` instead — that error names the call.
+  const hasCalls = /ctx\.\w+\s*\(/.test(cleaned)
   if (!hasFunction && !hasCalls) {
-    return { ok: false, reason: '对话模型返回的不是绘图代码（没有 render 函数，也没有任何绘制调用）' }
+    // Quote what the model actually said: "not code" alone leaves the user unable
+    // to tell a refusal from a wrong-API answer, and both are recoverable.
+    const head = cleaned.replace(/\s+/g, ' ').slice(0, 160)
+    return { ok: false, reason: `对话模型返回的不是绘图代码（没有 render 函数，也没有任何 ctx 调用）：${head}` }
   }
   if (cleaned.length > 60_000) return { ok: false, reason: '对话模型返回的代码过长' }
   return { ok: true, source: cleaned }

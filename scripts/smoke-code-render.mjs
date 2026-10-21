@@ -149,6 +149,45 @@ await check('C4b code calling an API that does not exist fails as code-runtime',
   assert.equal(code, 'code-runtime', `expected code-runtime, got ${code}`)
 })
 
+await check('C4b2 an unknown-but-real ctx call is reported by name, not swapped for a title card', async () => {
+  // The code detector accepts ANY `ctx.<method>(` call, not a whitelist of the
+  // methods this renderer implements. A whitelist filed `ctx.fillRect(...)` as
+  // prose and silently replaced real code with the fallback title card, which
+  // hides the one detail the user needs: the method that does not exist.
+  //
+  // The answer is a bare body on purpose: with a `function render` wrapper the
+  // `hasFunction` branch alone accepts it and the call check never decides
+  // anything, so the old whitelist would pass this test too.
+  const { runCodeRender } = await import(new URL('../lib/index.js', import.meta.url).href)
+  const chat = scriptedChat('ctx.fillRect(0, 0, ctx.width, ctx.height)')
+  let code
+  let message = ''
+  try {
+    const outcome = await runCodeRender({ kind: 'image', prompt: 'x', resolution: '480P', aspectRatio: '1:1' }, CONFIG, chat.complete, { persist: false })
+    assert.equal(outcome.degraded, false, 'real code calling an absent method must not be degraded to the fallback')
+  } catch (error) {
+    code = error.code
+    message = error instanceof Error ? error.message : String(error)
+  }
+  assert.equal(code, 'code-runtime', `expected code-runtime, got ${code}`)
+  assert.ok(/fillRect/.test(message), `the error must name the missing call, got: ${message}`)
+})
+
+await check('C3b a prose answer quotes what the model said so the user can tell refusal from mistake', async () => {
+  const { runCodeRender } = await import(new URL('../lib/index.js', import.meta.url).href)
+  const reply = 'I cannot draw that: it needs a photo I do not have.'
+  const chat = scriptedChat(reply)
+  const outcome = await runCodeRender(
+    { kind: 'image', prompt: 'x', resolution: '480P', aspectRatio: '1:1' },
+    CONFIG,
+    chat.complete,
+    { persist: false },
+  )
+  assert.equal(outcome.degraded, true)
+  const reason = outcome.degradedReason ?? ''
+  assert.ok(reason.includes('I cannot draw that'), `the reason must quote the answer, got: ${reason}`)
+})
+
 await check('C4c a slow renderer hits the deadline instead of hanging', async () => {
   const { renderCode } = await import(new URL('../lib/index.js', import.meta.url).href)
   // An infinite loop cannot be interrupted inside a frame; the deadline is
