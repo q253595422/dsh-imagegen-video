@@ -589,10 +589,24 @@ function taskIdOf(payload: Record<string, unknown>): string {
   return ''
 }
 
+/**
+ * Where the finished clip comes from once the task reaches a terminal state.
+ *
+ * Every family measured so far puts a URL in the poll body. OpenAI's video API
+ * — and the OpenAI-compatible relays that copy it — do not: a completed task
+ * carries no `url` anywhere, and the bytes are only served from
+ * `GET /videos/{id}/content` (#9).
+ */
+type VideoClipSource =
+  | { kind: 'url'; url: string }
+  | { kind: 'content'; url: string }
+
 /** Terminal state read from one poll response. */
 type PollOutcome =
   | { kind: 'pending' }
   | { kind: 'done'; url: string; duration?: number; poster?: string }
+  /** Finished, but the body had no URL: fetch the bytes from `/content`. */
+  | { kind: 'done-content'; duration?: number; poster?: string }
   | { kind: 'failed'; message: string }
 
 /**
@@ -625,9 +639,6 @@ function readPoll(payload: Record<string, unknown>): PollOutcome {
   const urlCandidates = [payload.url, payload.result_url, payload.video_url, content?.video_url, metadata?.url, video?.url]
   const url = urlCandidates.find(candidate => typeof candidate === 'string' && candidate.trim() !== '')
   if (['completed', 'succeeded', 'success', 'done', 'finished'].includes(status)) {
-    if (typeof url !== 'string') {
-      return { kind: 'failed', message: '视频任务已完成但未返回视频地址' }
-    }
     const duration = typeof payload.duration === 'number' ? payload.duration
       : typeof metadata?.duration === 'number' ? metadata.duration as number
         : typeof video?.duration === 'number' ? video.duration as number
@@ -639,6 +650,16 @@ function readPoll(payload: Record<string, unknown>): PollOutcome {
       : typeof metadata?.poster === 'string' ? metadata.poster as string
         : typeof content?.last_frame_url === 'string' ? content.last_frame_url
           : undefined
+    // A terminal task with no URL is NOT a failure: the OpenAI video contract
+    // keeps the clip behind `GET /videos/{id}/content`, so the poll loop turns
+    // this into a content fetch instead of dropping a render the user paid for.
+    if (typeof url !== 'string') {
+      return {
+        kind: 'done-content',
+        ...duration === undefined ? {} : { duration },
+        ...poster === undefined ? {} : { poster },
+      }
+    }
     return {
       kind: 'done',
       url,
@@ -681,6 +702,19 @@ function pollRetryDelayMs(retry: number): number {
   return steps[Math.min(retry, steps.length) - 1] ?? 3_000
 }
 
+/**
+ * The `/content` address for a finished task.
+ *
+ * OpenAI's video API serves the finished clip as a binary stream from
+ * `GET /videos/{id}/content` and never puts a URL in the poll body. Appending
+ * to the status URL keeps the `apiUrlFull`-derived base and the family's own
+ * status path in one place, so a relay with a prefix polls and fetches through
+ * the same prefix.
+ */
+function contentUrlFor(statusUrl: string): string {
+  return `${statusUrl.replace(/\/+$/, '')}/content`
+}
+
 /** Poll one task until terminal or the family deadline passes. */
 async function pollUntilDone(
   attempt: VideoAttempt,
@@ -689,7 +723,7 @@ async function pollUntilDone(
   taskId: string,
   family: string,
   signal?: AbortSignal,
-): Promise<{ url: string; duration?: number; poster?: string }> {
+): Promise<{ source: VideoClipSource; duration?: number; poster?: string }> {
   const policy = POLL_POLICY[family] ?? POLL_POLICY.unknown!
   const deadline = Date.now() + policy.deadlineMs
   const statusUrl = statusUrlFor(upstream, baseUrl, family, taskId)
@@ -712,7 +746,23 @@ async function pollUntilDone(
       const payload = await getJson(statusAttempt, statusUrl, upstream.apiKey, budget.signal)
       transientRetries = 0
       const outcome = readPoll(payload)
-      if (outcome.kind === 'done') return { url: outcome.url, ...outcome.duration === undefined ? {} : { duration: outcome.duration }, ...outcome.poster === undefined ? {} : { poster: outcome.poster } }
+      if (outcome.kind === 'done') {
+        return {
+          source: { kind: 'url', url: outcome.url },
+          ...outcome.duration === undefined ? {} : { duration: outcome.duration },
+          ...outcome.poster === undefined ? {} : { poster: outcome.poster },
+        }
+      }
+      // Finished with no URL in the body: the clip is behind `/content` (#9).
+      // The bytes are fetched by the download leg like any other result, so the
+      // same-origin key forwarding and the size cap still apply.
+      if (outcome.kind === 'done-content') {
+        return {
+          source: { kind: 'content', url: contentUrlFor(statusUrl) },
+          ...outcome.duration === undefined ? {} : { duration: outcome.duration },
+          ...outcome.poster === undefined ? {} : { poster: outcome.poster },
+        }
+      }
       if (outcome.kind === 'failed') {
         // The provider ran the render and reported it failed: record the task
         // id and its own words, which is the only place the cause exists.
@@ -1005,14 +1055,16 @@ export async function generateVideo(
   const finished = await pollUntilDone(submitAttempt, upstream, baseUrl, taskId, family, options.signal)
   // The download leg gets its own phase and its own URL: the clip usually
   // comes from a CDN, so "the status worked but the bytes did not" is a
-  // distinct failure the address alone makes obvious.
+  // distinct failure the address alone makes obvious. A `/content` source is
+  // the same leg — only the address differs — which is what keeps the key
+  // forwarding and the size cap in one place (#9).
   const downloadAttempt: VideoAttempt = {
     ...submitAttempt,
     phase: 'video-download',
-    url: displayUrl(finished.url),
+    url: displayUrl(finished.source.url),
     method: 'GET',
   }
-  const downloaded = await downloadVideo(downloadAttempt, upstream, finished.url, options.signal)
+  const downloaded = await downloadVideo(downloadAttempt, upstream, finished.source.url, options.signal)
   return {
     videos: [{
       ...downloaded,

@@ -5,6 +5,19 @@ Attribution for third-party code is in [NOTICE](./NOTICE).
 
 ## Releases
 
+### 1.15.2 — 视频取片支持 `/content` 回退
+
+- **A finished task with no URL in its body is now downloaded instead of
+  failed (#9).** OpenAI's video API — and the OpenAI-compatible relays that
+  copy it — report `status: "completed"` with no `url` anywhere and serve the
+  bytes only from `GET /videos/{id}/content`. `readPoll()` treated that body as
+  "completed but no video address" and failed a render the provider had already
+  finished. The poll now reports the content endpoint as the clip source, and
+  the download leg fetches it unchanged — same-origin key forwarding, MIME
+  inference and the size cap all still apply. A body URL is still preferred,
+  and a `/content` that 404s reports the download leg rather than passing as a
+  silent success.
+
 ### 1.15.1 — 火山适配的收口修复
 
 - **Ark pixel sizes stay inside the budget.** At 4K / 16:9 the solved

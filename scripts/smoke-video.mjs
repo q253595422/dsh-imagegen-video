@@ -78,6 +78,20 @@ function startUpstream() {
       res.end(JSON.stringify(list[index]))
       return
     }
+    if (req.method === 'GET' && url.pathname.startsWith('/v1/videos/') && url.pathname.endsWith('/content')) {
+      // OpenAI's video API (and the relays copying it) serve the finished clip
+      // here and never put a URL in the poll body (#9). This branch must come
+      // BEFORE the status route below, which matches every `/v1/videos/…`.
+      if (state.script.contentMissing === true) {
+        res.writeHead(404, { 'content-type': 'application/json' })
+        res.end(JSON.stringify({ error: { message: 'video not found' } }))
+        return
+      }
+      state.downloads.push({ path: url.pathname, authorization: req.headers.authorization })
+      res.writeHead(200, { 'content-type': 'video/mp4', 'content-length': String(MP4.length) })
+      res.end(MP4)
+      return
+    }
     if (req.method === 'GET' && url.pathname.startsWith('/v1/videos/')) {
       state.polls.push({ id: url.pathname.slice('/v1/videos/'.length), authorization: req.headers.authorization })
       // `pollFailures[n]` makes poll request n+1 answer that HTTP status, so a
@@ -378,6 +392,83 @@ await check('V1c4 the panel describes the upstream id a channel alias maps to', 
     '720P',
     'resolving first is what makes the narrowing apply',
   )
+})
+
+await check('V1c5 a completed task with no URL falls back to GET /videos/{id}/content (#9)', async () => {
+  const upstream = await startUpstream()
+  upstream.state.script = {
+    submit: { id: 'task_no_url_1', status: 'queued' },
+    polls: [
+      { id: 'task_no_url_1', status: 'in_progress', progress: 30 },
+      // The terminal body OpenAI's video API returns: no url anywhere, and an
+      // explicit `object`. This is what made 1.15.1 report a finished render as
+      // failed (#9).
+      { id: 'task_no_url_1', object: 'video', status: 'completed', progress: 100, model: 'wan3.0-video' },
+    ],
+  }
+  try {
+    const result = await generateVideo(
+      { apiUrl: upstream.base, apiKey: 'sk-content-test' },
+      { mode: 'text', model: 'agnes-video-2.5-flash', prompt: 'a cat', aspectRatio: '16:9', resolution: '720P', seconds: 5 },
+      { family: 'agnes' },
+    )
+    assert.equal(result.videos[0].mime, 'video/mp4')
+    assert.equal(result.videos[0].bytes.length, MP4.length, 'the clip bytes come from the content endpoint')
+    assert.equal(upstream.state.downloads.length, 1, 'exactly one fetch of the finished clip')
+    assert.equal(upstream.state.downloads[0].path, '/v1/videos/task_no_url_1/content', 'the content endpoint is the status URL + /content')
+    assert.equal(upstream.state.downloads[0].authorization, 'Bearer sk-content-test', 'the content fetch carries the same key')
+  } finally {
+    await upstream.close()
+  }
+  // A URL-carrying poll must NOT go to /content: the fallback is a fallback.
+  const withUrl = await startUpstream()
+  withUrl.state.script = {
+    submit: { id: 'task_with_url', status: 'queued' },
+    polls: [{ status: 'completed', url: `http://127.0.0.1:${withUrl.port}/direct.mp4` }],
+  }
+  try {
+    const result = await generateVideo(
+      { apiUrl: withUrl.base, apiKey: 'sk-content-test' },
+      { mode: 'text', model: 'agnes-video-2.5-flash', prompt: 'a cat', aspectRatio: '16:9', resolution: '720P', seconds: 5 },
+      { family: 'agnes' },
+    )
+    assert.equal(result.videos[0].bytes.length, MP4.length)
+    assert.equal(withUrl.state.downloads[0].path, '/direct.mp4', 'a body URL is still preferred over /content')
+    assert.ok(!withUrl.state.downloads.some(row => row.path.endsWith('/content')), 'no redundant content fetch')
+  } finally {
+    await withUrl.close()
+  }
+})
+
+await check('V1c6 a content fallback that 404s reports the download leg, not a silent success (#9)', async () => {
+  const upstream = await startUpstream()
+  // `contentMissing` makes the fake answer 404 on /content, which is what a
+  // relay says when the id is wrong or the artifact expired.
+  upstream.state.script = {
+    submit: { id: 'task_gone', status: 'queued' },
+    polls: [{ id: 'task_gone', status: 'completed' }],
+    contentMissing: true,
+  }
+  try {
+    await assert.rejects(
+      generateVideo(
+        { apiUrl: upstream.base, apiKey: 'k', channelName: 'ContentMissing' },
+        { mode: 'text', model: 'agnes-video-2.5-flash', prompt: 'p', aspectRatio: '16:9', resolution: '720P', seconds: 5 },
+        { family: 'agnes' },
+      ),
+      (error) => {
+        assert.equal(error.code, 'video-download-failed', 'a missing artifact is a download failure')
+        assert.match(error.message, /HTTP 404/, 'the wire status reaches the user')
+        return true
+      },
+    )
+  } finally {
+    await upstream.close()
+  }
+  const entry = host.listDiagnostics().find(row => row.channel === 'ContentMissing')
+  assert.ok(entry !== undefined, 'a failed content fetch leaves a diagnostic entry')
+  assert.equal(entry.phase, 'video-download', 'the phase names the leg that failed')
+  assert.match(entry.url, /\/v1\/videos\/task_gone\/content$/, 'the entry records the content address')
 })
 
 await check('V1d keyframe and reference modes send family-correct fields', async () => {

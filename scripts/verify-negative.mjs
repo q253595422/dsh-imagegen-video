@@ -683,6 +683,17 @@ const CASES = [
 
   // -------------------------------------------------- video diagnostics parity
   {
+    // The #9 fallback exists because a terminal poll may carry no URL at all.
+    // Put the old "no URL means failed" branch back and the smoke case that
+    // serves exactly that body must go red.
+    name: 'a finished task with no URL is failed again instead of fetched from /content (#9)',
+    runner: 'video',
+    file: 'src/video-engine.ts',
+    from: "    if (typeof url !== 'string') {\n      return {\n        kind: 'done-content',",
+    to: "    if (typeof url !== 'string') {\n      return { kind: 'failed', message: '视频任务已完成但未返回视频地址' }\n    }\n    if (false) {\n      return {\n        kind: 'done-content',",
+    expect: /falls back to GET \/videos\/\{id\}\/content/,
+  },
+  {
     // The parity claim is "the video chain records into the SAME buffer". Drop
     // the recording and the video check has nothing to look at.
     name: 'a failed video submit is no longer recorded',
