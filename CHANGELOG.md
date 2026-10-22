@@ -5,6 +5,27 @@ Attribution for third-party code is in [NOTICE](./NOTICE).
 
 ## Releases
 
+### 1.15.3 — 视频工作室不再是死路
+
+- **生视频标签页此前无法返回生图。** The shell hides the image config sidebar
+  on the video tab (two composers must never be shown at once), and that sidebar
+  is the only place the text/edit/video pills are rendered — so the tab had no
+  return control anywhere on screen, and leaving meant reloading or detouring
+  through the gallery. `VideoPanel` now takes an optional `onExit` and renders a
+  "← 返回生图" button at the head of its own toolbar. The button is defined once
+  and shared by both return branches, including the no-model branch, which is the
+  screen that most needs an exit.
+- **"普通生图" in the top nav did nothing while the video tab was open.** The
+  video tab maps onto workspace index 0, the same index 普通生图 occupies, and
+  `GooeyNav.select()` returned early on `index === activeIndex` — swallowing the
+  callback along with the burst animation it meant to skip. The short-circuit now
+  gates only the animation; `onSelect` fires unconditionally. Click and keyboard
+  share that function, so both paths are fixed.
+- **`video.back` ships in zh / en / ru.**
+- Full detail, including the verification that this was never observable through
+  the existing guards and the one change that was measured and then reverted, is
+  in `docs/releases/v1.15.3.md`.
+
 ### 1.15.2 — 视频取片支持 `/content` 回退
 
 - **A finished task with no URL in its body is now downloaded instead of
