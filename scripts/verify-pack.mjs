@@ -110,6 +110,39 @@ const listing = execFileSync('tar', ['-tzf', archivePath], { cwd: ROOT, encoding
   .split('\n').filter(line => line !== '')
 const entries = new Set(listing)
 
+// ------------------------------------------------------- the version, twice
+// The version lives in two places: `package.json` (what the registry and the
+// archive are named after) and `PLUGIN_VERSION` in `src/protocol.ts` (what the
+// host updater reports as `currentVersion` and what the panel shows). Nothing
+// derives one from the other. A bump that touches only `package.json` therefore
+// ships a coherent-looking package that tells every user it is one version
+// behind -- and the only guard that notices is smoke.mjs A3, which runs late,
+// in a different command, and reads as a test failure rather than as "you
+// forgot a file". That is exactly how 1.15.3 went out on the first attempt.
+//
+// Kept here, next to the notes-sheet check, because both are release-shape
+// assertions: cheap, local, and before anything is packed.
+const protocolSource = readFileSync(join(ROOT, 'src/protocol.ts'), 'utf8')
+const declaredVersion = protocolSource.match(/^export const PLUGIN_VERSION = '([^']+)'$/m)?.[1]
+if (declaredVersion === undefined) {
+  fail([
+    '',
+    'FAIL: could not read PLUGIN_VERSION from src/protocol.ts.',
+    'The host updater and the client UI both read it from there; if the line',
+    'moved or changed shape, update this check rather than letting it pass.',
+  ])
+}
+if (declaredVersion !== pkg.version) {
+  fail([
+    '',
+    `FAIL: package.json says ${pkg.version} but src/protocol.ts says ${declaredVersion}.`,
+    'Both are read at runtime and neither is derived from the other, so a bump',
+    'must change both. With them apart, the update check compares the registry',
+    `against ${declaredVersion} and tells the user ${pkg.version} is available`,
+    'while they are already on it.',
+  ])
+}
+
 const missing = REQUIRED.filter(entry => !entries.has(`package/${entry}`))
 if (missing.length > 0) {
   fail([
