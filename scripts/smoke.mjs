@@ -7247,6 +7247,71 @@ await check('E1 client apply mounts the sidebar entry and studio (jsdom)', async
     assert.equal(resizedImage.height, Math.round(resizedImage.width), 'the image keeps its aspect ratio while resizing')
     assert.equal(resizedImage.x, imageBefore.x + 100, 'the anchored corner stays put')
 
+    // --- a fully covered node is called out while the drag is in progress ---
+    // 节点在画布上可以任意摆放，所以「把一个节点整个拖到另一个上面」是能真的做出
+    // 来的：被盖住的那个既看不见、也框选不到，用户会以为节点丢了。
+    //
+    // 用一个 100x80 的小文本节点去盖：包含关系要成立，被盖的那方必须真的比盖住它
+    // 的小，而画布上现成的图片节点（240x240）比配置节点（320x190）还高。
+    canvasDocument.nodes = [
+      ...canvasDocument.nodes,
+      { id: 'node-covered', type: 'text', title: '会被盖住的小卡片', x: 0, y: 1200, width: 100, height: 80, metadata: { status: 'idle', text: '' } },
+    ]
+    ecommerceSwitch.click()
+    await new Promise(resolve => setTimeout(resolve, 60))
+    canvasSwitch.click()
+    await waitForSelector(view, '[data-node-id="node-covered"]')
+    {
+      const coveredEl = view.querySelector('[data-node-id="node-covered"]')
+      const configEl = view.querySelector('[data-node-id="node-config"]')
+      assert.ok(coveredEl !== null && configEl !== null, 'both nodes are on the canvas')
+      // 从 DOM 读位置：重开画布后第一次保存还没发生，canvasSaves 里可能仍是上一版。
+      const boxOf = (element) => ({
+        x: Number.parseFloat(element.style.left),
+        y: Number.parseFloat(element.style.top),
+        width: Number.parseFloat(element.style.width),
+        height: Number.parseFloat(element.style.height),
+      })
+      const coveredNode = boxOf(coveredEl)
+      const coverNode = boxOf(configEl)
+      // 目标：小节点落在配置节点正中（四周都留余量，包含关系才成立）。
+      const toCentre = {
+        x: coverNode.x + (coverNode.width - coveredNode.width) / 2 - coveredNode.x,
+        y: coverNode.y + (coverNode.height - coveredNode.height) / 2 - coveredNode.y,
+      }
+      coveredEl.dispatchEvent(new jsdomWindow.MouseEvent('pointerdown', { bubbles: true, clientX: 10, clientY: 10, button: 0 }))
+      jsdomWindow.dispatchEvent(new jsdomWindow.MouseEvent('pointermove', { bubbles: true, clientX: 10 + toCentre.x, clientY: 10 + toCentre.y, button: 0 }))
+      assert.ok(
+        await waitUntil(() => view.querySelector('[data-node-covered]') !== null),
+        'a node dragged fully under another is called out while the drag is live',
+      )
+      const badge = view.querySelector('[data-node-covered]')
+      assert.equal(badge.getAttribute('data-node-covered'), 'node-covered', 'the badge names the covered node')
+      assert.ok(
+        (badge.getAttribute('aria-label') ?? '').includes('完全重叠'),
+        'the badge says what happened, for a reader that cannot see the outline',
+      )
+      // 松手后提示必须还在：松手之后那个节点依然被盖着、依然看不见，
+      // 提示只在拖动期间存在的话，它就正好错过了唯一需要它的时刻。
+      jsdomWindow.dispatchEvent(new jsdomWindow.MouseEvent('pointerup', { bubbles: true, clientX: 10 + toCentre.x, clientY: 10 + toCentre.y, button: 0 }))
+      await new Promise(resolve => setTimeout(resolve, 80))
+      assert.ok(
+        view.querySelector('[data-node-covered]') !== null,
+        'the callout survives the pointer being released — the node is still covered',
+      )
+      // 再拖开一次：提示必须跟着消失，否则它就成了画布上一个不会散的标记。
+      coveredEl.dispatchEvent(new jsdomWindow.MouseEvent('pointerdown', { bubbles: true, clientX: 10, clientY: 10, button: 0 }))
+      jsdomWindow.dispatchEvent(new jsdomWindow.MouseEvent('pointermove', { bubbles: true, clientX: 10 + toCentre.x + coverNode.width, clientY: 10 + toCentre.y, button: 0 }))
+      assert.ok(
+        await waitUntil(() => view.querySelector('[data-node-covered]') === null),
+        'the callout clears as soon as the node is no longer covered',
+      )
+      jsdomWindow.dispatchEvent(new jsdomWindow.MouseEvent('pointerup', { bubbles: true, clientX: 10 + toCentre.x + coverNode.width, clientY: 10 + toCentre.y, button: 0 }))
+      await new Promise(resolve => setTimeout(resolve, 40))
+      // 收尾：把探针节点从文档里删掉，后面读 canvasDocument 的检查不该看见它。
+      canvasDocument.nodes = canvasDocument.nodes.filter(node => node.id !== 'node-covered')
+    }
+
     // --- file nodes read their content instead of showing a download hint ---
     canvasDocument.nodes = [
       ...canvasDocument.nodes,

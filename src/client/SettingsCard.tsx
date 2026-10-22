@@ -16,12 +16,13 @@ import { useEffect, useRef, useState, type ReactNode } from 'react'
 import type { InjectFace, PropsLocale, PropsRuntime } from '@deepseek-ai/dsh-client-ui-slots'
 import type {} from '@deepseek-ai/dsh-client-ui-settings/client'
 import { createSnapshotStore, type SnapshotStore } from '@deepseek-ai/dsh-client-store'
-import { CardForm, booleanField, secretField, textField, type CardActions, type CardShell, type FieldState as CardFieldState } from './settings-form.ts'
-import { ChannelsForm, type ChannelDraft, type ChannelsFormActions, type ChannelsFormState } from './channels-form.ts'
+import { CardForm, booleanField, secretField, textField, type CardActions, type CardSaveOutcome, type CardShell, type FieldState as CardFieldState } from './settings-form.ts'
+import { ChannelsForm, type ChannelDraft, type ChannelIssue, type ChannelsFormActions, type ChannelsFormState, type ChannelsSaveOutcome } from './channels-form.ts'
+import { ImageGenApi } from './api.ts'
 import type { ImageGenScope } from './settings-scope.ts'
 import { describeModel } from '../model-catalog.ts'
 import { DEFAULT_VIDEO_MODELS, describeVideoModel } from '../video-model-catalog.ts'
-import { IMAGE_MODEL_API, PRESETS_API, PROMPT_ENHANCE_API, USAGE_API, CANVAS_SKILL_API, SUBSCRIPTION_API, SUBSCRIPTION_PROVIDERS, SUBSCRIPTION_PROVIDER_DISPLAY_NAMES, DEFAULT_SUBSCRIPTION_MODELS, EXPERIMENTAL_SUBSCRIPTION_PROVIDERS, isChatCompletionsUrl, isSubscriptionProvider, resolveChannelProtocol, type ModelMapping, type PresetProviderView, type SubscriptionProvider } from '../protocol.ts'
+import { IMAGE_MODEL_API, PLUGIN_VERSION, PRESETS_API, PROMPT_ENHANCE_API, USAGE_API, CANVAS_SKILL_API, SUBSCRIPTION_API, SUBSCRIPTION_PROVIDERS, SUBSCRIPTION_PROVIDER_DISPLAY_NAMES, DEFAULT_SUBSCRIPTION_MODELS, EXPERIMENTAL_SUBSCRIPTION_PROVIDERS, isChatCompletionsUrl, isSubscriptionProvider, resolveChannelProtocol, type ModelMapping, type PresetProviderView, type SubscriptionProvider } from '../protocol.ts'
 import type { ImageGenKey } from './locales.ts'
 import { tt, type TranslateValues } from './helpers.ts'
 import { useImageGenLanguageTick } from './use-language.ts'
@@ -30,6 +31,15 @@ import { PptSetup } from './PptSetup.tsx'
 import { Select } from './Select.tsx'
 import { onTablistKeyDown, tabIndexFor } from './tablist.ts'
 import css from './settings-card.module.css'
+
+/**
+ * The card's own API client (update checks today).
+ *
+ * Module scope, not a per-render instance: `api.ts` holds no state, and the
+ * update check is fired from a button on a card that re-renders on every
+ * keystroke elsewhere on the page.
+ */
+const settingsApi = new ImageGenApi()
 
 /** The global (non-channel) fields this card's staged form edits. */
 export interface ImageGenSettings {
@@ -297,6 +307,10 @@ export function ImageGenSettingsSection(props: ImageGenSettingsSectionProps) {
   const subscriptionPopups = useRef<Partial<Record<SubscriptionProvider, Window>>>({})
   // Channel list local states.
   const [editingId, setEditingId] = useState<string | null>(null)
+  /** The result line under the save button: which outcome the last save had. */
+  const [saveNote, setSaveNote] = useState<{ ok: boolean; text: string } | null>(null)
+  const [updateState, setUpdateState] = useState<'idle' | 'checking'>('idle')
+  const [updateNote, setUpdateNote] = useState<{ ok: boolean; text: string } | null>(null)
   const [presetPickerOpen, setPresetPickerOpen] = useState(false)
   const [presets, setPresets] = useState<PresetProviderView[]>([])
   const [presetError, setPresetError] = useState<string | null>(null)
@@ -463,6 +477,58 @@ export function ImageGenSettingsSection(props: ImageGenSettingsSectionProps) {
   if (!state.available) return null
   const title = t('settings.title')
   const blocked = !state.dirty || state.invalid || state.saving || state.channels.saving
+
+  /**
+   * Save both halves and say what happened.
+   *
+   * Channel drafts are validated first: a save used to fire the writes and show
+   * nothing, so an empty API URL looked saved while nothing reached the Host.
+   * Blocking fields are reported in place and the first one takes focus.
+   */
+  /** Run the update check by hand and always say what came back. */
+  const checkUpdate = async (): Promise<void> => {
+    if (updateState === 'checking') return
+    setUpdateState('checking')
+    setUpdateNote(null)
+    try {
+      const info = await settingsApi.updateCheck()
+      setUpdateNote(info.updateAvailable
+        ? { ok: true, text: t('settings.updateAvailable', { version: info.latestVersion, current: info.currentVersion }) }
+        : { ok: true, text: t('settings.updateLatest', { version: info.currentVersion }) })
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error)
+      setUpdateNote({ ok: false, text: t('settings.updateCheckFailed', { error: message }) })
+    } finally {
+      setUpdateState('idle')
+    }
+  }
+
+  const saveAll = async (): Promise<void> => {
+    const blocking = Object.entries(state.channels.issues).find(([, list]) => list.length > 0)
+    if (blocking !== undefined) {
+      const [channelId, list] = blocking
+      const first = list[0]
+      setSaveNote({
+        ok: false,
+        text: first === undefined
+          ? t('channels.fixBeforeSave', { n: 0 })
+          : `${t(`channels.${first.code}` as never)} · ${t('channels.fixBeforeSave', { n: list.length })}`,
+      })
+      const fieldId = first?.field === 'apiUrl' ? `dsh-imagegen-channel-url-${channelId}` : `dsh-imagegen-channel-models-${channelId}`
+      const field = document.getElementById(fieldId)
+      if (field !== null) {
+        field.scrollIntoView?.({ block: 'center' })
+        field.focus?.()
+      }
+      return
+    }
+    setSaveNote(null)
+    const [channels, card] = await Promise.all([props.channels.commit(), props.save()])
+    const failure = channels.ok ? card : channels
+    setSaveNote(failure.ok
+      ? { ok: true, text: t('settings.saved') }
+      : { ok: false, text: t('settings.saveFailedReason', { error: failure.message ?? t('settings.saveFailed') }) })
+  }
   const disabled = !state.writable
   const fieldProps = {
     overriddenLabel: t('settings.overridden'),
@@ -473,7 +539,13 @@ export function ImageGenSettingsSection(props: ImageGenSettingsSectionProps) {
 
   if (!state.exposed) {
     return (
-      <section className={css.card} data-dsh-imagegen-settings-panel>
+      <section
+        className={css.card}
+        data-dsh-imagegen-settings-panel
+        role="dialog"
+        aria-modal="true"
+        aria-label={t('settings.title')}
+      >
         <button
           type="button"
           className={css.header}
@@ -527,7 +599,13 @@ export function ImageGenSettingsSection(props: ImageGenSettingsSectionProps) {
   ]
 
   return (
-    <section className={css.card} data-dsh-imagegen-settings-panel>
+    <section
+      className={css.card}
+      data-dsh-imagegen-settings-panel
+      role="dialog"
+      aria-modal="true"
+      aria-label={t('settings.title')}
+    >
       <button
         type="button"
         className={css.header}
@@ -536,12 +614,34 @@ export function ImageGenSettingsSection(props: ImageGenSettingsSectionProps) {
         onClick={() => { setOpen(!open) }}
       >
         <span className={css.headText}>
-          <span className={css.name}>{title}</span>
+          <span className={css.name}>{title} <span className={css.version}>v{PLUGIN_VERSION}</span></span>
           <span className={css.description}>{headerDescription}</span>
         </span>
         {state.dirty ? <span className={css.pending}>{t('settings.unsaved')}</span> : null}
+        {/* Manual check: the plugin used to run its update check once, on mount,
+            and swallow any failure, so a stale install had no way to find out. */}
+        <span
+          role="button"
+          tabIndex={0}
+          className={css.updateCheck}
+          data-update-check=""
+          aria-disabled={updateState === 'checking'}
+          title={updateState === 'checking' ? t('settings.checkingUpdate') : t('settings.checkUpdate')}
+          onClick={event => { event.stopPropagation(); void checkUpdate() }}
+          onKeyDown={event => {
+            if (event.key !== 'Enter' && event.key !== ' ') return
+            event.preventDefault()
+            event.stopPropagation()
+            void checkUpdate()
+          }}
+        >
+          {updateState === 'checking' ? t('settings.checkingUpdate') : t('settings.checkUpdate')}
+        </span>
         <span className={open ? css.chevronOpen : css.chevron}>▾</span>
       </button>
+      {updateNote !== null ? (
+        <p className={updateNote.ok ? css.saved : css.failed} role="status" data-update-note="">{updateNote.text}</p>
+      ) : null}
       {open
         ? (
           <div className={css.body}>
@@ -1075,12 +1175,14 @@ export function ImageGenSettingsSection(props: ImageGenSettingsSectionProps) {
             />
             </SettingsSection>
             <div className={css.footer}>
-              {(state.failed || state.channels.failed) ? <p className={css.failed} role="status">{t('settings.saveFailed')}</p> : null}
+              {saveNote !== null ? (
+                <p className={saveNote.ok ? css.saved : css.failed} role="status">{saveNote.text}</p>
+              ) : (state.failed || state.channels.failed) ? <p className={css.failed} role="status">{t('settings.saveFailed')}</p> : null}
               <button
                 type="button"
                 className={css.discard}
                 disabled={!state.dirty || state.saving || state.channels.saving}
-                onClick={() => { props.discard(); props.channels.discard() }}
+                onClick={() => { props.discard(); props.channels.discard(); setSaveNote(null) }}
               >
                 {t('settings.discard')}
               </button>
@@ -1088,7 +1190,7 @@ export function ImageGenSettingsSection(props: ImageGenSettingsSectionProps) {
                 type="button"
                 className={css.save}
                 disabled={blocked}
-                onClick={() => { void props.channels.commit(); void props.save() }}
+                onClick={() => { void saveAll() }}
               >
                 {t(!state.saving && !state.channels.saving ? 'settings.save' : 'settings.saving')}
               </button>
@@ -1112,6 +1214,7 @@ export function ImageGenSettingsSection(props: ImageGenSettingsSectionProps) {
           onSetVideoModels={(videoModels) => { props.channels.setChannels(channels.map(channel => channel.id === editing.id ? { ...channel, videoModels } : channel)) }}
           onSetKey={(value) => { props.channels.setChannelKey(editing.id, value) }}
           subscriptionStatus={editing.subscription === undefined ? undefined : subscriptionStatus[editing.subscription]}
+          issues={state.channels.issues[editing.id] ?? []}
           subscriptionBusy={editing.subscription === undefined ? undefined : subscriptionBusy[editing.subscription]}
           subscriptionMessage={editing.subscription === undefined ? undefined : subscriptionMessage[editing.subscription]}
           onSubscriptionLogin={(provider) => { void subscriptionLogin(provider) }}
@@ -1256,6 +1359,8 @@ function ChannelEditor(props: {
   writable: boolean
   onPatch: (patch: Partial<ChannelDraft>) => void
   onSetModels: (models: ModelMapping[]) => void
+  /** Per-channel blocking problems, so the field that blocks the save says so. */
+  issues: ChannelIssue[]
   /** Replace this channel's video model catalog (alias → upstream id). */
   onSetVideoModels: (models: ModelMapping[]) => void
   onSetKey: (value: string | undefined) => void
@@ -1276,6 +1381,8 @@ function ChannelEditor(props: {
   const [candidates, setCandidates] = useState<string[] | null>(null)
   const [detecting, setDetecting] = useState(false)
   const [detectError, setDetectError] = useState<string | null>(null)
+  const [testing, setTesting] = useState(false)
+  const [testResult, setTestResult] = useState<{ ok: boolean; text: string } | null>(null)
   const [manualId, setManualId] = useState('')
   const [removeOpen, setRemoveOpen] = useState(false)
   const [copyFrom, setCopyFrom] = useState('')
@@ -1314,6 +1421,39 @@ function ChannelEditor(props: {
 
   // Auto-detect once when the dialog opens with a complete endpoint.
   const autoDetected = useRef(false)
+
+  /**
+   * Probe the endpoint the user just typed and report the round trip.
+   *
+   * `detect` fills the model catalog but says nothing about how long the host
+   * took; someone who just edited the URL wants one explicit "does this work
+   * now" answer before saving.
+   */
+  const testConnection = (): void => {
+    setTesting(true)
+    setTestResult(null)
+    const payload: Record<string, unknown> = {
+      channelId: channel.id,
+      apiUrlFull: channel.apiUrlFull,
+      protocol: channel.protocol ?? 'auto',
+    }
+    if (channel.apiUrl.trim() !== '') payload.apiUrl = channel.apiUrl.trim()
+    if (keyDraft.trim() !== '') payload.apiKey = keyDraft.trim()
+    const startedAt = performance.now()
+    void fetch(IMAGE_MODEL_API.models, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(payload) })
+      .then(async response => {
+        const body = await response.json() as { ok?: boolean; models?: string[]; message?: string }
+        const elapsed = Math.round(performance.now() - startedAt)
+        if (!response.ok || body.ok !== true) throw new Error(body.message ?? `HTTP ${response.status}`)
+        const models = body.models ?? []
+        setTestResult({ ok: true, text: t('channels.testOk', { ms: elapsed, n: models.length }) })
+        if (models.length > 0) setCandidates(models)
+      })
+      .catch(error => {
+        setTestResult({ ok: false, text: t('channels.testFailed', { error: error instanceof Error ? error.message : String(error) }) })
+      })
+      .finally(() => { setTesting(false) })
+  }
   useEffect(() => {
     if (autoDetected.current) return
     autoDetected.current = true
@@ -1444,10 +1584,13 @@ function ChannelEditor(props: {
         <div className={css.editorGrid} data-connection>
           <div className={css.editorField}>
             <label className={css.label} htmlFor="dsh-imagegen-channel-url">{t('channels.apiUrl')}</label>
-            <input id="dsh-imagegen-channel-url" className={css.input} value={channel.apiUrl} placeholder={channel.apiUrlFull ? 'https://api.example.com/v1/wand/si-image/generation' : 'https://api.example.com/v1'} disabled={!props.writable} onChange={event => {
+            <input id="dsh-imagegen-channel-url" data-channel-url={props.channel.id} aria-invalid={props.issues.length > 0} aria-describedby={props.issues.length > 0 ? 'dsh-imagegen-channel-url-error' : undefined} className={css.input} value={channel.apiUrl} placeholder={channel.apiUrlFull ? 'https://api.example.com/v1/wand/si-image/generation' : 'https://api.example.com/v1'} disabled={!props.writable} onChange={event => {
               const apiUrl = event.target.value
               props.onPatch({ apiUrl, ...isChatCompletionsUrl(apiUrl) ? { apiUrlFull: true } : {} })
             }} />
+            {props.issues.map(issue => (
+              <p key={issue.code} id="dsh-imagegen-channel-url-error" className={css.fieldError} role="alert">{t(`channels.${issue.code}` as never)}</p>
+            ))}
           </div>
           <div className={css.editorField}>
             <label className={css.label} htmlFor="dsh-imagegen-channel-protocol">{t('channels.protocol')}</label>
@@ -1509,8 +1652,21 @@ function ChannelEditor(props: {
           <button type="button" className={css.modelFetch} disabled={!props.writable || detecting || (channel.apiUrlFull && resolveChannelProtocol(channel.apiUrl, channel.protocol) !== 'chat-completions')} onClick={detect}>
             {detecting ? t('channels.detecting') : candidates === null && channel.models.length === 0 ? t('channels.detectFirst') : t('channels.detect')}
           </button>
+          <button
+            type="button"
+            className={css.modelFetch}
+            data-test-connection=""
+            disabled={!props.writable || testing || channel.apiUrl.trim() === ''}
+            title={channel.apiUrl.trim() === '' ? t('channels.apiUrlRequired') : t('channels.testConnection')}
+            onClick={testConnection}
+          >
+            {testing ? t('channels.testing') : t('channels.testConnection')}
+          </button>
         </div>
         {detectError !== null ? <p className={css.failed} role="status">{t('channels.detectFailed', { error: detectError })}</p> : null}
+        {testResult !== null ? (
+          <p className={testResult.ok ? css.detectOk : css.failed} role="status" data-test-result="">{testResult.text}</p>
+        ) : null}
         {candidates !== null && detectError === null ? <p className={css.detectOk} role="status">{t('channels.detectSuccess', { n: candidates.length })}</p> : null}
 
         {channel.models.length === 0
@@ -1543,7 +1699,7 @@ function ChannelEditor(props: {
                       <div className={css.modelRowSummary}>
                         <div className={css.modelRowTitle}>
                           <span className={css.modelRowName} title={model.alias}>{model.alias}</span>
-                          <span className={css.modelBadge}>{entry.labelZh}{entry.known ? '' : ` · ${t('channels.unknownProtocol')}`}</span>
+                          <span className={css.modelBadge}>{entry.known ? entry.labelZh : t('channels.unknownProtocol')}</span>
                           {generated > 0 ? <span className={css.modelBadge} data-verified>{t('channels.generated', { n: generated })}</span> : null}
                         </div>
                         {model.id !== model.alias ? <span className={css.modelRowUpstream} title={model.id}>→ {model.id}</span> : null}
@@ -1620,7 +1776,7 @@ function ChannelEditor(props: {
                         <div className={css.modelRowSummary}>
                           <div className={css.modelRowTitle}>
                             <span className={css.modelRowName} title={model.alias}>{model.alias}</span>
-                            <span className={css.modelBadge}>{entry.labelZh}{entry.known ? '' : ` · ${t('channels.unknownProtocol')}`}</span>
+                            <span className={css.modelBadge}>{entry.known ? entry.labelZh : t('channels.unknownProtocol')}</span>
                           </div>
                           {model.id !== model.alias ? <span className={css.modelRowUpstream} title={model.id}>→ {model.id}</span> : null}
                         </div>

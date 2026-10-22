@@ -214,7 +214,7 @@
 .inputInvalid {
   height: 34px;
   padding: 0 12px;
-  border: 1px solid var(--dsw-alias-label-error);
+  border: 1px solid var(--dsw-alias-state-error-primary, #ec1313);
   border-radius: 8px;
   background: var(--dsw-alias-bg-layer-3);
   font: inherit;
@@ -239,7 +239,7 @@
 }
 
 .textarea { border: 1px solid var(--dsw-alias-border-l2); }
-.textareaInvalid { border: 1px solid var(--dsw-alias-label-error); }
+.textareaInvalid { border: 1px solid var(--dsw-alias-state-error-primary, #ec1313); }
 .textarea:focus-visible { border-color: var(--dsw-alias-brand-primary); }
 .textarea:disabled { color: var(--dsw-alias-label-tertiary); cursor: default; }
 
@@ -255,7 +255,7 @@
 }
 
 .invalid {
-  color: var(--dsw-alias-label-error);
+  color: var(--dsw-alias-state-error-primary, #ec1313);
 }
 
 .readOnly,
@@ -486,7 +486,7 @@
   margin: 0;
   font-size: 12px;
   line-height: 1.5;
-  color: var(--dsw-alias-label-error);
+  color: var(--dsw-alias-state-error-primary, #ec1313);
 }
 
 .discard,
@@ -642,7 +642,7 @@
 }
 
 .channelBadge[data-warn] {
-  color: var(--dsw-alias-label-error);
+  color: var(--dsw-alias-state-error-primary, #ec1313);
 }
 
 .channelBadge[data-default] {
@@ -670,7 +670,7 @@
 }
 
 .channelAction[data-danger] {
-  color: var(--dsw-alias-label-error);
+  color: var(--dsw-alias-state-error-primary, #ec1313);
 }
 
 .channelAction:disabled {
@@ -681,18 +681,18 @@
 .channelDanger {
   appearance: none;
   flex: none;
-  border: 1px solid var(--dsw-alias-label-error);
+  border: 1px solid var(--dsw-alias-state-error-primary, #ec1313);
   border-radius: 6px;
   padding: 3px 10px;
   background: none;
-  color: var(--dsw-alias-label-error);
+  color: var(--dsw-alias-state-error-primary, #ec1313);
   font: inherit;
   font-size: 12px;
   cursor: pointer;
 }
 
 .channelDanger:hover:not(:disabled) {
-  background: color-mix(in srgb, var(--dsw-alias-label-error) 12%, transparent);
+  background: color-mix(in srgb, var(--dsw-alias-state-error-primary, #ec1313) 12%, transparent);
 }
 
 .channelDanger:disabled {
@@ -705,7 +705,7 @@
   min-width: 0;
   font-size: 12px;
   line-height: 1.5;
-  color: var(--dsw-alias-label-error);
+  color: var(--dsw-alias-state-error-primary, #ec1313);
 }
 
 .defaultModelRow {
@@ -1134,7 +1134,7 @@
 }
 
 .modelBadge[data-warn] {
-  color: var(--dsw-alias-label-error);
+  color: var(--dsw-alias-state-error-primary, #ec1313);
 }
 
 .modelRowRemove {
@@ -1153,7 +1153,7 @@
 }
 
 .modelRowRemove:hover:not(:disabled) {
-  color: var(--dsw-alias-label-error);
+  color: var(--dsw-alias-state-error-primary, #ec1313);
   background: var(--dsw-alias-bg-module-platform);
 }
 
@@ -1303,7 +1303,7 @@
 
 .healthBadge[data-state='attention'],
 .sectionSummary[data-tone='attention'] {
-  color: var(--dsw-alias-label-error);
+  color: var(--dsw-alias-state-error-primary, #ec1313);
 }
 
 .summaryGrid {
@@ -1343,7 +1343,7 @@
 }
 
 .summaryCard[data-tone='attention'] {
-  background: color-mix(in srgb, var(--dsw-alias-label-error) 6%, var(--dsw-alias-bg-layer-2));
+  background: color-mix(in srgb, var(--dsw-alias-state-error-primary, #ec1313) 6%, var(--dsw-alias-bg-layer-2));
 }
 
 .summaryLabel {
@@ -1607,14 +1607,14 @@
 }
 
 .subscriptionDot[data-state='logged-out'] {
-  background: var(--dsw-alias-label-error);
+  background: var(--dsw-alias-state-error-primary, #ec1313);
 }
 
 .subscriptionWarning {
   margin: 9px 0 0;
   padding: 7px 9px;
   border-radius: 7px;
-  background: color-mix(in srgb, var(--dsw-alias-label-error) 7%, transparent);
+  background: color-mix(in srgb, var(--dsw-alias-state-error-primary, #ec1313) 7%, transparent);
   color: var(--dsw-alias-label-secondary);
   font-size: 11.5px;
   line-height: 1.5;
@@ -1664,4 +1664,55 @@
   margin-top: 10px;
   padding-top: 10px;
   border-top: 1px dashed var(--dsw-alias-border-l2);
+}
+
+
+/* Outcome line under the save button: success reads as quiet confirmation,
+   not as another warning next to the red failure copy. */
+.saved {
+  color: var(--dsw-alias-state-success-primary);
+}
+
+/* Inline field error: the message sits under the input it blocks. */
+.fieldError {
+  margin: 2px 0 0;
+  font-size: 11px;
+  line-height: 1.4;
+  color: var(--dsw-alias-state-error-primary, #ec1313);
+}
+
+
+/* Version chip: small and quiet — it answers "which build am I on" without
+   competing with the card title. */
+.version {
+  margin-left: 6px;
+  font-size: 11px;
+  font-weight: 400;
+  color: var(--dsw-alias-label-tertiary);
+}
+
+/* Manual update check, sits in the header next to the collapse chevron. */
+.updateCheck {
+  flex: none;
+  padding: 3px 8px;
+  border: 1px solid var(--dsw-alias-border-l2);
+  border-radius: 7px;
+  font-size: 11.5px;
+  color: var(--dsw-alias-label-secondary);
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.updateCheck:hover {
+  color: var(--dsw-alias-label-primary);
+}
+
+.updateCheck[aria-disabled='true'] {
+  cursor: default;
+  opacity: 0.6;
+}
+
+.updateCheck:focus-visible {
+  outline: 2px solid var(--dsw-alias-brand-primary);
+  outline-offset: 2px;
 }

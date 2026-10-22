@@ -34,6 +34,55 @@ export interface ChannelDraft {
 /** One staged key edit for a channel. */
 export type KeyEdit = { kind: 'set'; value: string } | { kind: 'clear' }
 
+/**
+ * One reason a draft cannot be saved.
+ *
+ * The form model stays i18n-free: it names the field and the reason, and the
+ * card maps the code to a localized sentence. `field` is also the focus
+ * target, and the array is ordered by the order the fields appear on screen,
+ * so "focus the first error" needs no second ordering rule.
+ */
+export interface ChannelIssue {
+  field: 'apiUrl' | 'models'
+  code: 'apiUrlRequired' | 'apiUrlScheme' | 'modelsRequired'
+}
+
+/**
+ * Whether a draft would save a channel that cannot work, and why.
+ *
+ * Checked in the card BEFORE any request: an empty API URL used to travel all
+ * the way to the settings mutation, where the Host rejected it with a message
+ * the footer rendered as the generic 「保存失败，请重试」 — so the one thing the
+ * user needed to fix was the one thing never named.
+ *
+ * @param draft - the staged channel as the editor holds it.
+ * @returns every problem, in on-screen field order (empty when saveable).
+ */
+export function validateChannelDraft(draft: ChannelDraft): ChannelIssue[] {
+  const issues: ChannelIssue[] = []
+  // A subscription channel has no endpoint to fill in; its auth is the account.
+  const subscriptionMode = draft.auth === 'subscription' && draft.subscription !== undefined
+  if (!subscriptionMode) {
+    const apiUrl = draft.apiUrl.trim()
+    if (apiUrl === '') issues.push({ field: 'apiUrl', code: 'apiUrlRequired' })
+    else if (!/^https?:\/\/\S+/i.test(apiUrl)) issues.push({ field: 'apiUrl', code: 'apiUrlScheme' })
+  }
+  // `stripChannel` drops blank aliases, so a list of blanks saves as a channel
+  // with no models — selectable in the pickers and unusable at generate time.
+  if (!draft.models.some(model => model.alias.trim() !== '')) issues.push({ field: 'models', code: 'modelsRequired' })
+  return issues
+}
+
+/** What a save attempt did. */
+export interface ChannelsSaveOutcome {
+  /** Whether every staged edit reached the Host document. */
+  ok: boolean
+  /** Nothing was staged, so no write was attempted (not a failure). */
+  noop?: boolean
+  /** The Host's own words when `ok` is false; shown verbatim under the summary. */
+  message?: string
+}
+
 /** The state the card renders. */
 export interface ChannelsFormState {
   /** Staged channel list (the scope value when nothing is staged). */
@@ -54,6 +103,10 @@ export interface ChannelsFormState {
   saving: boolean
   /** Whether the last save failed (cleared by the next edit or save). */
   failed: boolean
+  /** The Host's own words for the last failure, when it sent any. */
+  error: string | null
+  /** Per-channel blocking problems, keyed by channel id (empty = saveable). */
+  issues: Record<string, ChannelIssue[]>
 }
 
 /** The actions the card's slot entry injects. */
@@ -69,7 +122,7 @@ export interface ChannelsFormActions {
   /** Stage the default video-model alias. */
   setDefaultVideoModel: (model: string) => void
   /** Write every staged edit, then re-seed from what the Host accepted. */
-  commit: () => Promise<void>
+  commit: () => Promise<ChannelsSaveOutcome>
   /** Drop every staged edit. */
   discard: () => void
 }
@@ -120,6 +173,7 @@ export class ChannelsForm {
   private readonly listeners = new Set<() => void>()
   private saving = false
   private failed = false
+  private lastError: string | null = null
 
   constructor(private readonly scope: ImageGenScope) {
     scope.subscribe(() => { this.publish() })
@@ -218,6 +272,8 @@ export class ChannelsForm {
       writable: this.scope.getSnapshot().writable !== false,
       saving: this.saving,
       failed: this.failed,
+      error: this.lastError,
+      issues: Object.fromEntries(channels.map(channel => [channel.id, validateChannelDraft(channel)])),
     }
   }
 
@@ -226,9 +282,9 @@ export class ChannelsForm {
     return {
       setChannels: (channels) => { this.stageChannels(channels) },
       setChannelKey: (id, value) => { this.stageKey(id, value) },
-      setDefaultChannel: (id) => { this.stagedDefault = id; this.failed = false; this.publish() },
-      setDefaultModel: (model) => { this.stagedDefaultModel = model; this.failed = false; this.publish() },
-      setDefaultVideoModel: (model) => { this.stagedDefaultVideoModel = model; this.failed = false; this.publish() },
+      setDefaultChannel: (id) => { this.stagedDefault = id; this.clearFailure(); this.publish() },
+      setDefaultModel: (model) => { this.stagedDefaultModel = model; this.clearFailure(); this.publish() },
+      setDefaultVideoModel: (model) => { this.stagedDefaultVideoModel = model; this.clearFailure(); this.publish() },
       commit: () => this.commit(),
       discard: () => {
         if (this.stagedChannels === null && this.stagedKeys.size === 0 && this.stagedDefault === null && this.stagedDefaultModel === null && this.stagedDefaultVideoModel === null && !this.failed) return
@@ -237,7 +293,7 @@ export class ChannelsForm {
         this.stagedDefault = null
         this.stagedDefaultModel = null
         this.stagedDefaultVideoModel = null
-        this.failed = false
+        this.clearFailure()
         this.publish()
       },
     }
@@ -245,10 +301,16 @@ export class ChannelsForm {
 
   // ------------------------------------------------------------------ staging
 
+  /** Drop the recorded failure (every edit invalidates the reason it named). */
+  private clearFailure(): void {
+    this.failed = false
+    this.lastError = null
+  }
+
   private stageChannels(channels: ChannelDraft[]): void {
     const cleaned = channels.map(stripChannel)
     this.stagedChannels = cleaned
-    this.failed = false
+    this.clearFailure()
     this.publish()
   }
 
@@ -259,7 +321,7 @@ export class ChannelsForm {
     } else {
       this.stagedKeys.set(id, { kind: 'set', value: value.trim() })
     }
-    this.failed = false
+    this.clearFailure()
     this.publish()
   }
 
@@ -297,14 +359,20 @@ export class ChannelsForm {
 
   /**
    * Write every staged edit, then re-seed from what the Host accepted.
-   * @returns settlement after the write settles.
+   *
+   * The outcome is returned rather than only recorded, because the caller owes
+   * the user an answer at the moment they pressed the button: a boolean in the
+   * snapshot could only ever say 「保存失败」, never which field the Host
+   * objected to.
+   *
+   * @returns what the write did, including the Host's message on failure.
    */
-  async commit(): Promise<void> {
-    if (this.saving) return
+  async commit(): Promise<ChannelsSaveOutcome> {
+    if (this.saving) return { ok: false, message: 'save already in progress' }
     const ops = this.planOps()
-    if (ops.length === 0) return
+    if (ops.length === 0) return { ok: true, noop: true }
     this.saving = true
-    this.failed = false
+    this.clearFailure()
     this.publish()
     try {
       await this.scope.mutateOps(ops)
@@ -313,9 +381,13 @@ export class ChannelsForm {
       this.stagedDefault = null
       this.stagedDefaultModel = null
       this.stagedDefaultVideoModel = null
-      this.failed = false
-    } catch {
+      this.clearFailure()
+      return { ok: true }
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error)
       this.failed = true
+      this.lastError = message
+      return { ok: false, message }
     } finally {
       this.saving = false
       this.publish()

@@ -38,11 +38,31 @@ export interface SelectProps extends Omit<ButtonHTMLAttributes<HTMLButtonElement
   options?: SelectOption[]
   children?: ReactNode
   variant?: 'field' | 'compact' | 'composer' | 'toolbar'
+  /**
+   * Add a filter box inside the menu.
+   *
+   * Only visibility changes: every option keeps its original index, so
+   * `aria-activedescendant` and `data-option-index` still point at the right
+   * entry and existing keyboard/typeahead behaviour is unchanged.
+   */
+  searchable?: boolean
+  /** Per-value second line, e.g. the node count and timestamp of a canvas. */
+  optionHint?: (option: SelectOption) => string | undefined
+  /** Shown in place of the list when the filter matches nothing. */
+  emptyText?: string
+  /** Placeholder of the filter box; falls back to the trigger's accessible name. */
+  searchPlaceholder?: string
   onChange: (value: string) => void
 }
 
-export function Select({ value, options: suppliedOptions, children, variant = 'field', onChange, className, disabled, id, onKeyDown, onClick, ...buttonProps }: SelectProps): React.JSX.Element {
+export function Select({ value, options: suppliedOptions, children, variant = 'field', searchable = false, optionHint, emptyText, searchPlaceholder, onChange, className, disabled, id, onKeyDown, onClick, ...buttonProps }: SelectProps): React.JSX.Element {
   const options = suppliedOptions ?? optionsFromChildren(children)
+  /** Menu-only filter; an empty query shows every option. */
+  const [query, setQuery] = useState('')
+  const visible = query.trim() === ''
+    ? options.map((option, index) => ({ option, index }))
+    : options.map((option, index) => ({ option, index }))
+      .filter(({ option }) => `${option.label} ${option.group ?? ''} ${optionHint?.(option) ?? ''}`.toLocaleLowerCase().includes(query.trim().toLocaleLowerCase()))
   const selectedIndex = options.findIndex(option => option.value === value)
   const selected = options[selectedIndex] ?? options[0]
   const generatedId = useId()
@@ -56,12 +76,18 @@ export function Select({ value, options: suppliedOptions, children, variant = 'f
   const searchRef = useRef({ text: '', time: 0 })
   const unavailable = disabled === true || options.every(option => option.disabled === true)
 
-  const dismiss = (): void => { setOpen(false); triggerRef.current?.focus() }
+  const dismiss = (): void => { setOpen(false); setQuery(''); triggerRef.current?.focus() }
   const show = (last = false): void => {
     if (unavailable) return
     const rect = triggerRef.current?.getBoundingClientRect()
     if (rect === undefined) return
-    const width = Math.min(Math.max(rect.width, 168, Math.min(360, Math.max(...options.map(option => option.label.length)) * 7 + 28)), window.innerWidth - 16)
+    // The hint line is what tells same-named canvases apart, so it counts toward the width.
+    const widest = options.reduce((max, option) => {
+      const hint = optionHint?.(option)
+      const hintWidth = hint === undefined ? 0 : hint.length * 6.4
+      return Math.max(max, Math.max(option.label.length * 7 + 28, hintWidth + 20))
+    }, 0)
+    const width = Math.min(Math.max(rect.width, 168, Math.min(360, widest)), window.innerWidth - 16)
     const below = window.innerHeight - rect.bottom - 14
     const above = below < 160 && rect.top - 14 > below
     setPosition({
@@ -74,12 +100,16 @@ export function Select({ value, options: suppliedOptions, children, variant = 'f
     const enabled = options.map((option, index) => option.disabled ? -1 : index).filter(index => index >= 0)
     setActiveIndex(selectedIndex >= 0 && !selected?.disabled ? selectedIndex : enabled[last ? enabled.length - 1 : 0] ?? 0)
     searchRef.current = { text: '', time: 0 }
+    setQuery('')
     setOpen(true)
   }
 
   useEffect(() => {
     if (!open) return
-    menuRef.current?.focus()
+    // With a filter box the caret belongs there; otherwise the listbox itself takes focus.
+    const box = menuRef.current?.querySelector<HTMLInputElement>('input[data-dsh-select-search]')
+    if (box !== null && box !== undefined) box.focus()
+    else menuRef.current?.focus()
     const outside = (event: PointerEvent): void => {
       const target = event.target as Node | null
       if (target !== null && (triggerRef.current?.contains(target) || menuRef.current?.contains(target))) return
@@ -107,6 +137,11 @@ export function Select({ value, options: suppliedOptions, children, variant = 'f
     if (open) menuRef.current?.querySelector<HTMLElement>(`[data-option-index="${activeIndex}"]`)?.scrollIntoView?.({ block: 'nearest' })
   }, [open, activeIndex])
 
+  /** Optgroups are hidden when their first visible member is not the array's first, so the
+   *  header is rendered from the previous *original* index, not the previous visible one. */
+  const visibleIndices = visible.map(({ index }) => index)
+  const stepIndices = visibleIndices.filter(index => options[index]?.disabled !== true)
+
   const choose = (index: number): void => {
     const option = options[index]
     if (option === undefined || option.disabled) return
@@ -115,13 +150,15 @@ export function Select({ value, options: suppliedOptions, children, variant = 'f
   }
   const menuKeyDown = (event: KeyboardEvent<HTMLDivElement>): void => {
     event.stopPropagation()
-    const enabled = options.map((option, index) => option.disabled ? -1 : index).filter(index => index >= 0)
+    const enabled = stepIndices
     if (event.key === 'Escape' || event.key === 'Tab') {
       if (event.key === 'Escape') event.preventDefault()
       dismiss()
     } else if (event.key === 'Enter' || event.key === ' ') {
       event.preventDefault()
-      choose(activeIndex)
+      // With a filter on, the highlighted row may have just been filtered away.
+      const target = enabled.includes(activeIndex) ? activeIndex : enabled[0]
+      if (target !== undefined) choose(target)
     } else if (['ArrowDown', 'ArrowUp', 'Home', 'End'].includes(event.key)) {
       event.preventDefault()
       const current = enabled.indexOf(activeIndex)
@@ -175,7 +212,38 @@ export function Select({ value, options: suppliedOptions, children, variant = 'f
       onKeyDown={menuKeyDown}
       onPointerDown={event => { event.stopPropagation() }}
     >
-      {options.map((option, index) => <Fragment key={`${option.value}-${index}`}>
+      {searchable ? (
+        <input
+          className={css.search}
+          data-dsh-select-search=""
+          role="combobox"
+          aria-expanded={true}
+          aria-controls={menuId}
+          aria-autocomplete="list"
+          aria-activedescendant={options[activeIndex] === undefined ? undefined : `${menuId}-${activeIndex}`}
+          value={query}
+          placeholder={searchPlaceholder ?? buttonProps['aria-label'] ?? ''}
+          aria-label={searchPlaceholder ?? buttonProps['aria-label'] ?? ''}
+          onChange={event => {
+            const next = event.target.value
+            setQuery(next)
+            // Follow the filter so Enter never picks a row that is no longer shown.
+            const lowered = next.trim().toLocaleLowerCase()
+            const first = lowered === '' ? undefined : options
+              .map((option, index) => ({ option, index }))
+              .find(({ option }) => option.disabled !== true
+                && `${option.label} ${option.group ?? ''} ${optionHint?.(option) ?? ''}`.toLocaleLowerCase().includes(lowered))
+            if (first !== undefined) setActiveIndex(first.index)
+          }}
+          onMouseDown={event => { event.stopPropagation() }}
+          onKeyDown={event => {
+            // The box owns typing; only Arrow/Enter/Escape still drive the list.
+            if (event.key.length === 1 && !event.ctrlKey && !event.metaKey) event.stopPropagation()
+          }}
+        />
+      ) : null}
+      {visible.length === 0 && emptyText !== undefined ? <span className={css.empty} role="status">{emptyText}</span> : null}
+      {visible.map(({ option, index }) => <Fragment key={`${option.value}-${index}`}>
         {option.group !== undefined && option.group !== options[index - 1]?.group ? <span className={css.group}>{option.group}</span> : null}
         <button
           id={`${menuId}-${index}`}
@@ -188,11 +256,14 @@ export function Select({ value, options: suppliedOptions, children, variant = 'f
           data-selected={index === Math.max(0, selectedIndex) ? '' : undefined}
           data-highlighted={index === activeIndex ? '' : undefined}
           data-option-index={index}
-          title={option.label}
+          title={optionHint?.(option) === undefined ? option.label : `${option.label} · ${optionHint(option)}`}
           onPointerEnter={() => { if (!option.disabled) setActiveIndex(index) }}
           onMouseDown={event => { event.preventDefault() }}
           onClick={() => { choose(index) }}
-        >{option.label}</button>
+        >
+          <span className={css.optionLabel}>{option.label}</span>
+          {optionHint?.(option) === undefined ? null : <span className={css.optionHint}>{optionHint(option)}</span>}
+        </button>
       </Fragment>)}
     </div>, document.body) : null}
   </>

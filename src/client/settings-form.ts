@@ -63,6 +63,16 @@ export interface CardShell {
   failed: boolean
 }
 
+/** What a save attempt did. */
+export interface CardSaveOutcome {
+  /** Whether every staged edit landed as staged. */
+  ok: boolean
+  /** Nothing was staged, so no write was attempted (not a failure). */
+  noop?: boolean
+  /** The reason a write did not land, when the write threw one. */
+  message?: string
+}
+
 /** The write actions the card's slot entry injects. */
 export interface CardActions {
   /** Stage draft text for one field. */
@@ -70,7 +80,7 @@ export interface CardActions {
   /** Stage a clear, so saving lets the field re-inherit the composition layer. */
   resetField: (field: string) => void
   /** Write every staged edit, then re-seed from what the Host accepted. */
-  save: () => void
+  save: () => Promise<CardSaveOutcome>
   /** Drop every staged edit. */
   discard: () => void
 }
@@ -227,7 +237,7 @@ export class CardForm<T> {
       resetField: (field) => {
         this.stage(field, { text: this.specOf(field).format(this.baseValue(field)), clear: true })
       },
-      save: () => { void this.save() },
+      save: () => this.save(),
       discard: () => {
         if (this.staged.size === 0 && !this.failed) return
         this.staged.clear()
@@ -239,23 +249,43 @@ export class CardForm<T> {
 
   /**
    * Write every staged edit, then re-seed from what the Host accepted.
-   * @returns settlement after every write and the read-back.
+   *
+   * The outcome is returned because the caller owes the user an answer at the
+   * moment they pressed the button, and because a throwing write must not
+   * leave `saving` stuck true — that is what turned any refused write into a
+   * permanently disabled 「保存中…」 button.
+   *
+   * @returns what the write did, including the writer's message on failure.
    */
-  async save(): Promise<void> {
+  async save(): Promise<CardSaveOutcome> {
     const plan = this.plan()
     const writes = plan.flatMap(item => item.run === undefined ? [] : [item.run])
-    if (plan.length === 0 || this.saving || writes.length !== plan.length) return
+    if (plan.length === 0) return { ok: true, noop: true }
+    if (this.saving) return { ok: false, message: 'save already in progress' }
+    // An entry whose draft is not a value its field accepts has no write; the
+    // save refuses rather than dropping the edit (see {@link plan}).
+    if (writes.length !== plan.length) return { ok: false, message: `invalid draft: ${plan.filter(item => item.run === undefined).map(item => item.field).join(', ')}` }
     this.saving = true
     this.failed = false
     this.publish()
     let landed = true
-    for (const write of writes) {
-      landed = await write() && landed
+    let message: string | undefined
+    try {
+      for (const write of writes) {
+        try {
+          landed = await write() && landed
+        } catch (error) {
+          landed = false
+          message ??= error instanceof Error ? error.message : String(error)
+        }
+      }
+    } finally {
+      if (landed) this.staged.clear()
+      this.saving = false
+      this.failed = !landed
+      this.publish()
     }
-    if (landed) this.staged.clear()
-    this.saving = false
-    this.failed = !landed
-    this.publish()
+    return { ok: landed, ...message === undefined ? {} : { message } }
   }
 
   /**

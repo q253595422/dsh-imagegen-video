@@ -5,6 +5,11 @@
 
 .container {
   --gooey-time: 1500ms;
+  /* A flex child refuses to shrink below its content unless min-width is 0, so
+     `overflow-x: auto` in the narrow-width media query below never kicked in:
+     the nav kept its full width and slid under the chat toggle instead. */
+  min-width: 0;
+  flex: 1 1 auto;
   /* The particle burst is the one decorative flourish in this plugin, so its
      four hues stay an accent rather than the host's brand color -- but they are
      derived from the brand token instead of four unrelated literals, so they

@@ -189,6 +189,88 @@ interface NodeDragState {
   moved: boolean
   snapshot: string | null
   origins: Map<string, Point>
+  /** The node under the pointer. Only it decides the snap, so a multi-node
+   *  drag cannot be pulled apart by two of its members snapping elsewhere. */
+  primaryId: string
+}
+
+/** How close (in screen pixels) an edge must come before a drag snaps to it. */
+const SNAP_SCREEN_PX = 8
+
+/**
+ * Snap correction for a drag in progress.
+ *
+ * Tests the moved node's left/centre/right (and top/middle/bottom) against the
+ * same three lines of every node that is not being dragged, and returns the
+ * smallest shift that brings a pair within `threshold` world pixels. Edges
+ * against edges covers both alignment and edge-to-edge adjacency.
+ */
+function snapOffset(
+  primary: CanvasNode,
+  others: readonly CanvasNode[],
+  dx: number,
+  dy: number,
+  threshold: number,
+): Point {
+  const left = primary.x + dx
+  const top = primary.y + dy
+  const xs = [left, left + primary.width / 2, left + primary.width]
+  const ys = [top, top + primary.height / 2, top + primary.height]
+  let bestX = 0
+  let bestY = 0
+  let nearestX = threshold + 1
+  let nearestY = threshold + 1
+  for (const other of others) {
+    for (const target of [other.x, other.x + other.width / 2, other.x + other.width]) {
+      for (const edge of xs) {
+        const delta = target - edge
+        if (Math.abs(delta) <= nearestX) { nearestX = Math.abs(delta); bestX = delta }
+      }
+    }
+    for (const target of [other.y, other.y + other.height / 2, other.y + other.height]) {
+      for (const edge of ys) {
+        const delta = target - edge
+        if (Math.abs(delta) <= nearestY) { nearestY = Math.abs(delta); bestY = delta }
+      }
+    }
+  }
+  return { x: Math.abs(bestX) > threshold ? 0 : bestX, y: Math.abs(bestY) > threshold ? 0 : bestY }
+}
+
+/** 一个被完全盖住的节点，以及盖住它的那个节点。 */
+interface OverlapPair {
+  coveredId: string
+  coverId: string
+}
+
+/**
+ * 找出被另一个节点完全盖住的节点，只在涉及 `moving` 时报告。
+ *
+ * WHY 只报「完全被盖住」：部分重叠在画布上是常态（节点挨着摆、标注卡片压住图片
+ * 边缘），提示它只会变成噪音。真正让人卡住的是被完全罩住的那一个——屏幕上看不见
+ * 它，框选也选不到，用户会以为节点丢了。
+ *
+ * WHY 要求涉及 `moving`：两块静止的节点重叠是历史数据，每次载入都描红会变成甩不
+ * 掉的报错；而用户正拖着的那一个，才是他此刻需要知道的。
+ *
+ * 面积相同时用 id 定唯一方向，否则同一对节点会互为主从、提示来回闪。
+ */
+function coveredNodes(nodes: readonly CanvasNode[], moving: ReadonlySet<string>): OverlapPair[] {
+  const pairs: OverlapPair[] = []
+  for (const node of nodes) {
+    for (const cover of nodes) {
+      if (cover.id === node.id) continue
+      const inside = cover.x <= node.x
+        && cover.y <= node.y
+        && cover.x + cover.width >= node.x + node.width
+        && cover.y + cover.height >= node.y + node.height
+      if (!inside) continue
+      if (cover.width === node.width && cover.height === node.height && cover.id < node.id) continue
+      if (!moving.has(node.id) && !moving.has(cover.id)) continue
+      pairs.push({ coveredId: node.id, coverId: cover.id })
+    }
+  }
+  return pairs
 }
 
 interface PanState {
@@ -1799,6 +1881,13 @@ export function CanvasWorkspace(props: CanvasWorkspaceProps): React.JSX.Element 
   const [saveState, setSaveState] = useState<'loading' | 'saved' | 'saving' | 'error'>('loading')
   const [error, setError] = useState<string | null>(null)
   const [notice, setNotice] = useState<string | null>(null)
+  /** 当前这次拖动正在移动的节点 id。拖动之外为空。
+   *
+   * 重叠提示是文档的纯函数（见渲染层的 `liveOverlap`），不另存一份「哪两个
+   * 被盖住了」——删节点、撤销、换画布都会让那种快照过期。这里只记住「谁在动」。
+   * 用 ref：拖动每帧都在改位置，真正触发渲染的是文档更新，不需要在
+   * pointermove 里额外 setState（那是每像素一次的无谓渲染）。 */
+  const dragMovingIdsRef = useRef<ReadonlySet<string>>(new Set())
   const [historyVersion, setHistoryVersion] = useState(0)
 
   // Image-node tools: 标注 (box -> prompt card), 移除背景 (local matting) and
@@ -5029,12 +5118,28 @@ export function CanvasWorkspace(props: CanvasWorkspaceProps): React.JSX.Element 
         if (!drag.moved && Math.hypot(event.clientX - drag.startX, event.clientY - drag.startY) > 3) {
           drag.moved = true
           commitSnapshot(drag.snapshot)
+          // 告诉渲染层「这次拖动在动这些节点」：重叠提示完全由它 + 文档位置派生，
+          // 拖动每帧只更新位置，提示自然跟着变，不用另一份会过期的快照。
+          dragMovingIdsRef.current = new Set(drag.origins.keys())
         }
         if (drag.moved) {
-          updateNodes(nodes => nodes.map(node => {
-            const origin = drag.origins.get(node.id)
-            return origin === undefined ? node : { ...node, x: Math.round(origin.x + dx), y: Math.round(origin.y + dy) }
-          }))
+          // 8 screen pixels regardless of zoom: at 25% a world-space threshold
+          // would drag the node across a quarter of the canvas before snapping.
+          // The base position is the drag ORIGIN: `primary` has already been
+          // moved by the previous frame, so adding dx to it double-counts.
+          const primary = documentRef.current?.nodes.find(node => node.id === drag.primaryId)
+          const origin = drag.origins.get(drag.primaryId)
+          let snap = { x: 0, y: 0 }
+          if (primary !== undefined && origin !== undefined) {
+            const moving = new Set(drag.origins.keys())
+            const others = (documentRef.current?.nodes ?? []).filter(node => !moving.has(node.id))
+            snap = snapOffset({ ...primary, x: origin.x, y: origin.y }, others, dx, dy, SNAP_SCREEN_PX / scale)
+          }
+          const place = (nodes: readonly CanvasNode[]): CanvasNode[] => nodes.map(node => {
+            const nodeOrigin = drag.origins.get(node.id)
+            return nodeOrigin === undefined ? node : { ...node, x: Math.round(nodeOrigin.x + dx + snap.x), y: Math.round(nodeOrigin.y + dy + snap.y) }
+          })
+          updateNodes(nodes => place(nodes))
         }
         return
       }
@@ -5103,6 +5208,9 @@ export function CanvasWorkspace(props: CanvasWorkspaceProps): React.JSX.Element 
       const drag = dragRef.current
       if (drag !== null) {
         dragRef.current = null
+        // 刻意**不**在这里清 dragMovingIds：松手之后那个节点依然被盖着、依然
+        // 看不见，正是它需要提示的时候。提示本来就在「下一次拖动」时重算，
+        // 用户把节点删掉或拖开也会立刻消失；留到那时候比在松手这一秒抹掉更对。
         return
       }
       const connect = connectRef.current
@@ -5193,7 +5301,7 @@ export function CanvasWorkspace(props: CanvasWorkspaceProps): React.JSX.Element 
       if (item === undefined || item.type !== 'image') continue
       for (const card of attachedCards(item, current.nodes)) origins.set(card.id, { x: card.x, y: card.y })
     }
-    dragRef.current = { pointerId: event.pointerId, startX: event.clientX, startY: event.clientY, moved: false, snapshot: JSON.stringify(current), origins }
+    dragRef.current = { pointerId: event.pointerId, startX: event.clientX, startY: event.clientY, moved: false, snapshot: JSON.stringify(current), origins, primaryId: nodeId }
   }, [temporaryPanTool, tool])
 
   const handleConnectStart = useCallback((event: ReactPointerEvent<HTMLDivElement>, nodeId: string, handleType: 'source' | 'target'): void => {
@@ -5397,6 +5505,25 @@ export function CanvasWorkspace(props: CanvasWorkspaceProps): React.JSX.Element 
 
   // ------------------------------------------------------------- render
 
+  /**
+   * 被完全盖住的节点：文档的纯函数，不是另一份要维护的状态。
+   *
+   * WHY 只在拖动时算：两块静止的节点重叠是历史数据，每次载入都描红会变成
+   * 用户甩不掉的报错；WHY 只算「完全盖住」：部分重叠在画布上是常态，提示它只会
+   * 变成噪音。真正卡住人的是被完全罩住——屏幕上看不见它，框选也选不到。
+   *
+   * WHY 不存下来：删除、撤销、换画布都会让上一帧的结论失效，而在每个出口记得
+   * 清一遍是漏一处就留一个指着空处的出口。每次渲染重算最便宜也最不会错。
+   */
+  const liveOverlap = (() => {
+    if (document === null || dragMovingIdsRef.current.size === 0) return null
+    const pairs = coveredNodes(document.nodes, dragMovingIdsRef.current)
+    const hit = pairs[0]
+    if (hit === undefined) return null
+    const coverTitle = document.nodes.find(node => node.id === hit.coverId)?.title ?? ''
+    return { ids: new Set([hit.coveredId, hit.coverId]), coveredId: hit.coveredId, coverTitle }
+  })()
+
   const renderNode = (node: CanvasNode): React.JSX.Element => {
     const metadata = nodeMetadata(node)
     const isSelected = selectedIds.has(node.id)
@@ -5409,6 +5536,10 @@ export function CanvasWorkspace(props: CanvasWorkspaceProps): React.JSX.Element 
     const isGenerating = (node.type === 'image' || node.type === 'video') && metadata.status === 'generating'
     const isError = (node.type === 'image' || node.type === 'video') && metadata.status === 'error'
     const isConnectTarget = connecting?.targetId === node.id
+    /** 被完全盖住的那一方（或盖住别人的那一方）：拖动中出现，松手后保留。 */
+    const isOverlapping = liveOverlap !== null && liveOverlap.ids.has(node.id)
+    /** 只有被盖住的那个才挂徽标——盖住别人的那个本身看得见，不需要解释。 */
+    const coverNote = liveOverlap !== null && liveOverlap.coveredId === node.id ? liveOverlap : null
     const hasImage = asset !== undefined && asset.url !== ''
     const isConfig = node.type === 'config'
     const isFile = node.type === 'file'
@@ -5455,7 +5586,7 @@ export function CanvasWorkspace(props: CanvasWorkspaceProps): React.JSX.Element 
       tabIndex={0}
       role="group"
       aria-label={node.title}
-      className={`${css.node} ${isSketch ? css.sketchNode : isStoryboard ? css.storyboardNode : isConfig ? css.configNode : isTextual ? css.textNode : css.imageNode} ${isSelected ? css.nodeSelected : ''} ${isRelated ? css.nodeRelated : ''} ${isConnectTarget ? css.nodeConnectTarget : ''}`}
+      className={`${css.node} ${isSketch ? css.sketchNode : isStoryboard ? css.storyboardNode : isConfig ? css.configNode : isTextual ? css.textNode : css.imageNode} ${isSelected ? css.nodeSelected : ''} ${isRelated ? css.nodeRelated : ''} ${isConnectTarget ? css.nodeConnectTarget : ''} ${isOverlapping ? css.nodeOverlap : ''}`}
       style={{ left: node.x, top: node.y, width: node.width, height: node.height }}
       onPointerDown={event => handleNodePointerDown(event, node.id)}
       onDoubleClick={event => {
@@ -5479,6 +5610,16 @@ export function CanvasWorkspace(props: CanvasWorkspaceProps): React.JSX.Element 
       }}
     >
       <div className={css.nodeGlow} aria-hidden="true" />
+      {coverNote !== null
+        ? <span
+            className={css.overlapBadge}
+            data-node-covered={node.id}
+            role="status"
+            aria-label={`${tt('canvas.overlapBadge', { title: coverNote.coverTitle })}。${tt('canvas.overlapHint')}`}
+          >
+            {tt('canvas.overlapBadge', { title: coverNote.coverTitle })}
+          </span>
+        : null}
       {composeIndex >= 0
         ? <span className={css.composeBadge} data-compose-badge={String(composeIndex + 1)} aria-hidden="true">
             {tt('canvas.composeBadge', { index: composeIndex + 1 })}
@@ -6208,7 +6349,20 @@ export function CanvasWorkspace(props: CanvasWorkspaceProps): React.JSX.Element 
 
   return <section ref={rootRef} className={css.root} data-canvas-workspace="">
     <header className={css.topBar} data-canvas-no-zoom="">
-      <Select className={css.projectSelect} value={document?.id ?? ''} onChange={value => { void selectProject(value) }} aria-label={tt('canvas.project')}>
+      <Select
+        className={css.projectSelect}
+        value={document?.id ?? ''}
+        searchable
+        aria-label={tt('canvas.project')}
+        searchPlaceholder={tt('canvas.projectSearch')}
+        emptyText={tt('canvas.projectEmpty')}
+        optionHint={option => {
+          const project = projects.find(entry => entry.id === option.value)
+          if (project === undefined) return undefined
+          return tt('canvas.projectMeta', { count: project.nodeCount, time: new Date(project.updatedAt).toLocaleString() })
+        }}
+        onChange={value => { void selectProject(value) }}
+      >
         {favoriteProjects.length > 0 ? <optgroup label={tt('canvas.favoriteProjects', { count: favoriteProjects.length })}>
           {favoriteProjects.map(project => <option key={project.id} value={project.id}>★ {project.title}</option>)}
         </optgroup> : null}

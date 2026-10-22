@@ -77,9 +77,26 @@ export class ImageGenApi {
     })
     return (await readEnvelope<{ ok: true; runtime: PptRuntimeStatus }>(response)).runtime
   }
-  /** Ask the host to check the latest stable GitHub Release. */
+  /**
+   * Ask the host to check the latest stable GitHub Release.
+   *
+   * Every failure mode leaves as the same {@link ImageGenApiError} shape: the
+   * route answers `update-check-failed` when GitHub is unreachable, and fetch
+   * itself rejects with a bare `TypeError: Failed to fetch` when the host is
+   * down. Callers used to `.catch(() => {})` — one shape of failure and one
+   * silent outcome, so a permanently offline check looked identical to "no
+   * update". `code` is what the settings card maps to a readable sentence.
+   */
   async updateCheck(): Promise<UpdateInfo> {
-    const response = await fetch(UPDATE_API.check, { method: 'POST' })
+    let response: Response
+    try {
+      response = await fetch(UPDATE_API.check, { method: 'POST' })
+    } catch (error) {
+      throw new ImageGenApiError(
+        error instanceof Error ? error.message : String(error),
+        'update-check-unreachable',
+      )
+    }
     const body = await readEnvelope<{ ok: true; update: UpdateInfo }>(response)
     return body.update
   }

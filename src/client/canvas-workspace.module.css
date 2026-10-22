@@ -96,6 +96,13 @@
   outline: none;
 }
 
+/* 键盘焦点：这个输入框的描边常驻品牌色，`outline: none` 去掉 UA 环之后
+   Tab 到它没有任何视觉变化，等于看不见焦点。补一圈只对键盘生效的环。 */
+.titleInput:focus-visible {
+  outline: 2px solid var(--dsw-alias-brand-primary);
+  outline-offset: 2px;
+}
+
 .topBarSpacer { flex: 1; }
 
 .saveState {
@@ -104,7 +111,7 @@
   white-space: nowrap;
 }
 
-.saveState[data-state="error"] { color: var(--dsw-alias-label-error); }
+.saveState[data-state="error"] { color: var(--dsw-alias-state-error-primary, #ec1313); }
 .saveState[data-state="saving"] { color: var(--dsw-alias-state-warn-primary, var(--dsw-alias-label-secondary)); }
 
 /* ---------------------------------------------------------- icon button */
@@ -440,7 +447,7 @@
   pointer-events: auto;
 }
 
-.nodeStateError { color: var(--dsw-alias-label-error); }
+.nodeStateError { color: var(--dsw-alias-state-error-primary, #ec1313); }
 
 /* A second line inside a failed node: the message says what broke, this says
    what the user can do about it (e.g. switch the composer back to a model). */
@@ -505,6 +512,12 @@
 }
 
 .textArea::placeholder { color: var(--dsw-alias-label-tertiary); }
+
+/* 键盘焦点：无描边、无背景，`outline: none` 之后焦点完全不可见。 */
+.textArea:focus-visible {
+  outline: 2px solid var(--dsw-alias-brand-primary);
+  outline-offset: 2px;
+}
 
 /* ------------------------------------------------- text node type tools */
 
@@ -930,6 +943,12 @@
 
 .composerPrompt::placeholder { color: var(--dsw-alias-label-tertiary); }
 
+/* 键盘焦点：同上——透明背景 + `outline: none`，Tab 进来没有可见状态。 */
+.composerPrompt:focus-visible {
+  outline: 2px solid var(--dsw-alias-brand-primary);
+  outline-offset: 2px;
+}
+
 .composerMeta { display: flex; }
 
 .composerChip {
@@ -958,7 +977,7 @@
   color: var(--dsw-alias-label-tertiary);
 }
 
-.composerHint[data-renderer-warning] { color: var(--dsw-alias-label-warning, var(--dsw-alias-label-error)); }
+.composerHint[data-renderer-warning] { color: var(--dsw-alias-state-warn-primary, #f59e0b); }
 
 .composerControls [data-dsh-select] {
   height: 28px;
@@ -1368,7 +1387,7 @@
 }
 
 .contextMenu button:hover { background: var(--dsw-alias-interactive-bg-hover); }
-.contextMenu button[data-danger] { color: var(--dsw-alias-label-error); }
+.contextMenu button[data-danger] { color: var(--dsw-alias-state-error-primary, #ec1313); }
 
 /* 身份锚定角标：贴在图片节点左上角。用星形语义（钉住），不是彩色强调——
    --dsw-alias-brand-primary 是中性反转色，这里只做底片。 */
@@ -1405,9 +1424,9 @@
   max-width: min(680px, 88%);
   padding: 9px 12px;
   border-radius: 10px;
-  border: 1px solid color-mix(in srgb, var(--dsw-alias-label-error) 35%, transparent);
-  background: color-mix(in srgb, var(--dsw-alias-label-error) 12%, var(--dsw-alias-bg-layer-1));
-  color: var(--dsw-alias-label-error);
+  border: 1px solid color-mix(in srgb, var(--dsw-alias-state-error-primary, #ec1313) 35%, transparent);
+  background: color-mix(in srgb, var(--dsw-alias-state-error-primary, #ec1313) 12%, var(--dsw-alias-bg-layer-1));
+  color: var(--dsw-alias-state-error-primary, #ec1313);
   font-size: 12.5px;
   line-height: 1.5;
   box-shadow: 0 12px 30px rgb(15 23 42 / 18%);
@@ -1652,6 +1671,12 @@
   font-size: 12.5px;
   padding: 8px 10px;
   outline: none;
+}
+
+/* 键盘焦点：同一表单里 `button` 有自己的 hover 态，textarea 只有 `outline: none`。 */
+.generateForm textarea:focus-visible {
+  outline: 2px solid var(--dsw-alias-brand-primary);
+  outline-offset: 2px;
 }
 
 .generateForm [data-dsh-select] {
@@ -1930,7 +1955,7 @@
 }
 
 .skillRunNode[data-status='failed'] {
-  border-color: color-mix(in srgb, var(--dsw-alias-label-error) 42%, var(--dsw-alias-border-l1));
+  border-color: color-mix(in srgb, var(--dsw-alias-state-error-primary, #ec1313) 42%, var(--dsw-alias-border-l1));
 }
 
 .skillRunNode[data-status='pending'] { opacity: 0.85; }
@@ -1999,7 +2024,7 @@
   margin: 0;
   font-size: 11px;
   line-height: 1.45;
-  color: var(--dsw-alias-label-error);
+  color: var(--dsw-alias-state-error-primary, #ec1313);
   display: -webkit-box;
   -webkit-line-clamp: 3;
   -webkit-box-orient: vertical;
@@ -2285,7 +2310,7 @@
 /* Why the node skill menu cannot offer this entry (the host renders the copy). */
 .libraryEntryText small.libraryEntryIssue {
   font-size: 11px;
-  color: var(--dsw-alias-label-error);
+  color: var(--dsw-alias-state-error-primary, #ec1313);
   white-space: normal;
   overflow: visible;
 }
@@ -2329,7 +2354,7 @@
 }
 
 .skillConfigRequired {
-  color: var(--dsw-alias-label-error);
+  color: var(--dsw-alias-state-error-primary, #ec1313);
   font-style: normal;
   margin-left: 3px;
 }
@@ -2380,7 +2405,7 @@
   flex: none;
   border: 1px solid var(--dsw-alias-border-l1);
   background: transparent;
-  color: var(--dsw-alias-label-error);
+  color: var(--dsw-alias-state-error-primary, #ec1313);
   border-radius: 7px;
   font-size: 11.5px;
   padding: 4px 9px;
@@ -3031,6 +3056,41 @@
   pointer-events: none;
 }
 
+/* ------------------------------------------------------- full overlap */
+
+/* 一个节点被另一个完全盖住时：两个都描红，因为用户看到的是「一个框」，得
+   让这个框自己说明它属于哪一对。用 warning 而不是 error——这是可撤销的摆放
+   状态，不是失败。
+
+   色值必须取 dsh 真有的 `--dsw-alias-state-warn-primary`：`--dsw-alias-label-error`
+   这个变量在本版主题里并不存在（实测逐个元素扫过 542 个 token），写它等于没写，
+   边框会掉回继承色。 */
+.nodeOverlap {
+  border-color: var(--dsw-alias-state-warn-primary, #f59e0b);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--dsw-alias-state-warn-primary, #f59e0b) 26%, transparent);
+}
+
+/* 被盖住的那一个贴在右下角：左上角是身份锚定徽标、右上角是胶带序号，
+   只有这个角在各种节点类型上都空着。 */
+.overlapBadge {
+  position: absolute;
+  right: -10px;
+  bottom: -10px;
+  z-index: var(--z-hover);
+  max-width: 220px;
+  padding: 2px 8px;
+  border-radius: 999px;
+  border: 1px solid var(--dsw-alias-label-primary-foreground, #fff);
+  background: var(--dsw-alias-state-warn-primary, #f59e0b);
+  color: var(--dsw-alias-label-primary-foreground, #fff);
+  font-size: 11px;
+  line-height: 16px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  pointer-events: none;
+}
+
 /* Multi-select strip above the dock: says what a stitch would cover and in
    which order, matching the badges. */
 .composeBar {
@@ -3269,14 +3329,14 @@
 }
 
 .storyboardShotState[data-state='failed'] {
-  color: var(--dsw-alias-label-error);
-  background: color-mix(in srgb, var(--dsw-alias-label-error) 12%, transparent);
-  border-color: color-mix(in srgb, var(--dsw-alias-label-error) 28%, transparent);
+  color: var(--dsw-alias-state-error-primary, #ec1313);
+  background: color-mix(in srgb, var(--dsw-alias-state-error-primary, #ec1313) 12%, transparent);
+  border-color: color-mix(in srgb, var(--dsw-alias-state-error-primary, #ec1313) 28%, transparent);
 }
 
 /* 失败的那一镜整卡描一层错误色，扫列表时不用逐条读徽标 */
 .storyboardShot[data-state='failed'] {
-  border-color: color-mix(in srgb, var(--dsw-alias-label-error) 32%, var(--dsw-alias-border-l1));
+  border-color: color-mix(in srgb, var(--dsw-alias-state-error-primary, #ec1313) 32%, var(--dsw-alias-border-l1));
 }
 
 /* 镜号右侧的图标按钮组（上移 / 下移 / 删除）：靠右，尺寸与 `.textTool` 同级 */
@@ -3319,8 +3379,8 @@
 /* 删除镜头的按钮由调用方打上 `data-danger`，悬停转错误色——和 `.contextMenu button[data-danger]`
    同一套语义。文案会随语言变化，所以这里不按 `title` 匹配。 */
 .storyboardIconButton[data-danger]:hover {
-  color: var(--dsw-alias-label-error);
-  background: color-mix(in srgb, var(--dsw-alias-label-error) 12%, transparent);
+  color: var(--dsw-alias-state-error-primary, #ec1313);
+  background: color-mix(in srgb, var(--dsw-alias-state-error-primary, #ec1313) 12%, transparent);
 }
 
 /* 镜头提示词：与 `.textArea` 同一套字号 / 行高 / 占位符色，但要有自己的描边，
@@ -3392,9 +3452,9 @@
 }
 
 .storyboardShotRun[data-state='failed'] {
-  border-color: color-mix(in srgb, var(--dsw-alias-label-error) 38%, var(--dsw-alias-border-l1));
-  background: color-mix(in srgb, var(--dsw-alias-label-error) 10%, transparent);
-  color: var(--dsw-alias-label-error);
+  border-color: color-mix(in srgb, var(--dsw-alias-state-error-primary, #ec1313) 38%, var(--dsw-alias-border-l1));
+  background: color-mix(in srgb, var(--dsw-alias-state-error-primary, #ec1313) 10%, transparent);
+  color: var(--dsw-alias-state-error-primary, #ec1313);
 }
 
 .storyboardShotRun:disabled {

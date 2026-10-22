@@ -18,12 +18,80 @@
  * are: the image studio's task tray OR the video studio's run list.
  */
 
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useEffect, useRef, useState, type RefObject } from 'react'
 import { ImageGenApi } from './api.ts'
 import { tt } from './helpers.ts'
 import { useImageGenLanguageTick } from './use-language.ts'
 import type { DiagnosticEntry } from '../protocol.ts'
 import css from './panel.module.css'
+
+/** Everything inside a dialog that can take focus, in DOM order. */
+const FOCUSABLE = 'a[href], button:not(:disabled), input:not(:disabled), select:not(:disabled), textarea:not(:disabled), summary, [tabindex]:not([tabindex="-1"])'
+
+/**
+ * Make an overlay that declares `role="dialog" aria-modal="true"` behave like
+ * one for the keyboard.
+ *
+ * WHY: the attribute is a promise the browser does not enforce. Without this the
+ * opener kept focus, Tab walked the studio behind the record, and Esc fell
+ * through to whatever else was listening — the panel looked modal and was not.
+ * The container (it carries `tabIndex={-1}`) takes focus so a reader announces
+ * the dialog and its count, Tab cycles inside it, Esc is claimed in the capture
+ * phase so no overlay behind it reacts first, and the opener gets focus back.
+ *
+ * Mirrors `useDialogFocus` in ImageGenPanel — including its duck-typed opener,
+ * because jsdom hands out elements from another realm where `instanceof
+ * HTMLElement` is silently false — and adds the Tab cycle that helper omits.
+ *
+ * @param open - whether the overlay is mounted and visible.
+ * @param ref - the element carrying the dialog role.
+ * @param onClose - dismiss the overlay; called for Esc too.
+ */
+function useModalFocus (open: boolean, ref: RefObject<HTMLElement | null>, onClose: () => void): void {
+  // Held in a ref: a fresh inline `onClose` on every render would otherwise tear
+  // the listeners down and rebuild them, re-focusing the container mid-use.
+  const closeRef = useRef(onClose)
+  closeRef.current = onClose
+  useEffect(() => {
+    if (!open) return
+    const container = ref.current
+    const opener = document.activeElement
+    container?.focus()
+    const onKey = (event: KeyboardEvent): void => {
+      if (event.key === 'Escape') {
+        event.preventDefault()
+        event.stopPropagation()
+        closeRef.current()
+        return
+      }
+      if (event.key !== 'Tab' || container === null) return
+      const items = [...container.querySelectorAll<HTMLElement>(FOCUSABLE)]
+      const first = items[0]
+      const last = items.at(-1)
+      if (first === undefined || last === undefined) return
+      const active = document.activeElement
+      if (active === null || !container.contains(active)) {
+        // Focus is outside (or never arrived): pull it to the edge the user was
+        // travelling towards instead of letting Tab reach the studio behind.
+        event.preventDefault()
+        ;(event.shiftKey ? last : first).focus()
+      } else if (event.shiftKey && active === first) {
+        event.preventDefault()
+        last.focus()
+      } else if (!event.shiftKey && active === last) {
+        event.preventDefault()
+        first.focus()
+      }
+    }
+    window.addEventListener('keydown', onKey, true)
+    return () => {
+      window.removeEventListener('keydown', onKey, true)
+      if (opener !== null && typeof (opener as { focus?: unknown }).focus === 'function') {
+        (opener as HTMLElement).focus()
+      }
+    }
+  }, [open, ref])
+}
 
 /**
  * The entry point that opens the record. Both studios render it in their own
@@ -64,6 +132,20 @@ export function DiagnosticsPanel(props: {
   // unreachable host look identical on screen, and that is exactly the
   // confusion this surface exists to remove.
   const [loadError, setLoadError] = useState<string | null>(null)
+  // 清空是不可撤销的（缓冲只在宿主内存里），所以按钮先进入确认态，第二次点击
+  // 才真的清。用行内二次确认而不是确认弹层：这个面板本身已经是一层浮层，再叠
+  // 一个对话框会把 Esc 和焦点归属变成两层。
+  const [clearArmed, setClearArmed] = useState(false)
+  const panelRef = useRef<HTMLElement>(null)
+  useModalFocus(props.open, panelRef, props.onClose)
+  const disarm = useCallback(() => { setClearArmed(false) }, [])
+  // 关面板或换了一批记录，确认态都不该留着：回来时那一下点击会删掉他没想删的东西。
+  useEffect(() => { if (!props.open) setClearArmed(false) }, [props.open])
+  useEffect(() => {
+    if (!clearArmed) return
+    const timer = window.setTimeout(() => { setClearArmed(false) }, 5000)
+    return () => { window.clearTimeout(timer) }
+  }, [clearArmed])
 
   const reload = useCallback(async () => {
     setLoading(true)
@@ -116,6 +198,7 @@ export function DiagnosticsPanel(props: {
   }, [entries, describe])
 
   const clearAll = useCallback(async () => {
+    setClearArmed(false)
     try {
       await props.api.diagnosticsClear()
       setLoadError(null)
@@ -128,20 +211,41 @@ export function DiagnosticsPanel(props: {
   if (!props.open) return null
 
   return (
-    <section className={css.diagnosticsPanel} data-diagnostics-panel="" aria-label={tt('diagnostics.title')}>
+    <section
+      ref={panelRef}
+      className={css.diagnosticsPanel}
+      data-diagnostics-panel=""
+      role="dialog"
+      aria-modal="true"
+      aria-label={tt('diagnostics.title')}
+      // Focus lands here on open, so the reader announces the dialog rather
+      // than leaving the caret on the button that opened it.
+      tabIndex={-1}
+    >
       <header className={css.diagnosticsHeader}>
         <div>
           <strong>{tt('diagnostics.title')}</strong>
           <span>{tt('diagnostics.count', { count: entries.length })}</span>
         </div>
         <div className={css.diagnosticsActions}>
-          <button type="button" onClick={() => { void reload() }} disabled={loading}>{loading ? tt('diagnostics.loading') : tt('diagnostics.refresh')}</button>
-          <button type="button" onClick={() => { void copyAll() }} disabled={entries.length === 0}>{copied ? tt('diagnostics.copied') : tt('diagnostics.copy')}</button>
-          <button type="button" onClick={() => { void clearAll() }} disabled={entries.length === 0}>{tt('diagnostics.clear')}</button>
-          <button type="button" aria-label={tt('preview.close')} onClick={props.onClose}>×</button>
+          <button type="button" onClick={() => { disarm(); void reload() }} disabled={loading}>{loading ? tt('diagnostics.loading') : tt('diagnostics.refresh')}</button>
+          <button type="button" onClick={() => { disarm(); void copyAll() }} disabled={entries.length === 0}>{copied ? tt('diagnostics.copied') : tt('diagnostics.copy')}</button>
+          <button
+            type="button"
+            // 文案与提示行同时在两下点击间变化：只换颜色的话，色弱用户看不出
+            // 第一下已经生效。
+            data-clear-armed={clearArmed ? '' : undefined}
+            disabled={entries.length === 0}
+            onClick={() => {
+              if (!clearArmed) { setClearArmed(true); return }
+              void clearAll()
+            }}
+          >{clearArmed ? tt('diagnostics.clearConfirm') : tt('diagnostics.clear')}</button>
+          <button type="button" aria-label={tt('preview.close')} title={tt('preview.close')} onClick={props.onClose}>×</button>
         </div>
       </header>
       <p className={css.diagnosticsHint}>{tt('diagnostics.hint')}</p>
+      {clearArmed ? <p className={css.diagnosticsHint} role="alert" data-clear-hint="">{tt('diagnostics.clearConfirmHint')}</p> : null}
       {loadError !== null ? (
         <p className={css.diagnosticsEmpty} role="alert" data-diagnostics-error="">{tt('diagnostics.loadFailed', { reason: loadError })}</p>
       ) : null}

@@ -21,6 +21,7 @@ import type { VideoDirectorPlan, VideoGenerateRequest, VideoHistoryEntry, VideoM
 import { VIDEO_ASPECT_RATIOS, VIDEO_DURATIONS, type VideoResolution } from '../protocol.ts'
 import { describeVideoModel, isLikelyVideoModelId, resolveVideoModelId } from '../video-model-catalog.ts'
 import { Select } from './Select.tsx'
+import { ErrorDetail } from './ErrorDetail.tsx'
 import { DiagnosticsButton, DiagnosticsPanel } from './DiagnosticsPanel.tsx'
 import type { ImageGenKey } from './locales.ts'
 import { onTablistKeyDown, tabIndexFor } from './tablist.ts'
@@ -243,6 +244,24 @@ export function VideoPanel(props: VideoPanelProps) {
     && (mode !== 'image' || reference !== null)
     && (mode !== 'reference' || reference !== null)
     && (mode !== 'keyframe' || firstFrame !== null)
+
+  /**
+   * Why the generate button is disabled, in the same order as the guard above.
+   *
+   * Returning the first unmet condition is what makes the tooltip actionable: a
+   * user with both a missing frame and an empty prompt should be told the thing
+   * that prevents the call, not every unmet condition at once.
+   */
+  const generateBlockedReason = (): string => {
+    if (busy) return tt('video.generating')
+    if (model === '') return tt('video.noModel')
+    if (unknownModel) return tt('video.unsupportedModel')
+    if (prompt.trim() === '') return tt('canvas.videoNeedPrompt')
+    if (mode === 'image' && reference === null) return tt('canvas.videoNeedReference')
+    if (mode === 'reference' && reference === null) return tt('canvas.videoNeedReference')
+    if (mode === 'keyframe' && firstFrame === null) return tt('video.requiredFirstFrame')
+    return tt('video.generate')
+  }
 
   /**
    * Whether the previewed plan still describes what the composer holds.
@@ -508,7 +527,7 @@ export function VideoPanel(props: VideoPanelProps) {
             </div>
           </div>
 
-          {error !== null ? <p className={css.videoError} role="alert">{error}</p> : null}
+          {error !== null ? <div className={css.videoError}><ErrorDetail message={error} summary={tt('video.failed')} /></div> : null}
 
           <div className={css.videoPlanBar}>
             <button
@@ -562,7 +581,16 @@ export function VideoPanel(props: VideoPanelProps) {
           ) : null}
 
           <div className={css.videoActions}>
-            <button type="button" className={css.videoGenerate} disabled={!canGenerate} onClick={generate}>
+            {/* A disabled button with no reason is a dead end: these keys already
+                existed for the inline hints, so the tooltip reuses them instead of
+                leaving the user to guess which of four guards fired. */}
+            <button
+              type="button"
+              className={css.videoGenerate}
+              disabled={!canGenerate}
+              title={canGenerate ? undefined : generateBlockedReason()}
+              onClick={generate}
+            >
               {busy ? tt('video.generating') : tt('video.generate')}
             </button>
             <span className={css.videoHint}>{tt('video.pollNote')}</span>
@@ -593,7 +621,7 @@ export function VideoPanel(props: VideoPanelProps) {
                     ) : null}
                   </div>
                   <p className={css.videoTaskPrompt} title={task.request.prompt}>{task.request.prompt}</p>
-                  {task.status === 'failed' && task.error !== undefined ? <p className={css.videoError}>{task.error}</p> : null}
+                  {task.status === 'failed' && task.error !== undefined ? <ErrorDetail message={task.error} summary={tt('video.failed')} /> : null}
                   {/* The plan the run actually used: the request prompt above is
                       what the user typed, this is what the provider received. */}
                   {task.plan !== undefined ? <p className={css.videoHint} data-video-plan-applied="">

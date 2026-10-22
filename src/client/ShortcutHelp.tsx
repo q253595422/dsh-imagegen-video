@@ -12,6 +12,7 @@
  * handler accepts either (`event.ctrlKey || event.metaKey`), so naming both is
  * what the code actually does.
  */
+import { useEffect, useRef, type RefObject } from 'react'
 import type { ImageGenKey } from './locales.ts'
 import { tt } from './helpers.ts'
 import css from './shortcut-help.module.css'
@@ -111,15 +112,99 @@ export function shortcutKeysFor (labelKey: ImageGenKey): string {
   return ''
 }
 
+/** Everything inside the dialog that can take focus, in DOM order. */
+const FOCUSABLE = 'a[href], button:not(:disabled), input:not(:disabled), select:not(:disabled), textarea:not(:disabled), summary, [tabindex]:not([tabindex="-1"])'
+
+/**
+ * Make this overlay's `role="dialog" aria-modal="true"` true for the keyboard.
+ *
+ * WHY a copy of `useModalFocus` in DiagnosticsPanel instead of an import:
+ * no such helper is exported yet, and the two panels are owned separately, so
+ * importing one panel's private helper would couple them: a change there (or a
+ * file being edited by someone else) would silently alter this legend. The
+ * logic is three short concerns and they belong next to the markup they guard.
+ *
+ * Semantics are kept identical to the original: the container (which carries
+ * `tabIndex={-1}`) takes focus so a screen reader announces the dialog and its
+ * label, Tab cycles inside the container instead of walking onto the canvas
+ * behind it, Esc is claimed in the capture phase so the canvas's own window
+ * keydown never sees it, and the element that had focus before gets it back.
+ *
+ * Focus goes to the container rather than the × button because the legend is a
+ * reference surface: announcing “快捷键” and then letting the user read is what
+ * a dialog is for, while landing on “关闭” makes the first Tab stop repeat the
+ * same button (the only control) and skips the label.
+ *
+ * The component is rendered only while open, so mounting is the open signal and
+ * there is no `open` parameter to keep in sync.
+ *
+ * @param ref - the element carrying the dialog role.
+ * @param onClose - dismiss the panel; called for Esc too.
+ */
+function useModalFocus (ref: RefObject<HTMLElement | null>, onClose: () => void): void {
+  // Held in a ref: a fresh inline `onClose` on every render would otherwise tear
+  // the listeners down and rebuild them, re-focusing the container mid-use.
+  const closeRef = useRef(onClose)
+  closeRef.current = onClose
+  useEffect(() => {
+    const container = ref.current
+    const opener = document.activeElement
+    container?.focus()
+    const onKey = (event: KeyboardEvent): void => {
+      if (event.key === 'Escape') {
+        // The canvas listens for Esc on `window` in the bubble phase; claiming it
+        // here in the capture phase stops that handler, so closing the legend
+        // does not also clear the canvas selection or close its menus.
+        event.preventDefault()
+        event.stopPropagation()
+        closeRef.current()
+        return
+      }
+      if (event.key !== 'Tab' || container === null) return
+      const items = [...container.querySelectorAll<HTMLElement>(FOCUSABLE)]
+      const first = items[0]
+      const last = items.at(-1)
+      if (first === undefined || last === undefined) return
+      const active = document.activeElement
+      if (active === null || active === container || !container.contains(active)) {
+        // Focus is on the container itself (its initial landing point) or
+        // outside entirely. Tab would otherwise continue in document order —
+        // straight onto the canvas behind — so send it to the edge the user was
+        // travelling towards: forward lands on the close button, backward wraps
+        // to the last control inside instead of leaving the dialog.
+        event.preventDefault()
+        ;(event.shiftKey ? last : first).focus()
+      } else if (event.shiftKey && active === first) {
+        event.preventDefault()
+        last.focus()
+      } else if (!event.shiftKey && active === last) {
+        event.preventDefault()
+        first.focus()
+      }
+    }
+    window.addEventListener('keydown', onKey, true)
+    return () => {
+      window.removeEventListener('keydown', onKey, true)
+      // Duck-typed like the original: jsdom hands out elements from another
+      // realm where `instanceof HTMLElement` is silently false.
+      if (opener !== null && typeof (opener as { focus?: unknown }).focus === 'function') {
+        (opener as HTMLElement).focus()
+      }
+    }
+  }, [ref])
+}
+
 /**
  * The shortcut legend. Rendered inside the canvas so it inherits the panel's
  * theme tokens, and marked `data-canvas-no-zoom` so a click on it is not read as
  * a canvas gesture.
- * @param props.onClose - dismiss the panel (Esc is handled by the canvas too).
+ * @param props.onClose - dismiss the panel (Esc is handled here, and by the canvas too).
  */
 export function ShortcutHelp ({ onClose }: { onClose: () => void }): React.JSX.Element {
+  const dialogRef = useRef<HTMLDivElement>(null)
+  useModalFocus(dialogRef, onClose)
   return <div className={css.backdrop} data-canvas-no-zoom="" onPointerDown={event => event.stopPropagation()}>
-    <div className={css.dialog} role="dialog" aria-modal="true" aria-label={tt('canvas.shortcuts.title')} data-shortcut-help="">
+    <div ref={dialogRef} tabIndex={-1} className={css.dialog} role="dialog" aria-modal="true" aria-label={tt('canvas.shortcuts.title')} data-shortcut-help="">
       <header className={css.header}>
         <strong>{tt('canvas.shortcuts.title')}</strong>
         <button type="button" aria-label={tt('canvas.shortcuts.close')} title={tt('canvas.shortcuts.close')} onClick={onClose}>×</button>

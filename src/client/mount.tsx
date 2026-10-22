@@ -71,6 +71,43 @@ function applyChatWidth(column: HTMLElement, clientX: number): void {
   writeChatWidth(width)
 }
 
+/**
+ * Keep the separator out of the tab order while the stylesheet hides it.
+ *
+ * `.chatResizer` starts as `display: none` and only becomes a flex box while
+ * the panel is active, but `tabIndex = 0` stays on the element either way: a
+ * keyboard or screen-reader user tabs into a separator that has no visible
+ * focus ring and no keyboard-reachable size. The handle is created outside the
+ * React tree, so visibility has to be observed on the element itself.
+ * @param resizer - the handle whose tab order follows its rendered state.
+ * @returns disposer stopping the observation.
+ */
+function watchChatResizerVisibility(resizer: HTMLDivElement): () => void {
+  // Without ResizeObserver there is no way to notice the toggle, so leaving
+  // `tabIndex = 0` is truer than freezing the handle at -1 forever.
+  if (typeof ResizeObserver === 'undefined') return () => {}
+  // `display: none` (on the handle or an ancestor) leaves no client rects.
+  const visible = (): boolean => resizer.getClientRects().length > 0
+  const apply = (): void => {
+    if (visible()) {
+      resizer.tabIndex = 0
+      resizer.removeAttribute('aria-hidden')
+      return
+    }
+    // A hidden focused element must not carry aria-hidden: browsers drop the
+    // attribute and warn. Focus lands here only via the keyboard.
+    if (document.activeElement === resizer) resizer.blur()
+    resizer.tabIndex = -1
+    resizer.setAttribute('aria-hidden', 'true')
+  }
+  apply()
+  // Hiding is a size change too (the box collapses to 0×0 and comes back),
+  // and a freshly observed target reports once, so no extra initial pass.
+  const observer = new ResizeObserver(() => { apply() })
+  observer.observe(resizer)
+  return () => { observer.disconnect() }
+}
+
 /** Create the visible handle that separates the image workspace and chat. */
 function createChatResizer(column: HTMLElement): HTMLDivElement {
   const resizer = document.createElement('div')
@@ -142,6 +179,8 @@ export function mountPanel(
   let resizer: HTMLDivElement | undefined
   /** Releases the resizer's language subscription; re-pointed in `ensure`. */
   let stopResizerLanguageWatch: (() => void) | undefined
+  /** Releases the resizer's visibility observation; re-pointed in `ensure`. */
+  let stopResizerVisibilityWatch: (() => void) | undefined
   let panelActive = false
 
   const renderPanel = (): void => {
@@ -162,6 +201,8 @@ export function mountPanel(
       // would keep writing to a detached node forever.
       stopResizerLanguageWatch?.()
       stopResizerLanguageWatch = undefined
+      stopResizerVisibilityWatch?.()
+      stopResizerVisibilityWatch = undefined
     }
     const column = conversationColumn()
     if (column === undefined) return
@@ -180,6 +221,8 @@ export function mountPanel(
     stopResizerLanguageWatch = subscribeImageGenLanguage(() => {
       resizer?.setAttribute('aria-label', tt('chat.resizeHint'))
     })
+    stopResizerVisibilityWatch?.()
+    stopResizerVisibilityWatch = watchChatResizerVisibility(resizer)
   }
 
   // The frame mounts after boot settlement; watch for the column's arrival.
@@ -235,5 +278,7 @@ export function mountPanel(
     resizer = undefined
     stopResizerLanguageWatch?.()
     stopResizerLanguageWatch = undefined
+    stopResizerVisibilityWatch?.()
+    stopResizerVisibilityWatch = undefined
   }
 }

@@ -31,6 +31,12 @@
   overflow: hidden;
 }
 
+/* Focus lands on the sheet itself when the panel opens (tabIndex={-1}); it is a
+   landing point rather than a control, so the browser's default ring around the
+   whole dialog would only read as a stray border. The × inside keeps its own
+   :focus-visible ring below. */
+.dialog:focus { outline: none; }
+
 .header {
   display: flex;
   align-items: center;

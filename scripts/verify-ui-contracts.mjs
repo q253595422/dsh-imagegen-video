@@ -280,6 +280,54 @@ if (hostProblem.length > 0) {
   process.exit(1)
 }
 
+// ------------------------------------------------- 5. ecommerce card headings
+// `.ecommerceSection h3` lays the title and its `small` hint out as a flex row
+// (`display:flex`, `gap:7px`). Left to itself the title's bare text becomes an
+// anonymous flex item that SHRINKS to make room for the hint: at the default
+// 300px config column the available line is ~196px and the title was squeezed
+// to ~69px, one pixel short of "主图参考图" (70px), so every card heading wrapped
+// to two lines while the hint beside it was merely cut off.
+//
+// The hint's own `text-overflow: ellipsis` did not help either: a flex item's
+// default `min-width:auto` refuses to shrink below its content, which made the
+// ellipsis dead code — the text was clipped mid-character with no visual cue.
+//
+// Source-level on purpose: this is decided by how the two rules divide the
+// line, and the browser fixture below cannot see the ecommerce panel at all.
+const panelCss = read('panel.module.css')
+const titleRule = ruleOf(panelCss, '.ecommerceSectionTitle')
+const hintRule = ruleOf(panelCss, '.ecommerceSectionHint')
+if (!/flex:\s*none/.test(titleRule)) {
+  console.error('\nFAIL: the ecommerce card title is allowed to shrink.')
+  console.error('The card head is a flex row, so a shrinkable title gives up its width')
+  console.error('to the hint beside it and wraps: "主图参考图" needs 70px and was left 69px.')
+  process.exit(1)
+}
+if (!/min-width:\s*0/.test(hintRule)) {
+  console.error('\nFAIL: the ecommerce card hint cannot shrink, so its ellipsis never renders.')
+  console.error('A flex item defaults to `min-width: auto`; without an explicit 0 the hint')
+  console.error('is clipped mid-character instead of ending in "…".')
+  process.exit(1)
+}
+// The rule only works if the title text is wrapped in the span that carries it.
+// A bare text node in the flex row has no class to target, so the `flex: none`
+// above would apply to nothing and the wrap returns silently.
+//
+// Only headings that actually carry a hint are in scope: the ones without one
+// ("参数信息", "套图结果", …) have nothing competing for the line, so wrapping
+// them would add markup that earns nothing.
+const ecommerceCards = [...read('ImageGenPanel.tsx').matchAll(/<h3>(.*?)<\/h3>/gs)]
+  .map(match => match[1])
+  .filter(inner => inner.includes('css.ecommerceSectionHint}'))
+const unwrapped = ecommerceCards.filter(inner => !inner.startsWith('<span className={css.ecommerceSectionTitle}>'))
+if (ecommerceCards.length === 0 || unwrapped.length > 0) {
+  console.error('\nFAIL: an ecommerce card heading renders its title outside the no-shrink span.')
+  console.error('`flex: none` on .ecommerceSectionTitle cannot reach a bare text node,')
+  console.error(`so that heading wraps again. Offenders: ${String(unwrapped.length)} of ${ecommerceCards.length}.`)
+  process.exit(1)
+}
+console.log(`ecommerce card headings: title no-shrink in ${ecommerceCards.length} cards, hint ellipsis live`)
+
 // A repository that declares no licence cannot have its images redistributed by
 // pointing shipped data at them. `songguoxs/gpt4o-image-prompts` is the one case
 // of this: six prompt-signal cases once carried its preview URLs. The prompt text

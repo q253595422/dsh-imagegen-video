@@ -42,6 +42,7 @@ import {
   type ChatImageEventDetail, type ConversationDraftAttachment, type ConversationService,
 } from './conversation-sync.ts'
 import { Select } from './Select.tsx'
+import { ErrorDetail } from './ErrorDetail.tsx'
 import { onTablistKeyDown, tabIndexFor } from './tablist.ts'
 import css from './panel.module.css'
 
@@ -503,6 +504,23 @@ function withAnchorNote(prompt: string): string {
   return '商品套图一致性约束：附件是本套商品的主图，图中商品（外形、颜色、材质、Logo、包装文字）必须与附件完全一致，不得重新发明商品。' + prompt
 }
 
+/**
+ * Grow the prompt box to fit its text.
+ *
+ * A fallback for engines without `field-sizing: content` (`panel.module.css`
+ * sets it for the ones that have it). Height is reset to `auto` first so the
+ * box can shrink as well as grow — reading `scrollHeight` without the reset
+ * returns the previous, larger content height and the box would only ever
+ * ratchet upward. `max-height` in the stylesheet caps the growth, so this is
+ * the floor of the behaviour, not its whole definition.
+ *
+ * @param node - the textarea to resize.
+ */
+function autoGrowPrompt(node: HTMLTextAreaElement): void {
+  node.style.height = 'auto'
+  node.style.height = `${node.scrollHeight}px`
+}
+
 /** Studio tabs: the generation modes plus the gallery view and video. */
 type PanelTab = GenerateMode | 'video' | 'gallery'
 
@@ -818,6 +836,14 @@ export function ImageGenPanel(props: {
   const [historyConversationAddingId, setHistoryConversationAddingId] = useState<string | null>(null)
   const [conversationMessage, setConversationMessage] = useState<string | null>(null)
   const [error, setError] = useState<string | null>(null)
+  /**
+   * Upload-limit messages, kept apart from `error`.
+   *
+   * `error` renders as 「生成失败：…」, so a rejected fifth product image read
+   * as if generation itself had failed — there was no generation yet. Posting
+   * these to their own slot lets them render verbatim.
+   */
+  const [uploadNotice, setUploadNotice] = useState<string | null>(null)
   /** Session-only edit references: the first one is the primary `image`, the
    *  rest travel as `images` (see GenerateRequest). Declared after `setError`
    *  because the hook reports validation warnings through it. */
@@ -856,6 +882,9 @@ export function ImageGenPanel(props: {
   const [historyQuery, setHistoryQuery] = useState('')
   const [historyModelFilter, setHistoryModelFilter] = useState('all')
   const [historyRatioFilter, setHistoryRatioFilter] = useState('all')
+  /** 'all' | 'image' | 'video' — clips and images share one list, so the only
+   *  way to see just one kind used to be scrolling past the other. */
+  const [historyKindFilter, setHistoryKindFilter] = useState<'all' | 'image' | 'video'>('all')
   const [preview, setPreview] = useState<{ images: GeneratedImage[]; index: number } | null>(null)
   /** The gallery clip open in the full-screen player (images use `preview`). */
   const [galleryClip, setGalleryClip] = useState<HistoryEntry | null>(null)
@@ -1071,6 +1100,7 @@ export function ImageGenPanel(props: {
     const imageRows = groupHistoryEntries(history).map(imageRowOf)
     const videoRows = videoHistory.map(videoRowOf)
     const matches = (row: UnifiedHistoryRow, extra: string): boolean => {
+      if (historyKindFilter !== 'all' && row.kind !== historyKindFilter) return false
       if (query !== '' && !`${row.prompt} ${row.models.join(' ')}`.toLocaleLowerCase().includes(query)) return false
       if (historyModelFilter !== 'all' && !row.models.includes(historyModelFilter)) return false
       if (historyRatioFilter !== 'all' && extra !== historyRatioFilter) return false
@@ -1091,18 +1121,24 @@ export function ImageGenPanel(props: {
     // createdAt would also reorder image rows against each other, which can
     // change which item a click opens (comparison groups and product sets do
     // not necessarily follow createdAt).
+    //
+    // Merge the FILTERED halves, not `imageRows` / `videoRows`: `rows` above is
+    // the only place the search box and the two filters are applied, so merging
+    // the raw arrays made all three controls silently no-ops.
+    const image = rows.filter(row => row.kind === 'image')
+    const video = rows.filter(row => row.kind === 'video')
     const merged: UnifiedHistoryRow[] = []
     let left = 0
     let right = 0
-    while (left < imageRows.length && right < videoRows.length) {
-      merged.push(videoRows[right]!.createdAt > imageRows[left]!.createdAt
-        ? videoRows[right++]!
-        : imageRows[left++]!)
+    while (left < image.length && right < video.length) {
+      merged.push(video[right]!.createdAt > image[left]!.createdAt
+        ? video[right++]!
+        : image[left++]!)
     }
-    while (left < imageRows.length) merged.push(imageRows[left++]!)
-    while (right < videoRows.length) merged.push(videoRows[right++]!)
+    while (left < image.length) merged.push(image[left++]!)
+    while (right < video.length) merged.push(video[right++]!)
     return merged
-  }, [history, videoHistory, historyModelFilter, historyQuery, historyRatioFilter])
+  }, [history, videoHistory, historyModelFilter, historyKindFilter, historyQuery, historyRatioFilter])
 
   /** Every model name appearing in either store, for the model filter. */
   const historyModelOptions = useMemo(() => [
@@ -1239,6 +1275,14 @@ export function ImageGenPanel(props: {
             && task.result !== undefined
             && !previousTasks.some(old => old.id === task.id && old.status === 'completed'))
           tasksRef.current = next
+          // A failed task used to be invisible: the poll only reacted to
+          // `completed`, so a rejected request left the button re-enabled and
+          // the canvas pristine. Surface the first newly-failed task the same
+          // way a failed submit is surfaced, and pop the tray so its row (with
+          // retry) is on screen.
+          const failedNow = next.find(task => task.status === 'failed'
+            && task.error !== undefined && task.error !== ''
+            && !previousTasks.some(old => old.id === task.id && old.status === 'failed'))
           setTasks(current => {
             const completed = next.find(task => task.status === 'completed'
               && task.result !== undefined
@@ -1251,6 +1295,10 @@ export function ImageGenPanel(props: {
             }
             return next
           })
+          if (failedNow?.error !== undefined) {
+            setError(failedNow.error)
+            setTaskTrayOpen(true)
+          }
           if (hydratedCompleted.length > 0) {
             void api.historyList().then(entries => {
               if (!disposed) setHistory(entries)
@@ -1484,11 +1532,21 @@ export function ImageGenPanel(props: {
    *  that gets replaced on re-upload. */
   const acceptEcommerceFiles = (files: FileList | undefined, role: 'product' | 'style' = 'product'): void => {
     if (files === undefined) return
-    const incoming = Array.from(files).filter(file => file.type.startsWith('image/') && file.size <= REF_IMAGE_MAX_BYTES)
-    if (incoming.length === 0) {
-      setError(tt('edit.uploadHint'))
+    const accepted = Array.from(files).filter(file => file.type.startsWith('image/') && file.size <= REF_IMAGE_MAX_BYTES)
+    if (accepted.length === 0) {
+      setUploadNotice(tt('edit.uploadHint'))
       return
     }
+    setUploadNotice(null)
+    // Drop the extras here rather than inside the state updater: reading a
+    // sixth data URL only to throw it away wastes memory on images that can be
+    // megabytes each, and a 20-file drop would queue 20 readers.
+    const room = role === 'style'
+      ? 1
+      : Math.max(0, MAX_ECOMMERCE_ASSETS - ecommerceAssets.filter(item => item.role !== 'style').length)
+    if (role !== 'style' && accepted.length > room) setUploadNotice(tt('ecommerce.assetsFull'))
+    const incoming = role === 'style' ? accepted.slice(0, 1) : accepted.slice(0, room)
+    if (incoming.length === 0) return
     for (const file of incoming) {
       const reader = new FileReader()
       reader.onload = () => {
@@ -1500,13 +1558,13 @@ export function ImageGenPanel(props: {
             return [...previous.filter(item => item.role !== 'style'), styleAsset]
           }
           if (previous.filter(item => item.role !== 'style').length >= MAX_ECOMMERCE_ASSETS) {
-            setError(tt('ecommerce.assetsFull'))
+            setUploadNotice(tt('ecommerce.assetsFull'))
             return previous
           }
           return [...previous, { id: newComparisonId(), dataUrl, name: file.name, role: 'product' }]
         })
       }
-      reader.onerror = () => { setError(tt('edit.uploadHint')) }
+      reader.onerror = () => { setUploadNotice(tt('edit.uploadHint')) }
       reader.readAsDataURL(file)
     }
   }
@@ -2419,7 +2477,7 @@ export function ImageGenPanel(props: {
               <span className={css.ecommerceTaskState}>
                 <b>{group.label}</b>
                 {tt(`tasks.${item.status}` as never)}
-                {item.error !== undefined ? ` · ${item.error}` : ''}
+                {item.error !== undefined ? <ErrorDetail message={item.error} layout="inline" /> : null}
               </span>
             )}
           </div>
@@ -2539,6 +2597,11 @@ export function ImageGenPanel(props: {
 
       <div className={css.historyFilters}>
         <input className={css.historySearch} value={historyQuery} onChange={event => { setHistoryQuery(event.target.value) }} placeholder={tt('history.search')} aria-label={tt('history.search')} />
+        <Select value={historyKindFilter} onChange={value => { setHistoryKindFilter(value as 'all' | 'image' | 'video') }} aria-label={tt('history.kind')}>
+          <option value="all">{tt('history.allKinds')}</option>
+          <option value="image">{tt('history.imagesOnly')}</option>
+          <option value="video">{tt('history.videosOnly')}</option>
+        </Select>
         <Select value={historyModelFilter} onChange={value => { setHistoryModelFilter(value) }} aria-label={tt('history.model')}>
           <option value="all">{tt('history.allModels')}</option>
           {historyModelOptions.map(option => <option key={option} value={option}>{option}</option>)}
@@ -2821,15 +2884,19 @@ export function ImageGenPanel(props: {
             <svg viewBox="0 0 16 16" width="13" height="13" fill="none" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M2.5 3.5h11v7.5H6.8L3.8 13.6v-2.6H2.5z"/></svg>
             {tt('chat.toggle')}
           </button>
-          <button
-            type="button"
+          {/* A state readout, not a control. It was a <button> that did nothing
+              when pressed (cursor: default, no handler, no popup), which is the
+              worst kind of affordance: it looks clickable and answers nothing. */}
+          <span
+            role="status"
+            aria-live="polite"
             className={css.connectionStatus}
             data-connected={connected ? 'true' : 'false'}
             aria-label={tt(connected ? 'connection.connected' : 'connection.disconnected')}
           >
             <span className={css.connectionDot} aria-hidden="true" />
             {tt(connected ? 'connection.connected' : 'connection.disconnected')}
-          </button>
+          </span>
         </span>
       </header>
 
@@ -2876,6 +2943,7 @@ export function ImageGenPanel(props: {
                   type="button"
                   className={css.galleryFilter}
                   data-active={galleryFilter === value ? '' : undefined}
+                  aria-pressed={galleryFilter === value}
                   onClick={() => { setGalleryFilter(value) }}
                 >
                   <span>{label}</span>
@@ -2894,7 +2962,7 @@ export function ImageGenPanel(props: {
               <div className={css.galleryFilterHeading}>{tt('gallery.ratio')}</div>
               <div className={css.galleryRatioList}>
                 {(['all', '1:1', '3:4', '4:3', '16:9'] as const).map(ratio => (
-                  <button key={ratio} type="button" className={css.galleryRatio} data-active={galleryRatio === ratio ? '' : undefined} onClick={() => { setGalleryRatio(ratio) }}>
+                  <button key={ratio} type="button" className={css.galleryRatio} data-active={galleryRatio === ratio ? '' : undefined} aria-pressed={galleryRatio === ratio} onClick={() => { setGalleryRatio(ratio) }}>
                     {ratio === 'all' ? tt('gallery.all') : ratio}
                   </button>
                 ))}
@@ -2905,7 +2973,7 @@ export function ImageGenPanel(props: {
                   <div className={css.galleryFilterHeading}>{tt('gallery.tags')}</div>
                   <div className={css.galleryTagFilterList}>
                     {galleryTagOptions.map(tag => (
-                      <button key={tag} type="button" className={css.galleryTagFilter} data-active={galleryTagFilter === tag ? '' : undefined} onClick={() => { setGalleryTagFilter(previous => previous === tag ? null : tag) }}>
+                      <button key={tag} type="button" className={css.galleryTagFilter} data-active={galleryTagFilter === tag ? '' : undefined} aria-pressed={galleryTagFilter === tag} onClick={() => { setGalleryTagFilter(previous => previous === tag ? null : tag) }}>
                         <span>{tag}</span>
                         <span>{gallery.filter(entry => (entry.tags ?? []).includes(tag)).length}</span>
                       </button>
@@ -2941,9 +3009,12 @@ export function ImageGenPanel(props: {
               <section className={css.ecommerceWorkspace} data-ecommerce-workspace="">
                 <div className={css.ecommerceSection}>
                   <header className={css.ecommerceCardHead}>
-                    <h3>{tt('ecommerce.productRefTitle')}<small className={css.ecommerceSectionHint}>{tt('ecommerce.productRefHint')}</small></h3>
+                    <h3><span className={css.ecommerceSectionTitle}>{tt('ecommerce.productRefTitle')}</span><small className={css.ecommerceSectionHint}>{tt('ecommerce.productRefHint')}</small></h3>
                     <span className={css.ecommerceCardCount}>{ecommerceAssets.filter(asset => asset.role !== 'style').length}/{MAX_ECOMMERCE_ASSETS}</span>
                   </header>
+                  {uploadNotice !== null ? (
+                    <p className={css.ecommerceCardNotice} role="status" data-upload-notice="">{uploadNotice}</p>
+                  ) : null}
                   {ecommerceAssets.some(asset => asset.role !== 'style') ? (
                     <div className={css.ecommerceAssets}>
                       {ecommerceAssets.filter(asset => asset.role !== 'style').map(asset => (
@@ -3000,7 +3071,7 @@ export function ImageGenPanel(props: {
                 </div>
                 <div className={css.ecommerceSection}>
                   <header className={css.ecommerceCardHead}>
-                    <h3>{tt('ecommerce.styleRefTitle')}<small className={css.ecommerceSectionHint}>({tt('ecommerce.styleRefBadge')})</small></h3>
+                    <h3><span className={css.ecommerceSectionTitle}>{tt('ecommerce.styleRefTitle')}</span><small className={css.ecommerceSectionHint}>({tt('ecommerce.styleRefBadge')})</small></h3>
                     <span className={css.ecommerceCardCount}>{ecommerceAssets.some(asset => asset.role === 'style') ? 1 : 0}/1</span>
                   </header>
                   <p className={css.ecommerceCardHint}>{tt('ecommerce.styleRefHint')}</p>
@@ -3034,17 +3105,17 @@ export function ImageGenPanel(props: {
                 <div className={css.ecommerceSection}>
                   <label className={css.ecommerceField}>
                     <span className={css.ecommerceFieldLabel}>{tt('ecommerce.productName')}</span>
-                    <input value={ecommerce.productName} placeholder={tt('ecommerce.productName')} onChange={event => setEcommerce(previous => ({ ...previous, productName: event.target.value }))} />
+                    <input value={ecommerce.productName} placeholder={tt('ecommerce.productName')} aria-label={tt('ecommerce.productName')} onChange={event => setEcommerce(previous => ({ ...previous, productName: event.target.value }))} />
                   </label>
                 </div>
                 <div className={css.ecommerceSection}>
                   <header className={css.ecommerceCardHead}>
-                    <h3>{tt('ecommerce.refInfoTitle')}<small className={css.ecommerceSectionHint}>({tt('ecommerce.optional')})</small></h3>
+                    <h3><span className={css.ecommerceSectionTitle}>{tt('ecommerce.refInfoTitle')}</span><small className={css.ecommerceSectionHint}>({tt('ecommerce.optional')})</small></h3>
                     <button
                       type="button"
                       className={css.ecommerceAiButton}
-                      disabled={ecommerceEnhancing}
-                      title={tt('ecommerce.aiWriteHint')}
+                      disabled={ecommerceEnhancing || ecommerce.productName.trim() === ''}
+                      title={ecommerce.productName.trim() === '' ? tt('ecommerce.aiWriteNeedsName') : tt('ecommerce.aiWriteHint')}
                       onClick={() => { void ecommerceEnhanceInfo() }}
                     >
                       <svg viewBox="0 0 16 16" width="11" height="11" fill="currentColor" aria-hidden="true"><path d="M8 1.5l1.4 3.6L13 6.5l-3.6 1.4L8 11.5 6.6 7.9 3 6.5l3.6-1.4z"/></svg>
@@ -3058,7 +3129,7 @@ export function ImageGenPanel(props: {
                   <div className={css.ecommerceParamGrid}>
                     <label className={css.ecommerceField}>
                       <span className={css.ecommerceFieldLabel}>{tt('ecommerce.platformLabel')}</span>
-                      <Select value={ecommerce.platform} onChange={value => setEcommerce(previous => ({ ...previous, platform: value }))}><option>通用</option><option>淘宝 / 京东</option><option>Amazon</option></Select>
+                      <Select aria-label={tt('ecommerce.platformLabel')} value={ecommerce.platform} onChange={value => setEcommerce(previous => ({ ...previous, platform: value }))}><option>通用</option><option>淘宝 / 京东</option><option>亚马逊</option></Select>
                     </label>
                     <label className={css.ecommerceField}>
                       <span className={css.ecommerceFieldLabel}>{tt('ecommerce.languageLabel')}</span>
@@ -3086,7 +3157,7 @@ export function ImageGenPanel(props: {
                   </div>
                 </div>
                 <div className={css.ecommerceSection}>
-                  <h3>{tt('ecommerce.setStructure')}<small className={css.ecommerceSectionHint}>{tt('ecommerce.multiSelect')}</small></h3>
+                  <h3><span className={css.ecommerceSectionTitle}>{tt('ecommerce.setStructure')}</span><small className={css.ecommerceSectionHint}>{tt('ecommerce.multiSelect')}</small></h3>
                   <div className={css.ecommerceStructureGrid}>
                     {ecommerce.slots.map(slot => (
                       <button
@@ -3094,6 +3165,7 @@ export function ImageGenPanel(props: {
                         type="button"
                         className={css.ecommerceSlotCard}
                         data-active={slot.enabled ? '' : undefined}
+                        aria-pressed={slot.enabled}
                         title={`${slot.label}：${slot.description}`}
                         onClick={() => setEcommerce(previous => ({ ...previous, slots: previous.slots.map(item => item.key === slot.key ? { ...item, enabled: !item.enabled } : item) }))}
                       >
@@ -3184,7 +3256,8 @@ export function ImageGenPanel(props: {
                 className={css.prompt}
                 value={prompt}
                 placeholder={tt('prompt.placeholder')}
-                onChange={(event) => { setPrompt(event.target.value) }}
+                onChange={(event) => { setPrompt(event.target.value); autoGrowPrompt(event.currentTarget) }}
+                ref={node => { if (node !== null) autoGrowPrompt(node) }}
               />
               <div className={css.promptFooter}>
                 <button
@@ -3440,10 +3513,10 @@ export function ImageGenPanel(props: {
                     {gallerySelecting ? tt('gallery.selectionDone') : tt('gallery.select')}
                   </button>
                   <div className={css.galleryViewToggle} role="group" aria-label={tt('gallery.viewMode')}>
-                    <button type="button" data-active={galleryView === 'masonry' ? '' : undefined} onClick={() => { setGalleryView('masonry') }} title={tt('gallery.masonry')}>
+                    <button type="button" data-active={galleryView === 'masonry' ? '' : undefined} aria-pressed={galleryView === 'masonry'} onClick={() => { setGalleryView('masonry') }} title={tt('gallery.masonry')}>
                       <span aria-hidden="true">▦</span> {tt('gallery.masonry')}
                     </button>
-                    <button type="button" data-active={galleryView === 'grid' ? '' : undefined} onClick={() => { setGalleryView('grid') }} title={tt('gallery.grid')}>
+                    <button type="button" data-active={galleryView === 'grid' ? '' : undefined} aria-pressed={galleryView === 'grid'} onClick={() => { setGalleryView('grid') }} title={tt('gallery.grid')}>
                       <span aria-hidden="true">▤</span> {tt('gallery.grid')}
                     </button>
                   </div>
@@ -3512,7 +3585,24 @@ export function ImageGenPanel(props: {
                   <button type="button" className={css.galleryBulkButton} data-gallery-reload="" style={{ marginLeft: 8 }} onClick={retryInitialData}>{tt('canvas.retry')}</button>
                 </div>
               ) : filteredGallery.length === 0 ? (
-                <div className={css.historyEmpty}>{tt('gallery.empty')}</div>
+                // Two different situations used to share 「素材库还是空的」: an empty
+                // library, and a search that matched nothing in a full one. Saying
+                // "the library is empty" while 200 assets sit behind a filter sends
+                // the user looking for a bug instead of clearing the filter.
+                gallery.length === 0 ? (
+                  <div className={css.historyEmpty}>{tt('gallery.empty')}</div>
+                ) : (
+                  <div className={css.historyEmpty} data-gallery-no-match="">
+                    <span>{tt('gallery.noMatch')}</span>
+                    <button
+                      type="button"
+                      className={css.galleryBulkButton}
+                      data-gallery-clear-filters=""
+                      style={{ marginLeft: 8 }}
+                      onClick={() => { setGalleryQuery(''); setGalleryFilter('all'); setGalleryRatio('all'); setGalleryTagFilter(null) }}
+                    >{tt('gallery.clearFilters')}</button>
+                  </div>
+                )
               ) : (
                 <div className={css.galleryMasonry} data-view={galleryView}>
                   {filteredGallery.map(entry => {
@@ -3729,7 +3819,7 @@ export function ImageGenPanel(props: {
                     {task.status === 'failed' || task.status === 'cancelled' ? <button type="button" onClick={() => { void api.taskRetry(task.id) }}>{tt('tasks.retry')}</button> : null}
                     {/* #38: a bare "失败" told the reporter nothing. Show WHY inline. */}
                     {task.error !== undefined && task.error !== '' ? (
-                      <p className={css.taskError} role="status">{task.error}</p>
+                      <ErrorDetail message={task.error} />
                     ) : null}
                   </div>
                 ))}
@@ -3786,7 +3876,11 @@ export function ImageGenPanel(props: {
           ) : null}
 
           {!generating && error !== null ? (
-            <div className={css.canvasError} role="alert">{tt('canvas.error', { error })}</div>
+            <div className={css.canvasError} data-canvas-error-banner=""><ErrorDetail message={error} /></div>
+          ) : null}
+
+          {!generating && error === null && uploadNotice !== null ? (
+            <div className={css.canvasError} role="status" data-upload-notice="">{uploadNotice}</div>
           ) : null}
 
           {/* The empty state is "nothing to show yet". Opening a clip from the

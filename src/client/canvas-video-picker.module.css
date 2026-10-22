@@ -173,7 +173,7 @@
 .errorLine {
   margin: 10px 0 0;
   text-align: center;
-  color: var(--dsw-alias-label-error);
+  color: var(--dsw-alias-state-error-primary, #ec1313);
   font-size: 11.5px;
   overflow-wrap: anywhere;
 }

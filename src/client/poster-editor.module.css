@@ -67,7 +67,7 @@
 .controls .check { flex-direction: row; align-items: center; }
 .row { display: flex; gap: 8px; }
 .row button { flex: 1; font-size: 12px; padding: 6px; }
-.error { color: var(--dsw-alias-label-error); margin: 8px 20px; overflow-wrap: anywhere; }
+.error { color: var(--dsw-alias-state-error-primary, #ec1313); margin: 8px 20px; overflow-wrap: anywhere; }
 .footer { display: flex; align-items: center; justify-content: flex-end; gap: 8px; padding: 14px 20px; border-top: 1px solid var(--dsw-alias-border-l1); flex-wrap: wrap; }
 .footer small, .footer span { margin-right: auto; color: var(--dsw-alias-label-secondary); font-size: 12px; }
 .footer .primary { background: var(--dsw-alias-brand-primary); border-color: var(--dsw-alias-brand-primary); color: var(--dsw-alias-bg-base); }

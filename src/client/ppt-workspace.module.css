@@ -34,6 +34,9 @@
 .submitBar small { font-size: 10px; line-height: 1.7; color: var(--dsw-alias-label-secondary); }
 .workspace .primary { min-height: 42px; border-color: transparent; color: #fff; background: var(--dsw-alias-brand-primary); }
 .workspace .error { color: var(--dsw-alias-state-danger-primary, #b33535); white-space: pre-wrap; overflow-wrap: anywhere; }
+/* Setup instructions name a dialog, so the entry to it sits right beside them. */
+.setupNote { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+.setupNote > button { flex: none; }
 .resultHeader { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-bottom: 14px; }
 .resultHeader > span { color: var(--dsw-alias-label-secondary); font-size: 11px; }
 .empty > .fileIcon { width: 42px; height: 48px; font-size: 10px; }
@@ -147,4 +150,68 @@
  .viewerFooter small { flex-basis: 100%; }
  .fitLabel { margin-left: auto; }
  .slidePaper { min-height: 160px; }
+}
+
+/* Three-step setup guide. Each step states its own status, so a user who has no
+   skill installed can see what is blocking the next button instead of facing a
+   row of grey buttons and an empty form. */
+.setupStep {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 14px;
+  border: 1px solid var(--dsw-alias-border-l2);
+  border-radius: 12px;
+  background: var(--dsw-alias-bg-layer-2);
+}
+
+.stepHead {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 13px;
+}
+
+.stepIndex {
+  display: grid;
+  place-items: center;
+  flex: none;
+  width: 20px;
+  height: 20px;
+  border-radius: 6px;
+  background: var(--dsw-alias-bg-layer-1);
+  border: 1px solid var(--dsw-alias-border-l2);
+  font-size: 11px;
+  color: var(--dsw-alias-label-secondary);
+}
+
+.stepBadge {
+  margin-left: auto;
+  padding: 2px 8px;
+  border-radius: 999px;
+  font-size: 10.5px;
+  border: 1px solid var(--dsw-alias-border-l2);
+  color: var(--dsw-alias-label-secondary);
+  white-space: nowrap;
+}
+
+.stepBadge[data-tone='done'] {
+  color: var(--dsw-alias-brand-primary);
+  border-color: var(--dsw-alias-brand-primary);
+}
+
+.stepBadge[data-tone='todo'] {
+  color: var(--dsw-alias-state-danger-primary, #b33535);
+  border-color: rgb(208 64 64 / 30%);
+}
+
+.stepHint,
+.reason {
+  font-size: 11px;
+  line-height: 1.6;
+  color: var(--dsw-alias-label-secondary);
+}
+
+.reason {
+  overflow-wrap: anywhere;
 }

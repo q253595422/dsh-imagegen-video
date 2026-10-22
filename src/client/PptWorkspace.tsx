@@ -70,8 +70,12 @@ export function PptWorkspace({ api, active, importRequest, onImported }: { api: 
       for (const file of files) {
         if (!mounted.current) return
         if (current.current.length >= 12) { setError(tt('ppt.inputLimit')); break }
-        if (!['image/png', 'image/jpeg', 'image/webp'].includes(file.type) || file.size === 0 || file.size > 20 * 1024 * 1024) {
-          setError(tt('ppt.invalidImage')); continue
+        // Format and size are different fixes for the user, so they get different text.
+        if (!['image/png', 'image/jpeg', 'image/webp'].includes(file.type) || file.size === 0) {
+          setError(tt('ppt.uploadBadType', { name: file.name })); continue
+        }
+        if (file.size > 20 * 1024 * 1024) {
+          setError(tt('ppt.uploadTooLarge', { name: file.name })); continue
         }
         try {
           const asset = await api.canvasFileUpload(file)
@@ -147,7 +151,11 @@ export function PptWorkspace({ api, active, importRequest, onImported }: { api: 
         <small>{tt('ppt.ocrHint')}</small>
       </fieldset>
 
-      {!ready ? <p className={css.note}>{catalog?.reason || tt('ppt.setupRequired')}</p> : null}
+      {!ready ? <div className={css.setupNote} data-ppt-setup-note="">
+        <p className={css.note}>{catalog?.reason || tt('ppt.setupRequired')}</p>
+        {/* The instructions name a dialog, so they come with the way into it. */}
+        <button type="button" data-ppt-setup-open="" onClick={() => setSettingsOpen(true)}>{tt('ppt.openSettings')}</button>
+      </div> : null}
       <footer className={css.submitBar}>
         <button type="button" className={css.primary} data-ppt-convert="" disabled={!ready || busy || uploading || images.length === 0} onClick={() => { void submit() }}>{tt(busy ? 'ppt.submitting' : 'ppt.convert')}</button>
         <small>{tt('ppt.processingHint')}</small>
