@@ -17,6 +17,19 @@ Attribution for third-party code is in [NOTICE](./NOTICE).
   inference and the size cap all still apply. A body URL is still preferred,
   and a `/content` that 404s reports the download leg rather than passing as a
   silent success.
+- **A batch of UI fixes ships in the same version.** Eight modules were driven
+  in a real browser: a fully covered canvas node now marks both nodes and
+  carries a `role="status"` badge naming what covers it (the hint survives
+  pointer-up, when the node is still hidden); the sixty error/warning
+  declarations that referenced `--dsw-alias-label-error` / `-warning` — which
+  the dsh theme never defines — now use the resolvable
+  `--dsw-alias-state-error-primary` / `-state-warn-primary`; the ecommerce
+  section title no longer shrinks to 69px against a hint needing 70 (no column
+  width changed); saving, channel tests, update checks and diagnostics clearing
+  report what actually happened instead of reading as successes; dialogs trap
+  and restore focus, and the select exposes combobox semantics with
+  `aria-activedescendant`; PPT setup reports per-step state. Full detail in
+  `docs/releases/v1.15.2.md`.
 
 ### 1.15.1 — 火山适配的收口修复
 
