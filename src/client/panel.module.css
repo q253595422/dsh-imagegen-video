@@ -3485,6 +3485,32 @@ html[data-dsh-imagegen-chat-collapsed] [data-dsh-imagegen-chat-resizer] {
   font-family: var(--dsw-font-family);
 }
 
+/* The studio's way out. It sits at the head of the tab's own toolbar because
+   the shell hides the image config sidebar here -- and the sidebar is the only
+   place the text/edit/video pills exist -- so this tab would otherwise be a
+   dead end. Deliberately quiet: it is an escape, not the primary action. */
+.videoBack {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  height: 28px;
+  padding: 0 10px;
+  flex: none;
+  border: 1px solid var(--dsw-alias-border-l1);
+  border-radius: 8px;
+  background: transparent;
+  color: var(--dsw-alias-label-secondary);
+  font-family: inherit;
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.videoBack:hover {
+  color: var(--dsw-alias-label-primary);
+  background: var(--dsw-alias-interactive-bg-hover);
+}
+
 .videoToolbar {
   display: flex;
   align-items: center;

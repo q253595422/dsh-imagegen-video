@@ -3481,6 +3481,7 @@ export function ImageGenPanel(props: {
                 onAddToConversation={addClipToConversation}
                 onAddToCanvas={addClipToCanvas}
                 conversationBusyKey={addingToConversation === null ? null : String(addingToConversation)}
+                onExit={() => { openTab('text') }}
               />
             </section>
           ) : null}

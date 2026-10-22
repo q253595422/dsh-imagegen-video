@@ -104,6 +104,15 @@ export interface VideoPanelProps {
    * board and the history sidebar use.
    */
   onAddToCanvas?: (url: string, mime?: string, duration?: number, title?: string) => void
+  /**
+   * Leave the studio for the image composer.
+   *
+   * The shell hides the image config sidebar on this tab (two composers must
+   * never show at once), and that sidebar is the only place the text/edit/video
+   * pills are rendered -- so without this the tab is a dead end. Supplied by
+   * the parent because it owns the workspace/tab switch.
+   */
+  onExit?: () => void
 }
 
 export function VideoPanel(props: VideoPanelProps) {
@@ -363,9 +372,25 @@ export function VideoPanel(props: VideoPanelProps) {
   const frameHint = mode === 'image' || mode === 'reference' ? tt('video.requiredImage')
     : mode === 'keyframe' ? tt('video.requiredFirstFrame') : ''
 
+  // One definition, rendered by BOTH branches: the no-model branch returns
+  // before the toolbar exists, and that branch is the one where the user most
+  // needs a way out -- a screen with no models has nothing else to click.
+  const exitButton = props.onExit === undefined ? null : (
+    <button
+      type="button"
+      className={css.videoBack}
+      data-video-back=""
+      title={tt('video.back')}
+      onClick={() => { props.onExit!() }}
+    >
+      <span aria-hidden="true">←</span> {tt('video.back')}
+    </button>
+  )
+
   if (videoModels.length === 0) {
     return (
       <div className={css.videoWorkspace}>
+        <header className={css.videoToolbar}>{exitButton}</header>
         <div className={css.videoEmpty}>
           <h3>{tt('video.noModel')}</h3>
           <p>{tt('video.noModelHint')}</p>
@@ -377,6 +402,7 @@ export function VideoPanel(props: VideoPanelProps) {
   return (
     <div className={css.videoWorkspace}>
       <header className={css.videoToolbar}>
+        {exitButton}
         <div className={css.videoModes} role="tablist" aria-label={tt('mode.video')}>
           {availableModes.map((candidate, index) => (
             <button

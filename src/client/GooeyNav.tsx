@@ -152,11 +152,14 @@ export function GooeyNav(props: {
     }
   }, [activeIndex])
 
-  /** Move the selection with the gooey burst; a no-op on the active tab, so a
-   *  click and a keypress take the same path. */
+  /** Move the selection with the gooey burst; the callback always fires, so a
+   * click and a keypress take the same path even onto the active tab. */
   const select = (index: number, element: HTMLElement | null): void => {
-    if (index === activeIndexRef.current) return
-    if (element !== null) burstRef.current(element)
+    // The burst is an animation for a CHANGE of tab; the callback is a request
+    // to GO somewhere. Skipping both made 普通生图 a no-op on any workspace
+    // that maps onto the same index it already occupied -- the video tab does,
+    // and that left the user with no way back to the image composer.
+    if (index !== activeIndexRef.current && element !== null) burstRef.current(element)
     onSelect(index)
   }
 
