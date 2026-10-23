@@ -5,6 +5,77 @@ Attribution for third-party code is in [NOTICE](./NOTICE).
 
 ## Releases
 
+### 1.16.0 — 视频历史有封面了，侧栏不再猜宿主的类名
+
+- **视频历史此前没有封面，这是设计遗漏。** The host never generated a poster
+  frame when saving a clip, and `poster` was only populated when the upstream
+  happened to return `last_frame_url` — so every row rendered the same film
+  glyph. New `src/video-poster.ts` + `src/video-tools.ts` extract a frame with
+  the local ffmpeg at 10% of the duration (frame 0 is routinely a black frame
+  or a transition), scale it to 320px wide, and store it as
+  `<clip名>-poster.jpg`. `src/video-store.ts` gains `StoredVideoFile.posterFile`
+  and serves it through the existing `poster` field, so
+  `VideoHistoryFile.poster` keeps its meaning — an upstream URL or a same-origin
+  host-extracted one, either way just an `<img src>`.
+- **老记录惰性回填，且这一次请求内做完。** Three defects stacked here:
+  `BACKFILL_BATCH = 3` left the rest to "the next request"; the panel's
+  `initialDataRequestedRef` let `loadInitialData()` run only once per panel
+  lifetime on HEAD, so that request never came; and one unreadable clip blocked
+  the head of the queue forever. Now `drainVideoPosters()` empties the backlog
+  within the request, `posterFailures` (`src/video-store.ts:348`) remembers
+  clips that fail so they cost one slot instead of all of them, and the drain's
+  fixed point is `attempted === 0` rather than `filled === 0` — a batch whose
+  three slots were all unreadable clips fills nothing yet must not stop the
+  drain. `src/routes.ts:2501` keeps the drain unawaited but adds the `.catch`
+  an unawaited rejection needs: the host's fail-loud handler would otherwise
+  turn one unwritable index into `proc.exit(1)`.
+- **侧栏插件条目不再猜宿主的 class 名。** `sidebar-entry.ts` matched
+  `[class*="logoRow"]`-style guesses; the host re-hashes CSS Module class names
+  every release, and a selector that stops matching fails silently — the entry
+  simply disappears. It now reads the slot anchors the host writes into the DOM
+  (`[data-slot="sidebar.workspaces"]`, `sidebar.brand.mark`/`.name`,
+  `sidebar.footer.action`, `sidebar.settings`), which are a contract rather than
+  a build artifact. The middle-column takeover moves the same way:
+  `MAIN_SLOT_ANCHOR = '[data-slot="main"]'` plus `boxAncestor()`, which skips
+  the `display: contents` anchor itself for the ancestor that actually paints a
+  box.
+- **主题切换不再读 OS 偏好。** `surface-theme.ts` watched
+  `prefers-color-scheme`, but DSH resolves `system` itself and writes the answer
+  onto `body[data-ds-dark-theme]` — the media query was a second source of truth
+  that could disagree with the palette actually painted, leaving nav text
+  unreadable after a switch. It now observes only the attributes the host
+  writes.
+- **拖拽监听不再泄漏。** The chat divider's drag bound three window listeners
+  and `cursor`/`user-select` on `<html>` that nothing released after the element
+  was destroyed. `stopResizerDragWatch` is now held and released by the mount
+  lifetime.
+- **「看起来像原生」变成可检查的规则。** New `docs/native-ui-contract.md`
+  (319 lines) plus `scripts/verify-native-ui.mjs` (347 lines) enforcing eight
+  rules — literal colors, literal shadows, hardcoded radii, off-scale font
+  sizes, `prefers-color-scheme`, tokens DSH does not define, `[class*=]`
+  guessing, and theme read from the DOM. Wired into `pnpm test` after
+  `verify-reproducible`. 18 `*.module.css` files under `src/client/` were
+  migrated onto the tokens.
+- **`pnpm studio:preview`** builds the whole panel into a single-file preview
+  bundle and shoots light and dark states in a real Chrome with five in-page
+  audits. The 6MB artifact is gitignored.
+- **Dependency:** `@deepseek-ai/dsh-client-ui-primitives`
+  `0.1.2-alpha.2` → `0.2.1-rc.2` (the version the host actually ships; the old
+  one hardcoded 14px/18px radii where the new one uses
+  `var(--dsw-radius-md)`/`var(--dsw-radius-sm)`), plus the `0.2.1-rc.2` dev
+  dependencies it needs at pack time — `primitives@0.2.1` ships an empty
+  `dependencies` and degrades to unresolved globals if they are not declared.
+- **Cost, stated plainly:** the video row's thumbnail box goes from 54×54 to
+  52×52. `.historyThumbPlaceholder[data-video-thumb]` has had a 1px border since
+  HEAD, but `.panel *`'s `box-sizing: border-box` cannot reach it (the history
+  list is portalled into the sidebar host, outside the `.panel` subtree, and the
+  host ships no universal reset) — so 54×54 was the measured size all along.
+  Adding the rule makes clip rows match image rows; the net effect is that
+  video rows are 2px smaller. `.pptBadge` contrast goes 2.79:1 → 5.53:1.
+- Full detail, including the end-to-end measurement that the first listing is
+  always 0/10 covered and only the client's follow-up read makes the posters
+  appear, is in `docs/releases/v1.16.0.md`.
+
 ### 1.15.3 — 视频工作室不再是死路
 
 - **生视频标签页此前无法返回生图。** The shell hides the image config sidebar
