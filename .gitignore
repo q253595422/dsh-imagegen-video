@@ -13,5 +13,8 @@ node_modules/
 /docs/promo/src/frames/
 # `pnpm run ppt:preview` 的产物：单文件组件预览包，用于 pnpm run test:ppt-browser。
 /.ppt-preview/
+# `pnpm run studio:preview` + `scripts/studio-preview-shot.mjs` 的产物：6MB 预览包
+# 与明暗两态截图。属一次性验收材料，不进仓库。
+/.studio-preview/
 # macOS Finder 目录元数据：每次浏览目录都会重新生成，不属于仓库内容。
 .DS_Store

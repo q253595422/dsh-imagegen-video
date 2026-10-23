@@ -55,6 +55,63 @@ const SIZES = ['auto', '1:1', '3:4', '4:3', '9:16', '2:3', '3:2', '16:9', '21:9'
 /** Re-check Releases while the panel stays open; the host caches for 15 minutes. */
 const UPDATE_CHECK_INTERVAL_MS = 30 * 60_000
 
+/** Follow-up reads of the clip list while the host drains poster frames.
+ *  Offsets from the first listing rather than gaps between attempts: the host's
+ *  drain is one bounded pass (~4s), so 2s catches the cheap clips and 5s is the
+ *  single look taken after that pass should have finished. Two timers, then it
+ *  stops for good — a permanent poller for a decoration is not worth the reads. */
+const POSTER_REFRESH_DELAYS_MS = [2000, 5000] as const
+
+/** A clip the host may yet decorate is one whose row is showing a glyph right
+ *  now: `poster` is either absent, or an empty string, and `videoRowOf` treats
+ *  both as "no still" — so keying the refetch off exactly that predicate keeps
+ *  "needs a poster" and "shows the film icon" the same condition. */
+function needsPosterBackfill(entries: VideoHistoryEntry[]): boolean {
+  return entries.some(entry => entry.videos.some(file => file.poster === undefined || file.poster === ''))
+}
+
+/** Fold freshly read posters into the rows the sidebar is already showing.
+ *
+ *  Only `poster` is copied, and only for an entry that is still in `current`.
+ *  A follow-up read is issued *before* its answer arrives, so the list it
+ *  returns describes the host as it was when the request left — taking that
+ *  list as the new state would undo a delete made during the window (the
+ *  removed clip is still in the answer) and would also drop a clip stored
+ *  during it (that clip is not in the answer yet). Both are avoided here
+ *  without extra bookkeeping: `current` stays the sole source of *which rows
+ *  exist*, and the answer may only fill in the still that is missing.
+ *
+ *  Returns `current` itself when nothing was filled so an idle follow-up read
+ *  costs no re-render. */
+function withBackfilledPosters(current: VideoHistoryEntry[], fresh: VideoHistoryEntry[]): VideoHistoryEntry[] {
+  const byId = new Map(fresh.map(entry => [entry.id, entry]))
+  let changed = false
+  const next = current.map(entry => {
+    const update = byId.get(entry.id)
+    if (update === undefined) return entry
+    // Paired by `url`, not by index: a clip's own file list is the same list in
+    // both answers, but its order is not something this side controls, and
+    // attaching one clip's still to another would be worse than no still.
+    const posterByUrl = new Map<string, string>()
+    for (const file of update.videos) {
+      if (file.poster !== undefined && file.poster !== '') posterByUrl.set(file.url, file.poster)
+    }
+    if (posterByUrl.size === 0) return entry
+    let entryChanged = false
+    const videos = entry.videos.map(file => {
+      if (file.poster !== undefined && file.poster !== '') return file
+      const poster = posterByUrl.get(file.url)
+      if (poster === undefined) return file
+      entryChanged = true
+      return { ...file, poster }
+    })
+    if (!entryChanged) return entry
+    changed = true
+    return { ...entry, videos }
+  })
+  return changed ? next : current
+}
+
 const SIZE_KEYS: Record<string, 'size.auto' | 'size.square' | 'size.portrait34' | 'size.landscape43' | 'size.portrait916' | 'size.portrait23' | 'size.landscape32' | 'size.wide169' | 'size.ultrawide21'> = {
   auto: 'size.auto',
   '1:1': 'size.square',
@@ -574,14 +631,21 @@ interface UnifiedHistoryRow {
 
 /** Adapt one video-history entry into a sidebar row. */
 function videoRowOf(entry: VideoHistoryEntry): UnifiedHistoryRow {
+  // The host extracts a poster frame when it saves a clip, so most rows now
+  // have a still to show; a clip saved before that existed has none, and the
+  // thumbnail slot falls back to the film glyph.
+  //
+  // The row still never mounts a <video>: a list of thirty clips each holding
+  // a decoder is the cost this branch exists to avoid, and a poster is a plain
+  // still the browser can lazy-load like any other image.
+  const poster = entry.videos[0]?.poster
   return {
     key: `video:${entry.id}`,
     kind: 'video',
     createdAt: entry.createdAt,
     prompt: entry.prompt,
     models: [entry.model],
-    // A clip has no poster frame of its own, so the row renders a film icon
-    // rather than paying for a video element in the list.
+    ...poster === undefined || poster === '' ? {} : { thumbUrl: poster },
     meta: `${entry.aspectRatio} · ${entry.resolution} · ${entry.seconds}s`,
     entry,
   }
@@ -1185,6 +1249,48 @@ export function ImageGenPanel(props: {
     initialDataRequestedRef.current = true
     loadInitialData()
   }, [active, loadInitialData])
+
+  // The host writes poster frames *after* it has answered the first listing, so
+  // a list read once at mount keeps showing the film glyph for clips whose still
+  // simply had not been extracted yet. Follow up while the panel is open; the
+  // first load still paints immediately and nothing here is awaited on the
+  // render path (requirement: non-blocking).
+  const posterRefreshScheduledRef = useRef(false)
+  const posterRefreshTimersRef = useRef<number[]>([])
+  const posterRefreshAliveRef = useRef(true)
+  useEffect(() => {
+    // Set on setup, not just left at its initial value: a double-invoked mount
+    // (StrictMode, or a remount that reuses the ref) runs the cleanup below and
+    // then sets up again, and a flag only ever cleared would leave the panel
+    // permanently refusing its own answers.
+    posterRefreshAliveRef.current = true
+    return () => {
+      posterRefreshAliveRef.current = false
+      for (const timer of posterRefreshTimersRef.current) window.clearTimeout(timer)
+      posterRefreshTimersRef.current = []
+    }
+  }, [])
+  useEffect(() => {
+    if (!active || posterRefreshScheduledRef.current) return
+    // Only clips that are still showing a glyph are worth another read; a list
+    // that is already fully decorated must cost zero follow-up requests.
+    if (!needsPosterBackfill(videoHistory)) return
+    posterRefreshScheduledRef.current = true
+    posterRefreshTimersRef.current = POSTER_REFRESH_DELAYS_MS.map(delay => window.setTimeout(() => {
+      api.videoHistoryList()
+        .then(entries => {
+          // Unmounted between the timer firing and the answer landing: setting
+          // state now would warn and, worse, keep the dead list alive.
+          if (!posterRefreshAliveRef.current) return
+          setVideoHistory(current => withBackfilledPosters(current, entries))
+        })
+        .catch(() => {
+          // The first listing already succeeded, so what is on screen is
+          // correct — this read only decorates it. Reporting it on the
+          // sidebar's error line would claim the list failed to load.
+        })
+    }, delay))
+  }, [active, api, videoHistory])
 
   /** Retry after a failed first load: un-claim the one-shot read, then re-run it. */
   const retryInitialData = (): void => {
@@ -2514,11 +2620,18 @@ export function ImageGenPanel(props: {
     }
     const onUp = (): void => {
       window.removeEventListener('pointermove', onMove)
+      window.removeEventListener('pointerup', onUp)
+      window.removeEventListener('pointercancel', onUp)
       document.documentElement.style.removeProperty('cursor')
       document.documentElement.style.removeProperty('user-select')
     }
     window.addEventListener('pointermove', onMove)
-    window.addEventListener('pointerup', onUp, { once: true })
+    window.addEventListener('pointerup', onUp)
+    // A system interruption (touch scroll takeover, an OS dialog, a platform
+    // alt-tab) ends the gesture without ever delivering `pointerup`. Listening
+    // only for `up` left `pointermove` bound to the window and `cursor` /
+    // `user-select` pinned on <html> until the page was reloaded.
+    window.addEventListener('pointercancel', onUp)
     document.documentElement.style.setProperty('cursor', 'col-resize')
     document.documentElement.style.setProperty('user-select', 'none')
   }
@@ -2651,15 +2764,20 @@ export function ImageGenPanel(props: {
                     }
                   }}
                 >
-                  {isVideoRow
-                    ? <span className={css.historyThumbPlaceholder} data-video-thumb="" title={tt('history.video')} aria-label={tt('history.video')}>
-                        <svg viewBox="0 0 16 16" width="16" height="16" fill="none" stroke="currentColor" strokeWidth="1.4" strokeLinejoin="round" aria-hidden="true">
-                          <rect x="1.8" y="3.6" width="9.4" height="8.8" rx="1.4" />
-                          <path d="M11.2 8.2l3.2-2.1v3.8l-3.2-1.7z" fill="currentColor" stroke="none" />
-                        </svg>
-                      </span>
-                    : row.thumbUrl !== undefined
-                      ? <img className={css.historyThumb} src={row.thumbUrl} alt="" loading="lazy" decoding="async" />
+                  {/* Order matters: a still (a generated image, or a clip's
+                      poster frame) is checked first because both kinds of row
+                      can now carry one. `data-video-thumb` stays on the glyph
+                      fallback alone — it is what tints the icon for a clip, so
+                      putting it on an <img> would recolour the picture. */}
+                  {row.thumbUrl !== undefined
+                    ? <img className={css.historyThumb} src={row.thumbUrl} alt="" loading="lazy" decoding="async" />
+                    : isVideoRow
+                      ? <span className={css.historyThumbPlaceholder} data-video-thumb="" title={tt('history.video')} aria-label={tt('history.video')}>
+                          <svg viewBox="0 0 16 16" width="16" height="16" fill="none" stroke="currentColor" strokeWidth="1.4" strokeLinejoin="round" aria-hidden="true">
+                            <rect x="1.8" y="3.6" width="9.4" height="8.8" rx="1.4" />
+                            <path d="M11.2 8.2l3.2-2.1v3.8l-3.2-1.7z" fill="currentColor" stroke="none" />
+                          </svg>
+                        </span>
                       : <span className={css.historyThumbPlaceholder} />}
                   <span className={css.historyInfo}>
                     <span className={css.historyPrompt}>{row.prompt}</span>

@@ -17,7 +17,10 @@
   align-items: baseline;
   gap: 8px;
   margin: 0;
-  color: var(--dsw-alias-state-danger-primary, #b33535);
+  /* `state-danger-primary` never existed in DSH's token set; an undefined custom
+     property drops the whole declaration, so this text had NO colour at all.
+     `state-error-primary` is the real token. */
+  color: var(--dsw-alias-state-error-primary, #ec1313);
   font-size: inherit;
   overflow-wrap: anywhere;
 }
@@ -38,7 +41,7 @@
 }
 
 .toggle:hover { color: var(--dsw-alias-label-primary); }
-.toggle:focus-visible { outline: 2px solid var(--dsw-alias-brand-primary); outline-offset: 2px; border-radius: 3px; }
+.toggle:focus-visible { outline: 2px solid var(--dsw-alias-brand-primary); outline-offset: 2px; border-radius: var(--dsw-radius-xs); }
 
 /* The original string, unchanged: monospace, selectable, scrolls sideways on a
    long single-line body, and capped in height so a stack trace cannot push the
@@ -50,7 +53,7 @@
   padding: 8px 10px;
   overflow: auto;
   border: 1px solid var(--dsw-alias-border-l2);
-  border-radius: 8px;
+  border-radius: var(--dsw-radius-sm);
   background: var(--dsw-alias-bg-layer-3);
   color: var(--dsw-alias-label-secondary);
   font-family: ui-monospace, SFMono-Regular, Menlo, monospace;

@@ -9,16 +9,32 @@
  * the browser pulls bytes lazily through the video file route, which also
  * supports Range so the <video> element can seek.
  *
- * Framework-free (node:fs only) so the route layer can drive it directly.
+ * Storage itself is still node:fs only; the one exception is poster extraction
+ * (`video-poster.ts`), which shells out to a local ffmpeg because there is no
+ * other way to decode an mp4. It is invoked only after the clip bytes are
+ * already on disk, and it is allowed to fail silently — see the note on
+ * {@link appendVideoHistory}.
  */
 
 import { promises as fs } from 'node:fs'
 import path from 'node:path'
 import { VIDEO_API, type VideoDirectorPlan, type VideoHistoryEntry, type VideoHistoryEntryInput, type VideoMode } from './protocol.ts'
 import { imageDataRoot } from './image-storage-path.ts'
+import { extractPoster } from './video-poster.ts'
 
 /** Cap on retained video entries (clips are large: keep the list short). */
 export const VIDEO_HISTORY_MAX = 30
+
+/**
+ * Entries backfilled per call, so one request cannot spawn many ffmpegs.
+ *
+ * Three is the responsiveness half of a trade-off, not a correctness bound:
+ * {@link drainVideoPosters} repeats the batch until the backlog is empty, so
+ * the whole history gets posters from a single panel open. Do not raise this
+ * to "solve" a slow backfill — it only decides how many spawns happen before
+ * the first pause, and the drain already covers the rest.
+ */
+const BACKFILL_BATCH = 3
 
 function videoRoot(): string { return path.join(imageDataRoot(), 'videos') }
 function indexPath(): string { return path.join(videoRoot(), 'index.json') }
@@ -39,7 +55,10 @@ interface StoredVideoFile {
   file: string
   mime: string
   duration?: number
+  /** Upstream poster URL, when the provider supplied one. */
   poster?: string
+  /** Locally extracted poster file name (e.g. `<id>-<n>-poster.jpg`). */
+  posterFile?: string
   revisedPrompt?: string
 }
 
@@ -84,8 +103,17 @@ function mimeOfFile(file: string): string {
     case '.webm': return 'video/webm'
     case '.mov': return 'video/quicktime'
     case '.mkv': return 'video/x-matroska'
+    case '.jpg': case '.jpeg': return 'image/jpeg'
     default: return 'video/mp4'
   }
+}
+
+/** Suffix marking a locally extracted poster (never a clip's own name). */
+const POSTER_SUFFIX = '-poster.jpg'
+
+/** The poster file name derived from one stored clip's name. */
+function posterNameFor(file: string): string {
+  return file.replace(/\.(mp4|webm|mov|mkv)$/i, `${POSTER_SUFFIX}`)
 }
 
 /** Sanitize an entry id for use as a file-name prefix. */
@@ -140,7 +168,12 @@ function isStoredEntry(value: unknown): value is StoredEntry {
 /** Remove one entry's clip files (best effort). */
 async function removeEntryFiles(entry: StoredEntry): Promise<void> {
   for (const video of entry.videos) {
+    // The poster outlives a mistaken name only by accident: drop it with the
+    // clip, or a re-saved entry would leave an orphan JPEG behind forever.
     try { await fs.rm(path.join(filesDir(), video.file), { force: true }) } catch { /* ignore */ }
+    if (video.posterFile !== undefined) {
+      try { await fs.rm(path.join(filesDir(), video.posterFile), { force: true }) } catch { /* ignore */ }
+    }
   }
 }
 
@@ -165,6 +198,7 @@ function toWire(entry: StoredEntry): VideoHistoryEntry {
       mime: video.mime,
       ...video.duration === undefined ? {} : { duration: video.duration },
       ...video.poster === undefined ? {} : { poster: video.poster },
+      ...video.posterFile === undefined ? {} : { poster: fileUrl(video.posterFile) },
       ...video.revisedPrompt === undefined ? {} : { revisedPrompt: video.revisedPrompt },
     })),
     ...entry.refName === undefined ? {} : { refName: entry.refName },
@@ -187,6 +221,12 @@ export async function listVideoHistory(): Promise<VideoHistoryEntry[]> {
  * The engine has already downloaded the bytes, so the caller passes them here
  * rather than a URL: this keeps the store free of network access and means a
  * clip that never downloaded can never appear in the history.
+ *
+ * Extraction of the poster lives here rather than at the call sites because it
+ * is a property of *storing* a clip, not of *making* one: every path that saves
+ * a clip wants a thumbnail, and the bytes are already on disk by the time we
+ * could ask for one. A failed extraction is not an error — see
+ * {@link extractPoster}, which never throws.
  */
 export async function appendVideoHistory(input: VideoHistoryEntryInput & { files: Array<{ bytes: Buffer; mime: string; duration?: number; poster?: string; revisedPrompt?: string }> }): Promise<VideoHistoryEntry[]> {
   return mutateVideos(async () => {
@@ -198,13 +238,21 @@ export async function appendVideoHistory(input: VideoHistoryEntryInput & { files
         const file = input.files[index]!
         const name = `${prefix}-${index}.${extensionOf(file.mime)}`
         await fs.writeFile(path.join(filesDir(), name), file.bytes)
-        stored.push({
+        const record: StoredVideoFile = {
           file: name,
           mime: file.mime,
           ...file.duration === undefined ? {} : { duration: file.duration },
           ...file.poster === undefined ? {} : { poster: file.poster },
           ...file.revisedPrompt === undefined ? {} : { revisedPrompt: file.revisedPrompt },
-        })
+        }
+        // An upstream poster wins: it is the frame the provider chose, and the
+        // user may be on a channel where that frame is the correct branding.
+        if (record.poster === undefined) {
+          const posterFile = posterNameFor(name)
+          const ok = await extractPoster({ input: path.join(filesDir(), name), output: path.join(filesDir(), posterFile) })
+          if (ok) record.posterFile = posterFile
+        }
+        stored.push(record)
       }
     } catch (error) {
       await removeEntryFiles({ videos: stored } as StoredEntry)
@@ -263,9 +311,16 @@ export async function clearVideoHistory(): Promise<VideoHistoryEntry[]> {
  * The pattern is exactly what this store writes — `<id>-<index>.<ext>` — so
  * the route can never escape the files directory through `..` or an absolute
  * path, and `size` is returned so the route can answer Range requests.
+ *
+ * A second, independent branch accepts the extracted poster
+ * (`<id>-<index>-poster.jpg`). It is a separate alternation rather than an
+ * optional group in the first one so the clip pattern stays as strict as it
+ * was: a poster still cannot be named `<id>-poster.jpg`, cannot use another
+ * index than its clip's, and still cannot carry a path.
  */
 export async function readVideoFile(file: string): Promise<{ path: string; size: number; mime: string } | undefined> {
-  if (!/^[a-zA-Z0-9][a-zA-Z0-9-]*-[0-9]+\.(mp4|webm|mov|mkv)$/.test(file)) return undefined
+  if (!/^[a-zA-Z0-9][a-zA-Z0-9-]*-[0-9]+\.(mp4|webm|mov|mkv)$/.test(file)
+    && !/^[a-zA-Z0-9][a-zA-Z0-9-]*-[0-9]+-poster\.(jpg|jpeg)$/.test(file)) return undefined
   const absolute = path.join(filesDir(), file)
   try {
     const stat = await fs.stat(absolute)
@@ -276,8 +331,172 @@ export async function readVideoFile(file: string): Promise<{ path: string; size:
   }
 }
 
-/** Remove every stored clip (used when the data path is repointed). */
+/**
+ * Clip file names whose poster extraction already failed.
+ *
+ * Without this, head-of-line blocking is guaranteed rather than merely
+ * possible: `pending` takes the first {@link BACKFILL_BATCH} entries that lack
+ * a poster, so if the newest few clips are corrupt (or the machine lost its
+ * ffmpeg, or the file was deleted but the index row remains) those entries sit
+ * at the front of every call, fail again, and `filled` stays 0 — so the index
+ * is never rewritten, and every healthy clip behind them never gets a poster.
+ * Remembering the failure breaks that cycle at the cost of one retry.
+ *
+ * Keyed by clip file name, so it survives a repointed data directory without
+ * needing any cleanup: a removed clip simply stops matching anything.
+ */
+const posterFailures = new Set<string>()
+
+/**
+ * Fill in posters for entries saved before posters existed. Idempotent.
+ *
+ * Two reasons this is not just "run it at startup": the data directory is
+ * repointed at resolve time (`setImageDataRoot`), so at startup there is no
+ * known history to fix; and the user may never open the history panel at all,
+ * in which case ffmpeg should never be spawned on their behalf.
+ *
+ * Bounded to {@link BACKFILL_BATCH} entries per call so one batch cannot hold
+ * the mutation queue for long. That alone would leave a backlog behind on a
+ * machine where no further request ever arrives, which is why
+ * {@link drainVideoPosters} exists: it repeats this until the backlog is gone.
+ *
+ * @returns how many entries gained a poster in this call.
+ */
+export async function backfillVideoPosters(): Promise<number> {
+  const outcome = await backfillVideoPostersDetailed()
+  return outcome.filled
+}
+
+/**
+ * {@link backfillVideoPosters} with the two numbers a caller actually needs to
+ * decide whether the backlog is gone.
+ *
+ * `filled` alone cannot answer that question, and the failure is not
+ * theoretical: if the newest three clips are all unreadable, the first batch
+ * selects exactly those three, fails all three, fills nothing — and a loop
+ * keyed on `filled > 0` stops there, leaving every healthy clip behind them
+ * coverless forever. `attempted` distinguishes "nothing left to try" (real
+ * fixed point) from "this batch happened to select only unfillable entries"
+ * (progress was made: each failure is remembered, so the next batch selects
+ * different entries).
+ *
+ * Kept separate from {@link backfillVideoPosters} rather than widening its
+ * return type: that function is part of the plugin's exported surface
+ * (src/index.ts) and is used as a plain counter, and changing its signature
+ * would break that contract for no gain.
+ */
+async function backfillVideoPostersDetailed(): Promise<{ filled: number; attempted: number }> {
+  return mutateVideos(async () => {
+    const entries = await readIndex()
+    // Oldest-first among the missing ones is irrelevant here (the index is
+    // newest-first), so take the first few: those are the most recent clips,
+    // which are the ones the user is most likely to be looking at. Entries
+    // whose extraction already failed are skipped — see `posterFailures`.
+    const pending = entries
+      .filter(entry => entry.videos.some(video => video.poster === undefined && video.posterFile === undefined && !posterFailures.has(video.file)))
+      .slice(0, BACKFILL_BATCH)
+    let filled = 0
+    // Counts clips this batch actually ran ffmpeg on — including the ones that
+    // failed, because a failure is what shrinks the set of candidates.
+    let attempted = 0
+    for (const entry of pending) {
+      // One poster per entry: the first clip is the representative one, and
+      // multi-clip entries are rare enough that the rest would be noise.
+      const target = entry.videos.find(video => video.poster === undefined && video.posterFile === undefined && !posterFailures.has(video.file))
+      if (target === undefined) continue
+      const posterFile = posterNameFor(target.file)
+      const ok = await extractPoster({
+        input: path.join(filesDir(), target.file),
+        output: path.join(filesDir(), posterFile),
+      })
+      attempted++
+      if (!ok) {
+        // Remember it, or this entry blocks everything behind it forever.
+        posterFailures.add(target.file)
+        continue
+      }
+      // The name was tried and succeeded: forget any earlier failure, in case
+      // a future entry reuses this exact file name.
+      posterFailures.delete(target.file)
+      target.posterFile = posterFile
+      filled++
+    }
+    // Only rewrite the index when something actually changed: a call that
+    // found nothing to do should leave the file (and its mtime) alone.
+    if (filled > 0) await writeIndex(entries)
+    return { filled, attempted }
+  })
+}
+
+/**
+ * The in-flight drain, if any, so repeated requests share one run.
+ *
+ * `undefined` means "nothing is draining right now"; a promise means "a drain
+ * is running (or just finished, until the next call)". Holding the finished
+ * promise until the next call is what makes the dedup work: a request that
+ * arrives while a drain is still walking the backlog joins that run instead of
+ * queueing a second one behind it.
+ */
+let drain: Promise<void> | undefined
+
+/**
+ * Drain the whole poster backlog, one {@link BACKFILL_BATCH} at a time.
+ *
+ * {@link backfillVideoPosters} on its own is not enough, and the reason is
+ * measured rather than theoretical: the panel's `initialDataRequestedRef`
+ * (src/client/ImageGenPanel.tsx:919) only lets `loadInitialData()` through once
+ * per component lifetime, and opening/closing the panel re-renders without
+ * unmounting, so the ref never resets. "The next request picks up the rest"
+ * therefore never happens — a restart with 10 old clips would fill 3 and leave
+ * 7 permanently coverless.
+ *
+ * Convergence is by `attempted`, not by `filled`: a batch that ran ffmpeg at
+ * all necessarily shrank the candidate set (every failure is remembered by
+ * `posterFailures`, every success removed a row), so `attempted === 0` —
+ * nothing selected at all — is the only real fixed point. Keying on `filled`
+ * instead would stop early in exactly the case that matters: a batch whose
+ * three slots were all taken by unreadable clips filled nothing, yet the
+ * healthy clips behind them were never touched.
+ *
+ * Serialization is inherited, not added: every batch goes through
+ * `mutateVideos()`, so a drain never spawns two ffmpegs at once and never races
+ * a concurrent `appendVideoHistory` — it merely takes its turn. The cost is
+ * that an append arriving mid-drain waits for the current batch (~130ms per
+ * clip), which is why the caller must still not await this.
+ */
+export function drainVideoPosters(): Promise<void> {
+  drain ??= (async () => {
+    try {
+      // `attempted === 0` and not `filled === 0`: see above. A batch of three
+      // unreadable clips reports attempted=3/filled=0, and the drain must keep
+      // going to reach the clips behind them.
+      while ((await backfillVideoPostersDetailed()).attempted > 0) { /* keep going */ }
+    } finally {
+      // Clear even on rejection, or one failure would wedge the module and no
+      // later request could ever retry.
+      drain = undefined
+    }
+  })()
+  return drain
+}
+
+/**
+ * Abandon any drain that is still walking a data directory we no longer use.
+ *
+ * `setImageDataRoot()` repoints every subsequent read and write, so a drain
+ * started under the old root would keep extracting into (and indexing) a
+ * directory the user has left behind. The drain cannot be interrupted
+ * mid-batch, so this waits for the batch it is in to finish and then lets the
+ * loop exit on its own: `backfillVideoPosters` re-reads the index each batch,
+ * and the new root's index has nothing to drain.
+ */
 export async function resetVideoStore(): Promise<void> {
+  if (drain !== undefined) {
+    // Swallow: the caller is wiping the store, and a drain that fails half way
+    // (it may be writing into a directory that is about to be emptied) is not
+    // the caller's problem.
+    await drain.catch(() => { /* the store is being reset anyway */ })
+  }
   const previous = await readIndex()
   for (const entry of previous) await removeEntryFiles(entry)
   await writeIndex([])

@@ -4,7 +4,10 @@
   width: min(100%, 480px);
   min-height: 0;
   max-height: 600px;
-  color: #527bfa;
+  /* The dot wave is a progress indicator, so it takes the same accent the
+     panel's own spinner uses (`state-business-primary`, #4176e6 / #7aaaff)
+     instead of a private blue that ignored the theme. */
+  color: var(--dsw-alias-state-business-primary, #4176e6);
   pointer-events: none;
 }
 
@@ -41,9 +44,9 @@
   max-width: 100%;
   padding: 14px 20px;
   border: 1px solid var(--dsw-alias-border-l1);
-  border-radius: 24px;
+  border-radius: var(--dsw-radius-panel);
   background: var(--dsw-alias-bg-layer-1);
-  box-shadow: 0 6px 30px rgb(30 50 90 / 7%);
+  box-shadow: var(--dsw-shadow-lv2);
   text-align: right;
   line-height: 1.5;
 }
@@ -61,7 +64,7 @@
 }
 
 .field[data-compact] { width: 100%; max-height: none; }
-.field[data-compact] .badge { right: 4px; bottom: 4px; padding: 8px 12px; border-radius: 16px; }
+.field[data-compact] .badge { right: 4px; bottom: 4px; padding: 8px 12px; border-radius: var(--dsw-radius-lg); }
 .field[data-compact] .title { font-size: 12px; }
 .field[data-compact] .hint { font-size: 11px; }
 

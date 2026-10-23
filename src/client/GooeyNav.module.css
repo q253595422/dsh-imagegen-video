@@ -12,12 +12,14 @@
   flex: 1 1 auto;
   /* The particle burst is the one decorative flourish in this plugin, so its
      four hues stay an accent rather than the host's brand color -- but they are
-     derived from the brand token instead of four unrelated literals, so they
-     move with the theme. */
+     derived from the brand token mixed with DSH's own static swatches instead of
+     four unrelated literals, so they move with the theme.
+     Brand here is NEUTRAL (near-black on light, near-white on dark), so each
+     mix keeps the particle legible on both surfaces: warm, white and cool. */
   --gooey-color-1: var(--dsw-alias-brand-primary, #5227ff);
-  --gooey-color-2: color-mix(in srgb, var(--dsw-alias-brand-primary, #5227ff) 45%, #ff9ffc);
-  --gooey-color-3: color-mix(in srgb, var(--dsw-alias-brand-primary, #5227ff) 55%, #ffffff);
-  --gooey-color-4: color-mix(in srgb, var(--dsw-alias-brand-primary, #5227ff) 40%, #22d3ee);
+  --gooey-color-2: color-mix(in srgb, var(--dsw-alias-brand-primary, #5227ff) 45%, var(--dsw-static-red-400, #f25a5a));
+  --gooey-color-3: color-mix(in srgb, var(--dsw-alias-brand-primary, #5227ff) 55%, var(--dsw-static-neutral-00, #ffffff));
+  --gooey-color-4: color-mix(in srgb, var(--dsw-alias-brand-primary, #5227ff) 40%, var(--dsw-static-blue-400, #60a5fa));
   position: relative;
   max-width: 100%;
   font-size: 13px;
@@ -95,7 +97,10 @@
   content: '';
   position: absolute;
   inset: 0;
-  border-radius: 10px;
+  /* The pill itself is capsular: `li` above and `.effectFilter::after` below both
+     use the cap-shape value, so this inner copy uses the tokenised cap form of
+     the same shape instead of a 10px corner that would cut the ends flat. */
+  border-radius: 999px;
   background: var(--gooey-pill);
   opacity: 0;
   transform: scale(0);

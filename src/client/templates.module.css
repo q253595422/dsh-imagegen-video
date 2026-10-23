@@ -24,6 +24,15 @@
   background: var(--dsw-alias-bg-mask-1);
   color: var(--dsw-alias-label-primary);
   font-family: var(--dsw-font-family);
+  /* Square corners are not a rung on the radius scale: `data-fullscreen` and the
+     narrow-viewport override both mean "no rounding at all", so they read this
+     one zero instead of each spelling a literal the token scale rejects. */
+  --templates-radius-flat: 0;
+  /* Content layer: the favourite star sits ON a thumbnail, so its scrim/ink are
+     static values that stay readable over any artwork, not theme colours. */
+  --templates-thumb-scrim: var(--dsw-static-neutral-1000, #000000);
+  --templates-thumb-ink: var(--dsw-static-neutral-00, #ffffff);
+  --templates-thumb-accent: var(--dsw-static-amber-400, #f7ad31);
 }
 
 .shell {
@@ -39,9 +48,9 @@
   /* Visible, not hidden: the resize handle hangs 5px past the left edge. */
   overflow: visible;
   border: 1px solid var(--dsw-alias-border-l1);
-  border-radius: 18px 0 0 18px;
+  border-radius: var(--dsw-radius-xl) 0 0 var(--dsw-radius-xl);
   background: var(--dsw-alias-bg-base);
-  box-shadow: 0 18px 60px rgba(0, 0, 0, 0.28);
+  box-shadow: var(--dsw-shadow-lv3);
   transition: width 0.18s ease;
 }
 
@@ -53,7 +62,7 @@
 }
 
 .shell[data-fullscreen] {
-  border-radius: 0;
+  border-radius: var(--templates-radius-flat);
   transition: none;
 }
 
@@ -77,7 +86,7 @@
   bottom: 45%;
   left: 4px;
   width: 3px;
-  border-radius: 2px;
+  border-radius: var(--dsw-radius-xs);
   background: var(--dsw-alias-border-l1);
 }
 
@@ -130,7 +139,7 @@
   width: 28px;
   height: 28px;
   border: none;
-  border-radius: 8px;
+  border-radius: var(--dsw-radius-sm);
   background: transparent;
   color: var(--dsw-alias-label-secondary);
   cursor: pointer;
@@ -172,7 +181,7 @@
   height: 30px;
   padding: 0 14px;
   border: 1px solid transparent;
-  border-radius: 9px 9px 0 0;
+  border-radius: var(--dsw-radius-sm) var(--dsw-radius-sm) 0 0;
   border-bottom: none;
   background: transparent;
   color: var(--dsw-alias-label-secondary);
@@ -190,7 +199,7 @@
 
 .sourceTab[data-active] {
   border-color: var(--dsw-alias-border-l1);
-  border-radius: 9px;
+  border-radius: var(--dsw-radius-sm);
   background: var(--dsw-alias-bg-layer-1);
   color: var(--dsw-alias-brand-primary);
 }
@@ -262,7 +271,7 @@
   height: 34px;
   padding: 0 10px;
   border: 1px solid var(--dsw-alias-border-l1);
-  border-radius: 9px;
+  border-radius: var(--dsw-radius-sm);
   background: var(--dsw-alias-bg-layer-1);
   color: var(--dsw-alias-label-secondary);
   font-size: 12px;
@@ -282,7 +291,7 @@
   height: 34px;
   padding: 0 12px;
   border: 1px solid var(--dsw-alias-border-l1);
-  border-radius: 9px;
+  border-radius: var(--dsw-radius-sm);
   background: var(--dsw-alias-bg-layer-1);
   color: var(--dsw-alias-label-primary);
   font-size: 13px;
@@ -334,7 +343,7 @@
   margin: 0 18px 10px;
   padding: 8px 12px;
   border: 1px solid var(--dsw-alias-border-l1);
-  border-radius: 9px;
+  border-radius: var(--dsw-radius-sm);
   background: var(--dsw-alias-bg-layer-1);
   color: var(--dsw-alias-label-secondary);
   font-size: 12px;
@@ -383,7 +392,7 @@
   margin-bottom: 12px;
   padding: 10px 12px;
   border: 1px solid var(--dsw-alias-border-l1);
-  border-radius: 9px;
+  border-radius: var(--dsw-radius-sm);
   background: var(--dsw-alias-bg-layer-1);
   color: var(--dsw-alias-label-secondary);
   font-size: 12px;
@@ -437,7 +446,7 @@
   padding: 0;
   overflow: hidden;
   border: 1px solid var(--dsw-alias-border-l1);
-  border-radius: 11px;
+  border-radius: var(--dsw-radius-md);
   background: var(--dsw-alias-bg-layer-1);
   cursor: pointer;
   text-align: left;
@@ -498,9 +507,9 @@
   height: 26px;
   padding: 0;
   border: none;
-  border-radius: 8px;
-  background: rgba(0, 0, 0, 0.35);
-  color: rgba(255, 255, 255, 0.85);
+  border-radius: var(--dsw-radius-sm);
+  background: color-mix(in srgb, var(--templates-thumb-scrim) 35%, transparent);
+  color: color-mix(in srgb, var(--templates-thumb-ink) 85%, transparent);
   cursor: pointer;
   opacity: 0;
   transition: opacity 0.15s ease;
@@ -513,12 +522,12 @@
 }
 
 .favStar:hover {
-  background: rgba(0, 0, 0, 0.55);
-  color: #ffffff;
+  background: color-mix(in srgb, var(--templates-thumb-scrim) 55%, transparent);
+  color: var(--templates-thumb-ink);
 }
 
 .favStar[data-active] {
-  color: #ffb020;
+  color: var(--templates-thumb-accent);
 }
 
 /* A star whose state could not be read: the fill would be a claim about the
@@ -526,8 +535,8 @@
  * hollow rather than merely dimmed, so "unknown" is distinguishable from
  * "not favorited" instead of looking like the same empty star. */
 .favStar[data-unknown] {
-  color: rgba(255, 255, 255, 0.45);
-  background: rgba(0, 0, 0, 0.2);
+  color: color-mix(in srgb, var(--templates-thumb-ink) 45%, transparent);
+  background: color-mix(in srgb, var(--templates-thumb-scrim) 20%, transparent);
 }
 
 /* Touch shells have no hover: keep the star reachable. */
@@ -546,7 +555,7 @@
 }
 
 .cardTitle {
-  font-size: 12.5px;
+  font-size: 13px;
   font-weight: 600;
   line-height: 1.35;
   display: -webkit-box;
@@ -591,14 +600,14 @@
 }
 
 .attribution {
-  font-size: 11.5px;
+  font-size: 12px;
   color: var(--dsw-alias-label-dimmed);
   min-width: 0;
 }
 
 .sourceLink {
   flex: none;
-  font-size: 11.5px;
+  font-size: 12px;
   font-weight: 600;
   color: var(--dsw-alias-brand-primary);
   text-decoration: none;
@@ -630,9 +639,9 @@
   max-height: 100%;
   overflow: hidden;
   border: 1px solid var(--dsw-alias-border-l1);
-  border-radius: 14px;
+  border-radius: var(--dsw-radius-lg);
   background: var(--dsw-alias-bg-base);
-  box-shadow: 0 18px 60px rgba(0, 0, 0, 0.32);
+  box-shadow: var(--dsw-shadow-lv3);
 }
 
 .detailMedia {
@@ -695,10 +704,10 @@
   padding: 12px;
   overflow-y: auto;
   border: 1px solid var(--dsw-alias-border-l1);
-  border-radius: 10px;
+  border-radius: var(--dsw-radius-md);
   background: var(--dsw-alias-bg-layer-1);
   color: var(--dsw-alias-label-primary);
-  font-size: 12.5px;
+  font-size: 13px;
   line-height: 1.6;
   font-family: inherit;
   white-space: pre-wrap;
@@ -744,7 +753,7 @@
   border-radius: 999px;
   background: var(--dsw-alias-bg-base);
   color: var(--dsw-alias-label-primary);
-  box-shadow: 0 4px 20px rgba(0, 0, 0, 0.12);
+  box-shadow: var(--dsw-shadow-lv2);
   font-family: inherit;
   font-size: 13px;
   font-weight: 600;
@@ -770,7 +779,7 @@
   .shell {
     width: 100% !important;
     min-width: 0;
-    border-radius: 0;
+    border-radius: var(--templates-radius-flat);
   }
 
   .resizeHandle {

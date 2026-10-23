@@ -5,7 +5,7 @@
   margin: 4px 0;
   padding: 8px 10px 10px;
   border: 1px solid var(--dsw-alias-border-l1);
-  border-radius: 8px;
+  border-radius: var(--dsw-radius-sm);
   background: var(--dsw-alias-bg-layer-1);
 }
 
@@ -51,7 +51,7 @@
   max-width: min(280px, 100%);
   overflow: hidden;
   border: 1px solid var(--dsw-alias-border-l1);
-  border-radius: 6px;
+  border-radius: var(--dsw-radius-sm);
   background: var(--dsw-alias-bg-base);
 }
 

@@ -940,7 +940,7 @@ const mainSlotPage = `<!doctype html><html><head><style>
   body { margin: 0; }
   ${scaleCss}
 </style></head><body>
-  <div class="centerCol" id="centre">
+  <div id="centre" data-dsh-imagegen-center-col>
     <div data-dsh-imagegen-view id="studio">studio</div>
     <div data-slot="main" style="display: contents">
       <div data-slot="main.conversation" style="display: contents"><div id="conversation" data-phase="hero">conversation</div></div>
@@ -1129,6 +1129,17 @@ if (slot.conversation === 'none') {
 }
 if (slot.studio === 'none') {
   console.error('\nFAIL: the studio never became visible, so the fixture proves nothing.')
+  process.exit(1)
+}
+// The other half of the same takeover: an unrelated plugin entry that sits in
+// the column is evicted. Without this assertion the rule could stop matching
+// (as it did when the column was addressed by `[class*='centerCol']` and this
+// fixture still spelled the class) and the check would stay green.
+if (slot.otherEntry !== 'none') {
+  console.error('\nFAIL: an unrelated center-column plugin entry is still rendered inside the studio.')
+  console.error('The takeover is single-occupant: only the studio view, the keyed `main`')
+  console.error('anchor and the chat resizer may stay, so everything else in the column')
+  console.error('has to yield while the studio is active.')
   process.exit(1)
 }
 console.log('main slot: the shell panel yields the column while the conversation stays')

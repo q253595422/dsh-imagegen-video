@@ -4522,13 +4522,28 @@ await check('D3 sidebar entry mounts inside desktop and unknown sidebar shells, 
     // DSH Desktop renders the upstream sidebar inside a surface of its own, so
     // the web shell markers the entry used to look for are nowhere on the path
     // and the mount silently bailed out (#20).
+    //
+    // The slot anchors below are the ones the shipped `SidebarRoot` renders (see
+    // `dsh-client-ui-sidebar`): brand marks/name inside the logo row, workspaces
+    // inside the region area, footer action and settings inside the foot. They
+    // are `display: contents` (inline, exactly as the renderer writes them), so
+    // the block that paints the box is their
+    // ancestor — that ancestor is what the studio marks and spares. A fixture
+    // without them would describe a shell that does not ship.
     + '<aside class="dshDesktopSidebarSurface">'
     + '<div class="dshDesktopUpstreamSidebar">'
     + '<div class="xUkysG_root">'
-    + '<div class="xUkysG_logoRow"><button class="xUkysG_brandButton" aria-label="DSH">DSH</button></div>'
+    + '<div class="xUkysG_logoRow"><span class="xUkysG_brandIdentity">'
+    + '<span class="xUkysG_brandMark"><span data-slot="sidebar.brand.mark" style="display: contents"></span></span>'
+    + '<span class="xUkysG_brandName"><span data-slot="sidebar.brand.name" style="display: contents"></span></span>'
+    + '</span><button class="xUkysG_brandButton" aria-label="DSH">DSH</button></div>'
     + '<button class="xUkysG_newSession" aria-label="New session">New session</button>'
     + '<div data-other-sidebar-plugin>Other plugin</div>'
-    + '<div class="xUkysG_regionArea"></div>'
+    + '<div class="xUkysG_regionArea"><div data-slot="sidebar.workspaces" style="display: contents"></div></div>'
+    + '<div class="xUkysG_footArea">'
+    + '<div class="xUkysG_footerActions"><div data-slot="sidebar.footer.action" style="display: contents"></div></div>'
+    + '<div class="xUkysG_settingsArea"><div data-slot="sidebar.settings" style="display: contents"></div></div>'
+    + '</div>'
     + '</div>'
     + '</div>'
     + '</aside>'
@@ -4640,6 +4655,13 @@ await check('D3 sidebar entry mounts inside desktop and unknown sidebar shells, 
   jsdomDocument.documentElement.setAttribute('data-dsh-imagegen-active', '')
   assert.notEqual(jsdomWindow.getComputedStyle(shellButton).display, 'none', 'the native New Session action stays visible under the shipped studio CSS')
   assert.equal(jsdomWindow.getComputedStyle(desktopRoot.querySelector('[data-other-sidebar-plugin]')).display, 'none', 'unrelated sidebar plugin entries remain hidden')
+  // The other half of the same rule, and the reason it is gated: a shell whose
+  // chrome we resolved must keep that chrome. Hiding a foreign entry is a
+  // cosmetic win; hiding the brand row or the foot is a broken sidebar.
+  for (const block of ['.xUkysG_logoRow', '.xUkysG_regionArea', '.xUkysG_footArea']) {
+    assert.notEqual(jsdomWindow.getComputedStyle(desktopRoot.querySelector(block)).display, 'none', `the shell's own ${block} block stays visible in the studio`)
+    assert.equal(desktopRoot.querySelector(block).getAttribute('data-dsh-imagegen-sidebar-block'), '', `the shell's own ${block} block is marked as chrome, not guessed by class`)
+  }
   jsdomDocument.documentElement.removeAttribute('data-dsh-imagegen-active')
   await new Promise(resolve => setTimeout(resolve, 60))
   assert.equal(warnings.length, 0, `a mounted sidebar entry logs nothing: ${warnings.join(' | ')}`)
@@ -5765,7 +5787,11 @@ await check('E1 client apply mounts the sidebar entry and studio (jsdom)', async
     await waitForSelector(jsdomDocument, '[data-dsh-select-menu]')
     const historyFilterMenu = jsdomDocument.querySelector('[data-dsh-select-menu]')
     assert.equal(historyFilterMenu.parentElement, jsdomDocument.body, 'the menu escapes sidebar clipping')
-    assert.equal(jsdomWindow.getComputedStyle(historyFilterMenu).borderRadius, '12px', 'filters use the same rounded menu as channel selection')
+    // jsdom cannot resolve custom properties, so the cascade hands back the
+    // token itself. The contract records what DSH's theme resolves it to
+    // (radius-md = 12px, docs/native-ui-contract.md), so asserting the token is
+    // both stricter and honest: a hardcoded px would fail here even at 12px.
+    assert.equal(jsdomWindow.getComputedStyle(historyFilterMenu).borderRadius, 'var(--dsw-radius-md)', 'filters use the same rounded menu as channel selection, through the native radius token')
     historyFilterMenu.dispatchEvent(new jsdomWindow.KeyboardEvent('keydown', { key: 'End', bubbles: true }))
     await new Promise(resolve => setTimeout(resolve, 20))
     assert.equal(historyFilterMenu.getAttribute('aria-activedescendant'), historyFilterMenu.querySelector('[role="option"]:last-child').id, 'End moves keyboard focus to the last option')
@@ -5783,7 +5809,12 @@ await check('E1 client apply mounts the sidebar entry and studio (jsdom)', async
     const mainSlot = centreCol.querySelector('[data-slot="main"]')
     const conversationRoot = centreCol.querySelector('[data-slot="main.conversation"] > [data-phase]')
     assert.ok(mainSlot !== null && conversationRoot !== null, 'the 0.1.5+ conversation fixture stays mounted')
-    const takeoverSelector = "html[data-dsh-imagegen-active]:not([data-dsh-taskboard-active]):not([data-dsh-ssh-active]) [class*='centerCol'] > :not([data-dsh-imagegen-view]):not([data-slot='conversation']):not([data-slot='main']):not([data-dsh-imagegen-chat-resizer])"
+    // The column is addressed by OUR mark, not by a class-name guess: the
+    // shell's `centerCol` is a build-time hash, so a `[class*='centerCol']`
+    // selector here would keep passing on a fixture that spells the class while
+    // the shipped sheet matches nothing at all.
+    assert.equal(centreCol.getAttribute('data-dsh-imagegen-center-col'), '', 'the resolved column carries our mark, which is what the sheet addresses')
+    const takeoverSelector = "html[data-dsh-imagegen-active]:not([data-dsh-taskboard-active]):not([data-dsh-ssh-active]) [data-dsh-imagegen-center-col] > :not([data-dsh-imagegen-view]):not([data-slot='conversation']):not([data-slot='main']):not([data-dsh-imagegen-chat-resizer])"
     assert.equal(mainSlot.matches(takeoverSelector), false, 'the keyed main slot survives the studio takeover')
     assert.equal(centreCol.querySelector('[data-other-plugin-entry]').matches(takeoverSelector), true, 'unrelated center-column entries are still hidden')
     // #38: a shell global panel (the plugin market page) registers into the SAME

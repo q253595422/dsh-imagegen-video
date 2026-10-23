@@ -15,7 +15,7 @@
   display: flex;
   align-items: center;
   justify-content: center;
-  background: rgb(15 23 42 / 42%);
+  background: var(--dsw-alias-bg-mask-1);
   backdrop-filter: blur(3px);
 }
 
@@ -25,9 +25,9 @@
   width: min(760px, calc(100vw - 48px));
   max-height: min(620px, calc(100vh - 64px));
   border: 1px solid var(--dsw-alias-border-l1);
-  border-radius: 14px;
+  border-radius: var(--dsw-radius-lg);
   background: var(--dsw-alias-bg-layer-1);
-  box-shadow: 0 24px 60px rgb(15 23 42 / 28%);
+  box-shadow: var(--dsw-shadow-lv3);
   overflow: hidden;
 }
 
@@ -38,7 +38,7 @@
   gap: 12px;
   padding: 14px 16px;
   border-bottom: 1px solid var(--dsw-alias-border-l1);
-  font-size: 13.5px;
+  font-size: 14px;
   color: var(--dsw-alias-label-primary);
 }
 
@@ -46,11 +46,11 @@
   border: 0;
   background: transparent;
   color: var(--dsw-alias-label-secondary);
-  font-size: 19px;
+  font-size: 18px;
   line-height: 1;
   cursor: pointer;
   padding: 2px 6px;
-  border-radius: 6px;
+  border-radius: var(--dsw-radius-sm);
 }
 
 .close:hover {
@@ -68,8 +68,8 @@
   border: 0;
   background: transparent;
   padding: 6px 10px;
-  border-radius: 8px;
-  font-size: 12.5px;
+  border-radius: var(--dsw-radius-sm);
+  font-size: 13px;
   color: var(--dsw-alias-label-secondary);
   cursor: pointer;
 }
@@ -99,7 +99,7 @@
   gap: 6px;
   padding: 6px;
   border: 1.5px solid var(--dsw-alias-border-l1);
-  border-radius: 10px;
+  border-radius: var(--dsw-radius-md);
   background: transparent;
   color: var(--dsw-alias-label-primary);
   text-align: left;
@@ -118,12 +118,14 @@
   width: 100%;
   height: 110px;
   object-fit: cover;
-  border-radius: 7px;
-  background: #000;
+  border-radius: var(--dsw-radius-sm);
+  /* Content layer: a video needs a black letterbox behind it whatever the theme
+     is, otherwise an unloaded/transparent frame shows the card through. */
+  background: var(--dsw-static-neutral-1000, #000);
 }
 
 .cardTitle {
-  font-size: 11.5px;
+  font-size: 12px;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -131,15 +133,15 @@
 
 .cardMeta {
   color: var(--dsw-alias-label-tertiary);
-  font-size: 10.5px;
+  font-size: 11px;
 }
 
 .cardAdd {
   border: 1px solid var(--dsw-alias-border-l1);
-  border-radius: 7px;
+  border-radius: var(--dsw-radius-sm);
   background: transparent;
   color: var(--dsw-alias-brand-primary);
-  font-size: 11.5px;
+  font-size: 12px;
   padding: 4px 8px;
   cursor: pointer;
 }
@@ -156,9 +158,9 @@
   gap: 8px;
   min-height: 190px;
   border: 1.5px dashed var(--dsw-alias-border-l1);
-  border-radius: 12px;
+  border-radius: var(--dsw-radius-md);
   color: var(--dsw-alias-label-secondary);
-  font-size: 12.5px;
+  font-size: 13px;
   cursor: pointer;
 }
 
@@ -174,7 +176,7 @@
   margin: 10px 0 0;
   text-align: center;
   color: var(--dsw-alias-state-error-primary, #ec1313);
-  font-size: 11.5px;
+  font-size: 12px;
   overflow-wrap: anywhere;
 }
 
@@ -188,7 +190,7 @@
   padding: 26px 0;
   text-align: center;
   color: var(--dsw-alias-label-tertiary);
-  font-size: 12.5px;
+  font-size: 13px;
 }
 
 .footer {
@@ -197,17 +199,19 @@
   justify-content: space-between;
   gap: 12px;
   padding-top: 12px;
-  font-size: 12.5px;
+  font-size: 13px;
   color: var(--dsw-alias-label-secondary);
 }
 
 .primary {
   border: 0;
-  border-radius: 8px;
+  border-radius: var(--dsw-radius-sm);
   padding: 7px 14px;
   background: var(--dsw-alias-brand-primary);
-  color: #fff;
-  font-size: 12.5px;
+  /* Brand is the NEUTRAL inverse here, so the ink on top must be the inverted
+     foreground token rather than a literal white. */
+  color: var(--dsw-alias-label-primary-foreground);
+  font-size: 13px;
   cursor: pointer;
 }
 

@@ -5,6 +5,18 @@
  * by walking up to the first opaque background. That is a snapshot, and the
  * DSH host switches theme at runtime — so anything that picks its ink from the
  * answer needs to be re-asked, not asked once.
+ *
+ * // NATIVE-GAP: the contract-preferred source is the injected `theme` service
+ * (snapshot field `active.colorScheme`, event `theme/change`, provided by
+ * dsh-client-ui-theme). This surface cannot reach it: the panel's React root is
+ * created imperatively from `mount.tsx`, which receives only the services
+ * `src/client/index.ts` hands it, and that file is outside this change's scope.
+ * Wiring it is three lines there — add `'theme'` to `inject`, then pass
+ * `theme: { getSnapshot: () => ctx.get('theme').getTheme(), subscribe }` into
+ * `mountPanel` — after which the subscription below is the secondary path.
+ * Until then this measures the surface and re-measures when the host publishes
+ * the switch, which is what keeps the nav readable instead of asking the user
+ * to reload.
  */
 
 /**
@@ -40,15 +52,25 @@ export function detectLightSurface(element: HTMLElement): boolean {
  * once keeps the ink it was built with and goes unreadable against the new
  * surface. Three signals are needed to catch every way the answer can move:
  *
- *  - the root `class` / `data-theme` attributes, which is how DSH and most
- *    theme systems publish the switch (an ancestor's background changes);
- *  - the OS preference, for a host that follows it without touching the DOM;
+ *  - the attributes the DSH theme presenter writes when it applies a snapshot
+ *    (dsh-client-ui-layout, `ThemePresenter.apply`): `data-ds-dark-theme` and
+ *    `data-ds-theme-source` on <body>/<html>, plus `style.color-scheme`, which
+ *    is how a host that merely swaps tokens rather than an attribute shows up;
+ *  - `class` / `data-theme`, for other theme systems this plugin can run under
+ *    (and for a shell that sets either instead);
  *  - our own element being re-parented, when a shell rebuild moves it onto a
  *    different surface.
  *
  * A MutationObserver on the whole document would be the lazy version; this
  * watches only the attributes that can actually carry a theme, so it does not
  * fire on every node the panel renders.
+ *
+ * No OS-preference media query is watched here. DSH resolves `system` itself
+ * (`ThemeRuntime.buildSnapshot`: `media.matches ? 'dark' : 'light'`) and its
+ * presenter writes the resolved answer onto the document, so an OS flip
+ * re-emits `theme/change`, which re-applies the attributes observed above. A
+ * separate query would be a second source of truth that can disagree with the
+ * palette actually painted.
  */
 export function subscribeSurfaceTheme(element: HTMLElement, onChange: (light: boolean) => void): () => void {
   let last = detectLightSurface(element)
@@ -59,23 +81,16 @@ export function subscribeSurfaceTheme(element: HTMLElement, onChange: (light: bo
     onChange(next)
   }
 
-  // The theme is published as an attribute on <html> or <body>. DSH uses
-  // `data-ds-dark-theme` on <body>; `class` and `data-theme` cover the other
-  // systems this plugin can run under (and a shell that sets either). All three
-  // are watched -- an attribute-only observer that misses the real one is a
-  // subscription that never fires.
   const roots = [document.documentElement, document.body].filter(Boolean)
   const observer = typeof MutationObserver === 'function'
     ? new MutationObserver(report)
     : null
   for (const root of roots) {
-    observer?.observe(root, { attributes: true, attributeFilter: ['class', 'data-theme', 'data-ds-dark-theme', 'style'] })
+    observer?.observe(root, {
+      attributes: true,
+      attributeFilter: ['class', 'data-theme', 'data-ds-dark-theme', 'data-ds-theme-source', 'style'],
+    })
   }
-
-  const media = typeof globalThis.matchMedia === 'function'
-    ? globalThis.matchMedia('(prefers-color-scheme: dark)')
-    : null
-  media?.addEventListener?.('change', report)
 
   // A re-parented element sits on a different surface; the parent observer
   // below is what notices that (an attribute-only observer would not).
@@ -88,6 +103,5 @@ export function subscribeSurfaceTheme(element: HTMLElement, onChange: (light: bo
   return () => {
     observer?.disconnect()
     parentObserver?.disconnect()
-    media?.removeEventListener?.('change', report)
   }
 }

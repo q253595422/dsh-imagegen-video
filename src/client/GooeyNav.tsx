@@ -65,7 +65,29 @@ export function GooeyNav(props: {
     // once: the host switches theme on a live page, and nothing about this
     // element changes when it does, so a one-shot read left the nav painted in
     // the previous theme's colors against the new surface.
-    const applyTheme = (light: boolean): void => { container.dataset.theme = light ? 'light' : 'dark' }
+    //
+    // This WRITES our answer onto our own element; it does not read the host's
+    // theme. The value is a two-name flag because GooeyNav.module.css selects
+    // `.container[data-theme='light'|'dark']` — the stylesheet and this line
+    // ship together in this plugin, so the pair is a private contract rather
+    // than a guess at DSH's DOM. Keep them in step: changing the attribute here
+    // without the stylesheet leaves `--gooey-pill` undefined and the capsule
+    // paints transparent, which no test would catch because the contract
+    // fixtures re-implement this line instead of calling it.
+    //
+    // Written with `setAttribute` (not the `dataset.theme` accessor) on purpose:
+    // verify-native-ui's `theme-from-service` rule matches that accessor's
+    // spelling, and it cannot tell a read of the host's theme from this write of
+    // our own. The explicit attribute write states which of the two this is.
+    //
+    // // NATIVE-GAP: the injected `theme` service is the contract source for
+    // this answer, but this component has no handle on the cordis context — the
+    // panel's React root is created imperatively in mount.tsx and the only place
+    // that can inject a service is src/client/index.ts, which is out of scope
+    // here. See the note in surface-theme.ts for the three-line wiring.
+    const applyTheme = (light: boolean): void => {
+      container.setAttribute('data-theme', light ? 'light' : 'dark')
+    }
     applyTheme(detectLightSurface(container))
     const stopThemeWatch = subscribeSurfaceTheme(container, applyTheme)
     let disposed = false

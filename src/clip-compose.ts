@@ -22,16 +22,21 @@
  *
  * Process handling copies `src/skill-store.ts` `run()`: no shell, args as an
  * array, `stdio: ['ignore','pipe','pipe']`, bounded output, a timer that kills
- * the child, and `error`/`close` settling behind a `settled` flag.
+ * the child, and `error`/`close` settling behind a `settled` flag. That code
+ * now lives in `src/video-tools.ts`, which the poster extractor shares.
  */
 
-import { spawn } from 'node:child_process'
-import { accessSync, constants as FS_CONSTANTS, promises as fs, statSync } from 'node:fs'
-import { homedir, tmpdir } from 'node:os'
+import { promises as fs } from 'node:fs'
+import { tmpdir } from 'node:os'
 import path from 'node:path'
 import { GALLERY_API, VIDEO_API, type ClipComposer, type ClipStitchResult } from './protocol.ts'
 import { appendVideoHistory, readVideoFile } from './video-store.ts'
 import { readGalleryVideo } from './gallery-store.ts'
+import { describeTools, findTool, localVideoToolDirs, runProcess, tail, type ToolPair } from './video-tools.ts'
+
+// Re-exported for `src/index.ts` (the plugin's public surface) and for the
+// guard scripts, which import it straight from this module.
+export { localVideoToolDirs }
 
 // ---------------------------------------------------------------- constants
 
@@ -40,9 +45,6 @@ const TARGET_WIDTH = 1280
 const TARGET_HEIGHT = 720
 const TARGET_FPS = 30
 const TARGET_SAMPLE_RATE = 48_000
-
-/** Cap on captured process output, per stream (bad inputs can be very loud). */
-const MAX_PROCESS_OUTPUT = 8_000
 
 /** Cap on the diagnostic tail kept for one failure message. */
 const MAX_ERROR_TAIL = 600
@@ -53,120 +55,7 @@ const STITCH_TIMEOUT_MS = 30 * 60_000
 /** Wall-clock cap for one probe (audio presence, duration). */
 const PROBE_TIMEOUT_MS = 60_000
 
-/**
- * Absolute directories searched for `ffmpeg`/`ffprobe`, in order.
- *
- * `~/.local/bin` first because that is where this machine actually keeps them;
- * a bare command name is never tried, since the host's PATH cannot see it.
- */
-export function localVideoToolDirs(): string[] {
-  const dirs = [
-    path.join(homedir(), '.local', 'bin'),
-    '/opt/homebrew/bin',
-    '/usr/local/bin',
-    '/usr/bin',
-  ]
-  return [...new Set(dirs)]
-}
-
-// ---------------------------------------------------------------- process
-
-interface ProcessResult {
-  code: number
-  stdout: string
-  stderr: string
-}
-
-/** Last printable characters of process output, for an error message. */
-function tail(text: string): string {
-  const trimmed = text.trim()
-  if (trimmed === '') return '(no output)'
-  return trimmed.length <= MAX_ERROR_TAIL ? trimmed : `…${trimmed.slice(-MAX_ERROR_TAIL)}`
-}
-
-/**
- * Run one child process without a shell and collect its bounded output.
- *
- * Rejects on spawn failure, on the timeout, and on abort; a non-zero exit is
- * reported through `code` so callers can distinguish "ran and refused" from
- * "never ran". Modeled on `src/skill-store.ts` `run()`.
- * @param command - absolute executable path.
- * @param args - argument vector, never a shell string.
- * @param options - timeout and cancellation.
- */
-function runProcess(command: string, args: readonly string[], options: { timeoutMs: number; signal?: AbortSignal }): Promise<ProcessResult> {
-  const label = path.basename(command)
-  return new Promise((resolve, reject) => {
-    let settled = false
-    let timer: ReturnType<typeof setTimeout> | undefined
-    let stdout = ''
-    let stderr = ''
-    const child = spawn(command, [...args], {
-      windowsHide: true,
-      stdio: ['ignore', 'pipe', 'pipe'],
-    })
-    child.stdout.on('data', (chunk: Buffer) => {
-      if (stdout.length < MAX_PROCESS_OUTPUT) stdout += chunk.toString('utf8')
-    })
-    child.stderr.on('data', (chunk: Buffer) => {
-      if (stderr.length < MAX_PROCESS_OUTPUT) stderr += chunk.toString('utf8')
-    })
-    const finish = (settle: () => void): void => {
-      if (settled) return
-      settled = true
-      if (timer !== undefined) clearTimeout(timer)
-      options.signal?.removeEventListener('abort', onAbort)
-      settle()
-    }
-    function onAbort(): void {
-      child.kill()
-      finish(() => reject(new Error(`${label} was cancelled`)))
-    }
-    timer = setTimeout(() => {
-      child.kill()
-      finish(() => reject(new Error(`${label} timed out after ${options.timeoutMs}ms`)))
-    }, options.timeoutMs)
-    timer.unref?.()
-    if (options.signal !== undefined) {
-      if (options.signal.aborted) {
-        onAbort()
-        return
-      }
-      options.signal.addEventListener('abort', onAbort, { once: true })
-    }
-    child.on('error', error => finish(() => reject(new Error(`${label} could not start: ${error.message}`))))
-    child.on('close', code => finish(() => resolve({ code: code ?? -1, stdout, stderr })))
-  })
-}
-
 // ---------------------------------------------------------------- locating
-
-/** First executable candidate for one tool name, or undefined. */
-function findTool(name: 'ffmpeg' | 'ffprobe'): string | undefined {
-  for (const dir of localVideoToolDirs()) {
-    const candidate = path.join(dir, name)
-    try {
-      if (!statSync(candidate).isFile()) continue
-      accessSync(candidate, FS_CONSTANTS.X_OK)
-      return candidate
-    } catch { /* not here — keep looking */ }
-  }
-  return undefined
-}
-
-/** The resolved pair, looked up once per composer and cached. */
-interface ToolPair {
-  ffmpeg?: string
-  ffprobe?: string
-}
-
-function describeTools(found: ToolPair): string {
-  const ffmpeg = found.ffmpeg ?? 'not found'
-  const ffprobe = found.ffprobe ?? 'not found'
-  return `ffmpeg: ${ffmpeg}; ffprobe: ${ffprobe} (searched ${localVideoToolDirs().join(', ')})`
-}
-
-// ---------------------------------------------------------------- probing
 
 /**
  * One input's contribution to the filtergraph.

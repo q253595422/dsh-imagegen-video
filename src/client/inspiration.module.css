@@ -3,6 +3,11 @@
  * panel.module.css: dsh --dsw-* tokens, scoped to this component's subtree.
  */
 
+/* Content-layer ink for the caption that sits ON a thumbnail. It is not a theme
+   colour: the scrim has to darken whatever artwork is underneath, so it is built
+   from DSH's static blacks/whites and stays readable in both themes. Defined
+   once here, the way canvas-workspace.module.css defines its annotation colour. */
+
 .wrap {
   display: flex;
   flex-direction: column;
@@ -12,6 +17,8 @@
   margin: auto;
   padding: 24px;
   font-family: var(--dsw-font-family);
+  --inspiration-scrim-ink: var(--dsw-static-neutral-00, #ffffff);
+  --inspiration-scrim: var(--dsw-static-neutral-1000, #000000);
 }
 
 .title {
@@ -35,7 +42,7 @@
 }
 
 .emptyHint {
-  font-size: 12.5px;
+  font-size: 13px;
   color: var(--dsw-alias-label-tertiary);
 }
 
@@ -67,7 +74,7 @@
   padding: 0;
   overflow: hidden;
   border: 1px solid var(--dsw-alias-border-l1);
-  border-radius: 12px;
+  border-radius: var(--dsw-radius-md);
   background: var(--dsw-alias-bg-layer-1);
   cursor: pointer;
   transition: transform 0.15s ease, border-color 0.15s ease, box-shadow 0.15s ease;
@@ -76,7 +83,7 @@
 .tile:hover {
   border-color: var(--dsw-alias-brand-primary);
   transform: translateY(-2px);
-  box-shadow: 0 6px 18px rgba(0, 0, 0, 0.12);
+  box-shadow: var(--dsw-shadow-lv2);
 }
 
 .thumbWrap {
@@ -114,9 +121,9 @@
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-  background: linear-gradient(transparent, rgba(0, 0, 0, 0.55));
-  color: #ffffff;
-  font-size: 10.5px;
+  background: linear-gradient(transparent, color-mix(in srgb, var(--inspiration-scrim) 55%, transparent));
+  color: var(--inspiration-scrim-ink);
+  font-size: 11px;
   text-align: center;
   opacity: 0;
   transition: opacity 0.15s ease;

@@ -22,7 +22,7 @@ import { analyzeLayers, MAX_LAYER_IMAGE_BYTES } from './layer-analyzer.ts'
 import { normalizeImageModels } from './image-models.ts'
 import { ImageGenerationRuntime, type ChannelsView } from './generation-runtime.ts'
 import { appendHistory, clearHistory, listHistory, readHistoryImage, removeHistory } from './history-store.ts'
-import { clearVideoHistory, listVideoHistory, readVideoFile, removeVideoHistory } from './video-store.ts'
+import { clearVideoHistory, drainVideoPosters, listVideoHistory, readVideoFile, removeVideoHistory } from './video-store.ts'
 import { appendGallery, appendGalleryVideo, clearGallery, listGallery, listGalleryTrash, purgeGallery, readGalleryImage, readGalleryVideo, removeGallery, restoreGallery, updateGalleryTags } from './gallery-store.ts'
 import { baseMime, canvasStore, CanvasConflictError, MAX_CANVAS_FILE_BYTES, mimeFromFileName, safeFileName, type CanvasFileInput, type CanvasImageInput, type CanvasStore } from './canvas-store.ts'
 import { buildFilePreview } from './file-preview.ts'
@@ -2485,7 +2485,21 @@ export function makeRoutes(deps: ImageGenRoutesDeps): WebRoute[] {
       handler: async (req, res) => {
         if (!guard(req, res, 'POST')) return
         try {
-          writeJson(res, 200, { ok: true, entries: await video.list() })
+          const entries = await video.list()
+          // Posters for entries saved before posters existed. Deliberately not
+          // awaited: this shells out to ffmpeg (one clip at a time, ~130ms
+          // each), and the user asked for their history, not for a rebuild.
+          // The first response therefore shows the rows as they are, and the
+          // thumbnails land a moment later — the drain keeps running after the
+          // response, so the whole backlog is covered by this one request
+          // rather than by a second request that never comes.
+          //
+          // The `.catch` is not optional: an unawaited rejection lands on the
+          // process-level `unhandledRejection`, and the host's fail-loud
+          // handler turns that into `proc.exit(1)` — one unwritable index
+          // would take the whole host down over a decoration.
+          void drainVideoPosters().catch(() => { /* decoration only: a failed backfill must never reach the host's fail-loud handler */ })
+          writeJson(res, 200, { ok: true, entries })
         } catch (error) {
           writeJson(res, 200, { ok: false, code: 'video-history-failed', message: messageOf(error) })
         }

@@ -9,7 +9,7 @@
   min-height: 30px;
   padding: 6px 10px;
   border: 1px solid var(--dsw-alias-border-l2);
-  border-radius: 8px;
+  border-radius: var(--dsw-radius-sm);
   color: var(--dsw-alias-label-primary);
   background: var(--dsw-alias-bg-base);
   font: inherit;
@@ -30,7 +30,7 @@
 .trigger[data-variant='compact'],
 .trigger[data-variant='toolbar'] { min-height: 26px; padding: 4px 8px; font-size: 11px; }
 .trigger[data-variant='toolbar'] { width: auto; max-width: 138px; }
-.trigger[data-variant='composer'] { width: auto; min-height: 28px; max-width: 138px; padding: 4px 8px 4px 11px; border-radius: 999px; background: transparent; font-size: 11.5px; }
+.trigger[data-variant='composer'] { width: auto; min-height: 28px; max-width: 138px; padding: 4px 8px 4px 11px; border-radius: 999px; background: transparent; font-size: 12px; }
 
 .menu {
   position: fixed;
@@ -39,9 +39,9 @@
   overflow: auto;
   padding: 5px;
   border: 1px solid var(--dsw-alias-border-l2);
-  border-radius: 12px;
+  border-radius: var(--dsw-radius-md);
   background: var(--dsw-alias-bg-base);
-  box-shadow: 0 12px 30px rgb(0 0 0 / 16%);
+  box-shadow: var(--dsw-shadow-lv3);
   color: var(--dsw-alias-label-primary);
   font-family: var(--dsw-font-family, inherit);
   outline: none;
@@ -51,7 +51,7 @@
 .menu::-webkit-scrollbar { width: 6px; }
 .menu::-webkit-scrollbar-thumb { border-radius: 999px; background: var(--dsw-alias-border-l2); }
 .group { display: block; padding: 5px 8px 6px; color: var(--dsw-alias-label-tertiary); font-size: 10px; font-weight: 600; }
-.empty { display: block; padding: 12px 9px; color: var(--dsw-alias-label-tertiary); font-size: 11.5px; text-align: center; }
+.empty { display: block; padding: 12px 9px; color: var(--dsw-alias-label-tertiary); font-size: 12px; text-align: center; }
 
 /* Sticks to the top of the scrolling menu so the filter stays reachable in long
    lists. No z-index: a sticky box paints above its static siblings already, and
@@ -65,7 +65,7 @@
   margin: -5px 0 4px;
   padding: 6px 9px;
   border: 1px solid var(--dsw-alias-border-l2);
-  border-radius: 7px;
+  border-radius: var(--dsw-radius-sm);
   color: var(--dsw-alias-label-primary);
   background: var(--dsw-alias-bg-base);
   font: inherit;
@@ -76,14 +76,14 @@
 .search::placeholder { color: var(--dsw-alias-label-tertiary); }
 .search:focus-visible { border-color: var(--dsw-alias-brand-primary); outline: 1px solid var(--dsw-alias-brand-primary); outline-offset: 0; }
 .optionLabel { display: block; overflow: hidden; text-overflow: ellipsis; }
-.optionHint { display: block; overflow: hidden; color: var(--dsw-alias-label-tertiary); font-size: 10.5px; font-weight: 400; line-height: 1.35; text-overflow: ellipsis; }
+.optionHint { display: block; overflow: hidden; color: var(--dsw-alias-label-tertiary); font-size: 11px; font-weight: 400; line-height: 1.35; text-overflow: ellipsis; }
 .option {
   display: block;
   width: 100%;
   padding: 7px 9px;
   overflow: hidden;
   border: none;
-  border-radius: 7px;
+  border-radius: var(--dsw-radius-sm);
   color: var(--dsw-alias-label-primary);
   background: transparent;
   font: inherit;

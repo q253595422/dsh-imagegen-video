@@ -137,7 +137,7 @@
    AppFrame class-based column ([class*="centerCol"]) — without a positioned
    ancestor the absolutely-positioned view resolves against the frame. */
 [data-pane='conversation'],
-[class*='centerCol'] {
+[data-dsh-imagegen-center-col] {
   position: relative;
   min-width: 0;
   min-height: 0;
@@ -160,7 +160,7 @@
    panels (task board / ssh) from fighting over visibility if both activation
    attributes ever coexist. */
 html[data-dsh-imagegen-active]:not([data-dsh-taskboard-active]):not([data-dsh-ssh-active]) [data-pane='conversation'],
-html[data-dsh-imagegen-active]:not([data-dsh-taskboard-active]):not([data-dsh-ssh-active]) [class*='centerCol'] {
+html[data-dsh-imagegen-active]:not([data-dsh-taskboard-active]):not([data-dsh-ssh-active]) [data-dsh-imagegen-center-col] {
   display: grid !important;
   grid-template-columns: minmax(0, 1fr) 8px minmax(320px, clamp(320px, var(--dsh-imagegen-chat-width, 36%), 70%));
   grid-template-rows: minmax(0, 1fr);
@@ -235,7 +235,7 @@ html[data-dsh-imagegen-active]:not([data-dsh-taskboard-active]):not([data-dsh-ss
 .chatResizer::before {
   width: 3px;
   height: 36px;
-  border-radius: 3px;
+  border-radius: var(--dsw-radius-xs);
   background: currentColor;
   content: '';
   opacity: .55;
@@ -258,7 +258,7 @@ html[data-dsh-imagegen-active] [data-dsh-imagegen-chat-resizer] {
    The keyed `main` anchor is deliberately let through: the Conversation lives
    inside it, and the rule below then hides whichever entry is NOT the chat. */
 html[data-dsh-imagegen-active]:not([data-dsh-taskboard-active]):not([data-dsh-ssh-active]) [data-pane='conversation'] > :not([data-dsh-imagegen-view]):not([data-slot='conversation']):not([data-slot='main']):not([data-dsh-imagegen-chat-resizer]),
-html[data-dsh-imagegen-active]:not([data-dsh-taskboard-active]):not([data-dsh-ssh-active]) [class*='centerCol'] > :not([data-dsh-imagegen-view]):not([data-slot='conversation']):not([data-slot='main']):not([data-dsh-imagegen-chat-resizer]) {
+html[data-dsh-imagegen-active]:not([data-dsh-taskboard-active]):not([data-dsh-ssh-active]) [data-dsh-imagegen-center-col] > :not([data-dsh-imagegen-view]):not([data-slot='conversation']):not([data-slot='main']):not([data-dsh-imagegen-chat-resizer]) {
   display: none !important;
 }
 
@@ -287,14 +287,19 @@ html[data-dsh-imagegen-active]:not([data-dsh-taskboard-active]):not([data-dsh-ss
 
 /* Keep the Session/Image switcher and the native New Session action visible,
    including shells that wrap the action in a container. Other plugin entries
-   between the switcher and workspace region stay hidden in the studio. */
-html[data-dsh-imagegen-active] [data-dsh-imagegen-sidebar-root] > :not([data-dsh-imagegen-session-tabs]):not([data-dsh-imagegen-new-session]):not(:has([data-dsh-imagegen-new-session])):not([class*='logoRow']):not([class*='regionArea']):not([class*='footArea']) {
+   between the switcher and workspace region stay hidden in the studio.
+
+   The spared blocks are the shell's own chrome, resolved from slot anchors and
+   marked by `sidebar-entry.ts`. The rule is gated on `shell-blocks`: a shell
+   that exposes no brand anchor leaves that attribute off and keeps its sidebar
+   fully intact, instead of losing whole rows to a rule it cannot satisfy. */
+html[data-dsh-imagegen-active] [data-dsh-imagegen-sidebar-root][data-dsh-imagegen-shell-blocks] > :not([data-dsh-imagegen-session-tabs]):not([data-dsh-imagegen-new-session]):not([data-dsh-imagegen-sidebar-block]) {
   display: none !important;
 }
 
 @media (max-width: 760px) {
   html[data-dsh-imagegen-active]:not([data-dsh-taskboard-active]):not([data-dsh-ssh-active]) [data-pane='conversation'],
-  html[data-dsh-imagegen-active]:not([data-dsh-taskboard-active]):not([data-dsh-ssh-active]) [class*='centerCol'] {
+  html[data-dsh-imagegen-active]:not([data-dsh-taskboard-active]):not([data-dsh-ssh-active]) [data-dsh-imagegen-center-col] {
     grid-template-columns: minmax(0, 1fr);
     /* The chat row used to claim `minmax(340px, 0.9fr)` even when the chat was
        collapsed and nothing rendered in it. At 664×768 that left the studio
@@ -334,7 +339,7 @@ html[data-dsh-imagegen-active] [data-dsh-imagegen-sidebar-root] > :not([data-dsh
   padding: 0 12px;
   background: transparent;
   border: none;
-  border-radius: 8px;
+  border-radius: var(--dsw-radius-sm);
   color: var(--dsw-alias-label-secondary);
   cursor: pointer;
   font-size: 13px;
@@ -373,7 +378,7 @@ html[data-dsh-imagegen-active] [data-dsh-imagegen-sidebar-root] > :not([data-dsh
   min-width: 0;
   padding: 3px;
   border: 1px solid var(--dsw-alias-border-l1);
-  border-radius: 9px;
+  border-radius: var(--dsw-radius-md);
   background: var(--dsw-alias-bg-layer-1);
 }
 
@@ -386,7 +391,7 @@ html[data-dsh-imagegen-active] [data-dsh-imagegen-sidebar-root] > :not([data-dsh
   height: 30px;
   padding: 0 8px;
   border: 0;
-  border-radius: 7px;
+  border-radius: var(--dsw-radius-sm);
   color: var(--dsw-alias-label-secondary);
   background: transparent;
   cursor: pointer;
@@ -404,7 +409,6 @@ html[data-dsh-imagegen-active] [data-dsh-imagegen-sidebar-root] > :not([data-dsh
   width: auto;
   padding: 0;
   border: none;
-  border-radius: 0;
   background: transparent;
 }
 
@@ -412,8 +416,10 @@ html[data-dsh-imagegen-active] [data-dsh-imagegen-sidebar-root] > :not([data-dsh
   width: 34px;
   height: 34px;
   padding: 0;
-  border-radius: 9px;
-  font-size: 0;
+  border-radius: var(--dsw-radius-md);
+  /* Icon-only tab: the label is display:none and the glyph comes from the icon
+     font, so 0 here is the collapse idiom, not a half-pixel size. */
+  font-size: 0em;
 }
 
 [data-sidebar-collapsed] .sessionTabLabel {
@@ -442,7 +448,7 @@ html[data-dsh-imagegen-active] [data-dsh-imagegen-sidebar-root] > :not([data-dsh
 /* The history surface occupies the shell's workspace/session region while
    image generation is active. The shell's own tree stays mounted underneath
    so closing the tab restores it without a React remount. */
-[class*='regionArea'] {
+[data-dsh-imagegen-sidebar-region] {
   position: relative;
   min-height: 0;
 }
@@ -467,7 +473,7 @@ html[data-dsh-imagegen-active] .sidebarHistoryHost {
   width: 100%;
   height: 100%;
   border: 0;
-  border-radius: 8px;
+  border-radius: var(--dsw-radius-sm);
   background: transparent;
 }
 
@@ -554,7 +560,7 @@ html[data-dsh-imagegen-active] .sidebarHistoryHost {
   flex: none;
   width: 22px;
   height: 22px;
-  border-radius: 6px;
+  border-radius: var(--dsw-radius-sm);
   color: var(--dsw-alias-label-secondary);
   text-decoration: none;
   transition: color 0.12s, background 0.12s;
@@ -575,7 +581,7 @@ html[data-dsh-imagegen-active] .sidebarHistoryHost {
   height: 28px;
   padding: 0 10px;
   border: 1px solid var(--dsw-alias-state-error-primary, #ec1313);
-  border-radius: 8px;
+  border-radius: var(--dsw-radius-sm);
   background: transparent;
   color: var(--dsw-alias-state-error-primary, #ec1313);
   font: inherit;
@@ -647,9 +653,9 @@ html[data-dsh-imagegen-active] .sidebarHistoryHost {
   max-height: min(70vh, 560px);
   overflow: hidden;
   border: 1px solid var(--dsw-alias-border-l2);
-  border-radius: 12px;
+  border-radius: var(--dsw-radius-md);
   background: var(--dsw-alias-bg-layer-1);
-  box-shadow: 0 18px 48px rgba(0, 0, 0, 0.25);
+  box-shadow: var(--dsw-elevation-prominent);
   color: var(--dsw-alias-label-primary);
   text-align: left;
 }
@@ -687,7 +693,7 @@ html[data-dsh-imagegen-active] .sidebarHistoryHost {
   height: 24px;
   flex: none;
   border: none;
-  border-radius: 7px;
+  border-radius: var(--dsw-radius-sm);
   background: transparent;
   color: var(--dsw-alias-label-secondary);
   font-size: 18px;
@@ -703,7 +709,7 @@ html[data-dsh-imagegen-active] .sidebarHistoryHost {
 .updateStatus {
   margin: 10px 14px 0;
   padding: 8px 10px;
-  border-radius: 8px;
+  border-radius: var(--dsw-radius-sm);
   background: color-mix(in srgb, var(--dsw-alias-state-success-primary) 9%, transparent);
   color: var(--dsw-alias-state-success-primary);
   font-size: 12px;
@@ -724,20 +730,20 @@ html[data-dsh-imagegen-active] .sidebarHistoryHost {
   gap: 6px;
   margin: 8px 14px 0;
   padding: 8px 10px;
-  border-radius: 8px;
+  border-radius: var(--dsw-radius-sm);
   border: 1px solid var(--dsw-alias-border-l1);
   background: var(--dsw-alias-bg-layer-2);
 }
 
 .updateManualLabel {
   color: var(--dsw-alias-label-secondary);
-  font-size: 11.5px;
+  font-size: 12px;
   font-weight: 600;
 }
 
 .updateManualCode {
-  font-family: var(--dsw-font-mono, ui-monospace, SFMono-Regular, Menlo, monospace);
-  font-size: 11.5px;
+  font-family: var(--ds-font-family-code, ui-monospace, SFMono-Regular, Menlo, monospace);
+  font-size: 12px;
   line-height: 1.5;
   color: var(--dsw-alias-label-primary);
   overflow-wrap: anywhere;
@@ -751,7 +757,7 @@ html[data-dsh-imagegen-active] .sidebarHistoryHost {
   overflow-y: auto;
   padding: 12px 14px 16px;
   color: var(--dsw-alias-label-secondary);
-  font-size: 12.5px;
+  font-size: 12px;
   line-height: 1.65;
 }
 
@@ -770,13 +776,13 @@ html[data-dsh-imagegen-active] .sidebarHistoryHost {
 .updateNotes ul,
 .updateNotes ol { margin: 7px 0; padding-left: 20px; }
 .updateNotes li + li { margin-top: 3px; }
-.updateNotes code { padding: 1px 4px; border-radius: 4px; background: var(--dsw-alias-bg-layer-2); }
-.updateNotes pre { overflow-x: auto; padding: 10px; border-radius: 8px; background: var(--dsw-alias-bg-layer-2); }
+.updateNotes code { padding: 1px 4px; border-radius: var(--dsw-radius-xs); background: var(--dsw-alias-bg-layer-2); }
+.updateNotes pre { overflow-x: auto; padding: 10px; border-radius: var(--dsw-radius-sm); background: var(--dsw-alias-bg-layer-2); }
 .updateNotes pre code { padding: 0; background: transparent; }
 .updateNotes blockquote { margin: 8px 0; padding-left: 10px; border-left: 2px solid var(--dsw-alias-border-l2); color: var(--dsw-alias-label-tertiary); }
 .updateNotes a { color: var(--dsw-alias-brand-primary); }
-.updateNotes img { max-width: 100%; border-radius: 8px; }
-.updateNotes table { width: 100%; border-collapse: collapse; font-size: 11.5px; }
+.updateNotes img { max-width: 100%; border-radius: var(--dsw-radius-sm); }
+.updateNotes table { width: 100%; border-collapse: collapse; font-size: 12px; }
 .updateNotes th,
 .updateNotes td { padding: 5px 6px; border: 1px solid var(--dsw-alias-border-l1); text-align: left; }
 
@@ -888,7 +894,7 @@ html[data-dsh-imagegen-active] .sidebarHistoryHost {
   height: 28px;
   padding: 0;
   border: 1px solid var(--dsw-alias-border-l1);
-  border-radius: 7px;
+  border-radius: var(--dsw-radius-sm);
   color: var(--dsw-alias-label-secondary);
   background: var(--dsw-alias-bg-layer-1);
   cursor: pointer;
@@ -953,7 +959,7 @@ html[data-dsh-imagegen-active] .sidebarHistoryHost {
   display: flex;
   flex-direction: column;
   border: 1px solid var(--dsw-alias-border-l1);
-  border-radius: 12px;
+  border-radius: var(--dsw-radius-md);
   background: var(--dsw-alias-bg-layer-1);
   overflow: hidden;
 }
@@ -969,9 +975,9 @@ html[data-dsh-imagegen-active] .sidebarHistoryHost {
   flex-direction: column;
   overflow: hidden;
   border: 1px solid var(--dsw-alias-border-l2);
-  border-radius: 9px;
+  border-radius: var(--dsw-radius-md);
   background: color-mix(in srgb, var(--dsw-alias-bg-layer-1) 92%, transparent);
-  box-shadow: 0 8px 24px rgb(0 0 0 / 12%);
+  box-shadow: var(--dsw-shadow-lv2);
   backdrop-filter: blur(10px);
 }
 
@@ -982,7 +988,7 @@ html[data-dsh-imagegen-active] .sidebarHistoryHost {
 .taskTrayToggle:hover { background: var(--dsw-alias-bg-layer-2); }
 .taskTrayCount { min-width: 18px; padding: 1px 5px; border-radius: 999px; color: var(--dsw-alias-label-secondary); background: var(--dsw-alias-bg-layer-2); font-size: 11px; font-weight: 500; text-align: center; }
 .taskTrayChevron { margin-left: auto; color: var(--dsw-alias-label-tertiary); font-size: 12px; font-weight: 400; }
-.taskTrayClose { width: 32px; border: 0; border-left: 1px solid var(--dsw-alias-border-l1); color: var(--dsw-alias-label-tertiary); background: transparent; cursor: pointer; font: inherit; font-size: 17px; }
+.taskTrayClose { width: 32px; border: 0; border-left: 1px solid var(--dsw-alias-border-l1); color: var(--dsw-alias-label-tertiary); background: transparent; cursor: pointer; font: inherit; font-size: 18px; }
 .taskTrayClose:hover { color: var(--dsw-alias-label-primary); background: var(--dsw-alias-bg-layer-2); }
 .taskTray[data-open='false'] .taskTrayToggle { min-height: 34px; }
 .taskRows { min-height: 0; overflow-y: auto; }
@@ -995,7 +1001,7 @@ html[data-dsh-imagegen-active] .sidebarHistoryHost {
 .taskRow[data-status='running'] .taskStatus { color: var(--dsw-alias-brand-primary); }
 .taskRow[data-status='failed'] .taskStatus { color: var(--dsw-alias-state-error-primary, #ec1313); }
 .taskPrompt { overflow: hidden; color: var(--dsw-alias-label-secondary); font-size: 11px; text-overflow: ellipsis; white-space: nowrap; }
-.taskRow button { padding: 2px 7px; border: 0; border-radius: 5px; color: var(--dsw-alias-label-secondary); background: var(--dsw-alias-bg-layer-2); cursor: pointer; font: inherit; font-size: 11px; }
+.taskRow button { padding: 2px 7px; border: 0; border-radius: var(--dsw-radius-xs); color: var(--dsw-alias-label-secondary); background: var(--dsw-alias-bg-layer-2); cursor: pointer; font: inherit; font-size: 11px; }
 
 /* --- generation diagnostics (#38) ----------------------------------------- */
 /* The task row used to say only "失败", which is what the reporter of #38 was
@@ -1006,7 +1012,7 @@ html[data-dsh-imagegen-active] .sidebarHistoryHost {
   margin: 6px 0 0;
   padding: 6px 8px;
   border-left: 2px solid var(--dsw-alias-state-error-primary, #ec1313);
-  border-radius: 0 4px 4px 0;
+  border-radius: 0 var(--dsw-radius-xs) var(--dsw-radius-xs) 0;
   color: var(--dsw-alias-label-secondary);
   background: var(--dsw-alias-bg-layer-2);
   font-size: 11px;
@@ -1047,9 +1053,9 @@ html[data-dsh-imagegen-active] .sidebarHistoryHost {
   flex-direction: column;
   overflow: hidden;
   border: 1px solid var(--dsw-alias-border-l2);
-  border-radius: 9px;
+  border-radius: var(--dsw-radius-md);
   background: var(--dsw-alias-bg-layer-1);
-  box-shadow: 0 12px 32px rgb(0 0 0 / 18%);
+  box-shadow: var(--dsw-shadow-lv2);
 }
 
 .diagnosticsHeader {
@@ -1070,7 +1076,7 @@ html[data-dsh-imagegen-active] .sidebarHistoryHost {
 .diagnosticsActions button {
   padding: 3px 9px;
   border: 0;
-  border-radius: 5px;
+  border-radius: var(--dsw-radius-sm);
   color: var(--dsw-alias-label-secondary);
   background: var(--dsw-alias-bg-layer-2);
   cursor: pointer;
@@ -1100,7 +1106,7 @@ html[data-dsh-imagegen-active] .sidebarHistoryHost {
   margin-bottom: 6px;
   padding: 8px 10px;
   border: 1px solid var(--dsw-alias-border-l1);
-  border-radius: 7px;
+  border-radius: var(--dsw-radius-sm);
   background: var(--dsw-alias-bg-base);
 }
 
@@ -1111,7 +1117,7 @@ html[data-dsh-imagegen-active] .sidebarHistoryHost {
 
 .diagnosticsUrl {
   padding: 4px 7px;
-  border-radius: 5px;
+  border-radius: var(--dsw-radius-sm);
   color: var(--dsw-alias-label-secondary);
   background: var(--dsw-alias-bg-layer-2);
   font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
@@ -1127,7 +1133,7 @@ html[data-dsh-imagegen-active] .sidebarHistoryHost {
   margin: 5px 0 0;
   padding: 7px 9px;
   overflow: auto;
-  border-radius: 5px;
+  border-radius: var(--dsw-radius-sm);
   color: var(--dsw-alias-label-secondary);
   background: var(--dsw-alias-bg-layer-2);
   font-size: 11px;
@@ -1137,10 +1143,10 @@ html[data-dsh-imagegen-active] .sidebarHistoryHost {
 }
 .taskRow button:hover { color: var(--dsw-alias-brand-primary); }
 
-.configGuide { position: fixed; inset: 0; z-index: var(--z-guide); display: grid; place-items: center; padding: 20px; background: rgb(0 0 0 / 35%); }
-.configGuideBody { display: flex; width: min(360px, 100%); flex-direction: column; gap: 12px; padding: 18px; border: 1px solid var(--dsw-alias-border-l2); border-radius: 10px; color: var(--dsw-alias-label-primary); background: var(--dsw-alias-bg-layer-1); box-shadow: 0 14px 40px rgb(0 0 0 / 20%); }
+.configGuide { position: fixed; inset: 0; z-index: var(--z-guide); display: grid; place-items: center; padding: 20px; background: var(--dsw-alias-bg-mask-1); }
+.configGuideBody { display: flex; width: min(360px, 100%); flex-direction: column; gap: 12px; padding: 18px; border: 1px solid var(--dsw-alias-border-l2); border-radius: var(--dsw-radius-md); color: var(--dsw-alias-label-primary); background: var(--dsw-alias-bg-layer-1); box-shadow: var(--dsw-elevation-panel); }
 .configGuideBody span { color: var(--dsw-alias-label-secondary); font-size: 13px; line-height: 1.55; }
-.configGuideBody button { align-self: flex-end; min-height: 30px; padding: 0 12px; border: 0; border-radius: 7px; color: var(--dsw-alias-bg-layer-1); background: var(--dsw-alias-brand-primary); cursor: pointer; font: inherit; font-size: 12px; }
+.configGuideBody button { align-self: flex-end; min-height: 30px; padding: 0 12px; border: 0; border-radius: var(--dsw-radius-sm); color: var(--dsw-alias-bg-layer-1); background: var(--dsw-alias-brand-primary); cursor: pointer; font: inherit; font-size: 12px; }
 
 /* --- history surface (rendered into the shell sidebar) ----------------------- */
 
@@ -1152,7 +1158,7 @@ html[data-dsh-imagegen-active] .sidebarHistoryHost {
   max-width: none;
   min-height: 0;
   border: 1px solid var(--dsw-alias-border-l1);
-  border-radius: 12px;
+  border-radius: var(--dsw-radius-md);
   background: var(--dsw-alias-bg-layer-1);
   overflow: hidden;
 }
@@ -1190,7 +1196,7 @@ html[data-dsh-imagegen-active] .sidebarHistoryHost {
   box-sizing: border-box;
   padding: 0 8px;
   border: 1px solid var(--dsw-alias-border-l2);
-  border-radius: 7px;
+  border-radius: var(--dsw-radius-sm);
   color: var(--dsw-alias-label-primary);
   background: var(--dsw-alias-bg-layer-2);
   font: inherit;
@@ -1199,8 +1205,8 @@ html[data-dsh-imagegen-active] .sidebarHistoryHost {
 
 .historySearch { grid-column: 1 / -1; }
 .gallerySearch { width: 156px; }
-.galleryTagInput { width: 130px; min-height: 29px; box-sizing: border-box; padding: 0 8px; border: 1px solid var(--dsw-alias-border-l2); border-radius: 7px; color: var(--dsw-alias-label-primary); background: var(--dsw-alias-bg-layer-2); font: inherit; font-size: 11px; }
-.galleryBulkButton { min-height: 29px; padding: 0 8px; border: 1px solid var(--dsw-alias-border-l2); border-radius: 7px; color: var(--dsw-alias-label-secondary); background: var(--dsw-alias-bg-layer-1); cursor: pointer; font: inherit; font-size: 11px; }
+.galleryTagInput { width: 130px; min-height: 29px; box-sizing: border-box; padding: 0 8px; border: 1px solid var(--dsw-alias-border-l2); border-radius: var(--dsw-radius-sm); color: var(--dsw-alias-label-primary); background: var(--dsw-alias-bg-layer-2); font: inherit; font-size: 11px; }
+.galleryBulkButton { min-height: 29px; padding: 0 8px; border: 1px solid var(--dsw-alias-border-l2); border-radius: var(--dsw-radius-sm); color: var(--dsw-alias-label-secondary); background: var(--dsw-alias-bg-layer-1); cursor: pointer; font: inherit; font-size: 11px; }
 .galleryBulkButton:hover:not(:disabled) { color: var(--dsw-alias-brand-primary); border-color: var(--dsw-alias-brand-primary); }
 .galleryBulkButton:disabled { opacity: .45; cursor: default; }
 
@@ -1220,7 +1226,7 @@ html[data-dsh-imagegen-active] .sidebarHistoryHost {
   color: var(--dsw-alias-label-secondary);
   background: transparent;
   border: 1px solid var(--dsw-alias-border-l2);
-  border-radius: 7px;
+  border-radius: var(--dsw-radius-sm);
   cursor: pointer;
 }
 
@@ -1232,7 +1238,7 @@ html[data-dsh-imagegen-active] .sidebarHistoryHost {
 .historyClear {
   padding: 2px 8px;
   font: inherit;
-  font-size: 11.5px;
+  font-size: 12px;
   color: var(--dsw-alias-label-tertiary);
   background: transparent;
   border: 1px solid var(--dsw-alias-border-l2);
@@ -1284,7 +1290,7 @@ html[data-dsh-imagegen-active] .sidebarHistoryHost {
   gap: 6px;
   padding: 8px;
   border: 1px solid var(--dsw-alias-border-l1);
-  border-radius: 10px;
+  border-radius: var(--dsw-radius-md);
   background: var(--dsw-alias-bg-layer-2);
   flex: none;
 }
@@ -1311,10 +1317,14 @@ html[data-dsh-imagegen-active] .sidebarHistoryHost {
   min-width: 0;
 }
 
+/* The one thumbnail box in the merged list: an image result and a clip's poster
+   frame both land here, so the square 52×52 crop is what keeps the two kinds of
+   row aligned. A clip has no picture until the host writes a poster frame; that
+   case renders `.historyThumbPlaceholder` below, in the same 52×52 box. */
 .historyThumb {
   width: 52px;
   height: 52px;
-  border-radius: 8px;
+  border-radius: var(--dsw-radius-sm);
   object-fit: cover;
   background: var(--dsw-alias-bg-base);
   flex: none;
@@ -1323,7 +1333,7 @@ html[data-dsh-imagegen-active] .sidebarHistoryHost {
 .historyThumbPlaceholder {
   width: 52px;
   height: 52px;
-  border-radius: 8px;
+  border-radius: var(--dsw-radius-sm);
   background: var(--dsw-alias-bg-layer-3);
   flex: none;
 }
@@ -1369,7 +1379,7 @@ html[data-dsh-imagegen-active] .sidebarHistoryHost {
   height: 24px;
   padding: 0;
   border: 1px solid transparent;
-  border-radius: 7px;
+  border-radius: var(--dsw-radius-sm);
   background: transparent;
   color: var(--dsw-alias-label-tertiary);
   cursor: pointer;
@@ -1391,8 +1401,8 @@ html[data-dsh-imagegen-active] .sidebarHistoryHost {
 }
 
 .historyIconAction[data-danger]:hover {
-  color: var(--dsw-alias-state-error);
-  background: color-mix(in srgb, var(--dsw-alias-state-error) 10%, transparent);
+  color: var(--dsw-alias-state-error-primary);
+  background: color-mix(in srgb, var(--dsw-alias-state-error-primary) 10%, transparent);
 }
 
 /* --- cards (system-aligned rounded group chrome) ------------------------------ */
@@ -1404,7 +1414,7 @@ html[data-dsh-imagegen-active] .sidebarHistoryHost {
   padding: 12px;
   background: var(--dsw-alias-bg-layer-2);
   border: 1px solid var(--dsw-alias-border-l1);
-  border-radius: 12px;
+  border-radius: var(--dsw-radius-md);
   flex: none;
 }
 
@@ -1427,9 +1437,9 @@ html[data-dsh-imagegen-active] .sidebarHistoryHost {
   gap: 10px;
   padding: 14px 16px 16px;
   border: 1px solid var(--dsw-alias-border-l1);
-  border-radius: 14px;
+  border-radius: var(--dsw-radius-lg);
   background: var(--dsw-alias-bg-layer-1);
-  box-shadow: 0 1px 2px rgb(15 23 42 / 4%);
+  box-shadow: var(--dsw-shadow-lv1);
 }
 
 .ecommerceSection h3 {
@@ -1488,7 +1498,7 @@ html[data-dsh-imagegen-active] .sidebarHistoryHost {
 
 .ecommerceCardHint {
   margin: -4px 0 0;
-  font-size: 11.5px;
+  font-size: 12px;
   line-height: 1.5;
   color: var(--dsw-alias-label-tertiary);
 }
@@ -1499,15 +1509,15 @@ html[data-dsh-imagegen-active] .sidebarHistoryHost {
 .ecommerceCardNotice {
   margin: 2px 0 0;
   padding: 6px 9px;
-  font-size: 11.5px;
+  font-size: 12px;
   line-height: 1.5;
   color: var(--dsw-alias-label-primary);
   background: var(--dsw-alias-bg-layer-3);
   border-left: 2px solid var(--dsw-alias-brand-primary);
-  border-radius: 6px;
+  border-radius: var(--dsw-radius-sm);
 }
 
-.ecommerceSection input:not([type="checkbox"]), .ecommerceSection [data-dsh-select], .ecommerceSection textarea { box-sizing: border-box; width: 100%; padding: 9px 11px; color: var(--dsw-alias-label-primary); background: var(--dsw-alias-bg-layer-3); border: 1px solid var(--dsw-alias-border-l2); border-radius: 9px; font: inherit; }
+.ecommerceSection input:not([type="checkbox"]), .ecommerceSection [data-dsh-select], .ecommerceSection textarea { box-sizing: border-box; width: 100%; padding: 9px 11px; color: var(--dsw-alias-label-primary); background: var(--dsw-alias-bg-layer-3); border: 1px solid var(--dsw-alias-border-l2); border-radius: var(--dsw-radius-md); font: inherit; }
 .ecommerceSection input:not([type="checkbox"]):focus-visible, .ecommerceSection [data-dsh-select]:focus-visible, .ecommerceSection textarea:focus-visible { outline: 2px solid var(--dsw-alias-brand-primary); outline-offset: 1px; }
 .ecommerceSection textarea { min-height: 68px; resize: vertical; line-height: 1.5; }
 
@@ -1519,7 +1529,7 @@ html[data-dsh-imagegen-active] .sidebarHistoryHost {
 }
 
 .ecommerceFieldLabel {
-  font-size: 11.5px;
+  font-size: 12px;
   color: var(--dsw-alias-label-secondary);
 }
 
@@ -1542,7 +1552,7 @@ html[data-dsh-imagegen-active] .sidebarHistoryHost {
   min-height: 78px;
   padding: 12px;
   border: 1.5px dashed var(--dsw-alias-border-l2);
-  border-radius: 10px;
+  border-radius: var(--dsw-radius-md);
   background: transparent;
   color: var(--dsw-alias-label-secondary);
   cursor: pointer;
@@ -1566,7 +1576,7 @@ html[data-dsh-imagegen-active] .sidebarHistoryHost {
 }
 
 .ecommerceUploadHero small {
-  font-size: 10.5px;
+  font-size: 11px;
   color: var(--dsw-alias-label-tertiary);
 }
 
@@ -1583,7 +1593,7 @@ html[data-dsh-imagegen-active] .sidebarHistoryHost {
   justify-content: center;
   height: 34px;
   border: 1px solid var(--dsw-alias-border-l2);
-  border-radius: 8px;
+  border-radius: var(--dsw-radius-sm);
   background: var(--dsw-alias-bg-layer-2);
   color: var(--dsw-alias-label-primary);
   cursor: pointer;
@@ -1610,9 +1620,9 @@ html[data-dsh-imagegen-active] .sidebarHistoryHost {
   min-width: 16px;
   height: 16px;
   padding: 0 4px;
-  border-radius: 8px;
+  border-radius: var(--dsw-radius-sm);
   background: var(--dsw-alias-brand-primary);
-  color: #fff;
+  color: var(--dsw-alias-label-primary-foreground);
   font-size: 10px;
   font-weight: 600;
   line-height: 16px;
@@ -1635,16 +1645,16 @@ html[data-dsh-imagegen-active] .sidebarHistoryHost {
   width: 100%;
   height: 38px;
   border-radius: 999px;
-  font-size: 13.5px;
+  font-size: 14px;
 }
 
 .previewBadge {
   margin-left: 5px;
   padding: 0 4px;
-  border-radius: 4px;
+  border-radius: var(--dsw-radius-xs);
   background: var(--dsw-alias-brand-primary);
-  color: #fff;
-  font-size: 9px;
+  color: var(--dsw-alias-label-primary-foreground);
+  font-size: 10px;
   font-weight: 700;
   line-height: 13px;
   letter-spacing: 0.02em;
@@ -1652,17 +1662,17 @@ html[data-dsh-imagegen-active] .sidebarHistoryHost {
 
 .ecommercePlanNote {
   color: var(--dsw-alias-label-secondary);
-  font-size: 11.5px;
+  font-size: 12px;
   line-height: 1.5;
 }
 
 .ecommercePlanWarn {
   padding: 6px 8px;
   border: 1px solid var(--dsw-alias-border-l2);
-  border-radius: 6px;
+  border-radius: var(--dsw-radius-sm);
   background: var(--dsw-alias-bg-layer-2);
   color: var(--dsw-alias-label-secondary);
-  font-size: 11.5px;
+  font-size: 12px;
   line-height: 1.5;
 }
 
@@ -1679,7 +1689,7 @@ html[data-dsh-imagegen-active] .sidebarHistoryHost {
   gap: 3px;
   padding: 4px;
   border: 1px solid var(--dsw-alias-border-l1);
-  border-radius: 8px;
+  border-radius: var(--dsw-radius-sm);
   background: var(--dsw-alias-bg-layer-3);
 }
 
@@ -1687,7 +1697,7 @@ html[data-dsh-imagegen-active] .sidebarHistoryHost {
   width: 100%;
   height: 44px;
   object-fit: cover;
-  border-radius: 5px;
+  border-radius: var(--dsw-radius-sm);
 }
 
 .ecommerceAsset [data-dsh-select] {
@@ -1706,8 +1716,8 @@ html[data-dsh-imagegen-active] .sidebarHistoryHost {
   padding: 0;
   border: none;
   border-radius: 50%;
-  background: rgba(0, 0, 0, 0.55);
-  color: #fff;
+  background: var(--dsw-alias-bg-mask-1);
+  color: var(--dsw-alias-label-primary-inverted);
   cursor: pointer;
   font-size: 11px;
   line-height: 15px;
@@ -1715,7 +1725,7 @@ html[data-dsh-imagegen-active] .sidebarHistoryHost {
 }
 
 .ecommerceAsset button:not([data-dsh-select]):hover {
-  background: rgba(0, 0, 0, 0.8);
+  background: var(--dsw-alias-bg-mask-2);
 }
 
 .ecommerceAssetAdd {
@@ -1726,7 +1736,7 @@ html[data-dsh-imagegen-active] .sidebarHistoryHost {
   gap: 2px;
   min-height: 78px;
   border: 1.5px dashed var(--dsw-alias-border-l2);
-  border-radius: 8px;
+  border-radius: var(--dsw-radius-sm);
   background: transparent;
   color: var(--dsw-alias-label-secondary);
   cursor: pointer;
@@ -1758,7 +1768,7 @@ html[data-dsh-imagegen-active] .sidebarHistoryHost {
   color: var(--dsw-alias-label-secondary);
   cursor: pointer;
   font: inherit;
-  font-size: 12.5px;
+  font-size: 12px;
 }
 
 .ecommerceAdvancedToggle:hover {
@@ -1788,11 +1798,11 @@ html[data-dsh-imagegen-active] .sidebarHistoryHost {
   gap: 6px;
   padding: 10px;
   border: 1px solid var(--dsw-alias-brand-primary);
-  border-radius: 10px;
+  border-radius: var(--dsw-radius-md);
 }
 
 .ecommercePlanMini > strong {
-  font-size: 12.5px;
+  font-size: 12px;
 }
 
 .ecommercePlanList {
@@ -1808,7 +1818,7 @@ html[data-dsh-imagegen-active] .sidebarHistoryHost {
   justify-content: space-between;
   gap: 12px;
   color: var(--dsw-alias-label-secondary);
-  font-size: 11.5px;
+  font-size: 12px;
 }
 
 .ecommercePlanBack {
@@ -1873,7 +1883,7 @@ html[data-dsh-imagegen-active] .sidebarHistoryHost {
   font-size: 13px;
   text-align: center;
   border: 1.5px dashed var(--dsw-alias-border-l2);
-  border-radius: 12px;
+  border-radius: var(--dsw-radius-md);
 }
 
 .ecommerceGroups {
@@ -1916,9 +1926,9 @@ html[data-dsh-imagegen-active] .sidebarHistoryHost {
   gap: 8px;
   padding: 14px 16px;
   border: 1px solid var(--dsw-alias-border-l1);
-  border-radius: 14px;
+  border-radius: var(--dsw-radius-lg);
   background: var(--dsw-alias-bg-layer-1);
-  box-shadow: 0 1px 2px rgb(15 23 42 / 4%);
+  box-shadow: var(--dsw-shadow-lv1);
   transition: border-color 0.15s ease;
 }
 
@@ -1961,11 +1971,11 @@ html[data-dsh-imagegen-active] .sidebarHistoryHost {
   min-height: 26px;
   padding: 0 9px;
   border: 1px solid color-mix(in srgb, var(--dsw-alias-brand-primary) 35%, var(--dsw-alias-border-l2));
-  border-radius: 7px;
+  border-radius: var(--dsw-radius-sm);
   background: color-mix(in srgb, var(--dsw-alias-brand-primary) 7%, transparent);
   color: var(--dsw-alias-brand-primary);
   font: inherit;
-  font-size: 11.5px;
+  font-size: 12px;
   cursor: pointer;
 }
 
@@ -1986,7 +1996,7 @@ html[data-dsh-imagegen-active] .sidebarHistoryHost {
   color: var(--dsw-alias-label-primary);
   background: var(--dsw-alias-bg-layer-3);
   border: 1px solid var(--dsw-alias-border-l2);
-  border-radius: 10px;
+  border-radius: var(--dsw-radius-md);
   font: inherit;
   font-size: 13px;
   line-height: 1.7;
@@ -2023,7 +2033,6 @@ html[data-dsh-imagegen-active] .sidebarHistoryHost {
   gap: 8px;
   padding: 0;
   border: none;
-  border-radius: 0;
   background: transparent;
 }
 
@@ -2089,7 +2098,7 @@ html[data-dsh-imagegen-active] .sidebarHistoryHost {
   min-height: 0;
   padding: 0;
   border: 1px solid var(--dsw-alias-border-l1);
-  border-radius: 10px;
+  border-radius: var(--dsw-radius-md);
   background: var(--dsw-alias-bg-layer-3);
   overflow: hidden;
 }
@@ -2105,7 +2114,6 @@ html[data-dsh-imagegen-active] .sidebarHistoryHost {
   height: 100%;
   margin: 0;
   border: none;
-  border-radius: 0;
 }
 
 .ecommerceTaskCard .image {
@@ -2120,8 +2128,8 @@ html[data-dsh-imagegen-active] .sidebarHistoryHost {
   left: 6px;
   padding: 0 7px;
   border-radius: 999px;
-  background: rgb(0 0 0 / 55%);
-  color: #fff;
+  background: var(--dsw-alias-bg-mask-1);
+  color: var(--dsw-alias-label-primary-inverted);
   font-size: 10px;
   line-height: 16px;
   pointer-events: none;
@@ -2136,7 +2144,7 @@ html[data-dsh-imagegen-active] .sidebarHistoryHost {
   gap: 4px;
   justify-content: center;
   padding: 10px 4px 5px;
-  background: linear-gradient(transparent, rgb(0 0 0 / 55%));
+  background: linear-gradient(transparent, var(--dsw-alias-bg-mask-1));
   opacity: 0;
   transition: opacity 0.12s ease;
 }
@@ -2147,9 +2155,9 @@ html[data-dsh-imagegen-active] .sidebarHistoryHost {
 
 .ecommerceActionChip {
   border: none;
-  border-radius: 6px;
-  background: rgb(255 255 255 / 92%);
-  color: #111;
+  border-radius: var(--dsw-radius-sm);
+  background: var(--dsw-alias-bg-mask-2);
+  color: var(--dsw-alias-label-primary);
   font-size: 10px;
   font-weight: 500;
   line-height: 18px;
@@ -2160,7 +2168,7 @@ html[data-dsh-imagegen-active] .sidebarHistoryHost {
 }
 
 .ecommerceActionChip:hover {
-  background: #fff;
+  background: var(--dsw-alias-bg-mask-1);
 }
 
 .ecommerceActionChip:disabled {
@@ -2275,7 +2283,7 @@ html[data-dsh-imagegen-active] .sidebarHistoryHost {
 
 /* Drop the conversation column entirely while the chat toggle is collapsed. */
 html[data-dsh-imagegen-chat-collapsed][data-dsh-imagegen-active]:not([data-dsh-taskboard-active]):not([data-dsh-ssh-active]) [data-pane='conversation'],
-html[data-dsh-imagegen-chat-collapsed][data-dsh-imagegen-active]:not([data-dsh-taskboard-active]):not([data-dsh-ssh-active]) [class*='centerCol'] {
+html[data-dsh-imagegen-chat-collapsed][data-dsh-imagegen-active]:not([data-dsh-taskboard-active]):not([data-dsh-ssh-active]) [data-dsh-imagegen-center-col] {
   grid-template-columns: minmax(0, 1fr);
 }
 
@@ -2324,7 +2332,7 @@ html[data-dsh-imagegen-chat-collapsed] [data-dsh-imagegen-chat-resizer] {
   flex: 1;
   justify-content: center;
   height: 28px;
-  font-size: 12.5px;
+  font-size: 12px;
 }
 
 .modePill,
@@ -2347,10 +2355,10 @@ html[data-dsh-imagegen-chat-collapsed] [data-dsh-imagegen-chat-resizer] {
   color: var(--dsw-alias-label-secondary);
   background: transparent;
   border: 1.5px dashed var(--dsw-alias-border-l2);
-  border-radius: 12px;
+  border-radius: var(--dsw-radius-md);
   cursor: pointer;
   font: inherit;
-  font-size: 12.5px;
+  font-size: 12px;
   text-align: center;
 }
 
@@ -2385,7 +2393,7 @@ html[data-dsh-imagegen-chat-collapsed] [data-dsh-imagegen-chat-resizer] {
   width: 100%;
   max-height: 176px;
   object-fit: contain;
-  border-radius: 10px;
+  border-radius: var(--dsw-radius-md);
   background: var(--dsw-alias-bg-base);
   border: 1px solid var(--dsw-alias-border-l1);
 }
@@ -2416,7 +2424,7 @@ html[data-dsh-imagegen-chat-collapsed] [data-dsh-imagegen-chat-resizer] {
   color: var(--dsw-alias-label-primary);
   background: var(--dsw-alias-bg-layer-3);
   border: 1px solid var(--dsw-alias-border-l2);
-  border-radius: 10px;
+  border-radius: var(--dsw-radius-md);
   outline: none;
   resize: vertical;
   font-family: inherit;
@@ -2503,7 +2511,7 @@ html[data-dsh-imagegen-chat-collapsed] [data-dsh-imagegen-chat-resizer] {
 /* Over the model's documented prompt limit: red + bold so the locked generate
    button is self-explanatory (the tooltip repeats the exact limit). */
 .promptCount[data-over] {
-  color: var(--dsw-alias-status-danger, #e5484d);
+  color: var(--dsw-alias-state-error-primary, #e5484d);
   font-weight: 600;
 }
 
@@ -2580,7 +2588,7 @@ html[data-dsh-imagegen-chat-collapsed] [data-dsh-imagegen-chat-resizer] {
   color: var(--dsw-alias-label-primary);
   background: var(--dsw-alias-bg-layer-2);
   border: 1px solid var(--dsw-alias-border-l2);
-  border-radius: 18px;
+  border-radius: var(--dsw-radius-xl);
   outline: none;
   font-family: inherit;
   cursor: pointer;
@@ -2616,8 +2624,8 @@ html[data-dsh-imagegen-chat-collapsed] [data-dsh-imagegen-chat-resizer] {
   padding: 4px;
   background: var(--dsw-alias-bg-layer-2);
   border: 1px solid var(--dsw-alias-border-l2);
-  border-radius: 12px;
-  box-shadow: 0 -8px 24px rgba(0, 0, 0, 0.18);
+  border-radius: var(--dsw-radius-md);
+  box-shadow: var(--dsw-shadow-lv2);
   overflow: hidden;
 }
 
@@ -2630,7 +2638,7 @@ html[data-dsh-imagegen-chat-collapsed] [data-dsh-imagegen-chat-resizer] {
   color: var(--dsw-alias-label-primary);
   background: transparent;
   border: none;
-  border-radius: 8px;
+  border-radius: var(--dsw-radius-sm);
   cursor: pointer;
   text-align: left;
   white-space: nowrap;
@@ -2639,7 +2647,7 @@ html[data-dsh-imagegen-chat-collapsed] [data-dsh-imagegen-chat-resizer] {
 }
 
 .modelMenuItem:hover {
-  background: var(--dsw-alias-bg-hover);
+  background: var(--dsw-alias-interactive-bg-hover);
 }
 
 .modelMenuItem[data-selected] {
@@ -2693,12 +2701,12 @@ html[data-dsh-imagegen-chat-collapsed] [data-dsh-imagegen-chat-resizer] {
 .canvasError {
   margin: 14px;
   padding: 10px 14px;
-  font-size: 12.5px;
+  font-size: 12px;
   line-height: 1.6;
   color: var(--dsw-alias-state-error-primary, #ec1313);
   background: var(--dsw-alias-bg-layer-2);
   border: 1px solid var(--dsw-alias-state-error-primary, #ec1313);
-  border-radius: 10px;
+  border-radius: var(--dsw-radius-md);
   overflow-wrap: anywhere;
   flex: none;
 }
@@ -2764,7 +2772,7 @@ html[data-dsh-imagegen-chat-collapsed] [data-dsh-imagegen-chat-resizer] {
   flex-direction: column;
   margin: 0;
   border: 1px solid var(--dsw-alias-border-l1);
-  border-radius: 12px;
+  border-radius: var(--dsw-radius-md);
   overflow: hidden;
   background: var(--dsw-alias-bg-layer-2);
   cursor: zoom-in;
@@ -2807,15 +2815,15 @@ html[data-dsh-imagegen-chat-collapsed] [data-dsh-imagegen-chat-resizer] {
   font-size: 12px;
   line-height: 20px;
   font-weight: 500;
-  color: #fff;
-  background: rgb(15 18 24 / 82%);
-  border: 1px solid rgb(255 255 255 / 62%);
+  color: var(--dsw-alias-label-primary-inverted);
+  background: var(--dsw-alias-bg-mask-1);
+  border: 1px solid var(--dsw-alias-border-l2-darkmode-thin);
   border-radius: 999px;
   text-decoration: none;
   opacity: 0;
   transition: opacity 0.12s;
   backdrop-filter: blur(4px);
-  box-shadow: 0 2px 8px rgb(0 0 0 / 28%);
+  box-shadow: var(--dsw-shadow-lv1);
 }
 
 .imageCard:hover .download {
@@ -2823,12 +2831,12 @@ html[data-dsh-imagegen-chat-collapsed] [data-dsh-imagegen-chat-resizer] {
 }
 
 .download:hover {
-  background: rgb(15 18 24 / 94%);
+  background: var(--dsw-alias-bg-mask-2);
 }
 
 .download:focus-visible {
   opacity: 1;
-  outline: 2px solid #fff;
+  outline: 2px solid var(--dsw-alias-label-primary-inverted);
   outline-offset: 2px;
 }
 
@@ -2845,15 +2853,15 @@ html[data-dsh-imagegen-chat-collapsed] [data-dsh-imagegen-chat-resizer] {
   font-size: 12px;
   line-height: 20px;
   font-weight: 500;
-  color: #fff;
-  background: rgb(15 18 24 / 82%);
-  border: 1px solid rgb(255 255 255 / 62%);
+  color: var(--dsw-alias-label-primary-inverted);
+  background: var(--dsw-alias-bg-mask-1);
+  border: 1px solid var(--dsw-alias-border-l2-darkmode-thin);
   border-radius: 999px;
   cursor: pointer;
   opacity: 0;
   transition: opacity 0.12s;
   backdrop-filter: blur(4px);
-  box-shadow: 0 2px 8px rgb(0 0 0 / 28%);
+  box-shadow: var(--dsw-shadow-lv1);
 }
 
 .imageCard:hover .galleryAdd {
@@ -2861,12 +2869,12 @@ html[data-dsh-imagegen-chat-collapsed] [data-dsh-imagegen-chat-resizer] {
 }
 
 .galleryAdd:hover {
-  background: rgb(15 18 24 / 94%);
+  background: var(--dsw-alias-bg-mask-2);
 }
 
 .galleryAdd:focus-visible {
   opacity: 1;
-  outline: 2px solid #fff;
+  outline: 2px solid var(--dsw-alias-label-primary-inverted);
   outline-offset: 2px;
 }
 
@@ -2884,10 +2892,10 @@ html[data-dsh-imagegen-chat-collapsed] [data-dsh-imagegen-chat-resizer] {
   align-items: center;
   gap: 5px;
   padding: 2px 10px;
-  border: 1px solid rgb(255 255 255 / 62%);
+  border: 1px solid var(--dsw-alias-border-l2-darkmode-thin);
   border-radius: 999px;
-  color: #fff;
-  background: rgb(15 18 24 / 82%);
+  color: var(--dsw-alias-label-primary-inverted);
+  background: var(--dsw-alias-bg-mask-1);
   cursor: pointer;
   font: inherit;
   font-size: 12px;
@@ -2896,7 +2904,7 @@ html[data-dsh-imagegen-chat-collapsed] [data-dsh-imagegen-chat-resizer] {
   opacity: 0;
   transition: opacity 0.12s;
   backdrop-filter: blur(4px);
-  box-shadow: 0 2px 8px rgb(0 0 0 / 28%);
+  box-shadow: var(--dsw-shadow-lv1);
 }
 
 .imageCard:hover .conversationAdd,
@@ -2905,12 +2913,12 @@ html[data-dsh-imagegen-chat-collapsed] [data-dsh-imagegen-chat-resizer] {
 }
 
 .conversationAdd:hover {
-  background: rgb(15 18 24 / 94%);
+  background: var(--dsw-alias-bg-mask-2);
 }
 
 .conversationAdd:focus-visible {
   opacity: 1;
-  outline: 2px solid #fff;
+  outline: 2px solid var(--dsw-alias-label-primary-inverted);
   outline-offset: 2px;
 }
 
@@ -2980,7 +2988,7 @@ html[data-dsh-imagegen-chat-collapsed] [data-dsh-imagegen-chat-resizer] {
   align-items: center;
   justify-content: center;
   padding: 24px;
-  background: rgba(0, 0, 0, 0.72);
+  background: var(--dsw-alias-bg-mask-photo);
   backdrop-filter: blur(6px);
 }
 
@@ -2993,15 +3001,15 @@ html[data-dsh-imagegen-chat-collapsed] [data-dsh-imagegen-chat-resizer] {
   justify-content: center;
   width: 38px;
   height: 38px;
-  color: #fff;
-  background: rgba(255, 255, 255, 0.14);
-  border: 1px solid rgba(255, 255, 255, 0.28);
+  color: var(--dsw-alias-label-primary-inverted);
+  background: var(--dsw-specific-input-major);
+  border: 1px solid var(--dsw-alias-border-l2-darkmode-thin);
   border-radius: 50%;
   cursor: pointer;
 }
 
 .lightboxClose:hover {
-  background: rgba(255, 255, 255, 0.26);
+  background: var(--dsw-alias-bg-mask-2);
 }
 
 .lightboxNav {
@@ -3013,15 +3021,15 @@ html[data-dsh-imagegen-chat-collapsed] [data-dsh-imagegen-chat-resizer] {
   justify-content: center;
   width: 42px;
   height: 42px;
-  color: #fff;
-  background: rgba(255, 255, 255, 0.14);
-  border: 1px solid rgba(255, 255, 255, 0.28);
+  color: var(--dsw-alias-label-primary-inverted);
+  background: var(--dsw-specific-input-major);
+  border: 1px solid var(--dsw-alias-border-l2-darkmode-thin);
   border-radius: 50%;
   cursor: pointer;
 }
 
 .lightboxNav:hover {
-  background: rgba(255, 255, 255, 0.26);
+  background: var(--dsw-alias-bg-mask-2);
 }
 
 .lightboxNav[data-dir='prev'] {
@@ -3048,8 +3056,8 @@ html[data-dsh-imagegen-chat-collapsed] [data-dsh-imagegen-chat-resizer] {
   min-height: 0;
   position: relative;
   overflow: auto;
-  border-radius: 10px;
-  background: rgba(255, 255, 255, 0.04);
+  border-radius: var(--dsw-radius-md);
+  background: var(--dsw-alias-bg-mask-2);
 }
 
 .lightboxScaleFrame {
@@ -3065,8 +3073,8 @@ html[data-dsh-imagegen-chat-collapsed] [data-dsh-imagegen-chat-resizer] {
   max-width: 100%;
   max-height: 100%;
   object-fit: contain;
-  border-radius: 10px;
-  box-shadow: 0 24px 80px rgba(0, 0, 0, 0.5);
+  border-radius: var(--dsw-radius-md);
+  box-shadow: var(--dsw-elevation-prominent);
 }
 
 .lightboxTools {
@@ -3082,9 +3090,9 @@ html[data-dsh-imagegen-chat-collapsed] [data-dsh-imagegen-chat-resizer] {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  color: #fff;
-  background: rgba(255, 255, 255, 0.14);
-  border: 1px solid rgba(255, 255, 255, 0.28);
+  color: var(--dsw-alias-label-primary-inverted);
+  background: var(--dsw-specific-input-major);
+  border: 1px solid var(--dsw-alias-border-l2-darkmode-thin);
   cursor: pointer;
 }
 
@@ -3110,7 +3118,7 @@ html[data-dsh-imagegen-chat-collapsed] [data-dsh-imagegen-chat-resizer] {
 .lightboxTool:hover,
 .lightboxZoomLevel:hover,
 .lightboxCopy:hover {
-  background: rgba(255, 255, 255, 0.26);
+  background: var(--dsw-alias-bg-mask-2);
 }
 
 .lightboxCaptionRow {
@@ -3125,7 +3133,7 @@ html[data-dsh-imagegen-chat-collapsed] [data-dsh-imagegen-chat-resizer] {
   min-width: 0;
   font-size: 12px;
   line-height: 1.6;
-  color: rgba(255, 255, 255, 0.9);
+  color: var(--dsw-alias-label-primary-inverted);
   display: -webkit-box;
   -webkit-line-clamp: 3;
   -webkit-box-orient: vertical;
@@ -3152,7 +3160,7 @@ html[data-dsh-imagegen-chat-collapsed] [data-dsh-imagegen-chat-resizer] {
 
 .lightboxIndex {
   font-size: 12px;
-  color: rgba(255, 255, 255, 0.8);
+  color: var(--dsw-alias-label-dimmed);
   font-variant-numeric: tabular-nums;
 }
 
@@ -3166,11 +3174,11 @@ html[data-dsh-imagegen-chat-collapsed] [data-dsh-imagegen-chat-resizer] {
 .lightboxEdit {
   padding: 4px 14px;
   font: inherit;
-  font-size: 12.5px;
+  font-size: 12px;
   font-weight: 500;
-  color: #fff;
-  background: rgba(255, 255, 255, 0.14);
-  border: 1px solid rgba(255, 255, 255, 0.28);
+  color: var(--dsw-alias-label-primary-inverted);
+  background: var(--dsw-specific-input-major);
+  border: 1px solid var(--dsw-alias-border-l2-darkmode-thin);
   border-radius: 999px;
   text-decoration: none;
   cursor: pointer;
@@ -3178,13 +3186,13 @@ html[data-dsh-imagegen-chat-collapsed] [data-dsh-imagegen-chat-resizer] {
 
 .lightboxDownload:hover,
 .lightboxEdit:hover {
-  background: rgba(255, 255, 255, 0.26);
+  background: var(--dsw-alias-bg-mask-2);
 }
 
 .lightboxEdit {
-  color: #fff;
-  background: rgba(255, 255, 255, 0.14);
-  border: 1px solid rgba(255, 255, 255, 0.28);
+  color: var(--dsw-alias-label-primary-inverted);
+  background: var(--dsw-specific-input-major);
+  border: 1px solid var(--dsw-alias-border-l2-darkmode-thin);
   border-radius: 999px;
 }
 
@@ -3239,7 +3247,7 @@ html[data-dsh-imagegen-chat-collapsed] [data-dsh-imagegen-chat-resizer] {
   background: var(--dsw-alias-bg-mask-1);
   border: 1px solid var(--dsw-alias-border-l2);
   border-radius: 999px;
-  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.22);
+  box-shadow: var(--dsw-shadow-lv2);
   backdrop-filter: blur(6px);
   pointer-events: none;
   animation: dshImageGenToastIn 160ms ease-out;
@@ -3264,7 +3272,7 @@ html[data-dsh-imagegen-chat-collapsed] [data-dsh-imagegen-chat-resizer] {
   border-radius: 999px;
   color: var(--dsw-alias-label-primary);
   background: var(--dsw-alias-bg-mask-1);
-  box-shadow: 0 8px 24px rgb(0 0 0 / 22%);
+  box-shadow: var(--dsw-shadow-lv2);
   font-size: 13px;
   font-weight: 500;
   pointer-events: none;
@@ -3285,7 +3293,7 @@ html[data-dsh-imagegen-chat-collapsed] [data-dsh-imagegen-chat-resizer] {
 .config[data-gallery='true'] .galleryFilters { order: 2; flex: 1; min-height: 0; }
 .galleryFilters { padding: 18px 14px; overflow-y: auto; overflow-x: hidden; }
 .galleryFilterHeading { margin: 0 4px 10px; color: var(--dsw-alias-label-tertiary); font-size: 12px; font-weight: 600; }
-.galleryFilter { display: flex; align-items: center; justify-content: space-between; width: 100%; min-height: 34px; padding: 0 10px; border: 0; border-radius: 9px; color: var(--dsw-alias-label-secondary); background: transparent; cursor: pointer; text-align: left; }
+.galleryFilter { display: flex; align-items: center; justify-content: space-between; width: 100%; min-height: 34px; padding: 0 10px; border: 0; border-radius: var(--dsw-radius-md); color: var(--dsw-alias-label-secondary); background: transparent; cursor: pointer; text-align: left; }
 .galleryFilter:hover, .galleryFilter[data-active] { color: var(--dsw-alias-brand-primary); background: color-mix(in srgb, var(--dsw-alias-brand-primary) 10%, transparent); }
 .galleryFilterCount { min-width: 20px; padding: 1px 6px; border-radius: 999px; color: var(--dsw-alias-label-tertiary); background: var(--dsw-alias-bg-layer-2); font-size: 11px; text-align: center; }
 .galleryFilterDivider { height: 1px; margin: 18px 4px; background: var(--dsw-alias-border-l1); }
@@ -3293,11 +3301,11 @@ html[data-dsh-imagegen-chat-collapsed] [data-dsh-imagegen-chat-resizer] {
 .galleryRatio { padding: 6px 10px; border: 0; border-radius: 999px; color: var(--dsw-alias-label-secondary); background: var(--dsw-alias-bg-layer-2); cursor: pointer; font-size: 12px; }
 .galleryRatio[data-active] { color: var(--dsw-alias-brand-primary); background: color-mix(in srgb, var(--dsw-alias-brand-primary) 13%, transparent); }
 .galleryTagFilterList { display: flex; flex-wrap: wrap; gap: 6px; }
-.galleryTagFilter { display: inline-flex; align-items: center; gap: 5px; min-width: 0; max-width: 100%; min-height: 27px; padding: 0 8px; border: 1px solid var(--dsw-alias-border-l1); border-radius: 6px; color: var(--dsw-alias-label-secondary); background: var(--dsw-alias-bg-layer-2); cursor: pointer; font: inherit; font-size: 11px; }
+.galleryTagFilter { display: inline-flex; align-items: center; gap: 5px; min-width: 0; max-width: 100%; min-height: 27px; padding: 0 8px; border: 1px solid var(--dsw-alias-border-l1); border-radius: var(--dsw-radius-sm); color: var(--dsw-alias-label-secondary); background: var(--dsw-alias-bg-layer-2); cursor: pointer; font: inherit; font-size: 11px; }
 .galleryTagFilter span:first-child { overflow: hidden; max-width: 112px; text-overflow: ellipsis; white-space: nowrap; }
 .galleryTagFilter span:last-child { color: var(--dsw-alias-label-tertiary); font-size: 10px; }
 .galleryTagFilter:hover, .galleryTagFilter[data-active] { color: var(--dsw-alias-brand-primary); background: color-mix(in srgb, var(--dsw-alias-brand-primary) 10%, transparent); }
-.galleryFilterNote { margin: 20px 4px 0; color: var(--dsw-alias-label-quaternary); font-size: 11px; line-height: 1.5; }
+.galleryFilterNote { margin: 20px 4px 0; color: var(--dsw-alias-label-caption); font-size: 11px; line-height: 1.5; }
 .galleryWorkspace { position: absolute; inset: 0; display: flex; width: 100%; height: 100%; min-width: 0; min-height: 0; flex-direction: column; overflow: hidden; padding: 22px 24px 26px; box-sizing: border-box; }
 .galleryToolbar { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 12px 16px; flex: none; min-width: 0; margin-bottom: 18px; }
 .galleryToolbar > div:first-child { flex: none; }
@@ -3307,18 +3315,18 @@ html[data-dsh-imagegen-chat-collapsed] [data-dsh-imagegen-chat-resizer] {
 .galleryToolbarActions > * { flex-shrink: 0; }
 .galleryToolbarActions .gallerySearch { flex: 0 1 170px; max-width: 100%; }
 .galleryToolbarActions .gallerySort { width: auto; min-width: 96px; min-height: 30px; }
-.gallerySelectMode, .galleryBulkButton, .gallerySelectionClear { min-height: 30px; padding: 0 10px; border: 1px solid var(--dsw-alias-border-l1); border-radius: 7px; color: var(--dsw-alias-label-secondary); background: var(--dsw-alias-bg-layer-1); cursor: pointer; font: inherit; font-size: 12px; }
+.gallerySelectMode, .galleryBulkButton, .gallerySelectionClear { min-height: 30px; padding: 0 10px; border: 1px solid var(--dsw-alias-border-l1); border-radius: var(--dsw-radius-sm); color: var(--dsw-alias-label-secondary); background: var(--dsw-alias-bg-layer-1); cursor: pointer; font: inherit; font-size: 12px; }
 .gallerySelectMode:hover, .gallerySelectMode[data-active], .galleryBulkButton:hover:not(:disabled) { color: var(--dsw-alias-brand-primary); border-color: color-mix(in srgb, var(--dsw-alias-brand-primary) 38%, var(--dsw-alias-border-l1)); background: color-mix(in srgb, var(--dsw-alias-brand-primary) 11%, transparent); }
 .galleryBulkButton:disabled { cursor: not-allowed; opacity: .45; }
-.gallerySelectionBar { display: flex; align-items: center; gap: 10px; flex: none; min-width: 0; margin: -4px 0 16px; padding: 10px 12px; border: 1px solid color-mix(in srgb, var(--dsw-alias-brand-primary) 35%, var(--dsw-alias-border-l1)); border-radius: 9px; background: color-mix(in srgb, var(--dsw-alias-brand-primary) 7%, var(--dsw-alias-bg-layer-1)); }
+.gallerySelectionBar { display: flex; align-items: center; gap: 10px; flex: none; min-width: 0; margin: -4px 0 16px; padding: 10px 12px; border: 1px solid color-mix(in srgb, var(--dsw-alias-brand-primary) 35%, var(--dsw-alias-border-l1)); border-radius: var(--dsw-radius-md); background: color-mix(in srgb, var(--dsw-alias-brand-primary) 7%, var(--dsw-alias-bg-layer-1)); }
 .gallerySelectionBar strong { flex: none; color: var(--dsw-alias-brand-primary); font-size: 12px; }
 .gallerySelectionClear { margin-left: auto; }
 .gallerySelectionClear:hover { color: var(--dsw-alias-label-primary); background: var(--dsw-alias-bg-layer-2); }
-.galleryTagInput, .gallerySearch { min-width: 0; height: 30px; padding: 0 10px; border: 1px solid var(--dsw-alias-border-l1); border-radius: 7px; outline: none; color: var(--dsw-alias-label-primary); background: var(--dsw-alias-bg-layer-1); font: inherit; font-size: 12px; }
+.galleryTagInput, .gallerySearch { min-width: 0; height: 30px; padding: 0 10px; border: 1px solid var(--dsw-alias-border-l1); border-radius: var(--dsw-radius-sm); outline: none; color: var(--dsw-alias-label-primary); background: var(--dsw-alias-bg-layer-1); font: inherit; font-size: 12px; }
 .galleryTagInput { flex: 1 1 190px; }
 .galleryTagInput:focus, .gallerySearch:focus { border-color: var(--dsw-alias-brand-primary); }
-.galleryViewToggle { display: flex; padding: 3px; border: 1px solid var(--dsw-alias-border-l1); border-radius: 9px; background: var(--dsw-alias-bg-layer-1); }
-.galleryViewToggle button, .gallerySort, .galleryClear { min-height: 30px; padding: 0 10px; border: 0; border-radius: 7px; color: var(--dsw-alias-label-secondary); background: transparent; cursor: pointer; font: inherit; font-size: 12px; }
+.galleryViewToggle { display: flex; padding: 3px; border: 1px solid var(--dsw-alias-border-l1); border-radius: var(--dsw-radius-md); background: var(--dsw-alias-bg-layer-1); }
+.galleryViewToggle button, .gallerySort, .galleryClear { min-height: 30px; padding: 0 10px; border: 0; border-radius: var(--dsw-radius-sm); color: var(--dsw-alias-label-secondary); background: transparent; cursor: pointer; font: inherit; font-size: 12px; }
 .galleryViewToggle button[data-active], .galleryViewToggle button:hover, .gallerySort:hover, .galleryClear:hover { color: var(--dsw-alias-brand-primary); background: color-mix(in srgb, var(--dsw-alias-brand-primary) 11%, transparent); }
 .gallerySort { border: 1px solid var(--dsw-alias-border-l1); background: var(--dsw-alias-bg-layer-1); }
 .galleryClear { border: 1px solid var(--dsw-alias-border-l1); }
@@ -3328,13 +3336,13 @@ html[data-dsh-imagegen-chat-collapsed] [data-dsh-imagegen-chat-resizer] {
 .compareModelChoices { display: flex; flex-direction: column; gap: 8px; }
 .compareChannelGroup { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; }
 .compareChannelName { flex-basis: 100%; color: var(--dsw-alias-label-tertiary); font-size: 10px; font-weight: 600; }
-.compareModelChoices label { padding: 4px 6px; border: 1px solid var(--dsw-alias-border-l1); border-radius: 5px; font-size: 10px; }
-.comparisonBoard { position: absolute; z-index: var(--z-hover); top: 14px; right: 14px; bottom: 14px; left: 14px; display: flex; flex-direction: column; overflow: hidden; border: 1px solid var(--dsw-alias-border-l2); border-radius: 8px; background: var(--dsw-alias-bg-layer-1); box-shadow: 0 8px 24px rgb(0 0 0 / 12%); }
+.compareModelChoices label { padding: 4px 6px; border: 1px solid var(--dsw-alias-border-l1); border-radius: var(--dsw-radius-xs); font-size: 10px; }
+.comparisonBoard { position: absolute; z-index: var(--z-hover); top: 14px; right: 14px; bottom: 14px; left: 14px; display: flex; flex-direction: column; overflow: hidden; border: 1px solid var(--dsw-alias-border-l2); border-radius: var(--dsw-radius-sm); background: var(--dsw-alias-bg-layer-1); box-shadow: var(--dsw-shadow-lv2); }
 .comparisonBoard > header { display: flex; align-items: center; justify-content: space-between; padding: 10px 12px; border-bottom: 1px solid var(--dsw-alias-border-l1); }
 .comparisonBoard > header div { display: flex; align-items: baseline; gap: 7px; }
 .comparisonBoard > header strong { color: var(--dsw-alias-label-primary); font-size: 13px; }
 .comparisonBoard > header span { color: var(--dsw-alias-label-tertiary); font-size: 11px; }
-.comparisonBoard > header button { min-height: 28px; padding: 0 9px; border: 1px solid var(--dsw-alias-border-l1); border-radius: 5px; color: var(--dsw-alias-label-secondary); background: var(--dsw-alias-bg-layer-2); cursor: pointer; font: inherit; font-size: 11px; }
+.comparisonBoard > header button { min-height: 28px; padding: 0 9px; border: 1px solid var(--dsw-alias-border-l1); border-radius: var(--dsw-radius-xs); color: var(--dsw-alias-label-secondary); background: var(--dsw-alias-bg-layer-2); cursor: pointer; font: inherit; font-size: 11px; }
 .comparisonGrid { display: grid; flex: 1; min-height: 0; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); grid-template-rows: minmax(200px, 1fr); grid-auto-rows: minmax(200px, 1fr); gap: 12px; overflow: auto; padding: 12px; }
 .comparisonGrid article { display: flex; height: 100%; min-width: 0; min-height: 0; flex-direction: column; gap: 7px; }
 .comparisonGrid article > strong { color: var(--dsw-alias-label-primary); font-size: 12px; }
@@ -3345,18 +3353,18 @@ html[data-dsh-imagegen-chat-collapsed] [data-dsh-imagegen-chat-resizer] {
    board holds many models and the grid rows get squeezed. */
 .comparisonPending { display: flex; flex: 1; min-height: 160px; }
 .comparisonGrid img { display: block; width: 100%; height: 100%; min-height: 0; max-height: none; flex: 1; object-fit: contain; background: var(--dsw-alias-bg-base); }
-.comparisonFullscreen { position: fixed; z-index: var(--z-fullscreen); inset: 0; overflow: auto; padding: 54px 24px 24px; background: rgb(0 0 0 / 92%); }
+.comparisonFullscreen { position: fixed; z-index: var(--z-fullscreen); inset: 0; overflow: auto; padding: 54px 24px 24px; background: var(--dsw-alias-bg-mask-photo); }
 .comparisonFullscreenGrid { display: grid; min-height: 100%; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); align-items: start; gap: 18px; }
 .comparisonFullscreen figure { min-width: 0; margin: 0; }
-.comparisonFullscreen figcaption { margin-bottom: 8px; color: #fff; font-size: 13px; font-weight: 600; }
-.comparisonFullscreen img { display: block; width: 100%; margin-bottom: 10px; background: #111; }
+.comparisonFullscreen figcaption { margin-bottom: 8px; color: var(--dsw-alias-label-primary-inverted); font-size: 13px; font-weight: 600; }
+.comparisonFullscreen img { display: block; width: 100%; margin-bottom: 10px; background: var(--dsw-alias-bg-mask-3); }
 .historyItem[data-comparison] { border-color: color-mix(in srgb, var(--dsw-alias-brand-primary) 55%, var(--dsw-alias-border-l1)); }
 .galleryMasonry { display: grid; flex: 1 1 auto; width: 100%; height: 0; max-width: 100%; min-width: 0; min-height: 0; box-sizing: border-box; grid-template-columns: repeat(3, minmax(0, 1fr)); grid-auto-rows: max-content; align-content: start; gap: 16px; overflow-y: scroll; overflow-x: hidden; overscroll-behavior: contain; padding: 2px 8px 16px 2px; scrollbar-width: thin; scrollbar-color: var(--dsw-alias-border-l2) transparent; }
 .galleryMasonry::-webkit-scrollbar { width: 8px; }
 .galleryMasonry::-webkit-scrollbar-thumb { background: var(--dsw-alias-border-l2); border-radius: 999px; }
-.galleryCard { position: relative; display: block; width: 100%; margin: 0; overflow: hidden; border: 1px solid var(--dsw-alias-border-l1); border-radius: 14px; background: var(--dsw-alias-bg-layer-1); box-shadow: 0 5px 18px rgb(24 32 54 / 7%); }
-.galleryCard[data-selected] { border-color: var(--dsw-alias-brand-primary); box-shadow: 0 0 0 2px color-mix(in srgb, var(--dsw-alias-brand-primary) 26%, transparent), 0 5px 18px rgb(24 32 54 / 7%); }
-.gallerySelect { position: absolute; z-index: var(--z-content); top: 9px; right: 9px; display: grid; width: 26px; height: 26px; place-items: center; border: 1px solid rgb(255 255 255 / 75%); border-radius: 7px; background: rgb(0 0 0 / 58%); cursor: pointer; }
+.galleryCard { position: relative; display: block; width: 100%; margin: 0; overflow: hidden; border: 1px solid var(--dsw-alias-border-l1); border-radius: var(--dsw-radius-lg); background: var(--dsw-alias-bg-layer-1); box-shadow: var(--dsw-shadow-lv1); }
+.galleryCard[data-selected] { border-color: var(--dsw-alias-brand-primary); box-shadow: 0 0 0 2px color-mix(in srgb, var(--dsw-alias-brand-primary) 26%, transparent), var(--dsw-shadow-lv1); }
+.gallerySelect { position: absolute; z-index: var(--z-content); top: 9px; right: 9px; display: grid; width: 26px; height: 26px; place-items: center; border: 1px solid var(--dsw-alias-border-l2-darkmode-thin); border-radius: var(--dsw-radius-sm); background: var(--dsw-alias-bg-mask-1); cursor: pointer; }
 .gallerySelect input { width: 16px; height: 16px; margin: 0; accent-color: var(--dsw-alias-brand-primary); cursor: pointer; }
 .galleryImageButton { position: relative; display: block; width: 100%; padding: 0; border: 0; background: var(--dsw-alias-bg-base); cursor: zoom-in; }
 .galleryImageButton[data-selecting] { cursor: pointer; }
@@ -3364,28 +3372,28 @@ html[data-dsh-imagegen-chat-collapsed] [data-dsh-imagegen-chat-resizer] {
 .galleryMasonry[data-view='masonry'] .galleryCard:nth-child(3n + 1) .galleryImage { aspect-ratio: 4 / 5; }
 .galleryMasonry[data-view='masonry'] .galleryCard:nth-child(3n + 2) .galleryImage { aspect-ratio: 4 / 3; }
 .galleryMasonry[data-view='masonry'] .galleryCard:nth-child(3n) .galleryImage { aspect-ratio: 3 / 4; }
-.galleryBadge { position: absolute; top: 10px; left: 10px; padding: 4px 9px; border-radius: 999px; color: #fff; background: rgb(18 23 36 / 76%); font-size: 11px; backdrop-filter: blur(4px); }
+.galleryBadge { position: absolute; top: 10px; left: 10px; padding: 4px 9px; border-radius: 999px; color: var(--dsw-alias-label-primary-inverted); background: var(--dsw-alias-bg-mask-2); font-size: 11px; backdrop-filter: blur(4px); }
 .galleryCardActions { display: flex; padding: 8px 12px 0; }
-.galleryCardAction { display: inline-flex; align-items: center; justify-content: center; width: 100%; min-width: 0; gap: 4px; min-height: 28px; padding: 0 4px; border: 1px solid var(--dsw-alias-border-l2); border-radius: 7px; color: var(--dsw-alias-label-secondary); background: var(--dsw-alias-bg-layer-2); cursor: pointer; font: inherit; font-size: 10px; font-weight: 500; white-space: nowrap; }
+.galleryCardAction { display: inline-flex; align-items: center; justify-content: center; width: 100%; min-width: 0; gap: 4px; min-height: 28px; padding: 0 4px; border: 1px solid var(--dsw-alias-border-l2); border-radius: var(--dsw-radius-sm); color: var(--dsw-alias-label-secondary); background: var(--dsw-alias-bg-layer-2); cursor: pointer; font: inherit; font-size: 10px; font-weight: 500; white-space: nowrap; }
 .galleryCardAction:hover, .galleryCardAction:focus-visible { border-color: var(--dsw-alias-brand-primary); color: var(--dsw-alias-brand-primary); outline: none; }
 .galleryCardAction:disabled { cursor: wait; opacity: .55; }
 .galleryCardFooter { display: flex; align-items: center; gap: 9px; min-width: 0; padding: 10px 12px; }
-.galleryAvatar { display: grid; flex: none; width: 27px; height: 27px; place-items: center; border-radius: 50%; color: #fff; background: var(--dsw-alias-brand-primary); font-size: 12px; font-weight: 700; }
+.galleryAvatar { display: grid; flex: none; width: 27px; height: 27px; place-items: center; border-radius: 50%; color: var(--dsw-alias-label-primary-foreground); background: var(--dsw-alias-brand-primary); font-size: 12px; font-weight: 700; }
 .galleryCardInfo { display: flex; min-width: 0; flex: 1; flex-direction: column; gap: 2px; }
 .galleryCardInfo strong, .galleryCardInfo small { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .galleryCardInfo strong { color: var(--dsw-alias-label-primary); font-size: 12px; }
 .galleryCardInfo small { color: var(--dsw-alias-label-tertiary); font-size: 10px; }
 .galleryTags { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 4px; }
-.galleryTags button { overflow: hidden; max-width: 96px; min-height: 19px; padding: 1px 6px; border: 0; border-radius: 4px; color: var(--dsw-alias-brand-primary); background: color-mix(in srgb, var(--dsw-alias-brand-primary) 10%, transparent); cursor: pointer; font: inherit; font-size: 10px; line-height: 1.35; text-overflow: ellipsis; white-space: nowrap; }
+.galleryTags button { overflow: hidden; max-width: 96px; min-height: 19px; padding: 1px 6px; border: 0; border-radius: var(--dsw-radius-xs); color: var(--dsw-alias-brand-primary); background: color-mix(in srgb, var(--dsw-alias-brand-primary) 10%, transparent); cursor: pointer; font: inherit; font-size: 10px; line-height: 1.35; text-overflow: ellipsis; white-space: nowrap; }
 .galleryTags button:hover { background: color-mix(in srgb, var(--dsw-alias-brand-primary) 17%, transparent); }
 .galleryTags .galleryTagEdit { flex: none; color: var(--dsw-alias-label-tertiary); background: transparent; }
 .galleryTagEditor { display: flex; align-items: center; gap: 6px; padding: 0 12px 10px 48px; }
-.galleryTagEditor input { min-width: 0; flex: 1; height: 27px; padding: 0 8px; border: 1px solid var(--dsw-alias-border-l2); border-radius: 6px; outline: none; color: var(--dsw-alias-label-primary); background: var(--dsw-alias-bg-layer-2); font: inherit; font-size: 11px; }
+.galleryTagEditor input { min-width: 0; flex: 1; height: 27px; padding: 0 8px; border: 1px solid var(--dsw-alias-border-l2); border-radius: var(--dsw-radius-sm); outline: none; color: var(--dsw-alias-label-primary); background: var(--dsw-alias-bg-layer-2); font: inherit; font-size: 11px; }
 .galleryTagEditor input:focus { border-color: var(--dsw-alias-brand-primary); }
-.galleryTagEditor button { height: 27px; padding: 0 8px; border: 1px solid var(--dsw-alias-border-l2); border-radius: 6px; color: var(--dsw-alias-label-secondary); background: var(--dsw-alias-bg-layer-1); cursor: pointer; font: inherit; font-size: 11px; }
+.galleryTagEditor button { height: 27px; padding: 0 8px; border: 1px solid var(--dsw-alias-border-l2); border-radius: var(--dsw-radius-sm); color: var(--dsw-alias-label-secondary); background: var(--dsw-alias-bg-layer-1); cursor: pointer; font: inherit; font-size: 11px; }
 .galleryTagEditor button[type='submit'] { color: var(--dsw-alias-brand-primary); }
 .galleryRemove { flex: none; width: 24px; height: 24px; padding: 0; border: 0; border-radius: 50%; color: var(--dsw-alias-label-tertiary); background: transparent; cursor: pointer; font-size: 18px; }
-.galleryRemove:hover { color: var(--dsw-alias-state-error); background: var(--dsw-alias-bg-layer-2); }
+.galleryRemove:hover { color: var(--dsw-alias-state-error-primary); background: var(--dsw-alias-bg-layer-2); }
 
 @media (max-width: 760px) {
   .ecommerceParamGrid { grid-template-columns: 1fr; }
@@ -3497,7 +3505,7 @@ html[data-dsh-imagegen-chat-collapsed] [data-dsh-imagegen-chat-resizer] {
   padding: 0 10px;
   flex: none;
   border: 1px solid var(--dsw-alias-border-l1);
-  border-radius: 8px;
+  border-radius: var(--dsw-radius-sm);
   background: transparent;
   color: var(--dsw-alias-label-secondary);
   font-family: inherit;
@@ -3524,14 +3532,14 @@ html[data-dsh-imagegen-chat-collapsed] [data-dsh-imagegen-chat-resizer] {
   padding: 3px;
   background: var(--dsw-alias-bg-layer-2);
   border: 1px solid var(--dsw-alias-border-l1);
-  border-radius: 10px;
+  border-radius: var(--dsw-radius-md);
 }
 
 .videoModeButton {
   height: 28px;
   padding: 0 12px;
   border: none;
-  border-radius: 8px;
+  border-radius: var(--dsw-radius-sm);
   background: transparent;
   color: var(--dsw-alias-label-secondary);
   font-family: inherit;
@@ -3579,7 +3587,7 @@ html[data-dsh-imagegen-chat-collapsed] [data-dsh-imagegen-chat-resizer] {
   gap: 10px;
   padding: 14px;
   border: 1px solid var(--dsw-alias-border-l1);
-  border-radius: 12px;
+  border-radius: var(--dsw-radius-md);
   background: var(--dsw-alias-bg-layer-1);
 }
 
@@ -3594,7 +3602,7 @@ html[data-dsh-imagegen-chat-collapsed] [data-dsh-imagegen-chat-resizer] {
   resize: vertical;
   padding: 10px 12px;
   border: 1px solid var(--dsw-alias-border-l1);
-  border-radius: 10px;
+  border-radius: var(--dsw-radius-md);
   background: var(--dsw-alias-bg-base);
   color: var(--dsw-alias-label-primary);
   font-family: inherit;
@@ -3624,7 +3632,7 @@ html[data-dsh-imagegen-chat-collapsed] [data-dsh-imagegen-chat-resizer] {
   height: 32px;
   padding: 0 12px;
   border: 1px dashed var(--dsw-alias-border-l2);
-  border-radius: 9px;
+  border-radius: var(--dsw-radius-md);
   background: transparent;
   color: var(--dsw-alias-label-secondary);
   font-family: inherit;
@@ -3648,7 +3656,7 @@ html[data-dsh-imagegen-chat-collapsed] [data-dsh-imagegen-chat-resizer] {
   max-height: 180px;
   object-fit: contain;
   border: 1px solid var(--dsw-alias-border-l1);
-  border-radius: 9px;
+  border-radius: var(--dsw-radius-md);
   background: var(--dsw-alias-bg-layer-2);
 }
 
@@ -3659,7 +3667,7 @@ html[data-dsh-imagegen-chat-collapsed] [data-dsh-imagegen-chat-resizer] {
   height: 26px;
   padding: 0 10px;
   border: 1px solid var(--dsw-alias-border-l1);
-  border-radius: 8px;
+  border-radius: var(--dsw-radius-sm);
   background: transparent;
   color: var(--dsw-alias-label-secondary);
   font-family: inherit;
@@ -3702,7 +3710,7 @@ html[data-dsh-imagegen-chat-collapsed] [data-dsh-imagegen-chat-resizer] {
   min-width: 44px;
   padding: 0 10px;
   border: 1px solid var(--dsw-alias-border-l1);
-  border-radius: 8px;
+  border-radius: var(--dsw-radius-sm);
   background: transparent;
   color: var(--dsw-alias-label-secondary);
   font-family: inherit;
@@ -3748,7 +3756,7 @@ html[data-dsh-imagegen-chat-collapsed] [data-dsh-imagegen-chat-resizer] {
   gap: 6px;
   height: 28px;
   padding: 0 10px;
-  border: 1px solid var(--dsw-alias-border-secondary);
+  border: 1px solid var(--dsw-alias-border-l2);
   border-radius: 999px;
   background: transparent;
   color: var(--dsw-alias-label-secondary);
@@ -3768,8 +3776,8 @@ html[data-dsh-imagegen-chat-collapsed] [data-dsh-imagegen-chat-resizer] {
 }
 
 .videoPlanPreview {
-  border: 1px solid var(--dsw-alias-border-secondary);
-  border-radius: 10px;
+  border: 1px solid var(--dsw-alias-border-l2);
+  border-radius: var(--dsw-radius-md);
   padding: 10px 12px;
   display: flex;
   flex-direction: column;
@@ -3786,7 +3794,7 @@ html[data-dsh-imagegen-chat-collapsed] [data-dsh-imagegen-chat-resizer] {
 }
 
 .videoPlanBadge {
-  border: 1px solid var(--dsw-alias-border-secondary);
+  border: 1px solid var(--dsw-alias-border-l2);
   border-radius: 999px;
   padding: 0 6px;
   font-size: 11px;
@@ -3833,9 +3841,9 @@ html[data-dsh-imagegen-chat-collapsed] [data-dsh-imagegen-chat-resizer] {
 .videoGenerate {
   height: 38px;
   border: none;
-  border-radius: 10px;
+  border-radius: var(--dsw-radius-md);
   background: var(--dsw-alias-brand-primary);
-  color: #fff;
+  color: var(--dsw-alias-label-primary-foreground);
   font-family: inherit;
   font-size: 14px;
   font-weight: 650;
@@ -3873,7 +3881,7 @@ html[data-dsh-imagegen-chat-collapsed] [data-dsh-imagegen-chat-resizer] {
   height: 26px;
   padding: 0 10px;
   border: 1px solid var(--dsw-alias-border-l1);
-  border-radius: 8px;
+  border-radius: var(--dsw-radius-sm);
   background: transparent;
   color: var(--dsw-alias-label-secondary);
   font-family: inherit;
@@ -3895,12 +3903,12 @@ html[data-dsh-imagegen-chat-collapsed] [data-dsh-imagegen-chat-resizer] {
   gap: 8px;
   padding: 12px;
   border: 1px solid var(--dsw-alias-border-l1);
-  border-radius: 10px;
+  border-radius: var(--dsw-radius-md);
   background: var(--dsw-alias-bg-layer-1);
 }
 
 .videoTask[data-status='failed'] {
-  border-color: var(--dsw-alias-state-error);
+  border-color: var(--dsw-alias-state-error-primary);
 }
 
 .videoTaskHead {
@@ -3952,8 +3960,8 @@ html[data-dsh-imagegen-chat-collapsed] [data-dsh-imagegen-chat-resizer] {
 .videoPlayer {
   width: 100%;
   max-height: 360px;
-  border-radius: 9px;
-  background: #000;
+  border-radius: var(--dsw-radius-md);
+  background: var(--dsw-alias-bg-mask-3);
 }
 
 .videoHistoryClip {
@@ -3998,17 +4006,27 @@ html[data-dsh-imagegen-chat-collapsed] [data-dsh-imagegen-chat-resizer] {
   font-size: 13px;
 }
 
-/* A clip has no poster frame, so its sidebar row shows a film glyph in the
-   thumbnail slot instead of paying for a <video> element per row. */
+/* The fallback for a clip with no poster frame: it shows a film glyph in the
+   thumbnail slot instead of paying for a <video> element per row. A clip that
+   HAS a poster renders `.historyThumb` (an <img>) instead and never reaches
+   these rules -- which is why the tint below is scoped to this span. */
 .historyThumbPlaceholder[data-video-thumb] {
   display: flex;
   align-items: center;
   justify-content: center;
   color: var(--dsw-alias-label-tertiary);
   background: var(--dsw-alias-bg-layer-2);
+  /* The shell ships no global `box-sizing: border-box` reset, and `.panel`'s
+     scoped one cannot reach this span: the history list is portalled into the
+     sidebar host, outside the panel subtree. Without this the 1px ring adds
+     2px to the box and a clip's glyph slot measures 54×54 beside a still's
+     52×52 in the same list. */
+  box-sizing: border-box;
   border: 1px solid var(--dsw-alias-border-l1);
 }
 
+/* Same 52×52 slot as `.historyThumb`, so a clip thumbnail and an image
+   thumbnail line up in the merged list whether or not the clip has a poster. */
 .historyItem[data-video-row] .historyThumbPlaceholder[data-video-thumb] {
   color: var(--dsw-alias-brand-primary);
 }
@@ -4037,8 +4055,8 @@ a.historyIconAction {
   display: flex;
   align-items: center;
   justify-content: center;
-  color: #fff;
-  background: #00000033;
+  color: var(--dsw-alias-label-primary-inverted);
+  background: var(--dsw-alias-bg-mask-1);
   pointer-events: none;
 }
 
@@ -4059,16 +4077,16 @@ a.galleryCardAction {
 .galleryClipPlayer {
   max-width: 92vw;
   max-height: 88vh;
-  border-radius: 10px;
-  background: #000;
+  border-radius: var(--dsw-radius-md);
+  background: var(--dsw-alias-bg-mask-3);
 }
 
 /* The clip shown on the result board (the area image results use). */
 .videoBoardPlayer {
   width: 100%;
   max-height: 420px;
-  border-radius: 10px;
-  background: #000;
+  border-radius: var(--dsw-radius-md);
+  background: var(--dsw-alias-bg-mask-3);
 }
 
 /* "Make an editable PPT" from a finished image. The action sits on the card and
@@ -4078,10 +4096,10 @@ a.galleryCardAction {
   top: 68px;
   left: 8px;
   padding: 3px 10px;
-  border: 1px solid rgb(255 255 255 / 62%);
+  border: 1px solid var(--dsw-alias-border-l2-darkmode-thin);
   border-radius: 999px;
-  color: #fff;
-  background: rgb(15 18 24 / 82%);
+  color: var(--dsw-alias-label-primary-inverted);
+  background: var(--dsw-alias-bg-mask-1);
   font: inherit;
   font-size: 12px;
   cursor: pointer;
@@ -4097,7 +4115,7 @@ a.galleryCardAction {
   margin: 8px;
   padding: 6px 10px;
   border: 1px solid var(--dsw-alias-border-l2);
-  border-radius: 8px;
+  border-radius: var(--dsw-radius-sm);
   background: var(--dsw-alias-bg-layer-2);
   color: inherit;
   cursor: pointer;
