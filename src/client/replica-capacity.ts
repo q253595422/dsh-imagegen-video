@@ -31,6 +31,18 @@ export interface ReferenceCapacity {
   usable: number
   /** How many will be left out, so the UI can say so. */
   dropped: number
+  /**
+   * The model's real ceiling, independent of what is picked.
+   *
+   * `usable` is a function of BOTH the ceiling and the form, so it is 0 when the
+   * form is empty — which makes it useless as a "上限" for the UI to display:
+   * "参考图上限 0 张" is a sentence that contradicts itself. This field is the
+   * ceiling alone, and it is what the capacity line must show while nothing is
+   * picked. Kept next to `usable` (rather than recomputing
+   * `editReferenceLimit()` in the workspace) so there is still exactly one
+   * source of truth for the number.
+   */
+  limit: number
   /** The adapter family driving the number, for an honest one-line explanation. */
   reason: 'subscription' | 'chat' | 'single' | 'generic'
   /** The model id as configured, for the tooltip. */
@@ -61,7 +73,7 @@ export function referenceCapacity(
     // two branches above already returned and were checked first.
     if (limit === 1 && (family === 'grok' || family === 'nanobanana' || family === 'dall-e' || family === 'qwen' || family === 'minimax')) reason = 'single'
   }
-  return { usable, dropped: Math.max(0, picked - usable), reason, model }
+  return { usable, dropped: Math.max(0, picked - usable), limit, reason, model }
 }
 
 /**

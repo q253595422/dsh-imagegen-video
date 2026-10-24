@@ -1,10 +1,604 @@
-.root { color: var(--dsw-alias-label-primary); background: var(--dsw-alias-bg-layer-2); border-radius: var(--dsw-radius-lg); padding: 16px; }
-.grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(120px, 1fr)); gap: 12px; }
-.card { border: 1px solid var(--dsw-alias-border-l2); border-radius: var(--dsw-radius-md); padding: 8px; background: var(--dsw-alias-bg-layer-1); }
-.selected { border-color: var(--dsw-alias-brand-primary); }
-.thumb { width: 100%; aspect-ratio: 3 / 4; object-fit: cover; border-radius: var(--dsw-radius-sm); }
-.actions { display: flex; flex-wrap: wrap; gap: 8px; }
-.muted { color: var(--dsw-alias-label-secondary); }
-.error { color: var(--dsw-alias-state-error-primary); }
-.results { display: grid; grid-template-columns: repeat(auto-fill, minmax(180px, 1fr)); gap: 12px; }
-.result { width: 100%; object-fit: contain; border-radius: var(--dsw-radius-md); }
+/*
+ * Outfit (服饰穿戴) and Promo (带货图文) workspaces — own stylesheet.
+ *
+ * WHY this file exists at all, and why the two host rules below are GLOBAL
+ * ATTRIBUTE selectors rather than `.generation[data-workspace='outfit']`:
+ *
+ *   `.generation` is a CSS-module class, so the panel's copy of it is hashed at
+ *   build time (`WKhQka_generation`) while anything this file wrote as
+ *   `.generation` would hash to a different name and match nothing. Without a
+ *   host rule the classic config sidebar (300px) and the classic result host
+ *   stay laid out beside this surface, so `.root` is squeezed into a ~2px
+ *   column, its controls wrap into a single left-edge stack, and any grid
+ *   inside computes height 0. That is the "no UI" screenshot, and it is a
+ *   layout defect, not a rendering glitch — nothing logs.
+ *
+ *   `data-workspace` is emitted by `ImageGenPanel.tsx:3229` on exactly that one
+ *   host element, so the attribute alone identifies it without guessing at a
+ *   hashed class name. `data-outfit` / `data-promo` are already on each
+ *   workspace's own root (`OutfitWorkspace.tsx:28` / `PromoWorkspace.tsx:13`),
+ *   so those are the sibling markers used here — no second attribute scheme.
+ *
+ * This file deliberately does NOT re-declare anything `panel.module.css` owns:
+ * that stylesheet is being edited by someone else this round, so the two host
+ * rules live here instead. The same reasoning is what `replica-workspace.module.css`
+ * and `aplus-workspace.module.css` already do.
+ */
+:global([data-workspace='outfit']),
+:global([data-workspace='promo']) {
+  display: flex;
+  height: 100%;
+  flex-wrap: nowrap;
+}
+
+/* The config sidebar, classic result host and footer stay mounted for instant
+   tab switching; while this workspace is active they are its siblings and must
+   give up the box. `:not()` keeps the one child that belongs to this surface. */
+:global([data-workspace='outfit']) > :not([data-outfit]),
+:global([data-workspace='promo']) > :not([data-promo]) {
+  display: none !important;
+}
+
+.root {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  min-width: 0;
+  min-height: 0;
+  height: 100%;
+  gap: 14px;
+  padding: 14px 16px 18px;
+  overflow: hidden;
+  /* Keyed off the width THIS surface actually got, not the viewport: the panel
+     lives in the shell's centre column, so a `@media` query would collapse the
+     columns on a 900px window while the panel still had 1100px. */
+  container-type: inline-size;
+  container-name: outfit;
+  color: var(--dsw-alias-label-primary);
+  font-family: var(--dsw-font-family);
+}
+
+/* ------------------------------------------------------------------- header */
+
+.intro {
+  display: flex;
+  flex: none;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.intro h2 {
+  margin: 0 0 4px;
+  font-size: 15px;
+  line-height: 1.4;
+}
+
+.intro p {
+  margin: 0;
+  max-width: 62em;
+  color: var(--dsw-alias-label-secondary);
+  font-size: 12px;
+  line-height: 1.7;
+}
+
+/* The right-hand slot of the header. It carries a state readout or a count, so
+   it must not shrink below the width of its own text and wrap into the title. */
+.aside {
+  display: flex;
+  flex: none;
+  align-items: center;
+  gap: 8px;
+}
+
+.badge {
+  padding: 3px 8px;
+  border: 1px solid var(--dsw-alias-border-l2);
+  border-radius: var(--dsw-radius-xs);
+  background: var(--dsw-alias-bg-layer-2);
+  color: var(--dsw-alias-label-tertiary);
+  font-size: 11px;
+  white-space: nowrap;
+}
+
+/* --------------------------------------------------------------------- body */
+
+.body {
+  display: grid;
+  flex: 1;
+  min-height: 0;
+  grid-template-columns: 340px minmax(0, 1fr);
+  gap: 14px;
+}
+
+/* --------------------------------------------------------------------- form */
+
+.form {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  min-height: 0;
+  overflow: auto;
+  padding: 14px;
+  border: 1px solid var(--dsw-alias-border-l2);
+  border-radius: var(--dsw-radius-lg);
+  background: var(--dsw-alias-bg-layer-2);
+}
+
+/* ------------------------------------------------------------------- fields */
+
+.field {
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+  min-width: 0;
+}
+
+.fieldHead {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 8px;
+  min-width: 0;
+}
+
+.fieldLabel {
+  color: var(--dsw-alias-label-primary);
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.fieldNote {
+  color: var(--dsw-alias-label-tertiary);
+  font-size: 10px;
+  line-height: 1.6;
+}
+
+/* Two controls that belong on one line (link + fetch, name + a trailing
+   action). The input side must be the one that shrinks. */
+.inline {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+
+.inline > :first-child {
+  flex: 1;
+  min-width: 0;
+}
+
+/* ------------------------------------------------------------------ controls */
+
+.input {
+  width: 100%;
+  box-sizing: border-box;
+  padding: 8px 10px;
+  border: 1px solid var(--dsw-alias-border-l2);
+  border-radius: var(--dsw-radius-sm);
+  background: var(--dsw-alias-bg-layer-1);
+  color: var(--dsw-alias-label-primary);
+  font-family: var(--dsw-font-family);
+  font-size: 12px;
+  line-height: 1.6;
+}
+
+.textarea {
+  width: 100%;
+  min-height: 74px;
+  max-height: 190px;
+  box-sizing: border-box;
+  resize: vertical;
+  padding: 9px 10px;
+  border: 1px solid var(--dsw-alias-border-l2);
+  border-radius: var(--dsw-radius-sm);
+  background: var(--dsw-alias-bg-layer-1);
+  color: var(--dsw-alias-label-primary);
+  font-family: var(--dsw-font-family);
+  font-size: 12px;
+  line-height: 1.7;
+}
+
+.select {
+  width: 100%;
+  box-sizing: border-box;
+  padding: 8px 10px;
+  border: 1px solid var(--dsw-alias-border-l2);
+  border-radius: var(--dsw-radius-sm);
+  background: var(--dsw-alias-bg-layer-1);
+  color: var(--dsw-alias-label-primary);
+  font-family: var(--dsw-font-family);
+  font-size: 12px;
+  line-height: 1.6;
+}
+
+/* A pill is a radio expressed as a chip, so it carries `role="radio"` and
+   `aria-checked` (see ReplicaWorkspace.tsx:382-393). The selected state is a
+   border + tint rather than a fill change: the same control keeps its size and
+   its text position whether or not it is on, so switching never reflows the
+   row. */
+.pill {
+  display: inline-flex;
+  align-items: center;
+  padding: 4px 11px;
+  border: 1px solid var(--dsw-alias-border-l2);
+  border-radius: var(--dsw-radius-xs);
+  background: var(--dsw-alias-bg-layer-1);
+  color: var(--dsw-alias-label-secondary);
+  font-family: var(--dsw-font-family);
+  font-size: 12px;
+  line-height: 1.5;
+  cursor: pointer;
+}
+
+.pill:hover {
+  color: var(--dsw-alias-label-primary);
+}
+
+.pill[aria-checked='true'] {
+  border-color: var(--dsw-alias-brand-primary);
+  background: color-mix(in srgb, var(--dsw-alias-brand-primary) 12%, transparent);
+  color: var(--dsw-alias-label-primary);
+  font-weight: 600;
+}
+
+.pills {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  min-width: 0;
+}
+
+/* ------------------------------------------------------------------ buttons */
+
+.button {
+  padding: 7px 13px;
+  border: 1px solid var(--dsw-alias-border-l2);
+  border-radius: var(--dsw-radius-sm);
+  background: var(--dsw-alias-bg-layer-1);
+  color: var(--dsw-alias-label-primary);
+  font-family: var(--dsw-font-family);
+  font-size: 12px;
+  line-height: 1.5;
+  cursor: pointer;
+}
+
+.button:hover:not(:disabled) {
+  border-color: var(--dsw-alias-brand-primary);
+}
+
+.button:disabled {
+  cursor: not-allowed;
+  opacity: 0.6;
+}
+
+/* The one primary action per surface. `background` comes from the same token
+   the pill's selected state uses, so the two never disagree about what the
+   brand colour is. */
+.primary {
+  padding: 8px 15px;
+  border: 1px solid var(--dsw-alias-brand-primary);
+  border-radius: var(--dsw-radius-sm);
+  background: var(--dsw-alias-brand-primary);
+  color: var(--dsw-alias-label-primary-inverted);
+  font-family: var(--dsw-font-family);
+  font-size: 13px;
+  font-weight: 600;
+  line-height: 1.5;
+  cursor: pointer;
+}
+
+.primary:disabled {
+  cursor: not-allowed;
+  opacity: 0.6;
+}
+
+/* ------------------------------------------------------------------ thumbs */
+
+.thumbs {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.thumb {
+  position: relative;
+  flex: none;
+  width: 74px;
+  height: 74px;
+  border: 1px solid var(--dsw-alias-border-l2);
+  border-radius: var(--dsw-radius-sm);
+  background: var(--dsw-alias-bg-layer-1);
+  overflow: hidden;
+}
+
+.thumb img {
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.thumbIndex {
+  position: absolute;
+  left: 3px;
+  top: 3px;
+  padding: 0 4px;
+  border-radius: var(--dsw-radius-xs);
+  background: var(--dsw-alias-bg-layer-1);
+  color: var(--dsw-alias-label-secondary);
+  font-size: 10px;
+  line-height: 1.5;
+}
+
+.thumbRemove {
+  position: absolute;
+  right: 2px;
+  top: 2px;
+  display: grid;
+  place-items: center;
+  width: 17px;
+  height: 17px;
+  padding: 0;
+  border: none;
+  border-radius: var(--dsw-radius-xs);
+  background: var(--dsw-alias-bg-layer-1);
+  color: var(--dsw-alias-label-secondary);
+  font-family: var(--dsw-font-family);
+  font-size: 12px;
+  line-height: 1;
+  cursor: pointer;
+}
+
+.thumbRemove:hover {
+  color: var(--dsw-alias-label-primary);
+}
+
+/* -------------------------------------------------------------------- drop */
+
+.drop {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+  flex: none;
+  min-height: 74px;
+  padding: 10px;
+  border: 1px dashed var(--dsw-alias-border-l2);
+  border-radius: var(--dsw-radius-sm);
+  background: var(--dsw-alias-bg-layer-1);
+  color: var(--dsw-alias-label-secondary);
+  font-family: var(--dsw-font-family);
+  font-size: 11px;
+  text-align: center;
+  cursor: pointer;
+}
+
+.drop:hover:not(:disabled) {
+  border-color: var(--dsw-alias-brand-primary);
+  color: var(--dsw-alias-label-primary);
+}
+
+.drop:disabled {
+  cursor: not-allowed;
+  opacity: 0.6;
+}
+
+/* --------------------------------------------------------------- model grid */
+
+.grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(96px, 1fr));
+  gap: 10px;
+}
+
+.card {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 7px;
+  border: 1px solid var(--dsw-alias-border-l2);
+  border-radius: var(--dsw-radius-sm);
+  background: var(--dsw-alias-bg-layer-1);
+  color: var(--dsw-alias-label-secondary);
+  font-family: var(--dsw-font-family);
+  font-size: 11px;
+  text-align: left;
+  cursor: pointer;
+}
+
+.card:hover {
+  border-color: var(--dsw-alias-brand-primary);
+}
+
+.card img {
+  display: block;
+  width: 100%;
+  aspect-ratio: 3 / 4;
+  object-fit: cover;
+  border-radius: var(--dsw-radius-xs);
+}
+
+.card span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* The selected model is the one the request sends as `image`. Border weight is
+   the signal (not a fill), so the row keeps its height when the choice moves. */
+.card[aria-pressed='true'] {
+  border-color: var(--dsw-alias-brand-primary);
+  background: color-mix(in srgb, var(--dsw-alias-brand-primary) 12%, transparent);
+  color: var(--dsw-alias-label-primary);
+}
+
+/* ------------------------------------------------------------------ results */
+
+.results {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  min-width: 0;
+  min-height: 0;
+  overflow: auto;
+  padding: 14px;
+  border: 1px solid var(--dsw-alias-border-l2);
+  border-radius: var(--dsw-radius-lg);
+  background: var(--dsw-alias-bg-layer-1);
+}
+
+.empty {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  padding: 24px;
+  color: var(--dsw-alias-label-tertiary);
+  font-size: 12px;
+  text-align: center;
+}
+
+.outputs {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
+  gap: 10px;
+  min-width: 0;
+}
+
+.output {
+  display: block;
+  width: 100%;
+  height: auto;
+  border: 1px solid var(--dsw-alias-border-l2);
+  border-radius: var(--dsw-radius-sm);
+  background: var(--dsw-alias-bg-layer-2);
+}
+
+/* --------------------------------------------------------------- submit bar */
+
+.submitBar {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  flex: none;
+  margin-top: auto;
+  padding-top: 12px;
+  border-top: 1px solid var(--dsw-alias-border-l2);
+}
+
+.submitRow {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+/* ------------------------------------------------------------------- status */
+
+.error {
+  margin: 0;
+  color: var(--dsw-alias-state-error-primary);
+  font-size: 11px;
+  line-height: 1.6;
+}
+
+.muted {
+  color: var(--dsw-alias-label-secondary);
+  font-size: 11px;
+  line-height: 1.7;
+}
+
+/* ------------------------------------------------------------- promo layout */
+
+/* The promo result column is image LEFT, copy RIGHT. The copy card is a form,
+   not a readout: the title and body stay editable so the generated text can be
+   corrected before it is copied. */
+.promoOutputs {
+  display: grid;
+  grid-template-columns: minmax(0, 3fr) minmax(0, 4fr);
+  gap: 12px;
+  align-items: start;
+}
+
+.copyCard {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 12px;
+  border: 1px solid var(--dsw-alias-border-l2);
+  border-radius: var(--dsw-radius-sm);
+  background: var(--dsw-alias-bg-layer-2);
+}
+
+.copyTitle {
+  width: 100%;
+  box-sizing: border-box;
+  padding: 7px 9px;
+  border: 1px solid var(--dsw-alias-border-l2);
+  border-radius: var(--dsw-radius-xs);
+  background: var(--dsw-alias-bg-layer-1);
+  color: var(--dsw-alias-label-primary);
+  font-family: var(--dsw-font-family);
+  font-size: 13px;
+  font-weight: 600;
+  line-height: 1.5;
+}
+
+.copyBody {
+  width: 100%;
+  box-sizing: border-box;
+  min-height: 96px;
+  resize: vertical;
+  padding: 8px 9px;
+  border: 1px solid var(--dsw-alias-border-l2);
+  border-radius: var(--dsw-radius-xs);
+  background: var(--dsw-alias-bg-layer-1);
+  color: var(--dsw-alias-label-primary);
+  font-family: var(--dsw-font-family);
+  font-size: 12px;
+  line-height: 1.7;
+}
+
+.tags {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.tag {
+  padding: 1px 6px;
+  border: 1px solid var(--dsw-alias-border-l2);
+  border-radius: var(--dsw-radius-xs);
+  background: var(--dsw-alias-bg-layer-1);
+  color: var(--dsw-alias-label-secondary);
+  font-size: 10px;
+  line-height: 1.7;
+}
+
+/* On a narrow panel the copy card stacks under the image instead of beside it:
+   two columns at 240px would leave neither readable. */
+@container outfit (max-width: 760px) {
+  .body {
+    grid-template-columns: minmax(0, 1fr);
+    grid-template-rows: minmax(0, auto) minmax(240px, 1fr);
+    overflow: auto;
+  }
+
+  .form {
+    overflow: visible;
+  }
+
+  .promoOutputs {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}

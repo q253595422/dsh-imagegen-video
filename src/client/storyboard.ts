@@ -14,6 +14,32 @@
 
 import type { CanvasNode, CanvasShot, CanvasStoryboard } from '../protocol.ts'
 
+/**
+ * `CanvasShot.stale` 的声明处。
+ *
+ * 这个字段本来就该写在 protocol.ts 的 `CanvasShot` 里，但那份文件不在本工作
+ * 单元的可改范围内（另一位同事正在同一文件改 VideoTask 那一段），所以先用一
+ * 个模块合并把类型补在这里——声明式、编译期擦除，不影响运行产物。等 protocol
+ * 那边落了这个字段，把这段删掉即可，两处声明同类型也不会冲突。
+ */
+declare module '../protocol.ts' {
+  interface CanvasShot {
+    /**
+     * 这一镜的成片已经不可用。
+     *
+     * `carry` 模式下重跑第 N 镜会生成新的尾帧，第 N+1 镜起已经出片的那些都
+     * 是接旧尾帧做的，连续性静默断掉；把它们标成作废，让它们退回「需要重
+     * 跑」，而不是在拼接时冒充有效成片。文件本身不删——用户可能还想看那
+     * 一版，只是它不再算数。
+     *
+     * 挂在镜头上而不是视频节点上：节点只是文件容器，重试视频节点、刷新画
+     * 布等路径会把节点状态改回 success，节点上的标记会残留成幽灵；而镜头
+     * 自己的重跑（submitShot）是唯一的解锁入口。
+     */
+    stale?: boolean
+  }
+}
+
 /** Upper bound on shots per board; the host rejects documents beyond it. */
 export const MAX_SHOTS = 40
 
@@ -87,10 +113,16 @@ export type ShotState = 'empty' | 'generating' | 'ready' | 'failed'
  * node that no longer exists. A node with no clip but a recorded failure is
  * `failed`; a node that is merely a placeholder is `generating`, because that
  * is what its own spinner says.
+ *
+ * `stale` is checked BEFORE "a clip means ready": an invalidated shot still
+ * carries its old clip (the file is kept on purpose), so the clip test would
+ * otherwise report it finished forever and the broken join would never be
+ * offered for a re-run.
  */
 export function shotState(shot: CanvasShot, nodes: readonly CanvasNode[]): ShotState {
   const node = shotNodeOf(shot, nodes)
   if (node === undefined) return 'empty'
+  if (shot.stale === true) return 'failed'
   const metadata = node.metadata ?? {}
   if ((metadata.video?.url ?? '') !== '') return 'ready'
   if (metadata.status === 'error') return 'failed'
@@ -157,12 +189,47 @@ export function nextShotIndex(board: CanvasStoryboard, nodes: readonly CanvasNod
  * when a listed clip cannot be read. Leaving them out here means the stitch
  * button matches what the user can actually watch, and the caller reports the
  * shortfall rather than silently producing a shorter film.
+ *
+ * A STALE shot's file is still on disk and still playable, but it is not part
+ * of the film any more — it was made from a tail frame that no longer exists,
+ * so stitching it would splice in a break the user has already been told about.
+ * It must be left out here even though its node has bytes.
  */
 export function storyboardClipIds(board: CanvasStoryboard, nodes: readonly CanvasNode[]): string[] {
   return board.shots.flatMap(shot => {
+    if (shot.stale === true) return []
     const node = shotNodeOf(shot, nodes)
     return node === undefined || (node.metadata?.video?.url ?? '') === '' ? [] : [node.id]
   })
+}
+
+/**
+ * The board after shot `index` was re-submitted, with every already-produced
+ * shot after it marked stale.
+ *
+ * This is the fix for the silent break in `carry` continuity: the re-submitted
+ * shot gets a new tail frame, so every later shot was framed from a frame that
+ * is about to stop existing. They are not deleted — the user may still want to
+ * watch those takes — they are invalidated, which makes `shotState` report
+ * them `failed` and `nextShotIndex` pick them up again in order.
+ *
+ * Only shots that actually have a clip are touched: a downstream shot that was
+ * never produced has nothing to invalidate, and marking it would put a "this
+ * was invalidated" badge on a row the user never ran.
+ *
+ * The caller only applies this in `carry` mode. In `cut` mode the shots are
+ * independent by construction, so re-running one changes nothing about the
+ * others and invalidating them would destroy work for no reason.
+ */
+export function withStaleDownstream(board: CanvasStoryboard, index: number, nodes: readonly CanvasNode[]): CanvasStoryboard {
+  if (index < 0 || index >= board.shots.length) return board
+  const shots = board.shots.map((shot, position) => {
+    if (position <= index || shot.stale === true) return shot
+    const node = shotNodeOf(shot, nodes)
+    if (node === undefined || (node.metadata?.video?.url ?? '') === '') return shot
+    return { ...shot, stale: true }
+  })
+  return shots.every((shot, position) => shot === board.shots[position]) ? board : { ...board, shots }
 }
 
 /** The board after one edit, with the shot list kept consistent. */

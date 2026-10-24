@@ -104,6 +104,24 @@ function looksLikeNewSession(button: HTMLButtonElement): boolean {
 }
 
 /**
+ * True while the element still paints.
+ *
+ * The shell renders a hidden mobile copy of its sidebar slots (`header.dsh-
+ * mobile-app-header`) before — and sometimes instead of — the desktop column,
+ * and that copy is `display: none`. A seat resolved inside it is real DOM with
+ * no box, so anything cached from it is unusable and must be recomputed once
+ * the desktop column appears.
+ */
+function isVisible(node: HTMLElement): boolean {
+  if (!node.isConnected) return false
+  if (typeof globalThis.getComputedStyle !== 'function') return true
+  for (let cursor: HTMLElement | null = node; cursor !== null && cursor !== document.body; cursor = cursor.parentElement) {
+    if (getComputedStyle(cursor).display === 'none') return false
+  }
+  return true
+}
+
+/**
  * Nearest ancestor that paints a box. Slot anchors are `display: contents` by
  * contract (the renderer's `ANCHOR_STYLE`), so the grid item this plugin hangs
  * off is the first ancestor with a real display mode — not the anchor.
@@ -118,10 +136,20 @@ function boxAncestor(anchor: HTMLElement): HTMLElement | undefined {
   return undefined
 }
 
-/** Resolve a slot anchor to the element that paints its box. */
+/**
+ * Resolve a slot anchor to the element that paints its box.
+ *
+ * Anchors are tried in document order and the first PAINTED one wins: the
+ * hidden mobile copy comes first in document order on a desktop shell, so
+ * `querySelector` alone would always answer with the invisible header.
+ */
 function seatOf(selector: string): HTMLElement | undefined {
-  const anchor = document.querySelector<HTMLElement>(selector)
-  return anchor === null ? undefined : boxAncestor(anchor)
+  for (const anchor of document.querySelectorAll<HTMLElement>(selector)) {
+    if (!isVisible(anchor)) continue
+    const seat = boxAncestor(anchor)
+    if (seat !== undefined && isVisible(seat)) return seat
+  }
+  return undefined
 }
 
 /**
@@ -134,7 +162,7 @@ function seatOf(selector: string): HTMLElement | undefined {
  */
 function newSessionButton(root: ParentNode = document): HTMLButtonElement | undefined {
   const candidates = Array.from(root.querySelectorAll<HTMLButtonElement>('button'))
-  return candidates.find((button) => looksLikeNewSession(button) && button.querySelector('[data-slot]') === null)
+  return candidates.find((button) => looksLikeNewSession(button) && button.querySelector('[data-slot]') === null && isVisible(button))
 }
 
 /**
@@ -234,7 +262,7 @@ function sidebarRoot(): HTMLElement | undefined {
   // `SidebarRoot` renders the region seat as an only child of the column, so
   // the seat's parent IS the shell root in every shape this plugin supports.
   const column = seatOf(WORKSPACES_ANCHOR)?.parentElement
-  if (column !== undefined && column !== null) return column
+  if (column !== undefined && column !== null && isVisible(column)) return column
 
   const brand = seatOf(BRAND_MARK_ANCHOR) ?? seatOf(BRAND_NAME_ANCHOR)
   if (brand !== undefined) {
@@ -245,7 +273,7 @@ function sidebarRoot(): HTMLElement | undefined {
   }
 
   const pane = document.querySelector<HTMLElement>(LEGACY_SIDEBAR_PANE)
-  if (pane !== null) return pane
+  if (pane !== null && isVisible(pane)) return pane
 
   return newSessionButton()?.parentElement ?? undefined
 }
@@ -267,25 +295,16 @@ function makeTab(
 }
 
 /**
- * Mount or repair the two-tab switcher directly above the shell's New Session
- * button, which stays visible: the switcher only moves between the conversation
- * and the studio, it never creates a session.
+ * Build the two-tab switcher. Detached from any seat: the caller decides where
+ * it goes, so both the preferred seat and the fallback below share one builder.
  */
-function placeTabs(
-  root: HTMLElement,
+function createTabs(
   controller: ImageGenController,
   sessionLabel: string,
   sessionTooltip: string,
   imageLabel: string,
   imageTooltip: string,
-): HTMLDivElement | undefined {
-  const button = newSessionButton(root)
-  if (button === undefined) return undefined
-
-  const existing = root.querySelector<HTMLDivElement>(ENTRY_SELECTOR)
-  if (existing !== null && existing.parentElement === button.parentElement) return existing
-
-  existing?.remove()
+): HTMLDivElement {
   const tabs = document.createElement('div')
   tabs.dataset.dshImagegenSessionTabs = ''
   tabs.className = css.sessionTabs
@@ -301,9 +320,53 @@ function placeTabs(
   sessionTab.dataset.dshImagegenTab = 'session'
   imageTab.dataset.dshImagegenTab = 'image'
   tabs.append(sessionTab, imageTab)
+  return tabs
+}
 
-  // The shell button keeps its own slot below the switcher, untouched.
-  button.parentElement?.insertBefore(tabs, button)
+/** Seat marker for a switcher that had to fall back to the column itself. */
+const FALLBACK_SEAT_ATTR = 'dshImagegenTabsSeat'
+const FALLBACK_SEAT_VALUE = 'top'
+
+/**
+ * Mount or repair the two-tab switcher.
+ *
+ * Preferred seat: directly above the shell's New Session button, which stays
+ * visible there — the switcher only moves between the conversation and the
+ * studio, it never creates a session.
+ *
+ * Fallback seat: the first child of the sidebar column. Another plugin may take
+ * over the shell's sidebar and hide that button (`display: none !important`, the
+ * way ds-bot's team view does), which used to leave this switcher with no seat
+ * at all and therefore no way into the panel. The column itself always paints,
+ * so the switcher becomes its first child instead of vanishing. The marker lets
+ * the stylesheet restyle only this seat.
+ */
+function placeTabs(
+  root: HTMLElement,
+  button: HTMLButtonElement | undefined,
+  controller: ImageGenController,
+  sessionLabel: string,
+  sessionTooltip: string,
+  imageLabel: string,
+  imageTooltip: string,
+): HTMLDivElement {
+  const existing = root.querySelector<HTMLDivElement>(ENTRY_SELECTOR)
+
+  if (button !== undefined) {
+    if (existing !== null && existing.parentElement === button.parentElement) return existing
+    existing?.remove()
+    const tabs = createTabs(controller, sessionLabel, sessionTooltip, imageLabel, imageTooltip)
+    // The shell button keeps its own slot below the switcher, untouched.
+    button.parentElement?.insertBefore(tabs, button)
+    return tabs
+  }
+
+  // Already seated at the fallback: keep the node (its listeners stay live).
+  if (existing !== null && existing.parentElement === root) return existing
+  existing?.remove()
+  const tabs = createTabs(controller, sessionLabel, sessionTooltip, imageLabel, imageTooltip)
+  tabs.dataset[FALLBACK_SEAT_ATTR] = FALLBACK_SEAT_VALUE
+  root.insertBefore(tabs, root.firstChild)
   return tabs
 }
 
@@ -368,7 +431,7 @@ export function mountSidebarEntry(
   const warnUnmounted = (): void => {
     if (warnedUnmounted || tabs !== undefined) return
     warnedUnmounted = true
-    const reason = root === undefined ? 'sidebar root not found' : 'new-session button not found'
+    const reason = root === undefined ? 'sidebar root not found' : 'no seat for the switcher'
     console.warn(`[dsh-imagegen] sidebar entry stayed unmounted (${reason}); shell probe: ${describeShell()}`)
   }
 
@@ -388,7 +451,10 @@ export function mountSidebarEntry(
   }
 
   const ensure = (): void => {
-    if (root !== undefined && !root.isConnected) {
+    // A root that stopped painting was resolved against a shell the host has
+    // since replaced (the hidden mobile copy that lands before the desktop
+    // column): recompute instead of writing the entry into an invisible box.
+    if (root !== undefined && (!root.isConnected || !isVisible(root))) {
       markedButton?.removeAttribute('data-dsh-imagegen-new-session')
       markedButton = undefined
       for (const block of markedBlocks) {
@@ -396,21 +462,34 @@ export function mountSidebarEntry(
         block.removeAttribute(REGION_ATTR)
       }
       markedBlocks = []
-      root = undefined
+      // The nodes themselves go with the stale root: the next seat is a
+      // different container, and leaving a copy behind would either duplicate
+      // the switcher or keep the invisible one alive.
+      tabs?.remove()
+      historyHost?.remove()
       tabs = undefined
       historyHost = undefined
+      if (root.isConnected) delete root.dataset.dshImagegenSidebarRoot
+      root = undefined
     }
     root ??= sidebarRoot()
     if (root === undefined) return
     root.dataset.dshImagegenSidebarRoot = ''
     const button = newSessionButton(root)
-    if (button === undefined) return
-    if (markedButton !== button) markedButton?.removeAttribute('data-dsh-imagegen-new-session')
-    markedButton = button
-    if (!button.hasAttribute('data-dsh-imagegen-new-session')) {
-      button.setAttribute('data-dsh-imagegen-new-session', '')
+    if (button !== undefined) {
+      if (markedButton !== button) markedButton?.removeAttribute('data-dsh-imagegen-new-session')
+      markedButton = button
+      if (!button.hasAttribute('data-dsh-imagegen-new-session')) {
+        button.setAttribute('data-dsh-imagegen-new-session', '')
+      }
+    } else if (markedButton !== undefined) {
+      // The action this plugin used to mark is gone (another plugin hid or
+      // replaced it): drop the mark so a stale attribute cannot keep a hidden
+      // button styled for a seat that no longer exists.
+      markedButton.removeAttribute('data-dsh-imagegen-new-session')
+      markedButton = undefined
     }
-    tabs = placeTabs(root, controller, sessionLabel, sessionTooltip, imageLabel, imageTooltip)
+    tabs = placeTabs(root, button, controller, sessionLabel, sessionTooltip, imageLabel, imageTooltip)
     // The seat is resolved once here and shared: the history host has to sit in
     // it, and the stylesheet has to be able to spare it.
     const region = regionSeat(root)

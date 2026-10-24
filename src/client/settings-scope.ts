@@ -365,6 +365,8 @@ export function videoModelOptions(config: ImageGenConfig | undefined): {
   models: string[]
   groups: ImageModelGroup[]
   defaultModel?: string
+  /** Channel the picker should fall back to when nothing is selected yet. */
+  defaultChannelId?: string
   /** Channel ids that hold at least one video model (drives availability). */
   channelIds: string[]
 } {
@@ -385,10 +387,19 @@ export function videoModelOptions(config: ImageGenConfig | undefined): {
     ? config.defaultVideoModel
     : undefined
   const models = defaultModel === undefined ? aliases : [defaultModel, ...aliases.filter(model => model !== defaultModel)]
+  // Only a channel that actually offers a video model can be the fallback: the
+  // configured default may be an image-only channel, which would leave the
+  // picker pointing at a channel with nothing to choose. `groups` order is left
+  // alone (the canvas picker renders it as configured).
+  const configuredDefault = typeof config?.defaultChannelId === 'string'
+    && groups.some(group => group.id === config.defaultChannelId)
+    ? config.defaultChannelId
+    : undefined
   return {
     models,
     groups,
     channelIds: groups.map(group => group.id),
+    ...configuredDefault === undefined ? {} : { defaultChannelId: configuredDefault },
     ...defaultModel === undefined ? {} : { defaultModel },
   }
 }
