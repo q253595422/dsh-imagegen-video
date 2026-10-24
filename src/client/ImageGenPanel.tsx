@@ -26,6 +26,7 @@ import { GooeyNav } from './GooeyNav.tsx'
 import { InspirationGallery } from './InspirationGallery.tsx'
 import { CanvasWorkspace } from './CanvasWorkspace.tsx'
 import { PptWorkspace } from './PptWorkspace.tsx'
+import { ReplicaWorkspace } from './ReplicaWorkspace.tsx'
 import { ModelPicker, resolveModelChoice, type ModelPickerValue } from './ModelPicker.tsx'
 import { DiagnosticsButton, DiagnosticsPanel } from './DiagnosticsPanel.tsx'
 import { GenerationLoading } from './GenerationLoading.tsx'
@@ -627,7 +628,7 @@ const MODE_TABS = ['text', 'edit', 'video'] as const satisfies readonly PanelTab
 
 /** Top-level workspaces inside the panel. 'normal' is the classic studio;
  *  more task-oriented modes (prototype, …) can join alongside 'ecommerce'. */
-type PanelWorkspace = 'normal' | 'ecommerce' | 'canvas' | 'ppt'
+type PanelWorkspace = 'normal' | 'ecommerce' | 'canvas' | 'ppt' | 'replica'
 
 /**
  * What the panel hands the canvas when the user asks to add something.
@@ -3124,13 +3125,14 @@ export function ImageGenPanel(props: {
         </span>
         <GooeyNav
           ariaLabel={tt('workspace.label')}
-          activeIndex={workspace === 'normal' ? (tab === 'gallery' ? 1 : 0) : workspace === 'canvas' ? 2 : workspace === 'ecommerce' ? 3 : 4}
+          activeIndex={workspace === 'normal' ? (tab === 'gallery' ? 1 : 0) : workspace === 'canvas' ? 2 : workspace === 'ecommerce' ? 3 : workspace === 'ppt' ? 4 : 5}
           onSelect={index => {
             if (index === 0) openTab('text')
             else if (index === 1) openTab('gallery')
             else if (index === 2) setWorkspace('canvas')
             else if (index === 3) setWorkspace('ecommerce')
-            else setWorkspace('ppt')
+            else if (index === 4) setWorkspace('ppt')
+            else setWorkspace('replica')
           }}
           items={[
             { key: 'normal', label: tt('workspace.normal') },
@@ -3138,6 +3140,7 @@ export function ImageGenPanel(props: {
             { key: 'canvas', label: tt('workspace.canvas') },
             { key: 'ecommerce', label: <>{tt('workspace.ecommerce')}<span className={css.previewBadge}>{tt('ecommerce.badge')}</span></> },
             { key: 'ppt', label: tt('workspace.ppt') },
+            { key: 'replica', label: tt('workspace.replica') },
           ]}
         />
         <span className={css.panelHeaderActions}>
@@ -3738,6 +3741,10 @@ export function ImageGenPanel(props: {
           {/* ----------------------------------------------- ppt conversion */}
           {workspace === 'ppt' ? (
             <PptWorkspace api={api} active={active && workspace === 'ppt'} onImported={() => { /* no queued import to clear */ }} />
+          ) : null}
+
+          {workspace === 'replica' ? (
+            <ReplicaWorkspace api={api} active={active && workspace === 'replica'} modelGroups={modelGroups} defaultChannelId={defaultChannelId} channels={config?.channels ?? []} connected={connected} />
           ) : null}
 
           {/* -------------------------------------------------- video studio */}
