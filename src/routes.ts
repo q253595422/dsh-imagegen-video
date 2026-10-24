@@ -24,6 +24,7 @@ import { ImageGenerationRuntime, type ChannelsView } from './generation-runtime.
 import { appendHistory, clearHistory, listHistory, readHistoryImage, removeHistory } from './history-store.ts'
 import { clearVideoHistory, drainVideoPosters, listVideoHistory, readVideoFile, removeVideoHistory } from './video-store.ts'
 import { appendGallery, appendGalleryVideo, clearGallery, listGallery, listGalleryTrash, purgeGallery, readGalleryImage, readGalleryVideo, removeGallery, restoreGallery, updateGalleryTags } from './gallery-store.ts'
+import { listModels, readModel, saveModel } from './model-store.ts'
 import { baseMime, canvasStore, CanvasConflictError, MAX_CANVAS_FILE_BYTES, mimeFromFileName, safeFileName, type CanvasFileInput, type CanvasImageInput, type CanvasStore } from './canvas-store.ts'
 import { buildFilePreview } from './file-preview.ts'
 import { imageDataRoot } from './image-storage-path.ts'
@@ -33,7 +34,7 @@ import { testStorage, type StorageSyncConfig } from './storage-sync.ts'
 import { checkForUpdate, CURRENT_VERSION, installUpdate, ManualUpdateRequiredError, updateInstallTarget, type UpdateHostContext } from './updater.ts'
 import { IMAGE_PRESETS } from './presets.ts'
 import { clearDiagnostics, listDiagnostics } from './diagnostics-store.ts'
-import { AGENT_IMAGE_API, CANVAS_API, CANVAS_SKILL_API, CODE_RENDER_API, CONVERSATION_IMAGE_API, DATA_FOLDER_API, DEFAULT_TEMPLATE_SOURCE_ID, DIAGNOSTICS_API, GALLERY_API, GENERATE_API, HISTORY_API, IMAGEGEN_SETTINGS_NAMESPACE, IMAGE_MODEL_API, PRESETS_API, PROMPT_ENHANCE_API, SETTINGS_API, STORAGE_API, SUBSCRIPTION_API, SUBSCRIPTION_PROVIDERS, TASK_API, TEMPLATE_FAVORITES_API, TEMPLATES_API, UPDATE_API, USAGE_API, VIDEO_API, isChannelProtocolPreference, isTemplateSourceId, type CanvasAssetRef, type CanvasDocument, type VideoDirectorPlan, type CanvasSkillCatalog, type CanvasSkillConfigApplyRequest, type CanvasSkillConfigApplyResult, type CanvasSkillConfigSaveRequest, type CanvasSkillConfigSaveResult, type CanvasSkillInstallRequest, type CanvasSkillInstallResult, type CanvasSkillLibrary, type CanvasSkillRemoveResult, type CanvasSkillRunRequest, type CanvasSkillTask, type PptRunRequest, type PptRuntimeStatus, type GeneratedImage, type GenerateRequest, type HistoryEntry, type HistoryEntryInput, type ModelMapping, type PresetProviderView, type TemplateFavorite, type TemplateListResult, type TemplateRefreshResult, type TemplateSample, type CanvasVideoTaskMeta, type VideoGenerateRequest, type VideoHistoryEntry } from './protocol.ts'
+import { MODEL_API, AGENT_IMAGE_API, CANVAS_API, CANVAS_SKILL_API, CODE_RENDER_API, CONVERSATION_IMAGE_API, DATA_FOLDER_API, DEFAULT_TEMPLATE_SOURCE_ID, DIAGNOSTICS_API, GALLERY_API, GENERATE_API, HISTORY_API, IMAGEGEN_SETTINGS_NAMESPACE, IMAGE_MODEL_API, PRESETS_API, PROMPT_ENHANCE_API, SETTINGS_API, STORAGE_API, SUBSCRIPTION_API, SUBSCRIPTION_PROVIDERS, TASK_API, TEMPLATE_FAVORITES_API, TEMPLATES_API, UPDATE_API, USAGE_API, VIDEO_API, isChannelProtocolPreference, isTemplateSourceId, type CanvasAssetRef, type CanvasDocument, type VideoDirectorPlan, type CanvasSkillCatalog, type CanvasSkillConfigApplyRequest, type CanvasSkillConfigApplyResult, type CanvasSkillConfigSaveRequest, type CanvasSkillConfigSaveResult, type CanvasSkillInstallRequest, type CanvasSkillInstallResult, type CanvasSkillLibrary, type CanvasSkillRemoveResult, type CanvasSkillRunRequest, type CanvasSkillTask, type PptRunRequest, type PptRuntimeStatus, type GeneratedImage, type GenerateRequest, type HistoryEntry, type HistoryEntryInput, type ModelMapping, type PresetProviderView, type TemplateFavorite, type TemplateListResult, type TemplateRefreshResult, type TemplateSample, type CanvasVideoTaskMeta, type VideoGenerateRequest, type VideoHistoryEntry } from './protocol.ts'
 import { probeCodeRender } from './code-render-runtime.ts'
 
 /** Cap on JSON request bodies (settings ops and generate payloads are small). */
@@ -715,6 +716,11 @@ function failureOf(error: unknown): { ok: false; code: string; message: string }
  * @returns the route registrations.
  */
 export function makeRoutes(deps: ImageGenRoutesDeps): WebRoute[] {
+  const modelRoutes: WebRoute[] = [
+    { kind: 'exact', path: MODEL_API.list, handler: async (req, res) => { if (!guard(req, res, 'POST')) return; writeJson(res, 200, { ok: true, models: await listModels() }) } },
+    { kind: 'exact', path: MODEL_API.save, handler: async (req, res) => { if (!guard(req, res, 'POST')) return; try { const body = await readJsonBody(req, MAX_JSON_BODY_BYTES); const model = await saveModel({ name: String(body?.name ?? ''), data: String(body?.data ?? ''), mime: String(body?.mime ?? 'image/png') }); writeJson(res, 200, { ok: true, model }) } catch (error) { writeJson(res, 400, { ok: false, code: 'model-save-failed', message: messageOf(error) }) } } },
+    { kind: 'prefix', path: MODEL_API.image, handler: async (req, res) => { if (!guard(req, res, 'GET')) return; const file = imageFileFrom(req.url, MODEL_API.image); const found = file === undefined ? undefined : await readModel(file); if (!found) { writeJson(res, 404, { error: 'not found' }); return } res.writeHead(200, { 'content-type': found.mime }); res.end(found.data) } },
+  ]
   const history = deps.history ?? {
     list: listHistory,
     append: appendHistory,
@@ -860,6 +866,7 @@ export function makeRoutes(deps: ImageGenRoutesDeps): WebRoute[] {
   }
 
   return [
+    ...modelRoutes,
     // ---------------------------- composer image for /edit_image (exact)
     ...(deps.attachments?.saveImage === undefined || deps.pendingConversationImages === undefined ? [] : [{
       kind: 'exact' as const,
