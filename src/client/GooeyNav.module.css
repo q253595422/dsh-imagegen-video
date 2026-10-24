@@ -6,10 +6,33 @@
 .container {
   --gooey-time: 1500ms;
   /* A flex child refuses to shrink below its content unless min-width is 0, so
-     `overflow-x: auto` in the narrow-width media query below never kicked in:
-     the nav kept its full width and slid under the chat toggle instead. */
+     `overflow-x: auto` never kicked in: the nav kept its full width and slid
+     under the chat toggle instead. */
   min-width: 0;
   flex: 1 1 auto;
+  /* The row outgrows this column at ORDINARY window widths, not just on a
+     phone: the tab count follows the product (five at 1.16.1, more as
+     workspaces ship) while `li button` is `white-space: nowrap`, so the labels
+     never shrink. Without a clip here the surplus <li>s painted straight over
+     `.panelHeaderActions`: the chat toggle LOOKED fine and could not be
+     clicked, because `elementFromPoint` at its centre returned a nav button.
+     That was a real, shipped defect from 820px to 1200px.
+     Scrolling HERE keeps the overflow inside this box, so every tab stays
+     reachable (wheel, trackpad, and the arrow keys once focus is in the nav)
+     and the header buttons keep their own space. It used to live in a
+     `@media (max-width: 760px)` block, which is exactly why everything just
+     above 760px was broken. */
+  overflow-x: auto;
+  /* No visible scrollbar: it would steal 15px from a row that is already tight,
+     and the row stays scrollable without one. All three declarations exist
+     because the engines disagree: `scrollbar-width` is the standard property
+     (Chromium 121+, Firefox), `-ms-overflow-style` covers legacy Edge, and the
+     `::-webkit-scrollbar` rule below is what older Blink builds honor. Any one
+     of them alone leaves a classic 15px trough on some host, which would
+     re-create the very overflow this is meant to absorb. */
+  scrollbar-width: none;
+  -ms-overflow-style: none;
+  scrollbar-color: transparent transparent;
   /* The particle burst is the one decorative flourish in this plugin, so its
      four hues stay an accent rather than the host's brand color -- but they are
      derived from the brand token mixed with DSH's own static swatches instead of
@@ -24,6 +47,12 @@
   max-width: 100%;
   font-size: 13px;
 }
+
+/* The third, oldest way to hide that trough. Grouped with the two properties
+   above on purpose: they all answer one question ("is there a visible scroll
+   bar?"), so a later reader finds the whole answer in one place instead of
+   wondering which rule won. */
+.container::-webkit-scrollbar { display: none; }
 
 /* The pill and its label are the two colors that carry meaning, so they come
    from the theme rather than from a literal. The per-surface branches exist for
@@ -249,12 +278,9 @@
   }
 }
 
-/* On a phone the nav is wider than the screen. Scrolling it keeps every entry
-   reachable; `width: max-content` stops the labels from being squeezed instead. */
-@media (max-width: 760px) {
-  .container {
-    overflow-x: auto;
-    scrollbar-width: none;
-  }
-  .container nav { width: max-content; }
-}
+/* `width: max-content` at EVERY width, not only below some breakpoint: it is
+   what stops a squeezed label from wrapping onto two lines once the nav is a
+   scroll container (the labels are `nowrap`, so shrinking the `nav` box only
+   makes them taller). The scroll container above absorbs the surplus instead of
+   the labels. */
+.container nav { width: max-content; }

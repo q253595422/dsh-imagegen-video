@@ -4135,3 +4135,8 @@ a.galleryCardAction {
 @media (hover: none) {
   .pptAction { opacity: 1; }
 }
+
+/* Over-limit title length: a status color, so it comes from the state tokens
+   rather than a literal. Used by ListingCopyCard when the generated title exceeds
+   the platform cap. */
+.listingOverLimit { color: var(--dsw-alias-state-error-primary); }

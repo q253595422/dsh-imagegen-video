@@ -102,7 +102,7 @@ export function ListingCopyCard(props: {
             <div className={css.ecommerceSection}>
               <div className={css.ecommerceCardHead}>
                 <strong>{tt('listing.copyTitle')}</strong>
-                <span role="status" data-listing-title-count="" style={titleOver ? { color: 'var(--dsw-alias-label-danger, #e5484d)' } : undefined}>
+                <span role="status" data-listing-title-count="" className={titleOver ? css.listingOverLimit : undefined}>
                   {titleLength}/{limit}{titleOver ? ` ${tt('listing.over', { count: titleLength - limit })}` : ''}
                 </span>
               </div>
