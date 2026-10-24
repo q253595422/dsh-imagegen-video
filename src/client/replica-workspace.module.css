@@ -1,0 +1,427 @@
+/*
+ * Replica workspace ("爆款图复刻") — own stylesheet, per task-18 §2.
+ *
+ * These rules re-declare nothing that `panel.module.css` already owns: the panel
+ * stylesheet is off-limits this round, so the two things this file must do for
+ * itself are (a) take the whole generation surface the way the canvas/ppt
+ * workspaces do, and (b) hide the classic config/result/footer siblings that
+ * stay mounted for instant tab switching.
+ *
+ * The host rule is written as a GLOBAL ATTRIBUTE selector, not as
+ * `.generation[data-workspace='replica']`:
+ *
+ *   `.generation` is a CSS-module class, so the panel's copy of it is hashed at
+ *   build time (`WKhQka_generation`) while this file's `.generation` would be
+ *   hashed to something else entirely. The rule would then match nothing and
+ *   the surface would be silently squeezed next to the classic config column —
+ *   which is exactly what happened on the first build and was caught by
+ *   measuring the rendered boxes, not by reading the stylesheet.
+ *
+ * `data-workspace` is emitted (ImageGenPanel) only on that one host element, so
+ * the attribute alone identifies it without guessing at a hashed class name.
+ */
+:global([data-workspace='replica']) {
+  display: flex;
+  height: 100%;
+  flex-wrap: nowrap;
+}
+
+:global([data-workspace='replica']) > :not([data-replica-workspace]) {
+  display: none !important;
+}
+
+.root {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-width: 0;
+  min-height: 0;
+  height: 100%;
+  gap: 14px;
+  padding: 14px 16px 18px;
+  overflow: hidden;
+  /* The two-column form/result split must key off the width THIS surface
+     actually got, not the viewport: the panel lives in the shell's centre
+     column, which is the viewport minus the sidebar. `@media` would collapse
+     the columns on a 900px window even though the panel still had 1100px, and
+     would keep two columns on a wide window with a narrow panel. */
+  container-type: inline-size;
+  container-name: replica;
+  color: var(--dsw-alias-label-primary);
+  font-family: var(--dsw-font-family);
+}
+
+.intro {
+  display: flex;
+  flex: none;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.intro h2 {
+  margin: 0 0 4px;
+  font-size: 15px;
+  line-height: 1.4;
+}
+
+.intro p {
+  margin: 0;
+  max-width: 62em;
+  color: var(--dsw-alias-label-secondary);
+  font-size: 12px;
+  line-height: 1.7;
+}
+
+.body {
+  display: grid;
+  flex: 1;
+  min-height: 0;
+  grid-template-columns: 340px minmax(0, 1fr);
+  gap: 14px;
+}
+
+.form {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  min-height: 0;
+  overflow: auto;
+  padding: 14px;
+  border: 1px solid var(--dsw-alias-border-l2);
+  border-radius: var(--dsw-radius-lg);
+  background: var(--dsw-alias-bg-layer-1);
+}
+
+.field {
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+  min-width: 0;
+}
+
+.fieldHead {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 8px;
+  min-width: 0;
+}
+
+.fieldLabel {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--dsw-alias-label-primary);
+}
+
+.fieldNote {
+  font-size: 10px;
+  line-height: 1.6;
+  color: var(--dsw-alias-label-tertiary);
+}
+
+/* The honesty line for the reference-image cap. Warning tone, not error tone:
+   using fewer images than were picked is a real limit, not a mistake. */
+.capacity {
+  display: flex;
+  align-items: flex-start;
+  gap: 6px;
+  padding: 7px 9px;
+  border: 1px solid var(--dsw-alias-border-l2);
+  border-radius: var(--dsw-radius-sm);
+  background: var(--dsw-alias-bg-layer-2);
+  font-size: 10px;
+  line-height: 1.7;
+  color: var(--dsw-alias-label-secondary);
+}
+
+.capacity[data-tone='warn'] {
+  border-color: var(--dsw-alias-brand-primary);
+  color: var(--dsw-alias-label-primary);
+}
+
+.capacity strong {
+  font-weight: 600;
+  color: var(--dsw-alias-label-primary);
+}
+
+.thumbs {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.thumb {
+  position: relative;
+  flex: none;
+  width: 74px;
+  height: 74px;
+  border: 1px solid var(--dsw-alias-border-l2);
+  border-radius: var(--dsw-radius-sm);
+  background: var(--dsw-alias-bg-layer-2);
+  overflow: hidden;
+}
+
+.thumb img {
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+/* An image past the model's capacity is still shown — the user picked it — but
+   it is visibly marked as not going to be used, so the count is never a guess. */
+.thumb[data-unused='true'] {
+  opacity: 0.42;
+}
+
+.thumb[data-unused='true']::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background: var(--dsw-alias-bg-layer-1);
+  opacity: 0.35;
+  pointer-events: none;
+}
+
+.thumbIndex {
+  position: absolute;
+  left: 3px;
+  top: 3px;
+  padding: 0 4px;
+  border-radius: var(--dsw-radius-xs);
+  background: var(--dsw-alias-bg-layer-1);
+  font-size: 10px;
+  line-height: 1.5;
+  color: var(--dsw-alias-label-secondary);
+}
+
+.thumbRemove {
+  position: absolute;
+  right: 2px;
+  top: 2px;
+  display: grid;
+  place-items: center;
+  width: 17px;
+  height: 17px;
+  padding: 0;
+  border: none;
+  border-radius: var(--dsw-radius-xs);
+  background: var(--dsw-alias-bg-layer-1);
+  color: var(--dsw-alias-label-secondary);
+  font-size: 12px;
+  line-height: 1;
+  cursor: pointer;
+}
+
+.thumbRemove:hover {
+  color: var(--dsw-alias-label-primary);
+}
+
+.drop {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+  flex: none;
+  min-height: 74px;
+  padding: 10px;
+  border: 1px dashed var(--dsw-alias-border-l2);
+  border-radius: var(--dsw-radius-sm);
+  background: var(--dsw-alias-bg-layer-2);
+  color: var(--dsw-alias-label-secondary);
+  font-size: 11px;
+  text-align: center;
+  cursor: pointer;
+}
+
+.drop[data-over='true'] {
+  border-color: var(--dsw-alias-brand-primary);
+  color: var(--dsw-alias-label-primary);
+}
+
+.drop:disabled {
+  cursor: not-allowed;
+  opacity: 0.6;
+}
+
+.pills {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  min-width: 0;
+}
+
+.textarea {
+  width: 100%;
+  min-height: 74px;
+  max-height: 190px;
+  box-sizing: border-box;
+  resize: vertical;
+  padding: 9px 10px;
+  border: 1px solid var(--dsw-alias-border-l2);
+  border-radius: var(--dsw-radius-sm);
+  background: var(--dsw-alias-bg-layer-2);
+  color: var(--dsw-alias-label-primary);
+  font-family: var(--dsw-font-family);
+  font-size: 12px;
+  line-height: 1.7;
+}
+
+.input {
+  width: 100%;
+  box-sizing: border-box;
+  padding: 8px 10px;
+  border: 1px solid var(--dsw-alias-border-l2);
+  border-radius: var(--dsw-radius-sm);
+  background: var(--dsw-alias-bg-layer-2);
+  color: var(--dsw-alias-label-primary);
+  font-family: var(--dsw-font-family);
+  font-size: 12px;
+  line-height: 1.6;
+}
+
+.submitBar {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-top: auto;
+  padding-top: 12px;
+  border-top: 1px solid var(--dsw-alias-border-l2);
+  flex: none;
+}
+
+.error {
+  margin: 0;
+  color: var(--dsw-alias-brand-primary);
+  font-size: 11px;
+  line-height: 1.6;
+}
+
+.results {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  min-width: 0;
+  min-height: 0;
+  overflow: auto;
+  padding: 14px;
+  border: 1px solid var(--dsw-alias-border-l2);
+  border-radius: var(--dsw-radius-lg);
+  background: var(--dsw-alias-bg-layer-2);
+}
+
+/* The prompt preview exists so the two fidelity tiers can be compared without
+   submitting anything. It scrolls on its own and never widens the column. */
+.promptBox {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  flex: none;
+}
+
+.promptBox > header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  font-size: 11px;
+  color: var(--dsw-alias-label-secondary);
+}
+
+.promptText {
+  margin: 0;
+  max-height: 190px;
+  overflow: auto;
+  padding: 10px;
+  border: 1px solid var(--dsw-alias-border-l2);
+  border-radius: var(--dsw-radius-sm);
+  background: var(--dsw-alias-bg-layer-1);
+  color: var(--dsw-alias-label-primary);
+  font-family: var(--dsw-font-family);
+  font-size: 10px;
+  line-height: 1.75;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+/* One measured fact per row, so a number in the prompt can be traced back to a
+   measurement on screen instead of appearing from nowhere. */
+.facts {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.fact {
+  padding: 1px 6px;
+  border: 1px solid var(--dsw-alias-border-l2);
+  border-radius: var(--dsw-radius-xs);
+  background: var(--dsw-alias-bg-layer-1);
+  font-size: 10px;
+  line-height: 1.7;
+  color: var(--dsw-alias-label-secondary);
+}
+
+.swatches {
+  display: flex;
+  gap: 4px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.swatch {
+  width: 18px;
+  height: 18px;
+  border: 1px solid var(--dsw-alias-border-l2);
+  border-radius: var(--dsw-radius-xs);
+}
+
+.outputs {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
+  gap: 10px;
+  min-width: 0;
+}
+
+.output {
+  display: block;
+  width: 100%;
+  height: auto;
+  border: 1px solid var(--dsw-alias-border-l2);
+  border-radius: var(--dsw-radius-sm);
+  background: var(--dsw-alias-bg-layer-1);
+}
+
+.empty {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  padding: 24px;
+  color: var(--dsw-alias-label-tertiary);
+  font-size: 12px;
+  text-align: center;
+}
+
+@container replica (max-width: 760px) {
+  .body {
+    grid-template-columns: minmax(0, 1fr);
+    grid-template-rows: minmax(0, auto) minmax(240px, 1fr);
+    overflow: auto;
+  }
+
+  .form {
+    overflow: visible;
+  }
+}
