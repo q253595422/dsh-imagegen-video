@@ -5880,9 +5880,9 @@ await check('E1 client apply mounts the sidebar entry and studio (jsdom)', async
     // Gallery keeps the sidebar history visible, and selecting one history
     // group returns the center workspace to text-to-image.
     const tablistButtons = [...view.querySelectorAll('[role="tablist"] button')]
-    // Six top-nav entries (normal / gallery / canvas / ecommerce / ppt / replica)
-    // plus the normal workspace's three generation modes (text / edit / video).
-    assert.equal(tablistButtons.length, 9, 'top nav has six entries and the normal workspace shows three generation modes')
+    // Seven top-nav entries (normal / gallery / canvas / ecommerce / ppt /
+    // replica / outfit) plus the normal workspace's three generation modes.
+    assert.equal(tablistButtons.length, 10, 'top nav has seven entries and the normal workspace shows three generation modes')
     const pptSwitch = tablistButtons.find(button => button.textContent?.includes('图片转 PPT'))
     assert.ok(pptSwitch !== undefined, 'ppt top-nav entry is present')
     const ecommerceSwitch = tablistButtons.find(button => button.textContent?.includes('电商模式'))
@@ -5896,7 +5896,7 @@ await check('E1 client apply mounts the sidebar entry and studio (jsdom)', async
     const ecommerceWorkspace = view.querySelector('[data-ecommerce-workspace]')
     assert.ok(ecommerceWorkspace !== null, 'ecommerce workspace is rendered')
     assert.equal(jsdomWindow.getComputedStyle(ecommerceWorkspace).fontSize, '12px', 'ecommerce UI inherits the compact panel type scale')
-    assert.equal(view.querySelectorAll('[role="tablist"] button').length, 6, 'generation sub-modes hide in the ecommerce workspace')
+    assert.equal(view.querySelectorAll('[role="tablist"] button').length, 7, 'generation sub-modes hide in the ecommerce workspace')
     assert.equal([...view.querySelectorAll('textarea')].some(textarea => (textarea.getAttribute('placeholder') ?? '').includes('描述你想要的画面')), false, 'normal prompt card is hidden in ecommerce workspace')
     const ecommerceName = view.querySelector('input[placeholder="商品名称（必填）"]')
     assert.ok(ecommerceName !== null, 'ecommerce product form is rendered')
@@ -6041,7 +6041,7 @@ await check('E1 client apply mounts the sidebar entry and studio (jsdom)', async
     // Back to the normal workspace via the top nav: gallery works as before.
     normalSwitch.click()
     await new Promise(resolve => setTimeout(resolve, 50))
-    assert.equal(view.querySelectorAll('[role="tablist"] button').length, 9, 'generation sub-modes return in the normal workspace')
+    assert.equal(view.querySelectorAll('[role="tablist"] button').length, 10, 'generation sub-modes return in the normal workspace')
     const galleryPill = [...view.querySelectorAll('[role="tablist"] button')].find(button => button.textContent?.includes('素材库'))
     assert.ok(galleryPill !== undefined, '素材库入口存在')
     galleryPill.click()

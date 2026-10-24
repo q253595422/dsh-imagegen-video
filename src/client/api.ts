@@ -350,6 +350,18 @@ export class ImageGenApi {
   }
 
   async modelList(): Promise<Array<{ id: string; name: string; createdAt: number; file: string; mime: string }>> { return (await readEnvelope<{ ok: true; models: Array<{ id: string; name: string; createdAt: number; file: string; mime: string }> }>(await fetch(MODEL_API.list, { method: 'POST' }))).models }
+  /** Read one saved model back as a data URL, for an edit request's reference. */
+  async modelImage(id: string): Promise<string> {
+    const response = await fetch(`${MODEL_API.image}/${encodeURIComponent(id)}`)
+    const blob = await response.blob()
+    return await new Promise<string>((resolve, reject) => {
+      const reader = new FileReader()
+      reader.onload = () => resolve(String(reader.result))
+      reader.onerror = () => reject(reader.error)
+      reader.readAsDataURL(blob)
+    })
+  }
+
   async modelSave(input: { name: string; data: string; mime: string }): Promise<{ id: string; name: string; createdAt: number; file: string; mime: string }> { return (await readEnvelope<{ ok: true; model: { id: string; name: string; createdAt: number; file: string; mime: string } }>(await fetch(MODEL_API.save, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(input) }))).model }
 
   /** List the host-persisted gallery (newest first) plus its trash. */
