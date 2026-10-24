@@ -42,6 +42,7 @@ import {
   type ChatImageEventDetail, type ConversationDraftAttachment, type ConversationService,
 } from './conversation-sync.ts'
 import { Select } from './Select.tsx'
+import { ListingCopyCard } from './ListingCopyCard.tsx'
 import { ErrorDetail } from './ErrorDetail.tsx'
 import { onTablistKeyDown, tabIndexFor } from './tablist.ts'
 import css from './panel.module.css'
@@ -3333,6 +3334,7 @@ export function ImageGenPanel(props: {
                   </header>
                   <textarea value={ecommerce.promptInfo} placeholder={tt('ecommerce.promptInfoPlaceholder')} onChange={event => setEcommerce(previous => ({ ...previous, promptInfo: event.target.value }))} />
                 </div>
+                <ListingCopyCard api={api} draft={{ productName: ecommerce.productName, category: ecommerce.category, platform: ecommerce.platform, language: effectiveEcommerceLanguage(ecommerce) || '中文', promptInfo: ecommerce.promptInfo }} />
                 <div className={css.ecommerceSection}>
                   <h3>{tt('ecommerce.params')}</h3>
                   <div className={css.ecommerceParamGrid}>
