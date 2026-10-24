@@ -21,7 +21,7 @@ import { renderMarkdown } from './markdown.tsx'
 import { openImageGenConfig } from './config-entry.tsx'
 import { TemplateLibrary } from './TemplateLibrary.tsx'
 import { ReferenceImages } from './ReferenceImages.tsx'
-import { editReferenceLimit, useEditReferences } from './reference-images.ts'
+import { editReferenceLimit, useEditReferences, EDIT_REFERENCE_LIMIT } from './reference-images.ts'
 import { GooeyNav } from './GooeyNav.tsx'
 import { InspirationGallery } from './InspirationGallery.tsx'
 import { CanvasWorkspace } from './CanvasWorkspace.tsx'
@@ -537,13 +537,19 @@ function ecommerceVisualBrief(slot: ProductSetSlot, index: number): string {
   return choices[Math.min(index, choices.length - 1)]!
 }
 
-function ecommercePrompt(draft: ProductSetDraft, slot: ProductSetSlot, index = 0): string {
+function ecommercePrompt(draft: ProductSetDraft, slot: ProductSetSlot, index = 0, assets: readonly ProductAsset[] = []): string {
   const info = draft.promptInfo.trim() || '突出商品真实材质、结构和核心价值；保持商品颜色、形状、Logo、包装文字和结构真实，不添加不存在的配件'
   const language = effectiveEcommerceLanguage(draft) || '中文'
   const product = draft.productName.trim() || '该商品'
-  const refClause = slot.refRole !== undefined && slot.refRole !== 'none'
-    ? `本图以上传的${ECOMMERCE_ROLE_PROMPT_LABELS[slot.refRole]}图片为参考，商品与风格必须与参考图保持一致；`
-    : ''
+  // Every uploaded asset of this slot's role reaches the model, so the prompt
+  // has to say which picture carries which constraint. One blanket
+  // "以参考图为参考" sentence leaves the model free to blend four angles into
+  // a single hybrid product; naming each picture keeps its job explicit.
+  const role = slot.refRole
+  const refAssets = role === undefined || role === 'none' ? [] : assets.filter(asset => asset.role === role)
+  const refClause = refAssets.length === 0
+    ? ''
+    : `本图以上传的${ECOMMERCE_ROLE_PROMPT_LABELS[refAssets[0].role]}图片为参考（共 ${refAssets.length} 张：${refAssets.map((asset, order) => `第 ${order + 1} 张为${ECOMMERCE_ROLE_PROMPT_LABELS[asset.role]}${asset.name !== '' ? `「${asset.name}」` : ''}`).join('，')}），商品与风格必须与参考图保持一致；`
   const distinct = slot.key === 'main'
     ? ''
     : '这不是商品主图的简单复刻：只复用参考图中的商品外观和身份，必须重新设计背景、机位、构图、道具和光效，不得输出与主图相同的白底正面居中画面。'
@@ -552,9 +558,43 @@ function ecommercePrompt(draft: ProductSetDraft, slot: ProductSetSlot, index = 0
 
 /** Effective prompt for one image of a slot: the per-image override written in
  *  the pre-generation preview board wins over the auto-composed prompt. */
-function ecommerceSlotPrompt(draft: ProductSetDraft, slot: ProductSetSlot, index: number): string {
+function ecommerceSlotPrompt(draft: ProductSetDraft, slot: ProductSetSlot, index: number, assets: readonly ProductAsset[] = []): string {
   const override = draft.promptOverrides?.[`${slot.key}-${index + 1}`]
-  return override !== undefined && override.trim() !== '' ? override : ecommercePrompt(draft, slot, index)
+  return override !== undefined && override.trim() !== '' ? override : ecommercePrompt(draft, slot, index, assets)
+}
+
+/**
+ * How many reference images the selected model's channel can be relied on to
+ * transmit. This mirrors src/engine.ts's edit branches, and it must stay in
+ * step with them.
+ *
+ * Kept separate from editReferenceLimit() on purpose. That helper answers a
+ * different question (how many canvas references the session should accept)
+ * and is conservative by design, returning 1 for dall-e, qwen and minimax;
+ * the engine's generic branch would in fact send those five. Reusing it here
+ * would warn users on channels that are not losing anything.
+ *
+ * `unknown` counts as 1 rather than 5, and that is the deliberate asymmetry.
+ * The engine's generic branch does send several references, so from "how many
+ * does the host put on the wire" the answer for an unrecognised model really
+ * is five. But this number is not a measurement — it is what the UI tells the
+ * user they can rely on, and the notice it feeds warns about loss rather than
+ * promising capacity. A gateway whose id describeModel() does not know is
+ * exactly the case where we cannot see whether it keeps the extras or quietly
+ * drops them, and a warning that fires one time too often is recoverable
+ * ("switch model" is one click), while a coverless clip is not. Only the three
+ * families whose branches are known to carry the primary plus four extras get
+ * the larger number.
+ */
+function ecommerceReferenceLimit(model: string): number {
+  const { family } = describeModel(model)
+  if (family === 'grok' || family === 'nanobanana' || family === 'unknown') return 1
+  // gpt-image / dall-e / zhipu / qwen / minimax all fall to the engine's
+  // generic OpenAI-style branch, which repeats `image[]` once per reference
+  // (`src/engine.ts`, `.slice(0, 4)` on the extras). Seedream has its own JSON
+  // array branch carrying the same count. Five is therefore the primary plus
+  // the engine's four extras — a coincidence of two limits, not one limit.
+  return EDIT_REFERENCE_LIMIT
 }
 
 /** Consistency prefix for slots generated after the main image exists. */
@@ -1126,6 +1166,19 @@ export function ImageGenPanel(props: {
   const editLimitNotice = tab === 'edit' && refs.images.length > editReferenceCapacity
     ? tt('edit.modelLimit', { count: editReferenceCapacity })
     : null
+  /** Same question for the product-set flow, where one role may carry up to
+   *  MAX_ECOMMERCE_ASSETS pictures. The number is the selected model's, not the
+   *  workflow's, because the host forwards the role's whole asset list and the
+   *  channel drops whatever it cannot carry. See ecommerceReferenceLimit for
+   *  why this does not reuse editReferenceLimit(). */
+  const ecommerceReferenceCapacity = ecommerceReferenceLimit(model)
+  const ecommerceRefOverflow = ecommerceAssets.reduce((worst, asset) => {
+    if (asset.role === 'style') return worst
+    return Math.max(worst, ecommerceAssets.filter(item => item.role === asset.role).length)
+  }, 0)
+  const ecommerceLimitNotice = workspace === 'ecommerce' && ecommerceRefOverflow > ecommerceReferenceCapacity
+    ? tt('ecommerce.refLimit', { count: ecommerceReferenceCapacity })
+    : null
   const previewStage = useRef<HTMLDivElement>(null)
   // The three overlays that claim `role="dialog"`; see useDialogFocus.
   const previewDialogRef = useRef<HTMLDivElement>(null)
@@ -1691,7 +1744,7 @@ export function ImageGenPanel(props: {
       openSettingsGuide('enhancement')
       return
     }
-    const source = ecommerce.promptOverrides?.[key]?.trim() || ecommerceSlotPrompt(ecommerce, slot, index)
+    const source = ecommerce.promptOverrides?.[key]?.trim() || ecommerceSlotPrompt(ecommerce, slot, index, ecommerceAssets.filter(item => item.role === (slot.refRole ?? 'product')))
     setEcommercePolishingKey(key)
     setError(null)
     try {
@@ -1838,20 +1891,25 @@ export function ImageGenPanel(props: {
     if (!enabled || !channelReady(selectedChoice.channelId)) { openSettingsGuide('generation'); return }
     const projectId = ecommerce.projectId || newComparisonId()
     const buildRequest = (slot: ProductSetSlot, index: number): GenerateRequest => {
-      // Each slot picks one reference by asset role; a slot without a matching
-      // asset (or 'none') falls back to text-to-image.
+      // Every asset of the slot's role goes to the model, in upload order —
+      // the first one in `image` (single-reference channels only ever look
+      // there), the rest in `images`. A slot with no matching asset (or 'none')
+      // falls back to text-to-image.
       const refRole = slot.refRole ?? 'product'
-      const asset = refRole === 'none' ? undefined : ecommerceAssets.find(item => item.role === refRole)
+      const assets = refRole === 'none' ? [] : ecommerceAssets.filter(item => item.role === refRole)
+      const [primary, ...extras] = assets
       return {
-        mode: asset !== undefined ? 'edit' as const : 'text' as const,
+        mode: primary !== undefined ? 'edit' as const : 'text' as const,
         model: selectedChoice.model,
-        prompt: ecommerceSlotPrompt(ecommerce, slot, index),
+        prompt: ecommerceSlotPrompt(ecommerce, slot, index, assets),
         size: ecommerce.size,
         quality,
         n: 1,
         detail,
         ...(selectedChoice.channelId === '' ? {} : { channelId: selectedChoice.channelId }),
-        ...(asset !== undefined ? { image: asset.dataUrl, refName: asset.name } : {}),
+        ...(primary !== undefined
+          ? { image: primary.dataUrl, refName: primary.name, ...(extras.length > 0 ? { images: extras.map(asset => asset.dataUrl) } : {}) }
+          : {}),
         workflow: 'ecommerce' as const,
         projectId,
         projectName: ecommerce.productName.trim(),
@@ -1870,7 +1928,7 @@ export function ImageGenPanel(props: {
     const requests = leadSlots.flatMap(slot => Array.from({ length: slot.count }, (_, index) => buildRequest(slot, index)))
     const remaining = anchorChain
       ? otherSlots.flatMap(slot => Array.from({ length: slot.count }, (_, index) => {
-        const { image: _image, refName: _refName, ...rest } = buildRequest(slot, index)
+        const { image: _image, images: _images, refName: _refName, ...rest } = buildRequest(slot, index)
         return rest
       }))
       : []
@@ -3225,6 +3283,9 @@ export function ImageGenPanel(props: {
                   {uploadNotice !== null ? (
                     <p className={css.ecommerceCardNotice} role="status" data-upload-notice="">{uploadNotice}</p>
                   ) : null}
+                  {ecommerceLimitNotice !== null ? (
+                    <p className={css.ecommerceCardNotice} role="status" data-ecommerce-ref-limit="">{ecommerceLimitNotice}</p>
+                  ) : null}
                   {ecommerceAssets.some(asset => asset.role !== 'style') ? (
                     <div className={css.ecommerceAssets}>
                       {ecommerceAssets.filter(asset => asset.role !== 'style').map(asset => (
@@ -3967,7 +4028,7 @@ export function ImageGenPanel(props: {
                         </div>
                       </header>
                       <textarea
-                        value={edited ? override : ecommerceSlotPrompt(ecommerce, slot, index)}
+                        value={edited ? override : ecommerceSlotPrompt(ecommerce, slot, index, ecommerceAssets.filter(item => item.role === (slot.refRole ?? 'product')))}
                         onChange={event => setEcommerce(previous => ({ ...previous, promptOverrides: { ...previous.promptOverrides, [key]: event.target.value } }))}
                         rows={5}
                       />
