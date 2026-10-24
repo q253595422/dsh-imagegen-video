@@ -18,3 +18,6 @@ node_modules/
 /.studio-preview/
 # macOS Finder 目录元数据：每次浏览目录都会重新生成，不属于仓库内容。
 .DS_Store
+
+# Per-Bot parallel worktrees (task-16..20). Machine-local, never shipped.
+/.worktrees/
