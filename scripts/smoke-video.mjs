@@ -945,6 +945,99 @@ await check('V6b a channel-alias Seedance model routes and persists through the 
   }
 })
 
+await check('V6c an explicit channelId wins over another channel carrying the same alias (#10-4)', async () => {
+  // Two channels both catalog `same-alias`, each mapping it to its own upstream
+  // id and holding its own key. Before this fix the host resolved purely by
+  // "which channel happens to configure the alias", so a user who picked B was
+  // silently rendered (and billed) on A. The assertion is on what the upstream
+  // actually received, not on internal state.
+  const upstream = await startUpstream()
+  upstream.state.script = {
+    submit: { video_id: 'vid_alias', status: 'queued' },
+    polls: [{ status: 'completed', metadata: { url: `http://127.0.0.1:${upstream.port}/alias.mp4`, duration: 5 } }],
+  }
+  try {
+    const channels = [
+      {
+        id: 'channel-a',
+        preset: '',
+        name: 'Channel A',
+        apiUrl: upstream.base,
+        apiKey: 'key-of-a',
+        apiUrlFull: false,
+        models: [],
+        videoModels: [{ alias: 'same-alias', id: 'agnes-video-2.5-flash' }],
+      },
+      {
+        id: 'channel-b',
+        preset: '',
+        name: 'Channel B',
+        apiUrl: upstream.base,
+        apiKey: 'key-of-b',
+        apiUrlFull: false,
+        models: [],
+        videoModels: [{ alias: 'same-alias', id: 'agnes-video-2.5' }],
+      },
+    ]
+    const runtime = new host.ImageGenerationRuntime(() => ({ channels, defaultChannelId: 'channel-a' }))
+    const request = { mode: 'text', model: 'same-alias', prompt: 'p', aspectRatio: '16:9', resolution: '720P', seconds: 5 }
+
+    // 1) Explicit `channelId=B` must reach B's upstream id AND B's key.
+    await runtime.runVideo({ ...request, channelId: 'channel-b' })
+    assert.equal(upstream.state.submits.length, 1, 'one submit reached the upstream')
+    assert.equal(upstream.state.submits[0].body.model, 'agnes-video-2.5', 'the explicit channel decides which mapping is sent')
+    assert.equal(upstream.state.submits[0].authorization, 'Bearer key-of-b', 'and which credential pays for it')
+
+    // 2) No `channelId`: the historical fallback is preserved — the first
+    //    channel carrying the alias, not the default channel.
+    await runtime.runVideo(request)
+    assert.equal(upstream.state.submits.length, 2, 'the second submit reached the upstream')
+    assert.equal(upstream.state.submits[1].body.model, 'agnes-video-2.5-flash', 'an unqualified alias still resolves to the first channel holding it')
+    assert.equal(upstream.state.submits[1].authorization, 'Bearer key-of-a', 'and to that channel\'s key')
+  } finally {
+    await upstream.close()
+  }
+})
+
+await check('V6d an explicit channelId without the alias is refused, never taken over by another channel', async () => {
+  // The deliberate second step of the ordering: an explicit channel that does not
+  // configure the alias is used ANYWAY, so the upstream id degrades to the alias
+  // and validation refuses it. The alternative — quietly falling back to the
+  // channel that does configure it — would charge the user's other key for work
+  // they did not aim at that channel.
+  const runtime = new host.ImageGenerationRuntime(() => ({
+    channels: [
+      {
+        id: 'channel-a',
+        preset: '',
+        name: 'Channel A',
+        apiUrl: 'http://127.0.0.1:1/v1',
+        apiKey: 'key-of-a',
+        apiUrlFull: false,
+        models: [],
+        videoModels: [{ alias: 'same-alias', id: 'agnes-video-2.5-flash' }],
+      },
+      {
+        id: 'channel-b',
+        preset: '',
+        name: 'Channel B',
+        // Not reachable: the run must fail on validation before any HTTP call.
+        apiUrl: 'http://127.0.0.1:1/v1',
+        apiKey: 'key-of-b',
+        apiUrlFull: false,
+        models: [],
+        videoModels: [{ alias: 'other-alias', id: 'agnes-video-2.5' }],
+      },
+    ],
+    defaultChannelId: 'channel-a',
+  }))
+  await assert.rejects(
+    () => runtime.runVideo({ mode: 'text', model: 'same-alias', channelId: 'channel-b', prompt: 'p', aspectRatio: '16:9', resolution: '720P', seconds: 5 }),
+    error => error?.code === 'video-unknown-model',
+    'the explicitly chosen channel is used even without the alias, so the run is refused instead of billed to the other channel',
+  )
+})
+
 await check('V7 an unknown-family model configured in a channel fails with guidance', async () => {
   const runtime = new host.ImageGenerationRuntime(() => ({
     channels: [{
