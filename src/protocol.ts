@@ -220,6 +220,8 @@ export const HISTORY_API = {
  * Every response that can change the trash carries it as a second field next
  * to `entries`: the same two lists are always what the client renders.
  */
+export const MODEL_API = { list: '/api/dsh-imagegen/models/list', save: '/api/dsh-imagegen/models/save', image: '/api/dsh-imagegen/models/image' } as const
+
 export const GALLERY_API = {
   list: '/api/dsh-imagegen/gallery/list',
   append: '/api/dsh-imagegen/gallery/append',
