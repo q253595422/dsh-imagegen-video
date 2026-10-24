@@ -1533,6 +1533,15 @@ html[data-dsh-imagegen-active] .sidebarHistoryHost {
   color: var(--dsw-alias-label-secondary);
 }
 
+/* Quiet second line under a field. The ratio lock and the compliance hint are
+   caveats rather than labels, so they sit below in the tertiary tone instead
+   of competing with the field label above them. */
+.ecommerceFieldNote {
+  font-size: 11px;
+  line-height: 1.4;
+  color: var(--dsw-alias-label-tertiary);
+}
+
 .ecommerceParamGrid {
   display: grid;
   /* Deliberately two columns, not `auto-fit`: at the 248px config column an

@@ -433,7 +433,7 @@ function sniffImageMime(data: Buffer): string | undefined {
 
 /** True when an image reference is safe for a specific source. */
 function isAllowedImageRef(def: TemplateSourceDef, ref: string): boolean {
-  if (!/^https?:\/\//i.test(ref)) return IMAGE_FILE_PATTERN.test(ref) && !ref.includes('..')
+  if (!/^https?:\/\//i.test(ref)) return ref.length > 0 && ref.length <= 400 && !ref.includes('\\') && !ref.includes('\0') && !ref.startsWith('/') && ref.split('/').every(segment => segment !== '' && segment !== '.' && segment !== '..') && !ref.includes('..')
   if (ref.length > MAX_IMAGE_URL_LENGTH || ref.includes('..')) return false
   try {
     const url = new URL(ref)

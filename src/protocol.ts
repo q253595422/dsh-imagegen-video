@@ -8,7 +8,7 @@
 export const IMAGEGEN_SETTINGS_NAMESPACE = 'dsh-imagegen'
 
 /** Published package version shared by the host updater and the client UI. */
-export const PLUGIN_VERSION = '1.16.1'
+export const PLUGIN_VERSION = '1.17.0'
 
 /** Same-origin route family (loopback-only, mirroring the dsh-ssh fence). */
 export const SETTINGS_API = {
@@ -1575,8 +1575,10 @@ export interface EcommerceTaskMeta {
 }
 
 /** Role an uploaded product asset plays in the ecommerce workflow. 'none' is
- *  only used as a slot selection meaning "generate without a reference". */
-export type EcommerceRefRole = 'none' | 'product' | 'packaging' | 'detail' | 'style'
+ *  only used as a slot selection meaning "generate without a reference";
+ *  'layout' is a composition template the image borrows zoning from, never a
+ *  picture of the product itself. */
+export type EcommerceRefRole = 'none' | 'product' | 'packaging' | 'detail' | 'style' | 'layout'
 
 /** One planned image slot in a product set. */
 export interface ProductSetSlot {
@@ -1599,6 +1601,12 @@ export interface ProductSetDraft {
   /** Custom copy language when language is 'custom'. */
   customLanguage?: string
   size: string
+  /** Main-image platform compliance. When true the `main` slot alone is
+   *  generated on a pure #FFFFFF background with no props, text or shadow, and
+   *  is forced to a square 1:1 (Amazon and friends require exactly that);
+   *  every other slot keeps `size`. Drafts saved before this field existed
+   *  simply lack it, which reads as false. */
+  whiteBackground?: boolean
   productName: string
   /** 参数信息（提示词）: the merged reference-info field (v1.5.9+). */
   promptInfo: string
@@ -1614,6 +1622,17 @@ export interface ProductSetDraft {
 
 /** Host-mediated product-listing copy generation endpoint. */
 export const LISTING_COPY_API = '/api/dsh-imagegen/listing-copy' as const
+/** Host-side product page extraction endpoint. */
+export const ECOMMERCE_LINK_API = '/api/dsh-imagegen/ecommerce/fetch-link' as const
+export interface EcommerceLinkResult {
+  ok: boolean
+  title?: string
+  images?: string[]
+  sellingPoints?: string[]
+  price?: string
+  source?: 'json-ld' | 'og'
+  reason?: 'blocked-host' | 'timeout' | 'too-large' | 'not-html' | 'no-product-data' | 'fetch-failed'
+}
 
 /** One generated product-listing spec row. */
 export interface ListingSpec {

@@ -4216,6 +4216,56 @@ await check('C13d the config routes save and apply through the library backend',
   }
 })
 
+await check('C14 product-link fetching refuses every internal or literal host', async () => {
+  for (const url of [
+    'http://127.0.0.1:8791/v1/models',
+    'http://localhost/x',
+    'http://169.254.169.254/latest/meta-data/',
+    'http://10.0.0.5/x',
+    'http://192.168.1.10/x',
+    'http://172.20.0.9/x',
+    'http://[::1]/x',
+    'http://0.0.0.0/x',
+    'http://metadata.google.internal/x',
+    'http://93.184.216.34/x',
+    'file:///etc/passwd',
+    'gopher://example.com/x',
+  ]) {
+    const blocked = await post('/api/dsh-imagegen/ecommerce/fetch-link', { url })
+    assert.equal(blocked.status, 200, `${url} answers as a normal envelope`)
+    assert.equal(blocked.body.ok, false, `${url} is refused`)
+    assert.equal(blocked.body.reason, 'blocked-host', `${url} is refused as an internal host`)
+  }
+  const empty = await post('/api/dsh-imagegen/ecommerce/fetch-link', {})
+  assert.equal(empty.status, 400, 'a missing url is a bad request')
+})
+
+await check('C14b product markup extraction prefers JSON-LD and falls back to og', async () => {
+  const { extractProductLink } = await import(new URL('src/link-extract.ts', root).href)
+  const jsonLd = '<script type="application/ld+json">{"@context":"https://schema.org","@type":"Product","name":"陶瓷杯","image":["/cup.png"],"offers":{"price":"9.9"},"description":"轻。耐热。"}</script>'
+  const graph = '<script type="application/ld+json">{"@graph":[{"@type":"WebSite","name":"shop"},{"@type":"Product","name":"玻璃碗","image":"https://cdn.example.com/bowl.jpg","offers":{"price":"19"}}]}</script>'
+  const og = '<meta property="og:title" content="帆布包" /><meta property="og:image" content="/bag.jpg" /><meta property="og:description" content="厚实。能装。" />'
+  const fromJsonLd = extractProductLink(`<html><head>${jsonLd}</head></html>`, 'https://shop.example.com/p/1')
+  assert.equal(fromJsonLd.ok, true, 'a Product node is understood')
+  assert.equal(fromJsonLd.title, '陶瓷杯')
+  assert.deepEqual(fromJsonLd.images, ['https://shop.example.com/cup.png'], 'relative images resolve against the page')
+  assert.equal(fromJsonLd.price, '9.9')
+  assert.equal(fromJsonLd.source, 'json-ld')
+  const fromGraph = extractProductLink(`<html><head>${graph}</head></html>`, 'https://shop.example.com/p/2')
+  assert.equal(fromGraph.title, '玻璃碗', 'a Product node inside @graph is found')
+  assert.deepEqual(fromGraph.images, ['https://cdn.example.com/bowl.jpg'])
+  const fromOg = extractProductLink(`<html><head>${og}</head></html>`, 'https://shop.example.com/p/3')
+  assert.equal(fromOg.ok, true, 'og tags are the fallback')
+  assert.equal(fromOg.title, '帆布包')
+  assert.deepEqual(fromOg.images, ['https://shop.example.com/bag.jpg'])
+  assert.equal(fromOg.source, 'og')
+  const nothing = extractProductLink('<html><head></head><body>hello</body></html>', 'https://shop.example.com/p/4')
+  assert.equal(nothing.ok, false, 'a page without product markup is refused')
+  assert.equal(nothing.reason, 'no-product-data')
+  const titleOnly = extractProductLink('<html><head><title>只有标题</title></head></html>', 'https://shop.example.com/p/5')
+  assert.equal(titleOnly.title, '只有标题', 'a bare document title is still usable as a name')
+})
+
 await new Promise(resolve => server.close(resolve))
 
 // -------------------------------------------------- D. client bundle shape
@@ -5880,9 +5930,9 @@ await check('E1 client apply mounts the sidebar entry and studio (jsdom)', async
     // Gallery keeps the sidebar history visible, and selecting one history
     // group returns the center workspace to text-to-image.
     const tablistButtons = [...view.querySelectorAll('[role="tablist"] button')]
-    // Seven top-nav entries (normal / gallery / canvas / ecommerce / ppt /
-    // replica / outfit) plus the normal workspace's three generation modes.
-    assert.equal(tablistButtons.length, 10, 'top nav has seven entries and the normal workspace shows three generation modes')
+    // Eight top-nav entries (normal / gallery / canvas / ecommerce / ppt /
+    // replica / outfit / aplus) plus the normal workspace's three generation modes.
+    assert.equal(tablistButtons.length, 12, 'top nav has nine entries and the normal workspace shows three generation modes')
     const pptSwitch = tablistButtons.find(button => button.textContent?.includes('图片转 PPT'))
     assert.ok(pptSwitch !== undefined, 'ppt top-nav entry is present')
     const ecommerceSwitch = tablistButtons.find(button => button.textContent?.includes('电商模式'))
@@ -5896,7 +5946,7 @@ await check('E1 client apply mounts the sidebar entry and studio (jsdom)', async
     const ecommerceWorkspace = view.querySelector('[data-ecommerce-workspace]')
     assert.ok(ecommerceWorkspace !== null, 'ecommerce workspace is rendered')
     assert.equal(jsdomWindow.getComputedStyle(ecommerceWorkspace).fontSize, '12px', 'ecommerce UI inherits the compact panel type scale')
-    assert.equal(view.querySelectorAll('[role="tablist"] button').length, 7, 'generation sub-modes hide in the ecommerce workspace')
+    assert.equal(view.querySelectorAll('[role="tablist"] button').length, 9, 'generation sub-modes hide in the ecommerce workspace')
     assert.equal([...view.querySelectorAll('textarea')].some(textarea => (textarea.getAttribute('placeholder') ?? '').includes('描述你想要的画面')), false, 'normal prompt card is hidden in ecommerce workspace')
     const ecommerceName = view.querySelector('input[placeholder="商品名称（必填）"]')
     assert.ok(ecommerceName !== null, 'ecommerce product form is rendered')
@@ -5943,6 +5993,21 @@ await check('E1 client apply mounts the sidebar entry and studio (jsdom)', async
     assert.ok(noReferenceOption !== undefined, 'the rounded reference menu offers reference-free generation')
     noReferenceOption.click()
     await new Promise(resolve => setTimeout(resolve, 20))
+    // A layout reference is not a picture of the product, so the slot menu has to
+    // offer that role separately from the product shot; otherwise a template can
+    // only be uploaded as the product itself and the model copies its subject.
+    {
+      const probe = [...view.querySelectorAll('button[data-ecommerce-ref-select]')][0]
+      probe.click()
+      await waitForSelector(jsdomDocument, '[data-dsh-select-menu]')
+      const options = [...jsdomDocument.querySelectorAll('[data-dsh-select-menu] [role="option"]')]
+      const layoutOption = options.find(option => option.textContent === '版式参考')
+      assert.ok(layoutOption !== undefined, 'the reference menu offers the layout role')
+      const productOption = options.find(option => option.textContent === '商品主体')
+      assert.ok(productOption !== undefined, 'the reference menu keeps the product role')
+      productOption.click()
+      await new Promise(resolve => setTimeout(resolve, 40))
+    }
     const previewSet = [...view.querySelectorAll('button')].find(button => button.textContent?.includes('生成套图预览'))
     assert.ok(previewSet !== undefined, 'ecommerce preview action is rendered')
     previewSet.click()
@@ -6041,7 +6106,7 @@ await check('E1 client apply mounts the sidebar entry and studio (jsdom)', async
     // Back to the normal workspace via the top nav: gallery works as before.
     normalSwitch.click()
     await new Promise(resolve => setTimeout(resolve, 50))
-    assert.equal(view.querySelectorAll('[role="tablist"] button').length, 10, 'generation sub-modes return in the normal workspace')
+    assert.equal(view.querySelectorAll('[role="tablist"] button').length, 12, 'generation sub-modes return in the normal workspace')
     const galleryPill = [...view.querySelectorAll('[role="tablist"] button')].find(button => button.textContent?.includes('素材库'))
     assert.ok(galleryPill !== undefined, '素材库入口存在')
     galleryPill.click()
@@ -6450,6 +6515,15 @@ await check('E1 client apply mounts the sidebar entry and studio (jsdom)', async
     assert.ok(ecommerceTabAgain !== undefined, 'ecommerce switch still present for submission flow')
     ecommerceTabAgain.click()
     await new Promise(resolve => setTimeout(resolve, 50))
+    // Platform compliance switch: off by default, and turning it on has to say
+    // out loud that the main image is no longer generated at the ratio above it.
+    const whiteToggle = view.querySelector('[data-ecommerce-white]')
+    assert.ok(whiteToggle !== null, 'the white-background compliance switch is rendered')
+    assert.equal(whiteToggle.checked, false, 'the compliance switch is off by default')
+    whiteToggle.click()
+    await new Promise(resolve => setTimeout(resolve, 60))
+    assert.equal(whiteToggle.checked, true, 'the compliance switch can be turned on')
+    assert.ok(view.textContent?.includes('主图将强制 1:1'), 'the panel states the main image is locked to a square')
     const confirmSet = [...view.querySelectorAll('button')].find(button => button.textContent?.includes('确认生成整套图片'))
     assert.ok(confirmSet !== undefined, 'ecommerce confirm action is rendered')
     confirmSet.click()
@@ -6463,6 +6537,11 @@ await check('E1 client apply mounts the sidebar entry and studio (jsdom)', async
     assert.equal(anchored.length, 5, 'remaining slots are anchored after the main image')
     assert.ok(anchored.every(payload => payload.mode === 'edit' && payload.refName === 'set-main-anchor' && typeof payload.image === 'string' && payload.image.startsWith('data:')), 'anchored slots reference the generated main image')
     assert.ok(anchored.every(payload => payload.prompt.startsWith('商品套图一致性约束')), 'anchored prompts carry the consistency constraint')
+    // The compliance clause is a main-image requirement, not a style: it must
+    // reach exactly one submission, or a scene shot turns into a white packshot.
+    assert.ok(mainPayload.prompt.includes('纯白 #FFFFFF'), 'the compliance clause reaches the main image prompt')
+    assert.equal(anchored.some(payload => payload.prompt.includes('纯白 #FFFFFF')), false, 'the compliance clause never leaks into the other slots')
+    assert.equal(mainPayload.size, '1:1', 'the compliant main image is requested square')
     assert.ok(ecommerceSubmissions.every(payload => payload.projectName === '测试保温杯'), 'submissions carry the product name snapshot')
     const ecommerceResults = view.querySelector('[data-ecommerce-results]')
     assert.ok(ecommerceResults !== null, 'product set results section is rendered')
@@ -7608,6 +7687,49 @@ await check('E1 client apply mounts the sidebar entry and studio (jsdom)', async
     const closePicker = view.querySelector('[data-canvas-no-zoom][class*="modalBackdrop"] [aria-label="关闭"]')
     closePicker?.dispatchEvent(new jsdomWindow.MouseEvent('click', { bubbles: true }))
     await new Promise(resolve => setTimeout(resolve, 60))
+
+    // The A+ workspace is a real surface, not just an eighth label: selecting
+    // its tab mounts it, and it is the last top-nav entry so the generation
+    // sub-modes stay hidden exactly like the other non-normal workspaces.
+    const aplusSwitch = [...view.querySelectorAll('[role="tablist"] button')].find(button => button.textContent?.includes('A+ 详情'))
+    assert.ok(aplusSwitch !== undefined, 'aplus top-nav entry is present')
+    aplusSwitch.dispatchEvent(new jsdomWindow.MouseEvent('click', { bubbles: true, cancelable: true }))
+    await new Promise(resolve => setTimeout(resolve, 90))
+    const aplusWorkspace = view.querySelector('[data-aplus-workspace]')
+    assert.ok(aplusWorkspace !== null, 'aplus workspace is rendered')
+    assert.equal(aplusWorkspace.hidden, false, 'aplus workspace is visible while selected')
+    assert.equal(view.querySelectorAll('[role="tablist"] button').length, 9, 'aplus keeps the nine top-nav entries and hides generation sub-modes')
+    assert.ok(aplusWorkspace.textContent?.includes('A+ 详情页'), 'the aplus workspace labels itself')
+    assert.ok(aplusWorkspace.querySelectorAll('input[type="checkbox"]').length >= 12, 'the aplus workspace offers all twelve modules')
+    // Every module carries its own copy fields; the export draws them as a band on
+    // the picture, so a module without them would silently export a caption-less row.
+    assert.ok(aplusWorkspace.querySelector('[data-aplus-copy$="-title"]') !== null, 'a module exposes a title field for the on-image copy')
+    assert.ok(aplusWorkspace.querySelector('[data-aplus-copy$="-body"]') !== null, 'a module exposes a body field for the on-image copy')
+    assert.equal(aplusWorkspace.querySelectorAll('[data-aplus-copy]').length >= 12, true, 'every module can be captioned')
+
+    // The clothing upload has to stop where the wire stops: the engine takes the
+    // model shot plus four garments, so offering six meant two uploaded images
+    // were dropped without a word.
+    const outfitSwitch = [...view.querySelectorAll('[role="tablist"] button')].find(button => button.textContent === '服饰穿戴')
+    assert.ok(outfitSwitch !== undefined, 'outfit top-nav entry is present')
+    outfitSwitch.dispatchEvent(new jsdomWindow.MouseEvent('click', { bubbles: true, cancelable: true }))
+    await new Promise(resolve => setTimeout(resolve, 90))
+    const outfitWorkspace = view.querySelector('[data-outfit]')
+    assert.ok(outfitWorkspace !== null, 'outfit workspace is rendered')
+    assert.ok(outfitWorkspace.textContent?.includes('最多 4 张服装图'), 'the outfit hint states the real upload limit')
+    assert.equal(view.querySelectorAll('[role="tablist"] button').length, 9, 'outfit keeps the nine top-nav entries')
+
+    // Promo mode is the ninth workspace: it has to mount a link field and the four
+    // platform styles, and the nav count must not drift when it does.
+    const promoSwitch = [...view.querySelectorAll('[role="tablist"] button')].find(button => button.textContent === '带货图文')
+    assert.ok(promoSwitch !== undefined, 'promo top-nav entry is present')
+    promoSwitch.dispatchEvent(new jsdomWindow.MouseEvent('click', { bubbles: true, cancelable: true }))
+    await new Promise(resolve => setTimeout(resolve, 90))
+    const promoWorkspace = view.querySelector('[data-promo]')
+    assert.ok(promoWorkspace !== null, 'promo workspace is rendered')
+    assert.ok(promoWorkspace.querySelector('input[placeholder="粘贴商品链接"]') !== null, 'promo workspace offers a product-link field')
+    assert.equal(promoWorkspace.querySelectorAll('select option').length, 4, 'promo workspace offers four platform styles')
+    assert.equal(view.querySelectorAll('[role="tablist"] button').length, 9, 'promo keeps the nine top-nav entries')
   } finally {
     // Drain pending React work BEFORE restoring the globals. React DOM reads
     // `window` during commit (getActiveElementDeep), so a flush that lands after

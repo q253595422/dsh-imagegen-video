@@ -28,6 +28,8 @@ import { CanvasWorkspace } from './CanvasWorkspace.tsx'
 import { PptWorkspace } from './PptWorkspace.tsx'
 import { ReplicaWorkspace } from './ReplicaWorkspace.tsx'
 import OutfitWorkspace from './OutfitWorkspace.tsx'
+import PromoWorkspace from './PromoWorkspace.tsx'
+import { AplusWorkspace } from './AplusWorkspace.tsx'
 import { ModelPicker, resolveModelChoice, type ModelPickerValue } from './ModelPicker.tsx'
 import { DiagnosticsButton, DiagnosticsPanel } from './DiagnosticsPanel.tsx'
 import { GenerationLoading } from './GenerationLoading.tsx'
@@ -147,8 +149,9 @@ const PREVIEW_SCALE_STEP = 0.25
 const CONFIG_COLLAPSED_STORAGE_KEY = 'dsh-imagegen-config-collapsed'
 const ECOMMERCE_DRAFT_STORAGE_KEY = 'dsh-imagegen-ecommerce-draft'
 /** Reference roles an uploaded product asset can play (slot selections can
- *  also pick 'none'). */
-const ECOMMERCE_ASSET_ROLES = ['product', 'packaging', 'detail', 'style'] as const
+ *  also pick 'none'). 'layout' is the one role whose image is not a picture of
+ *  the product: it is a composition template the result borrows zoning from. */
+const ECOMMERCE_ASSET_ROLES = ['product', 'packaging', 'detail', 'style', 'layout'] as const
 type EcommerceAssetRole = Exclude<EcommerceRefRole, 'none'>
 const MAX_ECOMMERCE_ASSETS = 4
 const ECOMMERCE_ROLE_PROMPT_LABELS: Record<EcommerceAssetRole, string> = {
@@ -156,6 +159,7 @@ const ECOMMERCE_ROLE_PROMPT_LABELS: Record<EcommerceAssetRole, string> = {
   packaging: '包装',
   detail: '细节/角度',
   style: '风格参考',
+  layout: '版式参考',
 }
 /** One uploaded product asset. Session-only: data URLs are far too large for
  *  the localStorage draft, so assets never persist across reloads. */
@@ -497,6 +501,9 @@ function formatTime(timestamp: number): string {
 function defaultEcommerceDraft(): ProductSetDraft {
   return {
     projectId: '', projectName: '', category: '通用商品', platform: '通用', language: '中文', customLanguage: '', size: '1:1',
+    // Off by default: it is a platform requirement, not a look, and turning it
+    // on silently changes the main image's aspect ratio.
+    whiteBackground: false,
     productName: '', promptInfo: '',
     slots: PRODUCT_SET_SLOTS.map(slot => ({ ...slot })),
   }
@@ -539,6 +546,36 @@ function ecommerceVisualBrief(slot: ProductSetSlot, index: number): string {
   return choices[Math.min(index, choices.length - 1)]!
 }
 
+/**
+ * The aspect ratio one image of `slot` is actually requested at.
+ *
+ * Pure on purpose so the rule can be tested without mounting the panel. The
+ * one case that overrides the draft's own choice is the compliance switch: a
+ * white-background main image must be square, because that is what Amazon and
+ * the other strict platforms require of a hero image. Every other slot — and
+ * every slot when the switch is off — keeps whatever the user picked.
+ *
+ * `whiteBackground` is deliberately read through `=== true` rather than as a
+ * boolean: the field is optional and a draft saved before it existed does not
+ * carry it at all, which must behave exactly like `false`.
+ */
+function ecommerceSlotSize(draft: ProductSetDraft, slot: ProductSetSlot): string {
+  return draft.whiteBackground === true && slot.key === 'main' ? '1:1' : draft.size
+}
+
+/** The white-background compliance clause for the main image, or '' when the
+ *  switch is off or this is not the main slot.
+ *
+ *  A pure function for the same reason as ecommerceSlotSize: this text is a
+ *  platform requirement, not a style preference, so it has to be assertable
+ *  on its own. It is appended to the main slot's prompt and nowhere else —
+ *  a scene or selling-point image with a white background would be its own
+ *  kind of wrong. */
+function ecommerceWhiteBackgroundClause(draft: ProductSetDraft, slot: ProductSetSlot): string {
+  if (draft.whiteBackground !== true || slot.key !== 'main') return ''
+  return '主图平台合规硬约束：背景必须是纯白 #FFFFFF，严禁出现任何文字、水印、Logo 叠加、边框、投影、道具、场景或其他颜色；商品正面平铺居中，商品占画面至少 85%，主体边缘完整、不被裁切，不留多余负空间。'
+}
+
 function ecommercePrompt(draft: ProductSetDraft, slot: ProductSetSlot, index = 0, assets: readonly ProductAsset[] = []): string {
   const info = draft.promptInfo.trim() || '突出商品真实材质、结构和核心价值；保持商品颜色、形状、Logo、包装文字和结构真实，不添加不存在的配件'
   const language = effectiveEcommerceLanguage(draft) || '中文'
@@ -551,11 +588,18 @@ function ecommercePrompt(draft: ProductSetDraft, slot: ProductSetSlot, index = 0
   const refAssets = role === undefined || role === 'none' ? [] : assets.filter(asset => asset.role === role)
   const refClause = refAssets.length === 0
     ? ''
-    : `本图以上传的${ECOMMERCE_ROLE_PROMPT_LABELS[refAssets[0].role]}图片为参考（共 ${refAssets.length} 张：${refAssets.map((asset, order) => `第 ${order + 1} 张为${ECOMMERCE_ROLE_PROMPT_LABELS[asset.role]}${asset.name !== '' ? `「${asset.name}」` : ''}`).join('，')}），商品与风格必须与参考图保持一致；`
+    : refAssets[0].role === 'layout'
+      // A layout reference is a composition template, not a picture of the
+      // product. Saying so is not politeness: left unqualified, the model
+      // copies the template's own subject into the result, which is the one
+      // outcome the role exists to avoid.
+      ? `本图以上传的版式参考图为参考（共 ${refAssets.length} 张：${refAssets.map((asset, order) => `第 ${order + 1} 张版式${asset.name !== '' ? `「${asset.name}」` : ''}`).join('，')}）：只借用它的画面分区、留白比例、文字块位置与视觉节奏，严禁复制版式图中的商品、道具或场景，也不得把它当作商品参考；商品外观一律以上文与商品参考图为准。`
+      : `本图以上传的${ECOMMERCE_ROLE_PROMPT_LABELS[refAssets[0].role]}图片为参考（共 ${refAssets.length} 张：${refAssets.map((asset, order) => `第 ${order + 1} 张为${ECOMMERCE_ROLE_PROMPT_LABELS[asset.role]}${asset.name !== '' ? `「${asset.name}」` : ''}`).join('，')}），商品与风格必须与参考图保持一致；`
   const distinct = slot.key === 'main'
     ? ''
     : '这不是商品主图的简单复刻：只复用参考图中的商品外观和身份，必须重新设计背景、机位、构图、道具和光效，不得输出与主图相同的白底正面居中画面。'
-  return `生成一张电商${slot.label}。视觉目标：${ecommerceVisualBrief(slot, index)}。${distinct}商品身份与一致性约束：${product}的外形、比例、颜色、材质、镜头模组、Logo 与核心结构必须与${refClause === '' ? '文字描述' : '参考图'}保持一致，只允许改变场景、视角、构图和光效，不得重新发明或替换商品。商品品类：${draft.category}；平台：${draft.platform}；语言：${language}。${refClause}商品信息与要求：${info}。整体要求：商品主体清晰、比例真实、光线自然、细节真实、适合电商发布。`
+  const whiteBackground = ecommerceWhiteBackgroundClause(draft, slot)
+  return `生成一张电商${slot.label}。视觉目标：${ecommerceVisualBrief(slot, index)}。${distinct}商品身份与一致性约束：${product}的外形、比例、颜色、材质、镜头模组、Logo 与核心结构必须与${refClause === '' ? '文字描述' : '参考图'}保持一致，只允许改变场景、视角、构图和光效，不得重新发明或替换商品。商品品类：${draft.category}；平台：${draft.platform}；语言：${language}。${whiteBackground}${refClause}商品信息与要求：${info}。整体要求：商品主体清晰、比例真实、光线自然、细节真实、适合电商发布。`
 }
 
 /** Effective prompt for one image of a slot: the per-image override written in
@@ -629,7 +673,7 @@ const MODE_TABS = ['text', 'edit', 'video'] as const satisfies readonly PanelTab
 
 /** Top-level workspaces inside the panel. 'normal' is the classic studio;
  *  more task-oriented modes (prototype, …) can join alongside 'ecommerce'. */
-type PanelWorkspace = 'normal' | 'ecommerce' | 'canvas' | 'ppt' | 'replica' | 'outfit'
+type PanelWorkspace = 'normal' | 'ecommerce' | 'canvas' | 'ppt' | 'replica' | 'outfit' | 'promo' | 'aplus'
 
 /**
  * What the panel hands the canvas when the user asks to add something.
@@ -1123,6 +1167,11 @@ export function ImageGenPanel(props: {
         if (Array.isArray(merged.slots)) {
           merged.slots = merged.slots.map(slot => ({ ...slot, refRole: slot.refRole ?? 'product' }))
         }
+        // Same for the white-background switch, added later: a draft that
+        // predates it has no such field, and an explicit false is what that
+        // means — `=== true` above already treats `undefined` that way, and
+        // normalising here keeps the stored draft honest for the next read.
+        merged.whiteBackground = merged.whiteBackground === true
         // Drafts from the three-field era (卖点/保护要素/风格) fold into 参数信息.
         merged.promptInfo = typeof merged.promptInfo === 'string' ? merged.promptInfo : ''
         if (merged.promptInfo.trim() === '') {
@@ -1904,7 +1953,9 @@ export function ImageGenPanel(props: {
         mode: primary !== undefined ? 'edit' as const : 'text' as const,
         model: selectedChoice.model,
         prompt: ecommerceSlotPrompt(ecommerce, slot, index, assets),
-        size: ecommerce.size,
+        // The white-background switch forces the main image to a square; every
+        // other slot keeps the draft's own ratio.
+        size: ecommerceSlotSize(ecommerce, slot),
         quality,
         n: 1,
         detail,
@@ -3126,7 +3177,7 @@ export function ImageGenPanel(props: {
         </span>
         <GooeyNav
           ariaLabel={tt('workspace.label')}
-          activeIndex={workspace === 'normal' ? (tab === 'gallery' ? 1 : 0) : workspace === 'canvas' ? 2 : workspace === 'ecommerce' ? 3 : workspace === 'ppt' ? 4 : workspace === 'replica' ? 5 : 6}
+          activeIndex={workspace === 'normal' ? (tab === 'gallery' ? 1 : 0) : workspace === 'canvas' ? 2 : workspace === 'ecommerce' ? 3 : workspace === 'ppt' ? 4 : workspace === 'replica' ? 5 : workspace === 'outfit' ? 6 : workspace === 'promo' ? 7 : 8}
           onSelect={index => {
             if (index === 0) openTab('text')
             else if (index === 1) openTab('gallery')
@@ -3134,7 +3185,9 @@ export function ImageGenPanel(props: {
             else if (index === 3) setWorkspace('ecommerce')
             else if (index === 4) setWorkspace('ppt')
             else if (index === 5) setWorkspace('replica')
-            else setWorkspace('outfit')
+            else if (index === 6) setWorkspace('outfit')
+            else if (index === 7) setWorkspace('promo')
+            else setWorkspace('aplus')
           }}
           items={[
             { key: 'normal', label: tt('workspace.normal') },
@@ -3144,6 +3197,8 @@ export function ImageGenPanel(props: {
             { key: 'ppt', label: tt('workspace.ppt') },
             { key: 'replica', label: tt('workspace.replica') },
             { key: 'outfit', label: tt('outfit.title') },
+            { key: 'promo', label: tt('promo.title') },
+            { key: 'aplus', label: tt('aplus.title') },
           ]}
         />
         <span className={css.panelHeaderActions}>
@@ -3431,6 +3486,20 @@ export function ImageGenPanel(props: {
                     <label className={css.ecommerceField}>
                       <span className={css.ecommerceFieldLabel}>{tt('ecommerce.ratioLabel')}</span>
                       <Select value={ecommerce.size} onChange={value => setEcommerce(previous => ({ ...previous, size: value }))}>{SIZES.filter(size => size !== 'auto').map(size => <option key={size}>{size}</option>)}</Select>
+                      {/* Says the quiet part out loud: with compliance on, the
+                          ratio above is what the OTHER images get, and the
+                          main image is a square whatever the user picks. */}
+                      {ecommerce.whiteBackground === true ? <span className={css.ecommerceFieldNote}>{tt('ecommerce.whiteRatioLocked')}</span> : null}
+                    </label>
+                    <label className={css.ecommerceField}>
+                      <span className={css.ecommerceFieldLabel}>{tt('ecommerce.whiteLabel')}</span>
+                      <input
+                        type="checkbox"
+                        checked={ecommerce.whiteBackground === true}
+                        data-ecommerce-white=""
+                        onChange={event => setEcommerce(previous => ({ ...previous, whiteBackground: event.target.checked }))}
+                      />
+                      <span className={css.ecommerceFieldNote}>{tt('ecommerce.whiteHint')}</span>
                     </label>
                   </div>
                 </div>
@@ -3750,6 +3819,16 @@ export function ImageGenPanel(props: {
 
           {workspace === 'replica' ? (
             <ReplicaWorkspace api={api} active={active && workspace === 'replica'} modelGroups={modelGroups} defaultChannelId={defaultChannelId} channels={config?.channels ?? []} connected={connected} />
+          ) : null}
+
+          {/* --------------------------------------- promo image + copy */}
+          {workspace === 'promo' ? (
+            <PromoWorkspace api={api} config={config} />
+          ) : null}
+
+          {/* ---------------------------------------------- A+ detail page */}
+          {workspace === 'aplus' ? (
+            <AplusWorkspace api={api} active={active && workspace === 'aplus'} modelGroups={modelGroups} defaultChannelId={defaultChannelId} channels={config?.channels ?? []} connected={connected} />
           ) : null}
 
           {/* -------------------------------------------------- video studio */}

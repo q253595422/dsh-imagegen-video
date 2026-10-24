@@ -5,6 +5,35 @@ Attribution for third-party code is in [NOTICE](./NOTICE).
 
 ## Releases
 
+### 1.17.0 — 电商六件套、A+ 长图、带货图文，参考图按角色真传
+
+- **参考图带角色真传。** 过去 `refRole` 只用来拼一句提示词，真正进 `image` 的
+  永远只有第一张，其余静默丢弃。现在按角色筛出的图全部发送（`[primary,
+  ...extras]` → `image` + `images`），角色扩为 `product / packaging / detail /
+  style / layout`。上限写引擎的真实值 `EDIT_REFERENCE_LIMIT = 5`，grok 与
+  nanobanana 只吃单张的事实在界面写明。
+- **五个新工作区**（导航 6 → 9 项）：爆款图复刻、服饰穿戴（模特库落盘
+  `~/.dsh/dsh-imagegen/models/`）、商品上架文案、带货图文（含商品链接抓取）、
+  A+ 详情页（12 模块 + 导出长图）。
+- **A+ 长图零新依赖。** 浏览器 `<canvas>` 绘制并导出，没引入 `sharp` /
+  `node-canvas` / `puppeteer`，没用 `foreignObject`。`APLUS_MAX_HEIGHT = 16000`
+  超限拒绝不截断；文案带高超过块高 40% 时先缩到 0.6 倍再拒绝，那一块保留图片。
+- **商品套图补全。** 白底图合规只作用于主图（纯白 #FFFFFF、商品 ≥85%、强制
+  `1:1`，界面写明比例被锁）；新增 `layout` 版式参考角色。
+- **商品链接抓取是降级实现。** JSON-LD `Product`（含 `@graph`）优先、og 兜底，
+  抓不到回退手填。SSRF 硬拦：只 http/https，私有段 / 回环 / 云元数据域名 /
+  `169.254.169.254` / `.internal` / `.local` / 任何 IP 字面量 / 单标签主机名
+  全拒，`redirect:'manual'` 最多 4 跳每跳重校验，8 秒超时，2 MiB 上限。
+- **顺带修的既有缺陷**：820–1000px 下导航压住「展开右侧对话」（1.16.1 就有，
+  点不到）；服饰穿戴上传 6 张只发 4 张的静默丢弃；模特库 `..` 路径逃逸；
+  `smoke-canvas-video.mjs` 的 E1 flake 判据；A+ 文案带是不透明白盒子。
+- **验证**：`tsc` 0 错、`tsdown` 通过、全量 `pnpm test` EXIT=0（630 行、5 段
+  smoke 全绿、`UI CONTRACTS VERIFIED`）、native-UI 契约 PASS、152 源文件
+  tracked、`verify-reproducible` 跨目录逐字节一致。新增断言全部做过负向破坏，
+  改坏必红；长图与折行用真 Chromium 画 canvas 数像素，不靠 jsdom。
+- **已知缺口**：A+ 预览里不叠字（只在导出的长图上出现，留 1.18）；Windows
+  的折行未验证（PingFang 与微软雅黑度量不同）。
+
 ### 1.16.1 — 历史详情补全、两块结果板互斥、发布产物真正可重现
 
 - **历史记录不显示生成参数，是前端从没渲染过。** 宿主从生成那一刻就把

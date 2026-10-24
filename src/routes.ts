@@ -35,6 +35,7 @@ import { testStorage, type StorageSyncConfig } from './storage-sync.ts'
 import { checkForUpdate, CURRENT_VERSION, installUpdate, ManualUpdateRequiredError, updateInstallTarget, type UpdateHostContext } from './updater.ts'
 import { IMAGE_PRESETS } from './presets.ts'
 import { clearDiagnostics, listDiagnostics } from './diagnostics-store.ts'
+import { extractProductLink } from './link-extract.ts'
 import { MODEL_API, AGENT_IMAGE_API, CANVAS_API, CANVAS_SKILL_API, CODE_RENDER_API, CONVERSATION_IMAGE_API, DATA_FOLDER_API, DEFAULT_TEMPLATE_SOURCE_ID, DIAGNOSTICS_API, GALLERY_API, GENERATE_API, HISTORY_API, IMAGEGEN_SETTINGS_NAMESPACE, IMAGE_MODEL_API, LISTING_COPY_API, PRESETS_API, PROMPT_ENHANCE_API, SETTINGS_API, STORAGE_API, SUBSCRIPTION_API, SUBSCRIPTION_PROVIDERS, TASK_API, TEMPLATE_FAVORITES_API, TEMPLATES_API, UPDATE_API, USAGE_API, VIDEO_API, isChannelProtocolPreference, isTemplateSourceId, type CanvasAssetRef, type CanvasDocument, type VideoDirectorPlan, type CanvasSkillCatalog, type CanvasSkillConfigApplyRequest, type CanvasSkillConfigApplyResult, type CanvasSkillConfigSaveRequest, type CanvasSkillConfigSaveResult, type CanvasSkillInstallRequest, type CanvasSkillInstallResult, type CanvasSkillLibrary, type CanvasSkillRemoveResult, type CanvasSkillRunRequest, type CanvasSkillTask, type ListingCopyRequest, type PptRunRequest, type PptRuntimeStatus, type GeneratedImage, type GenerateRequest, type HistoryEntry, type HistoryEntryInput, type ModelMapping, type PresetProviderView, type TemplateFavorite, type TemplateListResult, type TemplateRefreshResult, type TemplateSample, type CanvasVideoTaskMeta, type VideoGenerateRequest, type VideoHistoryEntry } from './protocol.ts'
 import { probeCodeRender } from './code-render-runtime.ts'
 
@@ -329,6 +330,43 @@ async function readRawBody(req: IncomingMessage, maxBytes: number): Promise<Buff
 /** Human-readable text from an unknown thrown value. */
 function messageOf(error: unknown): string {
   return error instanceof Error ? error.message : String(error)
+}
+
+function privateHost(hostname: string): boolean {
+  const host = hostname.toLowerCase().replace(/^\[|\]$/g, '')
+  if (host === '' || host === 'localhost' || host === '0.0.0.0') return true
+  // Cloud metadata services live on names that resolve inside the provider network,
+  // so the literal check above is not enough on its own.
+  if (host === 'metadata' || host === 'instance-data' || host.endsWith('.internal') || host.endsWith('.local') || host.endsWith('.home.arpa')) return true
+  // Product pages are reached by name. Refusing every address literal up front keeps
+  // loopback, link-local and cloud metadata hosts out of the resolver entirely, and a
+  // single-label name can only resolve inside the local search domain.
+  if (/^[0-9.]+$/.test(host)) return true
+  if (host.includes(':')) return true
+  if (!host.includes('.')) return true
+  return false
+}
+function safeLinkUrl(value: string): URL | undefined {
+  try { const url = new URL(value); return (url.protocol === 'http:' || url.protocol === 'https:') && !privateHost(url.hostname) ? url : undefined } catch { return undefined }
+}
+async function fetchProductPage(input: string): Promise<import('./protocol.ts').EcommerceLinkResult> {
+  let current = safeLinkUrl(input)
+  if (!current) return { ok: false, reason: 'blocked-host' }
+  const controller = new AbortController(); const timer = setTimeout(() => controller.abort(), 8000)
+  try {
+    for (let hop = 0; hop <= 3; hop++) {
+      const response = await fetch(current, { redirect: 'manual', signal: controller.signal, headers: { 'user-agent': 'Mozilla/5.0' } })
+      if (response.status >= 300 && response.status < 400) { const location = response.headers.get('location'); if (!location || hop === 3) return { ok: false, reason: 'fetch-failed' }; current = safeLinkUrl(new URL(location, current).toString()); if (!current) return { ok: false, reason: 'blocked-host' }; continue }
+      const contentType = response.headers.get('content-type')?.split(';')[0].trim().toLowerCase()
+      if (contentType !== 'text/html' && contentType !== 'application/xhtml+xml') return { ok: false, reason: 'not-html' }
+      const reader = response.body?.getReader(); if (!reader) return { ok: false, reason: 'fetch-failed' }
+      const chunks: Uint8Array[] = []; let size = 0
+      for (;;) { const part = await reader.read(); if (part.done) break; size += part.value.byteLength; if (size > 2 * 1024 * 1024) { await reader.cancel(); return { ok: false, reason: 'too-large' } }; chunks.push(part.value) }
+      const html = Buffer.concat(chunks.map(chunk => Buffer.from(chunk))).toString('utf8')
+      return extractProductLink(html, current.toString())
+    }
+    return { ok: false, reason: 'fetch-failed' }
+  } catch (error) { return { ok: false, reason: (error as Error).name === 'AbortError' ? 'timeout' : 'fetch-failed' } } finally { clearTimeout(timer) }
 }
 
 /** Validate the { source } body of a template-library request. */
@@ -637,7 +675,21 @@ function imageFileFrom(rawUrl: string | undefined, basePath: string): string | u
     return undefined
   }
   if (!pathname.startsWith(`${basePath}/`)) return undefined
-  return decodeURIComponent(pathname.slice(basePath.length + 1))
+  let file: string
+  try {
+    file = decodeURIComponent(pathname.slice(basePath.length + 1))
+  } catch {
+    return undefined
+  }
+  // A relative path of plain segments. Nested segments are allowed — the
+  // template route serves /image/<sourceId>/<file> — but no segment may be
+  // empty, "." or "..", and the value may never be absolute.
+  if (file.length === 0 || file.length > 400) return undefined
+  if (file.includes('\\') || file.includes('\0') || file.startsWith('/')) return undefined
+  for (const segment of file.split('/')) {
+    if (segment === '' || segment === '.' || segment === '..') return undefined
+  }
+  return file
 }
 
 /** Parse the durable image reference carried by an Agent tool-result view. */
@@ -1055,6 +1107,17 @@ export function makeRoutes(deps: ImageGenRoutesDeps): WebRoute[] {
         } catch (error) {
           writeJson(res, 200, { ok: false, code: 'listing-copy-failed', message: messageOf(error) })
         }
+      },
+    },
+    // ----------------------------------------------- ecommerce link fetch
+    {
+      kind: 'exact', path: '/api/dsh-imagegen/ecommerce/fetch-link',
+      handler: async (req, res) => {
+        if (!guard(req, res, 'POST')) return
+        const body = await readJsonBody(req)
+        const url = typeof body?.url === 'string' ? body.url.trim() : ''
+        if (!url) { writeJson(res, 400, { ok: false, reason: 'fetch-failed' }); return }
+        writeJson(res, 200, await fetchProductPage(url))
       },
     },
     // -------------------------------------------------- settings describe

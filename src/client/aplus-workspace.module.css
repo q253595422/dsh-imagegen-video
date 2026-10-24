@@ -1,0 +1,422 @@
+/*
+ * A+ detail-page workspace — own stylesheet.
+ *
+ * The host rule is a GLOBAL ATTRIBUTE selector for the same reason the replica
+ * workspace uses one: `.generation` is a CSS-module class, so the panel's copy
+ * of it is hashed at build time (`WKhQka_generation`) while this file's
+ * `.generation` would hash to something else and match nothing. Without the
+ * host rule the surface is squeezed next to the classic config column instead
+ * of taking the panel — a real defect found by measuring rendered boxes in
+ * task-18, not by reading the stylesheet.
+ *
+ * `data-workspace` is emitted by `ImageGenPanel.tsx:3179` from the same state
+ * that drives the nav, so this file needs no wiring of its own.
+ */
+:global([data-workspace='aplus']) {
+  display: flex;
+  height: 100%;
+  flex-wrap: nowrap;
+}
+
+/* The config sidebar, classic result host and footer stay mounted for instant
+   tab switching; they are this workspace's siblings and must give up the box. */
+:global([data-workspace='aplus']) > :not([data-aplus-workspace]) {
+  display: none !important;
+}
+
+.root {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  min-width: 0;
+  min-height: 0;
+  height: 100%;
+  gap: 14px;
+  padding: 14px 16px 18px;
+  overflow: hidden;
+  /* Keyed off the width THIS surface actually got, not the viewport: the panel
+     lives in the shell's centre column. A `@media` query would collapse the
+     rows on a 900px window while the panel still had 1100px. */
+  container-type: inline-size;
+  container-name: aplus;
+  color: var(--dsw-alias-label-primary);
+  font-family: var(--dsw-font-family);
+}
+
+.intro {
+  display: flex;
+  flex: none;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.intro h2 {
+  margin: 0 0 4px;
+  font-size: 15px;
+  line-height: 1.4;
+}
+
+.intro p {
+  margin: 0;
+  max-width: 62em;
+  color: var(--dsw-alias-label-secondary);
+  font-size: 12px;
+  line-height: 1.7;
+}
+
+.hint {
+  flex: none;
+  padding: 3px 8px;
+  border-radius: var(--dsw-radius-xs);
+  background: var(--dsw-alias-bg-layer-2);
+  color: var(--dsw-alias-label-tertiary);
+  font-size: 11px;
+}
+
+.body {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  min-height: 0;
+  gap: 12px;
+}
+
+/* ------------------------------------------------------------------ controls */
+
+.controls {
+  display: flex;
+  flex: none;
+  flex-direction: column;
+  gap: 10px;
+  padding: 12px;
+  border: 1px solid var(--dsw-alias-border-l2);
+  border-radius: var(--dsw-radius-lg);
+  background: var(--dsw-alias-bg-layer-2);
+}
+
+.modelRow {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.productRow {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.fieldHead {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+}
+
+.fieldLabel {
+  color: var(--dsw-alias-label-secondary);
+  font-size: 12px;
+}
+
+.fieldNote {
+  color: var(--dsw-alias-label-tertiary);
+  font-size: 11px;
+}
+
+.drop {
+  padding: 7px 12px;
+  border: 1px dashed var(--dsw-alias-border-l2);
+  border-radius: var(--dsw-radius-sm);
+  background: var(--dsw-alias-bg-layer-1);
+  color: var(--dsw-alias-label-secondary);
+  font-family: var(--dsw-font-family);
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.thumbs {
+  display: flex;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.thumb {
+  position: relative;
+}
+
+.thumb img {
+  display: block;
+  width: 56px;
+  height: 56px;
+  border-radius: var(--dsw-radius-sm);
+  object-fit: cover;
+}
+
+.thumbRemove {
+  position: absolute;
+  top: -6px;
+  right: -6px;
+  width: 18px;
+  height: 18px;
+  padding: 0;
+  border: 1px solid var(--dsw-alias-border-l2);
+  border-radius: var(--dsw-radius-xs);
+  background: var(--dsw-alias-bg-layer-1);
+  color: var(--dsw-alias-label-secondary);
+  font-size: 11px;
+  line-height: 1;
+  cursor: pointer;
+}
+
+.exportRow {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+
+.select {
+  padding: 5px 8px;
+  border: 1px solid var(--dsw-alias-border-l2);
+  border-radius: var(--dsw-radius-sm);
+  background: var(--dsw-alias-bg-layer-1);
+  color: var(--dsw-alias-label-primary);
+  font-family: var(--dsw-font-family);
+  font-size: 12px;
+}
+
+.primary {
+  padding: 7px 14px;
+  border: 0;
+  border-radius: var(--dsw-radius-sm);
+  background: var(--dsw-alias-brand-primary);
+  /* Brand is the NEUTRAL inverse here, so the ink on top is the inverted
+     foreground token rather than a literal white. */
+  color: var(--dsw-alias-label-primary-foreground);
+  font-family: var(--dsw-font-family);
+  font-size: 13px;
+  cursor: pointer;
+}
+
+.primary:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+.secondary {
+  padding: 7px 14px;
+  border: 1px solid var(--dsw-alias-border-l2);
+  border-radius: var(--dsw-radius-sm);
+  background: var(--dsw-alias-bg-layer-1);
+  color: var(--dsw-alias-label-primary);
+  font-family: var(--dsw-font-family);
+  font-size: 13px;
+  cursor: pointer;
+}
+
+.secondary:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+.link {
+  padding: 4px 6px;
+  border: 0;
+  background: none;
+  color: var(--dsw-alias-label-tertiary);
+  font-family: var(--dsw-font-family);
+  font-size: 11px;
+  text-decoration: underline;
+  cursor: pointer;
+}
+
+.guard {
+  margin: 0;
+  padding: 8px 10px;
+  border-radius: var(--dsw-radius-sm);
+  background: var(--dsw-alias-bg-layer-1);
+  color: var(--dsw-alias-state-error-primary);
+  font-size: 12px;
+  line-height: 1.6;
+}
+
+.done {
+  margin: 0;
+  padding: 8px 10px;
+  border-radius: var(--dsw-radius-sm);
+  background: var(--dsw-alias-bg-layer-1);
+  color: var(--dsw-alias-state-success-primary);
+  font-size: 12px;
+  line-height: 1.6;
+}
+
+/* --------------------------------------------------------------- module list */
+
+.list {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  min-height: 0;
+  gap: 6px;
+  overflow-y: auto;
+}
+
+.row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  padding: 7px 10px;
+  border: 1px solid var(--dsw-alias-border-l2);
+  border-radius: var(--dsw-radius-sm);
+  background: var(--dsw-alias-bg-layer-1);
+}
+
+.row[data-state='failed'] {
+  border-color: var(--dsw-alias-state-error-primary);
+}
+
+.check {
+  flex: none;
+}
+
+.name {
+  flex: none;
+  font-size: 13px;
+}
+
+.ratio {
+  flex: none;
+  color: var(--dsw-alias-label-tertiary);
+  font-size: 11px;
+}
+
+.caption {
+  flex: 1 1 160px;
+  min-width: 0;
+  padding: 5px 8px;
+  border: 1px solid var(--dsw-alias-border-l2);
+  border-radius: var(--dsw-radius-xs);
+  background: var(--dsw-alias-bg-layer-1);
+  color: var(--dsw-alias-label-primary);
+  font-family: var(--dsw-font-family);
+  font-size: 12px;
+}
+
+.small {
+  flex: none;
+  padding: 5px 10px;
+  border: 1px solid var(--dsw-alias-border-l2);
+  border-radius: var(--dsw-radius-xs);
+  background: var(--dsw-alias-bg-layer-1);
+  color: var(--dsw-alias-label-primary);
+  font-family: var(--dsw-font-family);
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.small:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+.state {
+  flex: none;
+  min-width: 3.5em;
+  color: var(--dsw-alias-label-tertiary);
+  font-size: 11px;
+}
+
+.state[data-state='done'] {
+  color: var(--dsw-alias-state-success-primary);
+}
+
+.state[data-state='failed'] {
+  color: var(--dsw-alias-state-error-primary);
+}
+
+.thumbImage {
+  flex: none;
+  width: 56px;
+  height: 56px;
+  border-radius: var(--dsw-radius-xs);
+  object-fit: cover;
+}
+
+.thumbEmpty {
+  flex: none;
+  width: 56px;
+  height: 56px;
+  border: 1px dashed var(--dsw-alias-border-l2);
+  border-radius: var(--dsw-radius-xs);
+}
+
+.rowError {
+  flex-basis: 100%;
+  color: var(--dsw-alias-state-error-primary);
+  font-size: 11px;
+  line-height: 1.5;
+  word-break: break-word;
+}
+
+/* Copy inputs. They share the row's second line with the caption field: the
+   caption feeds the prompt, these two feed the exported image, and splitting
+   them keeps a user from confusing "what the model is told" with "what the
+   shopper reads". */
+.copyRow {
+  display: flex;
+  flex-basis: 100%;
+  gap: 6px;
+  margin-top: 2px;
+}
+
+.copyTitle {
+  flex: 0 0 30%;
+  min-width: 0;
+  padding: 4px 8px;
+  border: 1px solid var(--dsw-alias-border-l2);
+  border-radius: var(--dsw-radius-xs);
+  background: var(--dsw-alias-bg-layer-1);
+  color: var(--dsw-alias-label-primary);
+  font-family: var(--dsw-font-family);
+  font-size: 12px;
+}
+
+.copyBody {
+  flex: 1 1 auto;
+  min-width: 0;
+  padding: 4px 8px;
+  border: 1px solid var(--dsw-alias-border-l2);
+  border-radius: var(--dsw-radius-xs);
+  background: var(--dsw-alias-bg-layer-1);
+  color: var(--dsw-alias-label-primary);
+  font-family: var(--dsw-font-family);
+  font-size: 12px;
+  line-height: 1.5;
+  resize: vertical;
+}
+
+.footnote {
+  flex: none;
+  margin: 0;
+  color: var(--dsw-alias-label-tertiary);
+  font-size: 11px;
+}
+
+/* On a narrow panel the aspect readout is the first thing to go: the caption
+   field is what the user types into, and it must not lose its width. */
+@container aplus (width < 560px) {
+  .ratio {
+    display: none;
+  }
+
+  .row {
+    gap: 6px;
+    padding: 6px 8px;
+  }
+
+  .caption {
+    flex-basis: 120px;
+  }
+}
