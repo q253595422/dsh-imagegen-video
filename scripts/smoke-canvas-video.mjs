@@ -1746,16 +1746,27 @@ await check('E1-E2 a video node carries its own model picker and regenerate cont
     .filter(node => node.querySelector('[data-corner]') !== null)
   /** Every assertion below runs on a SELECTED node's hover toolbar, so a
    *  failure halfway through must still hand the selection back: a dirty
-   *  selection makes the next check's clicks land on the wrong nodes. */
+   *  selection makes the next check's clicks land on the wrong nodes.
+   *
+   *  Each click is judged per node (its own corner disappears), NOT by a
+   *  whole-canvas `before - 1` count: an async completion that auto-selects a
+   *  node between the count read and this click (a skill output or a poster
+   *  save landing in that window) used to make the total drift while this
+   *  node's selection was cleared correctly, failing the stale count.
+   *  `before - 1` can also pass when the wrong node got cleared, so the
+   *  final total-zero assertion below is what really protects E2. */
   const clearSelection = async () => {
     for (const selected of selectedNodes()) {
-      const before = selectedNodes().length
       pointerDown(selected, true)
       assert.ok(
-        await waitUntil(() => selectedNodes().length === before - 1),
+        await waitUntil(() => selected.querySelector('[data-corner]') === null),
         'E1: the leftover selection is cleared before the next read',
       )
     }
+    assert.equal(
+      selectedNodes().length, 0,
+      'E1: no selection residue remains before the next read',
+    )
   }
 
   try {
