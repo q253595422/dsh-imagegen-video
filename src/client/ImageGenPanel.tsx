@@ -604,6 +604,71 @@ type ComparisonSession = { taskIds: string[]; prompt: string; comparisonId: stri
 type HistoryGroup = { key: string; entries: HistoryEntry[]; models: string[] }
 
 /**
+ * Which saved generation the result board is showing.
+ *
+ * Exactly one of the three surfaces can be open, and this type is what says so:
+ * there is no value meaning "an image history and a clip". `null` means the
+ * board shows the current run instead of anything recalled.
+ *
+ * Every reader derives from this one value (see `viewingHistoryId` and friends
+ * near the state), so the sidebar's active row and the board's contents are
+ * two views of the same fact and cannot drift apart.
+ */
+type BoardView =
+  | { kind: 'history', id: string }
+  | { kind: 'video', id: string }
+  | { kind: 'gallery', id: string }
+  | null
+
+/**
+ * Which of the two result surfaces the board is allowed to paint right now.
+ *
+ * `BoardView` says what the user SELECTED; it says nothing about `images`,
+ * which the generation pipeline fills on its own (`setImages` in the poll that
+ * notices a finished task). Gating the image grid on `images.length` alone
+ * therefore let a finished generation paint beside an open clip -- the two
+ * surfaces were gated on two different facts, so neither gate could see the
+ * other.
+ *
+ * So "may the image grid paint?" is answered here, once, from the selection.
+ * Every surface reads `resultSurface`, and `resultSurfaceOf` is a closed switch
+ * over `BoardView`, so a fourth surface cannot be added without deciding what it
+ * displaces: the `assertNever` at the end of it makes that a compile error.
+ */
+type ResultSurface =
+  | { kind: 'video', clip: VideoHistoryEntry }
+  | { kind: 'images' }
+
+/** Exhaustiveness guard: adding a `BoardView` kind fails the build here. */
+function assertNever(value: never): never {
+  throw new Error(`unhandled result surface: ${JSON.stringify(value)}`)
+}
+
+/**
+ * Resolve the one surface the board may paint.
+ *
+ * A selected clip that is no longer in the list (deleted, refetched away)
+ * yields `images`: that is what the board did before the clip was selected, and
+ * it is the only other surface that can show anything.
+ */
+function resultSurfaceOf(view: BoardView, clip: VideoHistoryEntry | null): ResultSurface {
+  if (view === null) return { kind: 'images' }
+  switch (view.kind) {
+    case 'video':
+      // `clip` is the resolved entry for `view.id`; a stale id -- the row was
+      // deleted while it was open -- means fall back rather than paint nothing.
+      return clip === null ? { kind: 'images' } : { kind: 'video', clip }
+    case 'history':
+    case 'gallery':
+      // Both are image generations: same grid, and only the parameter line
+      // differs, which is decided further down.
+      return { kind: 'images' }
+    default:
+      return assertNever(view)
+  }
+}
+
+/**
  * One sidebar row in the unified history.
  *
  * Image and video history live in separate host stores with genuinely different
@@ -918,14 +983,31 @@ export function ImageGenPanel(props: {
   const [enhancing, setEnhancing] = useState(false)
   const [configGuide, setConfigGuide] = useState<'generation' | 'enhancement' | 'disabled' | null>(null)
   const [history, setHistory] = useState<HistoryEntry[]>([])
-  const [viewingHistoryId, setViewingHistoryId] = useState<string | null>(null)
-  /** The clip currently open in the video tab (mirrors viewingHistoryId). */
-  const [viewingVideoId, setViewingVideoId] = useState<string | null>(null)
+  /**
+   * Which saved generation the result board is showing, if any.
+   *
+   * ONE value, not three ids. It used to be three independent `useState`
+   * slots (`viewingHistoryId`, `viewingVideoId`, `galleryViewingId`) kept in
+   * step by hand: every "show me that" handler had to remember to null the
+   * other two, and `openVideoFromHistory` and `viewHistoryGroup` each forgot a
+   * different one. The result was two histories drawn at once — a playing clip
+   * with an image grid over it.
+   *
+   * A discriminated union makes that state unrepresentable: there is no value
+   * meaning "the clip AND the image history". Nothing has to be remembered, so
+   * nothing can be forgotten, and a future fourth surface cannot be added
+   * without deciding how it excludes the other three.
+   */
+  const [boardView, setBoardView] = useState<BoardView>(null)
   const [gallery, setGallery] = useState<HistoryEntry[]>([])
   /** Soft-deleted entries: hidden from the shelf, restorable for 30 days. */
   const [galleryTrash, setGalleryTrash] = useState<HistoryEntry[]>([])
   const [galleryTrashOpen, setGalleryTrashOpen] = useState(false)
-  const [galleryViewingId, setGalleryViewingId] = useState<string | null>(null)
+  /** The three selection ids are VIEWS of `boardView`, never separate state —
+   *  so they cannot disagree with each other or with what the board draws. */
+  const viewingHistoryId = boardView !== null && boardView.kind === 'history' ? boardView.id : null
+  const viewingVideoId = boardView !== null && boardView.kind === 'video' ? boardView.id : null
+  const galleryViewingId = boardView !== null && boardView.kind === 'gallery' ? boardView.id : null
   const [galleryAdding, setGalleryAdding] = useState(false)
   const [galleryMessage, setGalleryMessage] = useState<string | null>(null)
   const [galleryFilter, setGalleryFilter] = useState<GalleryFilter>('all')
@@ -1310,8 +1392,7 @@ export function ImageGenPanel(props: {
           openTab('text')
           setImages(next)
           setComparison(null)
-          setViewingHistoryId(null)
-          setGalleryViewingId(null)
+          setBoardView(null)
           setError(null)
         })
         .catch(caught => { setError(errorMessage(caught)) })
@@ -1874,8 +1955,7 @@ export function ImageGenPanel(props: {
       setEcommerceProjectId(entry.projectId)
       setEcommercePreview(false)
       setError(null)
-      setViewingHistoryId(entry.id)
-      setGalleryViewingId(null)
+      setBoardView({ kind: 'history', id: entry.id })
     } catch (caught) {
       setError(errorMessage(caught))
     }
@@ -2026,8 +2106,7 @@ export function ImageGenPanel(props: {
       setImages(await loadHistoryGroup(group))
       setComparison(null)
       setError(null)
-      setViewingHistoryId(entry.id)
-      setGalleryViewingId(null)
+      setBoardView({ kind: 'history', id: entry.id })
     } catch (caught) {
       setError(errorMessage(caught))
     }
@@ -2050,9 +2129,7 @@ export function ImageGenPanel(props: {
     openTab('text')
     setImages([])
     setComparison(null)
-    setViewingHistoryId(null)
-    setGalleryViewingId(null)
-    setViewingVideoId(entry.id)
+    setBoardView({ kind: 'video', id: entry.id })
     setError(null)
   }, [])
 
@@ -2082,7 +2159,7 @@ export function ImageGenPanel(props: {
 
   const deleteVideoHistoryEntry = useCallback(async (id: string): Promise<void> => {
     setVideoHistory(previous => previous.filter(entry => entry.id !== id))
-    if (viewingVideoId === id) setViewingVideoId(null)
+    if (viewingVideoId === id) setBoardView(null)
     try {
       setVideoHistory(await api.videoHistoryRemove(id))
     } catch {
@@ -2093,7 +2170,7 @@ export function ImageGenPanel(props: {
   const deleteHistoryGroup = async (group: HistoryGroup): Promise<void> => {
     const ids = new Set(group.entries.map(entry => entry.id))
     setHistory(previous => previous.filter(entry => !ids.has(entry.id)))
-    if (viewingHistoryId !== null && ids.has(viewingHistoryId)) setViewingHistoryId(null)
+    if (viewingHistoryId !== null && ids.has(viewingHistoryId)) setBoardView(null)
     if (ecommerceRestored !== null && group.entries.some(entry => entry.projectId === ecommerceRestored.projectId)) {
       setEcommerceRestored(null)
       setEcommerceProjectId(null)
@@ -2117,8 +2194,7 @@ export function ImageGenPanel(props: {
     setPreview(null)
     setPreviewScale(1)
     setPromptCopied(false)
-    setViewingHistoryId(null)
-    setGalleryViewingId(null)
+    setBoardView(null)
     setGallerySelecting(false)
     setSelectedGalleryIds(new Set())
     setComparison(null)
@@ -2134,8 +2210,7 @@ export function ImageGenPanel(props: {
     if (!window.confirm(tt('history.clearConfirm'))) return
     setHistory([])
     setVideoHistory([])
-    setViewingHistoryId(null)
-    setViewingVideoId(null)
+    setBoardView(null)
     try {
       setHistory(await api.historyClear())
     } catch {
@@ -2369,8 +2444,7 @@ export function ImageGenPanel(props: {
       const restored = await historyImagesToGenerated(entry.images)
       setImages(restored)
       setError(null)
-      setViewingHistoryId(null)
-      setGalleryViewingId(entry.id)
+      setBoardView({ kind: 'gallery', id: entry.id })
       if (restored.length > 0) openPreview(restored, 0)
     } catch (caught) {
       setError(errorMessage(caught))
@@ -2380,7 +2454,7 @@ export function ImageGenPanel(props: {
   /** Move one gallery entry to the trash (the host keeps its files). */
   const deleteGalleryEntry = async (id: string): Promise<void> => {
     setGallery(gallery.filter(entry => entry.id !== id))
-    if (galleryViewingId === id) setGalleryViewingId(null)
+    if (galleryViewingId === id) setBoardView(null)
     try {
       const result = await api.galleryRemove(id)
       setGallery(result.entries)
@@ -2418,7 +2492,7 @@ export function ImageGenPanel(props: {
   const clearGalleryAll = async (): Promise<void> => {
     if (!window.confirm(tt('gallery.clearConfirm'))) return
     setGallery([])
-    setGalleryViewingId(null)
+    setBoardView(null)
     try {
       const result = await api.galleryClear()
       setGallery(result.entries)
@@ -2596,6 +2670,23 @@ export function ImageGenPanel(props: {
   const viewingGalleryEntry = galleryViewingId === null ? null : gallery.find(entry => entry.id === galleryViewingId) ?? null
   /** The clip currently shown on the result board (null when none). */
   const viewingVideoEntry = viewingVideoId === null ? null : videoHistory.find(entry => entry.id === viewingVideoId) ?? null
+  /**
+   * The saved image generation the result board is drawing, if any.
+   *
+   * An image history and a gallery entry are the same shape (a `HistoryEntry`),
+   * so the board reads them through one value: the parameter line below has a
+   * single source, and `boardView` still guarantees at most one of them exists.
+   */
+  const viewingImageEntry = viewingEntry ?? viewingGalleryEntry
+  /**
+   * The one surface the result board may paint.
+   *
+   * Both board branches below read THIS, not `viewingVideoEntry` / `images`
+   * separately: a finished generation fills `images` without touching
+   * `boardView`, so two independent gates could disagree and paint a clip and
+   * a fresh grid at the same time.
+   */
+  const resultSurface = resultSurfaceOf(boardView, viewingVideoEntry)
   const previewImage = preview === null ? null : preview.images[preview.index] ?? null
   const comparisonTasks = comparison === null ? [] : comparison.taskIds.map(id => tasks.find(task => task.id === id)).filter((task): task is GenerationTask => task !== undefined)
   const comparisonResults = comparisonTasks.filter(task => task.status === 'completed' && task.result !== undefined)
@@ -4016,13 +4107,22 @@ export function ImageGenPanel(props: {
             />
           ) : null}
 
-          {isGeneration && viewingVideoEntry !== null ? (
+          {isGeneration && resultSurface.kind === 'video' ? (
             <div className={css.canvasBody} data-video-board="">
               <div className={css.canvasMeta}>
                 <span>{tt('history.video')}</span>
-                <span className={css.canvasHistoryTag}>{tt('history.viewing', { time: formatTime(viewingVideoEntry.createdAt) })}</span>
+                <span className={css.canvasHistoryTag}>{tt('history.viewing', { time: formatTime(resultSurface.clip.createdAt) })}</span>
+                {/* Every value below is read off the entry, never off the form:
+                    the form holds what you would generate *next*, so reading it
+                    here is what made a re-opened clip look like it had been made
+                    with today's settings. `historyMeta` keeps a long prompt on one
+                    line; the full text stays reachable through `title`. */}
+                <span className={css.historyMeta} title={resultSurface.clip.prompt}>{resultSurface.clip.prompt}</span>
+                {resultSurface.clip.resolution ? (
+                  <span className={css.canvasHistoryTag}>{tt('video.resolution')} {resultSurface.clip.resolution}</span>
+                ) : null}
               </div>
-              {viewingVideoEntry.videos.map(clip => (
+              {resultSurface.clip.videos.map(clip => (
                 <figure key={clip.url} className={css.imageCard} data-clip-figure="">
                   <video className={css.videoBoardPlayer} src={clip.url} controls autoPlay preload="metadata" />
                   <button
@@ -4030,7 +4130,7 @@ export function ImageGenPanel(props: {
                     className={css.galleryAdd}
                     data-video-board-canvas=""
                     title={tt('canvas.addToCanvas')}
-                    onClick={() => { addClipToCanvas(clip.url, clip.mime, clip.duration, viewingVideoEntry.prompt) }}
+                    onClick={() => { addClipToCanvas(clip.url, clip.mime, clip.duration, resultSurface.clip.prompt) }}
                   >
                     <svg viewBox="0 0 16 16" width="12" height="12" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><rect x="2.5" y="2.5" width="11" height="11" rx="1.5"/><path d="M5 8h6M8 5v6"/></svg>
                     {tt('canvas.addToCanvas')}
@@ -4041,21 +4141,21 @@ export function ImageGenPanel(props: {
                     data-video-board-conversation=""
                     disabled={addingToConversation !== null}
                     title={tt('conversation.addVideoHint')}
-                    onClick={() => { void addClipToConversation(clip.url, `board:${viewingVideoEntry.id}`) }}
+                    onClick={() => { void addClipToConversation(clip.url, `board:${resultSurface.clip.id}`) }}
                   >
                     <svg viewBox="0 0 16 16" width="12" height="12" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M3 4.5h10v7H3z"/><path d="M5.5 2.5h5M8 6v4M6 8h4"/></svg>
-                    {addingToConversation === `board:${viewingVideoEntry.id}` ? tt('conversation.adding') : tt('conversation.add')}
+                    {addingToConversation === `board:${resultSurface.clip.id}` ? tt('conversation.adding') : tt('conversation.add')}
                   </button>
                   <a className={css.download} href={clip.url} download onClick={event => event.stopPropagation()}>{tt('download')}</a>
                   <figcaption className={css.imageCaption}>
-                    {viewingVideoEntry.model} · {viewingVideoEntry.aspectRatio} · {viewingVideoEntry.seconds}s
+                    {resultSurface.clip.model} · {resultSurface.clip.aspectRatio} · {resultSurface.clip.seconds}s
                   </figcaption>
                 </figure>
               ))}
             </div>
           ) : null}
 
-          {isGeneration && !generating && images.length > 0 ? (
+          {isGeneration && !generating && images.length > 0 && resultSurface.kind === 'images' ? (
             <div className={css.canvasBody}>
               <div className={css.canvasMeta}>
                 <span>{tt('canvas.images', { count: images.length })}</span>
@@ -4065,6 +4165,20 @@ export function ImageGenPanel(props: {
                       ? tt('history.viewing', { time: formatTime(viewingEntry.createdAt) })
                       : tt('gallery.viewing', { time: formatTime(viewingGalleryEntry!.createdAt) })}
                   </span>
+                ) : null}
+                {/* One source for both shapes: a history entry and a gallery entry
+                    are the same record, so the parameter line cannot drift between
+                    them. Values are the stored ones -- not the form's, which holds
+                    what you would generate next. */}
+                {viewingImageEntry !== null ? (
+                  <>
+                    <span className={css.historyMeta} title={viewingImageEntry.prompt}>{viewingImageEntry.prompt}</span>
+                    <span className={css.canvasHistoryTag}>{tt('params.size')} {viewingImageEntry.size}</span>
+                    <span className={css.canvasHistoryTag}>{tt('params.quality')} {viewingImageEntry.quality}</span>
+                    {viewingImageEntry.detail ? (
+                      <span className={css.canvasHistoryTag}>{tt('params.detail')} {viewingImageEntry.detail}</span>
+                    ) : null}
+                  </>
                 ) : null}
               </div>
               <div className={css.grid} data-count={images.length}>

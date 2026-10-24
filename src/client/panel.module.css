@@ -2735,8 +2735,18 @@ html[data-dsh-imagegen-chat-collapsed] [data-dsh-imagegen-chat-resizer] {
 .canvasMeta {
   flex: none;
   display: flex;
+  /* A nowrap row does not clip, it COMPRESSES: `.canvasBody` scrolls only
+     vertically, so once the parameter line outgrew a narrow panel its items
+     were squeezed below their content width, the prompt went to 0 and the rest
+     of the line painted outside the board. Wrapping instead lets each item keep
+     its own width and puts the overflow on a second line, where
+     `.historyMeta`'s existing ellipsis finally has a width to truncate against.
+     Inert while the row fits, so a wide panel lays out exactly as it did. */
+  flex-wrap: wrap;
   align-items: center;
   gap: 8px;
+  /* Rows break; the gaps do not. `gap` alone would also put 8px between lines. */
+  row-gap: 4px;
   font-size: 12px;
   color: var(--dsw-alias-label-tertiary);
 }

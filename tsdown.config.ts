@@ -56,6 +56,15 @@ function cssVirtualId(absolutePath: string): string {
 function cssRealPath(virtualId: string): string {
   return resolvePath(process.cwd(), virtualId.slice(CSS_VIRTUAL_PREFIX.length, -CSS_VIRTUAL_SUFFIX.length))
 }
+/**
+ * Synthetic virtual id -> repo-relative CSS path, i.e. the id with its wrapper
+ * stripped. This is NOT the same string as the absolute path, and the
+ * difference is load-bearing: see the `filename` argument at the lightningcss
+ * call site.
+ */
+function cssRepoPath(virtualId: string): string {
+  return virtualId.slice(CSS_VIRTUAL_PREFIX.length, -CSS_VIRTUAL_SUFFIX.length)
+}
 
 /** Node half: plain ESM library, host-shared packages stay bare (module
  *  identity must be the host runtime's own copies — bundling them would
@@ -131,7 +140,21 @@ const clientConfig: UserConfig = {
       this.addWatchFile(fileId)
       const source = await readFile(fileId)
       const { code, exports: cssExports } = transform({
-        filename: fileId,
+        // The repo-relative path, NOT `fileId`. lightningcss derives `[hash]`
+        // from this string and from nothing else — measured: the same bytes
+        // under `/a/b/src/client/x.module.css` hash to `uoukpq_wrap` and under
+        // `/c/d/src/client/x.module.css` to `ByV2Ia_wrap`, while changing the
+        // CSS from `red` to `blue` does not move it at all. So the absolute
+        // path made every generated class name — and therefore the bundle —
+        // depend on where the repo happened to be checked out, and the same
+        // commit built in two directories produced different `lib/client.js`.
+        // A repo-relative path is stable across machines, which is what makes
+        // the published SHA256SUMS reproducible from source at all.
+        // Uniqueness is a precondition, not a hope: 18 `.module.css` files,
+        // all under `src/client/`, all basenames distinct — and the path, not
+        // just the basename, is the input, so even a repeated basename would
+        // not collide.
+        filename: cssRepoPath(virtualId),
         code: source,
         cssModules: { pattern: '[hash]_[local]' },
         minify: true,

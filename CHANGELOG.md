@@ -5,6 +5,38 @@ Attribution for third-party code is in [NOTICE](./NOTICE).
 
 ## Releases
 
+### 1.16.1 — 历史详情补全、两块结果板互斥、发布产物真正可重现
+
+- **历史记录不显示生成参数，是前端从没渲染过。** 宿主从生成那一刻就把
+  `prompt` / `size` / `quality` / `detail` 写进索引，`historyList` 一直原样
+  返回，只是从 1.16.0 起结果板只画「本次生成 N 张」和时间。现在图片板与
+  素材库的 `canvasMeta` 统一取自这条历史自己的 `viewingImageEntry`——不是
+  表单里「下次要生成」的值；数量取 `images.length` 而不是条目上的 `n`，两者
+  在「一张图生成失败」时会分叉。视频板补 `prompt` 与 `resolution`，i18n 只
+  复用现成 key。
+- **两块结果板的条件互不排斥。** 视频板判 `kind === 'video'`，图片格判
+  `images.length > 0`；生成完成时 `setImages(...)` 会把图片格重新长出来贴在
+  视频下面。1.16.0 的第一次修法是「两个板面各加一个条件」，那正是成因。现在
+  由 `resultSurfaceOf(boardView, viewingVideoEntry)`
+  （`src/client/ImageGenPanel.tsx:2689`）单一派生四种状态，两个板面只读它，
+  `switch` 穷尽 + `assertNever`：以后加第五种状态编译期就报错。
+- **`verify-reproducible.mjs` 只在同一目录构建两次**，所以「绝对路径进了 CSS
+  Module 类名哈希」它永远看不见。`tsdown.config.ts` 改用仓库相对路径
+  （`cssRepoPath()`，`:60-66`）；检查改为在另一个目录再构建一次，逐字节比对
+  `lib/` 下全部 5 个产物（此前漏了同样随包发布的 `client.js.map`），
+  `BUILD_INPUTS` 补上 `tsconfig.json`——tsdown 自己不读它，rolldown 读，改一条
+  `target` 就能让产物变字节。四种破坏（绝对路径 / 只让 `.map` 依赖 cwd /
+  删掉 tsconfig 输入 / 恢复）逐条确认会红。
+- **参数行换行。** `.canvasMeta` 加 `flex-wrap: wrap` 与 `row-gap: 4px`
+  （必须写在 `gap` 之后，简写会覆盖它）。1440px 下短提示词与改前逐像素一致；
+  真实数据里那条 2257 字符的提示词改前在 1440px 下会被压成「本次生成 3 张」
+  每行一个字，这一版顺带修好。
+- **验证**：`tsc --noEmit` / `pnpm build` / `verify-native-ui.mjs` /
+  `pnpm test` 全 EXIT=0；真 Chrome 断言 42 PASS（改前 14 FAIL）。
+- **已知未做**：`smoke-canvas-video.mjs` 的 E1 是既有 flake（未改动树上同样偶发
+  失败）；CI 的 apt 超时未修；契约守卫两处盲区（选择器语法校验、`token-must-exist`
+  对带 fallback 的报错文案）未补；三处 `HEAD` 写死 `5px` 的按钮未统一。
+
 ### 1.16.0 — 视频历史有封面了，侧栏不再猜宿主的类名
 
 - **视频历史此前没有封面，这是设计遗漏。** The host never generated a poster
