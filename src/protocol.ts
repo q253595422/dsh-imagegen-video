@@ -1610,6 +1610,39 @@ export interface ProductSetDraft {
   slots: ProductSetSlot[]
 }
 
+/** Host-mediated product-listing copy generation endpoint. */
+export const LISTING_COPY_API = '/api/dsh-imagegen/listing-copy' as const
+
+/** One generated product-listing spec row. */
+export interface ListingSpec {
+  name: string
+  value: string
+}
+
+/** Structured listing copy the model must produce (fields may be missing). */
+export interface ListingCopy {
+  title?: string
+  sellingPoints?: string[]
+  description?: string
+  keywords?: string[]
+  specs?: ListingSpec[]
+}
+
+/** A client → host listing-copy request, projected from the product draft. */
+export interface ListingCopyRequest {
+  productName: string
+  category: string
+  platform: string
+  language: string
+  /** User-supplied product facts; the model must not invent beyond these. */
+  promptInfo: string
+}
+
+/** A client → host listing-copy reply. `ok: false` carries an actionable message. */
+export type ListingCopyResult =
+  | { ok: true; copy: ListingCopy }
+  | { ok: false; code: 'listing-copy-failed' | 'listing-copy-unstructured'; message: string }
+
 /** A client → host generate request (what the panel collects). */
 export interface GenerateRequest extends EcommerceTaskMeta {
   /** text-to-image (images/generations) or image-to-image (images/edits). */

@@ -343,6 +343,7 @@ export { applyPlan, hasMotion, looksChinese, MAX_PLANNED_PROMPT_CHARS, MAX_PROMP
 export { appendVideoHistory, backfillVideoPosters, clearVideoHistory, listVideoHistory, readVideoFile, removeVideoHistory, VIDEO_HISTORY_MAX } from './video-store.ts'
 export { VideoTaskQueue } from './video-task-queue.ts'
 export { promptCharLimit } from './model-catalog.ts'
+export { generateListingCopy, listingTitleLimit } from './listing-copy.ts'
 export { analyzeLayers, normalizeLayerPlan, MAX_LAYER_IMAGE_BYTES } from './layer-analyzer.ts'
 export { ImageGenerationRuntime, type HostChatSeam } from './generation-runtime.ts'
 export { createHostChatSeam } from './host-chat.ts'
