@@ -689,6 +689,8 @@ await check('V3 the video routes answer over real HTTP', async () => {
         retry: id => tasks.find(task => task.id === id),
         list: () => tasks,
         subscribe: () => () => {},
+        // 路由在列表前会调它，桩也必须答——否则测的就不是路由本身。
+        restorePending: async () => ({ restored: 0 }),
       },
       runVideo: async () => ({ videos: [] }),
     },
@@ -945,6 +947,99 @@ await check('V6b a channel-alias Seedance model routes and persists through the 
   }
 })
 
+await check('V6c an explicit channelId wins over another channel carrying the same alias (#10-4)', async () => {
+  // Two channels both catalog `same-alias`, each mapping it to its own upstream
+  // id and holding its own key. Before this fix the host resolved purely by
+  // "which channel happens to configure the alias", so a user who picked B was
+  // silently rendered (and billed) on A. The assertion is on what the upstream
+  // actually received, not on internal state.
+  const upstream = await startUpstream()
+  upstream.state.script = {
+    submit: { video_id: 'vid_alias', status: 'queued' },
+    polls: [{ status: 'completed', metadata: { url: `http://127.0.0.1:${upstream.port}/alias.mp4`, duration: 5 } }],
+  }
+  try {
+    const channels = [
+      {
+        id: 'channel-a',
+        preset: '',
+        name: 'Channel A',
+        apiUrl: upstream.base,
+        apiKey: 'key-of-a',
+        apiUrlFull: false,
+        models: [],
+        videoModels: [{ alias: 'same-alias', id: 'agnes-video-2.5-flash' }],
+      },
+      {
+        id: 'channel-b',
+        preset: '',
+        name: 'Channel B',
+        apiUrl: upstream.base,
+        apiKey: 'key-of-b',
+        apiUrlFull: false,
+        models: [],
+        videoModels: [{ alias: 'same-alias', id: 'agnes-video-2.5' }],
+      },
+    ]
+    const runtime = new host.ImageGenerationRuntime(() => ({ channels, defaultChannelId: 'channel-a' }))
+    const request = { mode: 'text', model: 'same-alias', prompt: 'p', aspectRatio: '16:9', resolution: '720P', seconds: 5 }
+
+    // 1) Explicit `channelId=B` must reach B's upstream id AND B's key.
+    await runtime.runVideo({ ...request, channelId: 'channel-b' })
+    assert.equal(upstream.state.submits.length, 1, 'one submit reached the upstream')
+    assert.equal(upstream.state.submits[0].body.model, 'agnes-video-2.5', 'the explicit channel decides which mapping is sent')
+    assert.equal(upstream.state.submits[0].authorization, 'Bearer key-of-b', 'and which credential pays for it')
+
+    // 2) No `channelId`: the historical fallback is preserved — the first
+    //    channel carrying the alias, not the default channel.
+    await runtime.runVideo(request)
+    assert.equal(upstream.state.submits.length, 2, 'the second submit reached the upstream')
+    assert.equal(upstream.state.submits[1].body.model, 'agnes-video-2.5-flash', 'an unqualified alias still resolves to the first channel holding it')
+    assert.equal(upstream.state.submits[1].authorization, 'Bearer key-of-a', 'and to that channel\'s key')
+  } finally {
+    await upstream.close()
+  }
+})
+
+await check('V6d an explicit channelId without the alias is refused, never taken over by another channel', async () => {
+  // The deliberate second step of the ordering: an explicit channel that does not
+  // configure the alias is used ANYWAY, so the upstream id degrades to the alias
+  // and validation refuses it. The alternative — quietly falling back to the
+  // channel that does configure it — would charge the user's other key for work
+  // they did not aim at that channel.
+  const runtime = new host.ImageGenerationRuntime(() => ({
+    channels: [
+      {
+        id: 'channel-a',
+        preset: '',
+        name: 'Channel A',
+        apiUrl: 'http://127.0.0.1:1/v1',
+        apiKey: 'key-of-a',
+        apiUrlFull: false,
+        models: [],
+        videoModels: [{ alias: 'same-alias', id: 'agnes-video-2.5-flash' }],
+      },
+      {
+        id: 'channel-b',
+        preset: '',
+        name: 'Channel B',
+        // Not reachable: the run must fail on validation before any HTTP call.
+        apiUrl: 'http://127.0.0.1:1/v1',
+        apiKey: 'key-of-b',
+        apiUrlFull: false,
+        models: [],
+        videoModels: [{ alias: 'other-alias', id: 'agnes-video-2.5' }],
+      },
+    ],
+    defaultChannelId: 'channel-a',
+  }))
+  await assert.rejects(
+    () => runtime.runVideo({ mode: 'text', model: 'same-alias', channelId: 'channel-b', prompt: 'p', aspectRatio: '16:9', resolution: '720P', seconds: 5 }),
+    error => error?.code === 'video-unknown-model',
+    'the explicitly chosen channel is used even without the alias, so the run is refused instead of billed to the other channel',
+  )
+})
+
 await check('V7 an unknown-family model configured in a channel fails with guidance', async () => {
   const runtime = new host.ImageGenerationRuntime(() => ({
     channels: [{
@@ -1082,7 +1177,7 @@ await check('V8 a clip deleted between stat and stream open ends the request, no
     resolveChannels: () => ({ channels: [], defaultChannelId: '' }),
     runtime: {
       queue: { submit: () => ({ id: 'x' }), list: () => [], get: () => undefined, cancel: () => undefined, retry: () => undefined, summaries: () => [] },
-      videoQueue: { submit: () => ({ id: 'x' }), summaries: () => [], get: () => undefined, cancel: () => undefined, retry: () => undefined, list: () => [], subscribe: () => () => {} },
+      videoQueue: { submit: () => ({ id: 'x' }), summaries: () => [], get: () => undefined, cancel: () => undefined, retry: () => undefined, list: () => [], subscribe: () => () => {}, restorePending: async () => ({ restored: 0 }) },
       runVideo: async () => ({ videos: [] }),
     },
     video: {
@@ -1271,6 +1366,143 @@ await check('V9b the poll and download legs are recorded under their own phases'
   assert.equal(download.failureCode, 'video-download-failed')
   assert.equal(download.status, 404)
   assert.match(download.url, /\/gone\/nothing$/, 'the entry records the address the bytes were fetched from')
+})
+
+// ---------------------------------------------------------------- 重启恢复 (#10-1)
+
+/**
+ * A restart used to lose every in-flight render while the provider kept working
+ * and billing. The queue takes its persistence through injectable hooks, so the
+ * whole path runs against memory here and never touches the user's data folder.
+ */
+await check('V10 a restart reattaches an in-flight render and never submits it twice (#10-1)', async () => {
+  const upstream = await startUpstream()
+  upstream.state.script = {
+    submit: { video_id: 'vid_resume_1', task_id: 'task_resume_1', status: 'queued' },
+    // Enough polls that the first "process" is abandoned while still running.
+    polls: [
+      { status: 'running', progress: 10 },
+      { status: 'running', progress: 40 },
+      { status: 'completed', metadata: { url: `http://127.0.0.1:${upstream.port}/out/clip.mp4`, duration: 5 } },
+    ],
+  }
+  const pending = new Map()
+  const hooks = {
+    readPending: async () => ({ tasks: [...pending.values()] }),
+    writePending: async entry => { pending.set(entry.localTaskId, entry) },
+    removePending: async id => { pending.delete(id) },
+    cancelRemote: async () => 'unsupported',
+  }
+  const run = async (request, signal) => await host.generateVideo(
+    { apiUrl: upstream.base, apiKey: 'sk-resume', channelName: 'Resume' },
+    request,
+    { signal },
+  )
+  try {
+    // First process: submit and let the engine announce the remote id.
+    const first = new host.VideoTaskQueue(run, 1, hooks)
+    first.submit({
+      mode: 'text', model: 'agnes-video-2.5-flash', prompt: 'resume me',
+      aspectRatio: '16:9', resolution: '720P', seconds: 5,
+    })
+    for (let i = 0; i < 100 && pending.size === 0; i += 1) await new Promise(r => setTimeout(r, 10))
+    assert.equal(pending.size, 1, 'an in-flight submit is persisted before the poll loop finishes')
+    const saved = [...pending.values()][0]
+    assert.ok(saved.remoteTaskId.length > 0, 'the record carries the provider task id')
+
+    // Second process: nothing in memory, only the record the first one left.
+    const submitsBefore = upstream.state.submits.length
+    const second = new host.VideoTaskQueue(run, 1, hooks)
+    const outcome = await second.restorePending()
+    assert.equal(outcome.restored, 1, 'the record is put back into the queue')
+    assert.equal(upstream.state.submits.length, submitsBefore, 'a restore must never submit — and pay — again')
+
+    // 轮询是在后台异步推进的，机器忙时（并行构建、其它会话）4 秒不够；
+    // 用截止时间而不是固定轮次，抖动就不会变成假失败。
+    const deadline = Date.now() + 20_000
+    while (Date.now() < deadline && second.get(saved.localTaskId)?.status !== 'completed') {
+      await new Promise(r => setTimeout(r, 20))
+    }
+    const restored = second.get(saved.localTaskId)
+    assert.equal(restored?.status, 'completed', `the restored task finishes by polling the SAME remote render (polls=${upstream.state.polls.length})`)
+    assert.ok(restored?.resumedAt !== undefined, 'the panel can tell it was reattached after a restart')
+    assert.equal(pending.size, 0, 'the record is dropped once the render reaches a terminal state')
+  } finally {
+    await upstream.close()
+  }
+})
+
+await check('V11 the pending index stays small: no base64 frames on disk (#10-1)', async () => {
+  const upstream = await startUpstream()
+  upstream.state.script = {
+    submit: { video_id: 'vid_big_1', task_id: 'task_big_1', status: 'queued' },
+    polls: Array.from({ length: 40 }, () => ({ status: 'running', progress: 30 })),
+  }
+  const pending = new Map()
+  const queue = new host.VideoTaskQueue(async (request, signal) => await host.generateVideo(
+    { apiUrl: upstream.base, apiKey: 'sk-big', channelName: 'Big' },
+    request,
+    { signal },
+  ), 1, {
+    readPending: async () => ({ tasks: [] }),
+    writePending: async entry => { pending.set(entry.localTaskId, entry) },
+    removePending: async id => { pending.delete(id) },
+    cancelRemote: async () => 'unsupported',
+  })
+  try {
+    queue.submit({
+      mode: 'image', model: 'agnes-video-2.5-flash', prompt: 'p',
+      aspectRatio: '16:9', resolution: '720P', seconds: 5,
+      image: `data:image/png;base64,${'A'.repeat(200_000)}`,
+    })
+    for (let i = 0; i < 100 && pending.size === 0; i += 1) await new Promise(r => setTimeout(r, 10))
+    assert.equal(pending.size, 1, 'the reference-frame request is still persisted')
+    const serialized = JSON.stringify([...pending.values()])
+    assert.equal(serialized.includes('base64'), false, 'the index must not carry a base64 frame')
+    assert.equal(serialized.includes('data:image'), false, 'the index must not carry a data URL')
+    assert.ok(serialized.length < 4096, `the index stays small (got ${serialized.length} bytes)`)
+  } finally {
+    await upstream.close()
+  }
+})
+
+await check('V12 cancelling is honest: no fabricated endpoint, and the task says so (#10-2)', async () => {
+  const upstream = await startUpstream()
+  upstream.state.script = {
+    submit: { video_id: 'vid_cancel_1', task_id: 'task_cancel_1', status: 'queued' },
+    polls: Array.from({ length: 60 }, () => ({ status: 'running', progress: 15 })),
+  }
+  const queue = new host.VideoTaskQueue(async (request, signal) => await host.generateVideo(
+    { apiUrl: upstream.base, apiKey: 'sk-cancel', channelName: 'Cancel' },
+    request,
+    { signal },
+  ), 1, {
+    readPending: async () => ({ tasks: [] }),
+    writePending: async () => {},
+    removePending: async () => {},
+    cancelRemote: async () => 'unsupported',
+  })
+  try {
+    const task = queue.submit({
+      mode: 'text', model: 'agnes-video-2.5-flash', prompt: 'cancel me',
+      aspectRatio: '16:9', resolution: '720P', seconds: 5,
+    })
+    for (let i = 0; i < 100 && upstream.state.submits.length === 0; i += 1) await new Promise(r => setTimeout(r, 10))
+    // 等到轮询真的发生，才证明远端已经在渲染；在那之前取消不算「止损」。
+    for (let i = 0; i < 200 && upstream.state.polls.length === 0; i += 1) await new Promise(r => setTimeout(r, 10))
+    assert.ok(upstream.state.polls.length > 0, 'the render had really started before it was cancelled')
+    queue.cancel(task.id)
+    for (let i = 0; i < 100 && queue.get(task.id)?.remoteCancel === 'pending'; i += 1) await new Promise(r => setTimeout(r, 10))
+    assert.equal(queue.get(task.id)?.status, 'cancelled', 'the local task stops at once')
+    assert.equal(queue.get(task.id)?.remoteCancel, 'unsupported', 'this plugin has no measured cancel endpoint, and says so')
+    // 没有实测的取消端点，就不该向远端发任何 DELETE：这个假上游只认 submit /
+    // poll / download 三条路径，多出来的请求会落到兜底分支，不会被静默吞掉。
+    const pollsAtCancel = upstream.state.polls.length
+    await new Promise(r => setTimeout(r, 120))
+    assert.equal(upstream.state.polls.length, pollsAtCancel, 'the local abort really stopped the poll loop')
+  } finally {
+    await upstream.close()
+  }
 })
 
 console.log(results.join('\n'))

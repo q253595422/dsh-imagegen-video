@@ -1,12 +1,12 @@
 /**
- * 工作流执行器的离线验证：图分层、下游闭包、层内并行、失败即停、缓存复用。
+ * 工作流执行器的离线验证：图分层、下游闭包、层内并行、失败只停下游、缓存复用。
  *
  * 只跑纯函数与执行循环，不碰网络、不碰画布状态，所以它能进 `pnpm test` 的
  * 离线套件。
  */
 
 import assert from 'node:assert/strict'
-import { downstreamClosure, planLayers, planWorkflow } from '../src/client/workflow-graph.ts'
+import { downstreamClosure, planLayers, planWorkflow, upstreamClosure } from '../src/client/workflow-graph.ts'
 import { runWorkflow } from '../src/client/workflow-runner.ts'
 
 const nodes = ['text', 'img', 'vid', 'vid2', 'compose', 'lonely']
@@ -35,6 +35,13 @@ assert.deepEqual(
   downstreamClosure(['a'], ['a', 'b'], [{ fromNodeId: 'a', toNodeId: 'b' }, { fromNodeId: 'b', toNodeId: 'b' }]),
   ['a', 'b'],
   '自环不应让遍历无限循环',
+)
+
+// 上游闭包只沿连线反方向走：下游的分支不能被当成「输入」。
+assert.deepEqual(
+  upstreamClosure(['compose'], nodes, edges),
+  ['text', 'img', 'vid', 'vid2', 'compose'],
+  '上游闭包应包含 compose 的全部输入侧节点，且不含无关节点',
 )
 
 // ------------------------------------------------------------------ 分层
@@ -120,7 +127,8 @@ assert.deepEqual(planWorkflow([], nodes, edges), { layers: [], cycle: [] }, '无
 }
 
 {
-  // 失败即停：一旦某节点失败，下游一个都不许提交。
+  // 整个下游闭包都被挡住（中间节点失败，没有兄弟分支），仍是 failed：
+  // 部分成功的状态只用来描述「确实有独立分支跑出来了」。
   const ran = []
   const result = await runWorkflow({
     roots: ['a'],
@@ -132,8 +140,65 @@ assert.deepEqual(planWorkflow([], nodes, edges), { layers: [], cycle: [] }, '无
     },
   })
   assert.equal(result.status, 'failed', '链路中段失败应让整体失败')
-  assert.equal(result.failedNodeId, 'b', '应报出失败的那个节点')
   assert.deepEqual(ran, ['a', 'b'], '失败节点之后不该再提交任何节点')
+  assert.deepEqual(result.blocked, ['c'], '失败节点的下游应被列为阻断')
+  assert.deepEqual(result.failedNodeIds, ['b'], '失败节点列表应含 b')
+}
+
+{
+  // 失败只停自己的下游：两条互不依赖的管线，A 断了不能让 B 一起停下。
+  // 这曾经是误伤：一个节点失败就 return，另一条能跑完的分支被跳过。
+  const ran = []
+  const result = await runWorkflow({
+    roots: ['a1', 'b1'],
+    nodeIds: ['a1', 'a2', 'b1', 'b2'],
+    edges: [
+      { fromNodeId: 'a1', toNodeId: 'a2' },
+      { fromNodeId: 'b1', toNodeId: 'b2' },
+    ],
+    run: async nodeId => {
+      ran.push(nodeId)
+      return nodeId === 'a1' ? 'failed' : 'done'
+    },
+  })
+  assert.deepEqual(ran, ['a1', 'b1', 'b2'], 'A 断了下游 a2 不该提交，但 B 分支必须跑完')
+  assert.equal(result.status, 'partial', '有一条分支跑完时不能报成 failed 或 completed')
+  assert.equal(result.failedNodeId, 'a1', '应报出失败的那个节点')
+  assert.deepEqual(result.blocked, ['a2'], '被阻断的只有失败节点的下游')
+  assert.equal(result.done, 2, 'done 只数真正跑出结论的节点（b1、b2）')
+}
+
+{
+  // 上游跑成功不能证明「有分支跑完」：a → b 里 b 失败，a 是 b 的输入。
+  const result = await runWorkflow({
+    roots: ['a'],
+    nodeIds: ['a', 'b'],
+    edges: [{ fromNodeId: 'a', toNodeId: 'b' }],
+    run: async nodeId => nodeId === 'b' ? 'failed' : 'done',
+  })
+  assert.equal(result.status, 'failed', '失败节点的上游完成不算独立分支跑完')
+  assert.equal(result.done, 1, '上游节点本身仍然计入 done')
+}
+
+{
+  // 同层里一个失败、另一个独立节点成功，且后面的层仍照常推进。
+  const ran = []
+  const result = await runWorkflow({
+    roots: ['a', 'b'],
+    nodeIds: ['a', 'b', 'a2', 'b2'],
+    edges: [
+      { fromNodeId: 'a', toNodeId: 'a2' },
+      { fromNodeId: 'b', toNodeId: 'b2' },
+    ],
+    run: async nodeId => {
+      ran.push(nodeId)
+      if (nodeId === 'a') throw new Error('渠道未配置')
+      return 'done'
+    },
+  })
+  assert.equal(result.status, 'partial', '异常也只该停自己的下游')
+  assert.equal(result.error, '渠道未配置', '异常信息应原样带出')
+  assert.deepEqual(ran, ['a', 'b', 'b2'], '抛异常的节点下游不该提交，另一条链照常')
 }
 
 {
@@ -188,7 +253,7 @@ assert.deepEqual(planWorkflow([], nodes, edges), { layers: [], cycle: [] }, '无
 }
 
 {
-  // 进度回调要覆盖每一层，且最终 done 等于总节点数。
+  // 进度回调要覆盖每一层，且最终 done 等于真正有结论的节点数。
   const seen = []
   await runWorkflow({
     roots: ['a'],
@@ -201,6 +266,24 @@ assert.deepEqual(planWorkflow([], nodes, edges), { layers: [], cycle: [] }, '无
   const last = seen[seen.length - 1]
   assert.equal(last.done, 2, '最后一次进度应是全部完成')
   assert.equal(last.count, 2, '总数应为参与执行的节点数')
+}
+
+{
+  // 部分失败时进度里的 running 不能把被阻断的节点报成正在跑。
+  const seen = []
+  const result = await runWorkflow({
+    roots: ['a1', 'b1'],
+    nodeIds: ['a1', 'a2', 'b1', 'b2'],
+    edges: [
+      { fromNodeId: 'a1', toNodeId: 'a2' },
+      { fromNodeId: 'b1', toNodeId: 'b2' },
+    ],
+    run: async nodeId => nodeId === 'a1' ? 'failed' : 'done',
+    onProgress: progress => seen.push(progress),
+  })
+  const running = seen.flatMap(progress => progress.running)
+  assert.ok(!running.includes('a2'), `被阻断的节点不能被报成正在执行：${running.join(', ')}`)
+  assert.equal(seen[seen.length - 1].done, result.done, '最后一次进度的 done 应与结果一致')
 }
 
 console.log('workflow: ok')

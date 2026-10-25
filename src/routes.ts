@@ -2541,6 +2541,10 @@ export function makeRoutes(deps: ImageGenRoutesDeps): WebRoute[] {
         if (!guard(req, res, 'POST')) return
         const runtime = deps.runtime
         if (runtime === undefined) { writeJson(res, 200, { ok: true, tasks: [] }); return }
+        // 面板打开时的第一次列表就是这个挂载点：宿主重启后，先把还在远端
+        // 渲染的任务接回队列，再回列表，否则用户看到的永远是空队列，而远端
+        // 仍按分钟计费。`restorePending()` 内部只跑一次，后续调用是缓存。
+        await runtime.videoQueue.restorePending()
         writeJson(res, 200, { ok: true, tasks: runtime.videoQueue.summaries() })
       },
     },

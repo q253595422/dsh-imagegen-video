@@ -103,16 +103,29 @@ export class ImageGenerationRuntime {
   /**
    * Resolve the channel that owns one video model alias.
    *
-   * A video request names a model alias, not a channel, and video aliases live
-   * in a channel's `videoModels` catalog rather than its image `models` one. So
-   * resolution is: the alias's own channel, then the explicitly requested
-   * channel, then the default channel.
+   * 顺序：显式 `channelId`（渠道存在就以它为准，**包括它没配这条别名的情况**）
+   * → 别名所在的第一个渠道 → 默认渠道 → 第一个渠道。
+   *
+   * 为什么显式渠道跑在别名命中前面：同一个别名可以在多个渠道各配一份，各自映射
+   * 到不同的上游 id、用不同的 key 计费。「别名配在谁那儿」是猜出来的（取第一个
+   * 命中的渠道），`channelId` 是用户选出来的；把猜测放在选择前面，用户明明选了
+   * B，请求仍会被恰好也配了同名别名的 A 抢走，事后只能翻 history 的渠道快照才
+   * 看得出走了哪个 key。
+   *
+   * 为什么第二档是硬用而不是退回别名所在渠道：显式选了却悄悄换渠道，等于拿用户
+   * 另一把 key 去计费，还把失败点藏起来。硬用会让上游 id 退化成别名本身，随即在
+   * `describeVideoModel` 处报 `video-unknown-model`——错误出现在用户能理解的位置
+   * （「这个渠道没配这个模型」），而不是一条由别的渠道付钱的成功记录。
    */
   private videoChannel(model: string, channelId: string | undefined, view: ChannelsView): RuntimeChannel | undefined {
+    // 前两档合成一次查找：只要这个渠道还在，它有没有这条别名都以它为准。
+    const explicit = channelId === undefined
+      ? undefined
+      : view.channels.find(candidate => candidate.id === channelId)
     const byAlias = view.channels.find(candidate =>
       (candidate.videoModels ?? []).some(row => row.alias === model))
-    return byAlias
-      ?? view.channels.find(candidate => candidate.id === channelId)
+    return explicit
+      ?? byAlias
       ?? view.channels.find(candidate => candidate.id === view.defaultChannelId)
       ?? view.channels[0]
   }

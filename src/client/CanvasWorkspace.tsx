@@ -21,7 +21,7 @@ import type { Timeline } from './timeline.ts'
 import { CastDialog, castLine } from './CastDialog.tsx'
 import { castMembers, castPromptLines, castReferenceIds, ROLE_LABELS } from './cast.ts'
 import { orderByPosition, orderIdsByPosition } from '../clip-order.ts'
-import { defaultStoryboard, MAX_SHOTS, SHOT_SECONDS, nextShotId, shotNodeOf, shotProblem, shotState, storyboardClipIds, storyboardOf, storyboardProgress, nextShotIndex, withAppendedShot, withMovedShot, withRemovedShot, withShot, type ShotState } from './storyboard.ts'
+import { defaultStoryboard, MAX_SHOTS, SHOT_SECONDS, nextShotId, shotNodeOf, shotProblem, shotState, storyboardClipIds, storyboardOf, storyboardProgress, nextShotIndex, withAppendedShot, withMovedShot, withRemovedShot, withShot, withStaleDownstream, type ShotState } from './storyboard.ts'
 import { ImageGenApiError, type ImageGenApi } from './api.ts'
 import { errorMessage, tt } from './helpers.ts'
 import type { ImageGenKey } from './locales.ts'
@@ -3924,11 +3924,20 @@ export function CanvasWorkspace(props: CanvasWorkspaceProps): React.JSX.Element 
         const boardIndex = nodes.findIndex(node => node.id === board.id)
         if (boardIndex >= 0) {
           const boardNode = nodes[boardIndex]!
+          const previousBoard = storyboardOf(boardNode)
+          // 重跑这一镜自己先解锁（旧片仍然是旧片，但它已经不再是「作废」状态），
+          // 随后由它在 carry 模式下作废下游：新的尾帧一旦落地，接在旧尾帧上的
+          // 那些成片就都不成立了。作废放在这里——真正提交成功之后——是因为
+          // 提交失败或被拒时尾帧不会变，此时作废下游等于白白毁掉用户的工作。
+          const restarted = withShot(previousBoard, index, { nodeId, stale: undefined })
+          const nextBoard = previousBoard.continuity === 'carry'
+            ? withStaleDownstream(restarted, index, nodes)
+            : restarted
           nodes[boardIndex] = {
             ...boardNode,
             metadata: {
               ...nodeMetadata(boardNode),
-              storyboard: withShot(storyboardOf(boardNode), index, { nodeId }),
+              storyboard: nextBoard,
               status: 'success',
             },
           }
@@ -4247,6 +4256,18 @@ export function CanvasWorkspace(props: CanvasWorkspaceProps): React.JSX.Element 
         setError(tt('canvas.workflow.failed', {
           node: failed?.title ?? (result.failedNodeId ?? ''),
           message: result.error ?? '',
+        }))
+        return
+      }
+      // `partial`: another branch failed while this one finished. Reporting it
+      // as plain success would swallow the failure; reporting it as `failed`
+      // would claim nothing ran. Say both halves.
+      if (result.status === 'partial') {
+        const failed = current.nodes.find(node => node.id === result.failedNodeId)
+        setError(tt('canvas.workflow.partial', {
+          node: failed?.title ?? (result.failedNodeId ?? ''),
+          blocked: result.blocked.length,
+          done: result.done,
         }))
         return
       }

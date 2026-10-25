@@ -156,6 +156,34 @@ await check('H4 a shot count over the cap is refused, not silently truncated', a
   assert.ok(failed, '41 shots is past the documented cap')
 })
 
+await check('H5 an invalidated shot survives a save and reload', async () => {
+  const { CanvasStore } = await import(new URL('../src/canvas-store.ts', import.meta.url).href)
+  const store = new CanvasStore(join(root, 'canvas-h5'))
+  const created = await store.create('作废标记')
+  // The document `submitShot` writes after a carry re-run: shot 2 was framed
+  // from the tail frame shot 1 just replaced, so it is marked invalid.
+  const board = {
+    id: 'board-5', type: 'storyboard', title: '分镜',
+    x: 0, y: 0, width: 380, height: 420,
+    metadata: {
+      storyboard: {
+        shots: [shot('shot-1', 'a cat', { nodeId: 'clip-1' }), shot('shot-2', 'the same cat', { nodeId: 'clip-2', stale: true })],
+        aspectRatio: '16:9', resolution: '720P', continuity: 'carry',
+      },
+    },
+  }
+  const saved = await store.save({ ...created, nodes: [board] }, created.revision)
+  const read = await store.read(saved.id)
+  assert.ok(read !== undefined, 'the canvas reads back')
+  const reloaded = read.nodes.find(item => item.id === 'board-5')
+  assert.ok(reloaded !== undefined, 'the board survived')
+  // The flag has to reach disk: a shot that reloads as valid would be stitched
+  // in again on the next page open, which is exactly the silent break this
+  // whole change removes.
+  assert.equal(reloaded.metadata.storyboard.shots[1].stale, true, 'the invalid marker is persisted')
+  assert.equal(reloaded.metadata.storyboard.shots[0].stale, undefined, 'a valid shot carries no marker')
+})
+
 // ------------------------------------------------------------ pure state
 
 const state = await import(new URL('../src/client/storyboard.ts', import.meta.url).href)
@@ -246,6 +274,105 @@ await check('P6 the built client bundle carries the board renderer', async () =>
   assert.match(bundle, /storyboardBody/, 'the board body is in the bundle')
   assert.match(bundle, /storyboardShots/, 'the shot list is in the bundle')
   assert.match(bundle, /storyboardFoot/, 'the board actions are in the bundle')
+})
+
+/**
+ * The `carry` break: shot 1 gets re-run, its tail frame changes, and shots 2/3
+ * were framed from the old one. They must fall back to "needs a run" — and the
+ * canvas must be the thing that does it, not just a rule the renderer ignores.
+ *
+ * Two halves in one check, because either half alone can pass while the bug is
+ * still there: the pure rule (what an invalidated shot reads as) and the wiring
+ * in `submitShot` (who invalidates, in which mode, and only after a successful
+ * submit). Deleting the call from `submitShot` has to turn THIS check red.
+ */
+await check('P7 a carry re-run invalidates every downstream clip, after a successful submit', async () => {
+  const board = {
+    shots: [
+      shot('s1', 'one', { nodeId: 'c1' }),
+      shot('s2', 'two', { nodeId: 'c2' }),
+      shot('s3', 'three', { nodeId: 'c3' }),
+    ],
+    aspectRatio: '16:9', resolution: '720P', continuity: 'carry',
+  }
+  // The nodes as they stand right after the submit: shot 1's node was replaced
+  // by the fresh placeholder, shots 2/3 still carry their old clips.
+  const afterSubmit = [node({ id: 'c1', metadata: { status: 'generating', taskId: 't1' } }), clip('c2'), clip('c3')]
+  // The exact write-back `submitShot` performs once the host accepted the task:
+  // unlock the re-run shot itself, then invalidate what sat on its old tail.
+  const restarted = state.withShot(board, 0, { nodeId: 'c1', stale: undefined })
+  const next = state.withStaleDownstream(restarted, 0, afterSubmit)
+
+  assert.equal(state.shotState(next.shots[0], afterSubmit), 'generating', 'the re-run shot is rendering again, not stale')
+  assert.equal(state.shotState(next.shots[1], afterSubmit), 'failed', 'shot 2 was framed from a tail frame that no longer exists')
+  assert.equal(state.shotState(next.shots[2], afterSubmit), 'failed', 'shot 3 depends on shot 2, so it falls too')
+  // While the new tail frame is still rendering, shot 2 genuinely cannot be
+  // framed yet — the existing carry rule already answers -1 for that.
+  assert.equal(state.nextShotIndex(next, afterSubmit), -1, 'carry waits for the new tail frame before shot 2')
+  // Once it lands, shot 2 is the next run, in order — the invalidated shots are
+  // not skipped over, which is the whole point of marking them.
+  const landed = [clip('c1'), clip('c2'), clip('c3')]
+  assert.equal(state.nextShotIndex(next, landed), 1, 'then the next run is shot 2, in order')
+  assert.deepEqual(state.storyboardClipIds(next, landed), ['c1'], 'an invalidated clip is not handed to the stitch')
+  // The file itself is kept: invalid is not the same as deleted, the user may
+  // still want to watch that take.
+  assert.equal(afterSubmit[1].metadata.video.url, '/api/dsh-imagegen/videos/file/c2.mp4', 'the old clip stays on the node')
+  assert.equal(board.shots[1].stale, undefined, 'the input board is not mutated')
+
+  // A downstream shot that never produced anything has nothing to invalidate;
+  // marking it would put a stale badge on a row the user never ran.
+  const unrun = { ...board, shots: [shot('s1', 'one', { nodeId: 'c1' }), shot('s2', 'two'), shot('s3', 'three')] }
+  const afterUnrun = state.withStaleDownstream(state.withShot(unrun, 0, { nodeId: 'c1', stale: undefined }), 0, [clip('c1')])
+  assert.equal(afterUnrun.shots[1].stale, undefined, 'an unproduced shot is left alone')
+  assert.equal(afterUnrun.shots[1].id, 's2', 'the list is not reordered or shortened')
+
+  // Wiring: `submitShot` is what invalidates, on the success path only.
+  const { readFileSync } = await import('node:fs')
+  const source = readFileSync(new URL('../src/client/CanvasWorkspace.tsx', import.meta.url), 'utf8')
+  const from = source.indexOf('const submitShot = useCallback')
+  assert.ok(from > 0, 'submitShot exists')
+  const body = source.slice(from, source.indexOf('const runStoryboard = useCallback'))
+  const submitAt = body.indexOf('await api.videoTaskSubmit(request)')
+  const staleAt = body.indexOf('withStaleDownstream(')
+  assert.ok(submitAt > 0, 'the submit call is in submitShot')
+  assert.ok(staleAt > submitAt, 'downstream is invalidated AFTER the host accepted the task, never before')
+  assert.equal(body.split('withStaleDownstream(').length, 2, 'invalidated in exactly one place')
+  // The try/catch that guards the submit: its handler must come AFTER the
+  // invalidation, so a rejected submit returns before any board write. (The
+  // function holds an earlier try/catch for the frame grab, hence searching
+  // forward from the invalidation rather than taking the first one.)
+  const catchAt = body.indexOf('} catch (caught)', staleAt)
+  assert.ok(catchAt > staleAt, 'a rejected submit returns before any invalidation')
+  assert.match(body, /previousBoard\.continuity === 'carry'/, 'only carry mode invalidates anything')
+})
+
+/**
+ * `cut` boards have no join to protect: every shot is independent, so re-running
+ * one must leave the others exactly as they were. And a re-run that FAILS never
+ * reaches the write-back, so the others keep their clips too.
+ */
+await check('P8 a cut re-run, or a failed one, leaves the other shots untouched', async () => {
+  const cut = {
+    shots: [
+      shot('s1', 'one', { nodeId: 'c1' }),
+      shot('s2', 'two', { nodeId: 'c2' }),
+      shot('s3', 'three', { nodeId: 'c3' }),
+    ],
+    aspectRatio: '16:9', resolution: '720P', continuity: 'cut',
+  }
+  const nodes = [clip('c1'), clip('c2'), clip('c3')]
+  const restarted = state.withShot(cut, 0, { nodeId: 'c1', stale: undefined })
+  // `submitShot` never calls the invalidator in this mode (pinned in P7), so the
+  // board it writes back is exactly this one.
+  assert.equal(state.shotState(restarted.shots[1], nodes), 'ready', 'a cut shot 2 still has a valid clip')
+  assert.equal(state.shotState(restarted.shots[2], nodes), 'ready', 'a cut shot 3 still has a valid clip')
+  assert.deepEqual(state.storyboardClipIds(restarted, nodes), ['c1', 'c2', 'c3'], 'the whole cut board still stitches')
+
+  // A rejected submit: the board is never written, so shots 2/3 keep their clips
+  // and the run button still points past them.
+  const board = { ...cut, continuity: 'carry' }
+  assert.equal(state.shotState(board.shots[1], nodes), 'ready', 'nothing was invalidated by a failed re-run')
+  assert.equal(state.nextShotIndex(board, nodes), -1, 'with every shot finished there is nothing to re-run')
 })
 
 // ------------------------------------------------------------ run

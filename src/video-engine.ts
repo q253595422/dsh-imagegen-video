@@ -65,6 +65,65 @@ export class VideoGenError extends Error {
   }
 }
 
+/**
+ * Whether a family can stop a render on the PROVIDER's side (#10-2).
+ *
+ * Every entry is `'unsupported'` on purpose, and this is measured rather than
+ * lazy:
+ *
+ *  - The request shapes in this file were recorded from observed upstream
+ *    behaviour; the repository has never seen a cancel/delete call from any of
+ *    these providers, so there is no path to copy.
+ *  - OpenAI's Videos API is the one family whose documentation we could check
+ *    from a primary source: `DELETE /videos/{id}` is documented as
+ *    "permanently delete a completed or failed video and its stored assets" —
+ *    it removes an artifact that already exists, it does not abort a render in
+ *    progress. Calling it on a running task is therefore not a cancel, and
+ *    claiming otherwise would let the user believe the billing stopped.
+ *
+ * Consequence, and the reason this table exists as data rather than as an `if`:
+ * adding a real endpoint for a family is a one-line change here plus a branch in
+ * {@link cancelRemoteVideo}; nothing in the queue or the panel has to learn a new
+ * concept.
+ */
+const REMOTE_CANCEL: Record<string, 'supported' | 'unsupported'> = {
+  agnes: 'unsupported',
+  comemoe: 'unsupported',
+  'openai-video': 'unsupported',
+  seedance: 'unsupported',
+  xai: 'unsupported',
+  unknown: 'unsupported',
+}
+
+/** The families this build knows how to cancel remotely (none, today). */
+export function cancelableFamilies(): string[] {
+  return Object.keys(REMOTE_CANCEL).filter(family => REMOTE_CANCEL[family] === 'supported')
+}
+
+/**
+ * Ask the provider to stop one render, when this build knows how.
+ *
+ * Returns the honest outcome: `'unsupported'` means no request was made and the
+ * provider is very likely still rendering and billing, `'stopped'` means the
+ * provider acknowledged, `'unconfirmed'` means the request failed or its answer
+ * was unusable. It never throws — the caller has already told the user the task
+ * is cancelled locally, and a cancel that fails must not resurrect it.
+ *
+ * @param upstream credentials for the channel the render was submitted through.
+ * @param target the provider task id plus its family and model, for diagnostics.
+ */
+export async function cancelRemoteVideo(
+  upstream: VideoUpstreamConfig,
+  target: { taskId: string; family: string; model: string; mode: string; signal?: AbortSignal },
+): Promise<'stopped' | 'unconfirmed' | 'unsupported'> {
+  if (target.taskId.trim() === '') return 'unsupported'
+  if ((REMOTE_CANCEL[target.family] ?? 'unsupported') !== 'supported') return 'unsupported'
+  // 每个协议族都是 'unsupported' 时这里走不到。等某一天真测到了取消端点，
+  // 把那个族改成 'supported'，再在这里补发请求并把结果映射成
+  // 'stopped' / 'unconfirmed'——不要在那之前先写一段猜出来的 DELETE。
+  return 'unsupported'
+}
+
 /** Upstream credentials for one video request (mirrors the image upstream). */
 export type VideoUpstreamConfig = UpstreamConfig
 
@@ -715,7 +774,14 @@ function contentUrlFor(statusUrl: string): string {
   return `${statusUrl.replace(/\/+$/, '')}/content`
 }
 
-/** Poll one task until terminal or the family deadline passes. */
+/**
+ * Poll one task until terminal or the family deadline passes.
+ *
+ * `since.submittedAt` shifts the whole deadline: the budget belongs to the
+ * RENDER, not to this process, so a resume starts with whatever is left. A
+ * resume whose budget is already spent still gets one poll — a finished clip
+ * must never be thrown away because the host happened to restart late.
+ */
 async function pollUntilDone(
   attempt: VideoAttempt,
   upstream: VideoUpstreamConfig,
@@ -723,9 +789,15 @@ async function pollUntilDone(
   taskId: string,
   family: string,
   signal?: AbortSignal,
+  since: { submittedAt?: number } = {},
 ): Promise<{ source: VideoClipSource; duration?: number; poster?: string }> {
   const policy = POLL_POLICY[family] ?? POLL_POLICY.unknown!
-  const deadline = Date.now() + policy.deadlineMs
+  const already = since.submittedAt === undefined ? 0 : Math.max(0, Date.now() - since.submittedAt)
+  const deadline = since.submittedAt === undefined ? Date.now() + policy.deadlineMs : since.submittedAt + policy.deadlineMs
+  // At least one poll even when the elapsed time already exceeds the budget:
+  // the render may have finished while this process was down, and dropping it
+  // would waste the exact money the resume path exists to save.
+  let mustPollOnce = already >= policy.deadlineMs
   const statusUrl = statusUrlFor(upstream, baseUrl, family, taskId)
   const statusAttempt: VideoAttempt = {
     ...attempt,
@@ -738,7 +810,8 @@ async function pollUntilDone(
   // a dropped connection from the status endpoint must not fail a task the
   // provider is still working on; the retries stay inside the family deadline.
   let transientRetries = 0
-  while (Date.now() < deadline) {
+  while (mustPollOnce || Date.now() < deadline) {
+    mustPollOnce = false
     await waitForPoll(pollDelayMs(policy, attemptCount), signal)
     attemptCount += 1
     const budget = requestSignal(signal, SUBMIT_TIMEOUT_MS)
@@ -993,6 +1066,105 @@ function submitBody(
 }
 
 /**
+ * A submit that landed: the only moment the provider task id exists (#10-1).
+ *
+ * Emitted so the host queue can persist the id without this module knowing how
+ * video tasks are stored, and without `generation-runtime.ts` having to forward
+ * anything. The listener is matched to its task by the `AbortSignal` the queue
+ * created for that run, because the queue is the only place that knows the local
+ * task id and it already owns that signal.
+ */
+export interface VideoSubmitEvent {
+  /** The signal the caller passed to `generateVideo` (undefined for direct calls). */
+  signal?: AbortSignal
+  /** The provider's task id — the value a restart needs. */
+  remoteTaskId: string
+  family: string
+  /** The upstream model id that was submitted. */
+  model: string
+  submittedAt: number
+  upstream: VideoUpstreamConfig
+  request: VideoGenerateRequest
+}
+
+const submitListeners = new Set<(event: VideoSubmitEvent) => void>()
+
+/**
+ * Observe successful submits (used by the task queue to persist the remote id).
+ *
+ * An observer that throws must not fail a render the user has already paid for,
+ * so listener errors are swallowed — the same rule the queue applies to its own
+ * listeners.
+ *
+ * @returns an unsubscribe function.
+ */
+export function onVideoSubmitted(listener: (event: VideoSubmitEvent) => void): () => void {
+  submitListeners.add(listener)
+  return () => { submitListeners.delete(listener) }
+}
+
+function publishSubmit(event: VideoSubmitEvent): void {
+  for (const listener of submitListeners) {
+    try {
+      listener(event)
+    } catch {
+      // Observers are bookkeeping; the render is the product.
+    }
+  }
+}
+
+/**
+ * Poll one already-submitted render and download its clip.
+ *
+ * This is the restart path (#10-1): it never submits, so reattaching a render
+ * costs nothing beyond the polls. Shared with {@link generateVideo}'s tail so
+ * both paths download and shape the result identically.
+ *
+ * `submittedAt` is the ONLY clock used for the deadline. Counting from the
+ * restart instead would hand a render that has already run 35 minutes a fresh
+ * 40-minute budget, so an abandoned task could sit in the queue for over an
+ * hour.
+ *
+ * @returns the finished clip, ready for the store to persist.
+ */
+export async function resumeVideo(
+  upstream: VideoUpstreamConfig,
+  request: VideoGenerateRequest,
+  resume: { taskId: string; family: string; submittedAt?: number },
+  options: { signal?: AbortSignal } = {},
+): Promise<VideoEngineResult> {
+  const model = (request.upstream ?? request.model).trim()
+  if (model === '') throw new VideoGenError('未指定视频模型', 'video-no-model')
+  const family = resume.family.trim() === '' ? describeVideoModel(model).family : resume.family
+  const baseUrl = upstream.apiUrl.replace(/\/+$/, '')
+  const statusUrl = statusUrlFor(upstream, baseUrl, family, resume.taskId)
+  const attempt = videoAttempt(upstream, request, model, 'video-poll', statusUrl, 'GET')
+  const finished = await pollUntilDone(
+    attempt,
+    upstream,
+    baseUrl,
+    resume.taskId,
+    family,
+    options.signal,
+    resume.submittedAt === undefined ? {} : { submittedAt: resume.submittedAt },
+  )
+  const downloadAttempt: VideoAttempt = {
+    ...attempt,
+    phase: 'video-download',
+    url: displayUrl(finished.source.url),
+    method: 'GET',
+  }
+  const downloaded = await downloadVideo(downloadAttempt, upstream, finished.source.url, options.signal)
+  return {
+    videos: [{
+      ...downloaded,
+      ...finished.duration === undefined ? {} : { duration: finished.duration },
+      ...finished.poster === undefined ? {} : { poster: finished.poster },
+    }],
+  }
+}
+
+/**
  * Generate one video: submit, poll to a terminal state, download the clip.
  *
  * `family` may be forced by the caller (the runtime passes the resolved
@@ -1013,6 +1185,11 @@ export async function generateVideo(
   if (family === 'unknown') {
     throw new VideoGenError(`视频模型「${model}」的协议族未知，无法生成`, 'video-unknown-model')
   }
+  // Resume FIRST, before the reference-frame guards: a restarted render no
+  // longer carries its frames (they were deliberately not persisted), so those
+  // checks would reject a request that is perfectly valid — the provider
+  // already has the frames and only polling is left.
+  if (request.resume !== undefined) return await resumeVideo(upstream, request, request.resume, options)
   const references = referencesOf(request)
   if (request.mode === 'keyframe' && references.all.length === 0) {
     throw new VideoGenError('首尾帧模式至少需要一张首帧图片', 'video-bad-reference')
@@ -1051,6 +1228,19 @@ export async function generateVideo(
   } finally {
     submitBudget.dispose()
   }
+
+  // The remote id exists only from here on. Publish it before polling so a
+  // crash during the (minutes-long) poll still leaves the record a restart can
+  // reattach — that gap is exactly what #10-1 reported.
+  publishSubmit({
+    ...options.signal === undefined ? {} : { signal: options.signal },
+    remoteTaskId: taskId,
+    family,
+    model,
+    submittedAt: Date.now(),
+    upstream,
+    request,
+  })
 
   const finished = await pollUntilDone(submitAttempt, upstream, baseUrl, taskId, family, options.signal)
   // The download leg gets its own phase and its own URL: the clip usually

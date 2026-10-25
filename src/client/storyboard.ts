@@ -87,10 +87,16 @@ export type ShotState = 'empty' | 'generating' | 'ready' | 'failed'
  * node that no longer exists. A node with no clip but a recorded failure is
  * `failed`; a node that is merely a placeholder is `generating`, because that
  * is what its own spinner says.
+ *
+ * `stale` is checked BEFORE "a clip means ready": an invalidated shot still
+ * carries its old clip (the file is kept on purpose), so the clip test would
+ * otherwise report it finished forever and the broken join would never be
+ * offered for a re-run.
  */
 export function shotState(shot: CanvasShot, nodes: readonly CanvasNode[]): ShotState {
   const node = shotNodeOf(shot, nodes)
   if (node === undefined) return 'empty'
+  if (shot.stale === true) return 'failed'
   const metadata = node.metadata ?? {}
   if ((metadata.video?.url ?? '') !== '') return 'ready'
   if (metadata.status === 'error') return 'failed'
@@ -157,12 +163,47 @@ export function nextShotIndex(board: CanvasStoryboard, nodes: readonly CanvasNod
  * when a listed clip cannot be read. Leaving them out here means the stitch
  * button matches what the user can actually watch, and the caller reports the
  * shortfall rather than silently producing a shorter film.
+ *
+ * A STALE shot's file is still on disk and still playable, but it is not part
+ * of the film any more — it was made from a tail frame that no longer exists,
+ * so stitching it would splice in a break the user has already been told about.
+ * It must be left out here even though its node has bytes.
  */
 export function storyboardClipIds(board: CanvasStoryboard, nodes: readonly CanvasNode[]): string[] {
   return board.shots.flatMap(shot => {
+    if (shot.stale === true) return []
     const node = shotNodeOf(shot, nodes)
     return node === undefined || (node.metadata?.video?.url ?? '') === '' ? [] : [node.id]
   })
+}
+
+/**
+ * The board after shot `index` was re-submitted, with every already-produced
+ * shot after it marked stale.
+ *
+ * This is the fix for the silent break in `carry` continuity: the re-submitted
+ * shot gets a new tail frame, so every later shot was framed from a frame that
+ * is about to stop existing. They are not deleted — the user may still want to
+ * watch those takes — they are invalidated, which makes `shotState` report
+ * them `failed` and `nextShotIndex` pick them up again in order.
+ *
+ * Only shots that actually have a clip are touched: a downstream shot that was
+ * never produced has nothing to invalidate, and marking it would put a "this
+ * was invalidated" badge on a row the user never ran.
+ *
+ * The caller only applies this in `carry` mode. In `cut` mode the shots are
+ * independent by construction, so re-running one changes nothing about the
+ * others and invalidating them would destroy work for no reason.
+ */
+export function withStaleDownstream(board: CanvasStoryboard, index: number, nodes: readonly CanvasNode[]): CanvasStoryboard {
+  if (index < 0 || index >= board.shots.length) return board
+  const shots = board.shots.map((shot, position) => {
+    if (position <= index || shot.stale === true) return shot
+    const node = shotNodeOf(shot, nodes)
+    if (node === undefined || (node.metadata?.video?.url ?? '') === '') return shot
+    return { ...shot, stale: true }
+  })
+  return shots.every((shot, position) => shot === board.shots[position]) ? board : { ...board, shots }
 }
 
 /** The board after one edit, with the shot list kept consistent. */

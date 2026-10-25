@@ -480,6 +480,176 @@ export function drainVideoPosters(): Promise<void> {
   return drain
 }
 
+// ---------------------------------------------------------------- in-flight renders
+//
+// Why a separate file instead of a column on `index.json`: that index is the
+// finished-clip history. It is capped (`VIDEO_HISTORY_MAX`), evicted oldest
+// first, and scanned by the poster backfill, so an in-flight render parked
+// there would be trimmed away by retention rules that know nothing about it —
+// and the user would lose the one record that can reattach a paid render
+// (#10-1). This file is written at submit and deleted at the terminal state, so
+// it normally holds zero or one row per running task.
+
+/** One in-flight render, enough to reattach after a restart. */
+export interface PendingVideoTask {
+  /** The local queue id, so a restored record can be matched to the panel row. */
+  localTaskId: string
+  /** The provider's own task id: the only thing that reattaches the render. */
+  remoteTaskId: string
+  /**
+   * When the submit succeeded. The poll deadline is counted from here, not from
+   * the restart: a render that has already been running for 30 minutes must not
+   * get a fresh 40-minute budget (comemoe's ceiling), and a resumed task that
+   * already exceeded it still gets one poll so a finished clip is not thrown
+   * away.
+   */
+  submittedAt: number
+  /** Channel that owns the credentials, and its name for the failure copy. */
+  channelId?: string
+  channelName: string
+  /** Protocol family: drives the status URL and the poll cadence. */
+  family: string
+  /** The alias the user picked (what the panel and the history record). */
+  modelAlias: string
+  /** The upstream id actually submitted. */
+  upstream: string
+  /**
+   * The request summary that survives a restart.
+   *
+   * Reference frames are deliberately absent: they are base64 data URLs that
+   * would push this index into megabytes, and they are not needed to resume —
+   * polling and downloading only need the task id. The booleans are kept so the
+   * error copy can still say which mode failed.
+   */
+  request: {
+    mode: VideoMode
+    aspectRatio: string
+    resolution: string
+    seconds: number
+    /** Truncated: the panel shows it, nobody sends it anywhere on resume. */
+    prompt: string
+    refName?: string
+    hasImage: boolean
+    hasImages: number
+    hasFirstFrame: boolean
+    hasLastFrame: boolean
+  }
+}
+
+/** Cap on the prompt kept in the pending index; keeps the file in the KB range. */
+const PENDING_PROMPT_MAX = 400
+
+function pendingPath(): string { return path.join(videoRoot(), `${PENDING_INDEX_NAME}.json`) }
+const PENDING_INDEX_NAME = 'pending-tasks'
+
+/**
+ * The remote task ids of renders still in flight in THIS process.
+ *
+ * Maintained in memory because the queue needs it synchronously: `cancel()` is
+ * synchronous by contract (two callers await `runtime.videoQueue.cancel(id)` as
+ * a plain value), so it cannot await a file read just to learn which remote task
+ * the user is trying to stop.
+ */
+const inflightRemote = new Map<string, string>()
+
+/** The remote task id of one in-flight local task, when the submit already landed. */
+export function remoteTaskIdOf(localTaskId: string): string | undefined {
+  return inflightRemote.get(localTaskId)
+}
+
+/** Writes to the pending index are serialized: one shared file, read-modify-write. */
+let pendingIndexMutation: Promise<void> = Promise.resolve()
+
+function mutatePending<T>(operation: () => Promise<T>): Promise<T> {
+  const next = pendingIndexMutation.then(operation, operation)
+  pendingIndexMutation = next.then(() => undefined, () => undefined)
+  return next
+}
+
+/** Structural guard for one stored in-flight record. */
+function isPendingTask(value: unknown): value is PendingVideoTask {
+  if (value === null || typeof value !== 'object') return false
+  const record = value as Record<string, unknown>
+  return typeof record.localTaskId === 'string'
+    && typeof record.remoteTaskId === 'string'
+    && typeof record.submittedAt === 'number'
+    && typeof record.family === 'string'
+    && typeof record.modelAlias === 'string'
+    && record.request !== null
+    && typeof record.request === 'object'
+}
+
+/**
+ * Read the in-flight index, quarantining a corrupt file instead of ignoring it.
+ *
+ * Three states, deliberately distinct: the file is absent (nothing was running,
+ * the normal case after a clean exit); the file parses (resume it); the file is
+ * unreadable JSON or the wrong shape (a paid render may be sitting behind it, so
+ * the bytes are preserved as `.corrupt-<ts>` and the caller is told, rather than
+ * a silent `[]` that would look identical to "nothing was running").
+ *
+ * @returns the readable rows plus the reason the file was quarantined, if it was.
+ */
+export async function readPendingVideoTasks(): Promise<{ tasks: PendingVideoTask[]; corrupt?: string }> {
+  let raw: string
+  try {
+    raw = await fs.readFile(pendingPath(), 'utf8')
+  } catch {
+    // Missing file is the healthy "nothing was in flight" state.
+    return { tasks: [] }
+  }
+  try {
+    const parsed: unknown = JSON.parse(raw)
+    const rows = (parsed as { tasks?: unknown })?.tasks
+    if (!Array.isArray(rows)) throw new Error('pending-tasks.json has no tasks array')
+    return { tasks: rows.filter(isPendingTask) }
+  } catch (error) {
+    const reason = error instanceof Error ? error.message : String(error)
+    const quarantine = `${pendingPath()}.corrupt-${Date.now()}`
+    try { await fs.rename(pendingPath(), quarantine) } catch { /* the reason still travels */ }
+    return { tasks: [], corrupt: `${reason}（原文件已保留为 ${path.basename(quarantine)}）` }
+  }
+}
+
+/**
+ * Record one in-flight render so a restart can reattach it.
+ *
+ * Called by the engine after the submit returns a task id. A failure here must
+ * never fail the render — the money is already spent, and the clip is still
+ * downloadable in this process — so the caller swallows the rejection; the
+ * absent row only costs the restart guarantee.
+ */
+export async function writePendingVideoTask(entry: PendingVideoTask): Promise<void> {
+  inflightRemote.set(entry.localTaskId, entry.remoteTaskId)
+  await mutatePending(async () => {
+    await fs.mkdir(videoRoot(), { recursive: true })
+    const current = await readPendingVideoTasks()
+    const prompt = entry.request.prompt.length > PENDING_PROMPT_MAX
+      ? `${entry.request.prompt.slice(0, PENDING_PROMPT_MAX)}…`
+      : entry.request.prompt
+    const record: PendingVideoTask = { ...entry, request: { ...entry.request, prompt } }
+    const kept = [record, ...current.tasks.filter(task => task.localTaskId !== entry.localTaskId)]
+    const tmp = `${pendingPath()}.tmp-${process.pid}`
+    await fs.writeFile(tmp, JSON.stringify({ version: 1, tasks: kept }), 'utf8')
+    await fs.rename(tmp, pendingPath())
+  })
+}
+
+/** Drop one in-flight record once its render reached a terminal state. */
+export async function removePendingVideoTask(localTaskId: string): Promise<void> {
+  inflightRemote.delete(localTaskId)
+  await mutatePending(async () => {
+    const current = await readPendingVideoTasks()
+    if (current.tasks.length === 0) return
+    const kept = current.tasks.filter(task => task.localTaskId !== localTaskId)
+    if (kept.length === current.tasks.length) return
+    await fs.mkdir(videoRoot(), { recursive: true })
+    const tmp = `${pendingPath()}.tmp-${process.pid}`
+    await fs.writeFile(tmp, JSON.stringify({ version: 1, tasks: kept }), 'utf8')
+    await fs.rename(tmp, pendingPath())
+  })
+}
+
 /**
  * Abandon any drain that is still walking a data directory we no longer use.
  *

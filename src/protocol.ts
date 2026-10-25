@@ -632,6 +632,21 @@ export interface VideoGenerateRequest {
    * the same clip is reproduced without another chat call.
    */
   renderSource?: string
+  /**
+   * Reattach an already-submitted render instead of submitting a new one (#10-1).
+   *
+   * Set only by the host when it restores an in-flight task after a restart. The
+   * engine goes straight to polling; a request carrying this must never reach a
+   * submit, or the user pays for the render twice.
+   */
+  resume?: {
+    /** The provider's own task id. */
+    taskId: string
+    /** Protocol family that owns the status URL and the poll cadence. */
+    family: string
+    /** When the original submit succeeded: the poll budget counts from here. */
+    submittedAt: number
+  }
 }
 
 /**
@@ -753,6 +768,18 @@ export interface VideoHistoryEntryInput {
 export type VideoTaskStatus = 'queued' | 'running' | 'completed' | 'failed' | 'cancelled'
 
 /**
+ * What became of the render on the PROVIDER's side when the user cancelled.
+ *
+ * A cancel request only ever aborts the local poll loop, so the honest answer
+ * is a status rather than a boolean: this plugin has no measured cancel
+ * endpoint for any family (see `REMOTE_CANCEL` in video-engine.ts), so a
+ * cancelled task is normally `unsupported` — "stopped here, still running
+ * there". Without this field the panel said "已取消" and the user believed the
+ * billing had stopped, which is exactly the #10-2 complaint.
+ */
+export type VideoCancelState = 'pending' | 'stopped' | 'unconfirmed' | 'unsupported'
+
+/**
  * One queued or finished video generation as the browser consumes it.
  *
  * Shared by the host queue and the panel, so the wire shape is declared once
@@ -768,6 +795,22 @@ export interface VideoTask {
   finishedAt?: number
   result?: VideoGenerateResult
   error?: string
+  /**
+   * The provider's own task id, once the submit leg returned one (#10-1).
+   *
+   * Carried on the task so a restart can pick the SAME remote render back up
+   * instead of paying for a second submit. Absent for tasks that never reached
+   * the provider (queued behind another render, code-path renders).
+   */
+  remoteTaskId?: string
+  /** What happened to the provider-side render on cancel (see the type). */
+  remoteCancel?: VideoCancelState
+  /**
+   * Set when this task was re-attached after a host restart rather than
+   * submitted in this process. The panel says so, because "已用时" would
+   * otherwise start from zero on a render that has been running for minutes.
+   */
+  resumedAt?: number
 }
 
 /**
@@ -858,6 +901,17 @@ export interface CanvasShot {
   seconds: number
   /** The video node this shot produced, once one has been created. */
   nodeId?: string
+  /**
+   * The clip this shot produced can no longer be trusted as input to the next
+   * one.
+   *
+   * Set when a `carry` storyboard re-runs an earlier shot: every downstream
+   * clip was rendered from the old tail frame, so its first frame no longer
+   * matches. The clip file is kept (the user may still want to look at it) —
+   * only its standing as "ready input" is withdrawn. `submitShot` is the one
+   * place that clears it again, by re-running the shot.
+   */
+  stale?: boolean
 }
 
 /**

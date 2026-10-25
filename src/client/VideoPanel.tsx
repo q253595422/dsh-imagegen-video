@@ -21,6 +21,7 @@ import type { VideoDirectorPlan, VideoGenerateRequest, VideoHistoryEntry, VideoM
 import { VIDEO_ASPECT_RATIOS, VIDEO_DURATIONS, type VideoResolution } from '../protocol.ts'
 import { describeVideoModel, isLikelyVideoModelId, resolveVideoModelId } from '../video-model-catalog.ts'
 import { Select } from './Select.tsx'
+import { resolveModelChoice } from './ModelPicker.tsx'
 import { ErrorDetail } from './ErrorDetail.tsx'
 import { DiagnosticsButton, DiagnosticsPanel } from './DiagnosticsPanel.tsx'
 import type { ImageGenKey } from './locales.ts'
@@ -66,6 +67,33 @@ function formatElapsed(ms: number): string {
   const minutes = Math.floor(total / 60)
   const seconds = total % 60
   return minutes === 0 ? `${seconds}s` : `${minutes}m${String(seconds).padStart(2, '0')}s`
+}
+
+/** One picked video model: which channel offers it, and the alias on that channel. */
+interface VideoModelChoice {
+  /** Owning channel id; '' means no channel matched (legacy config). */
+  channelId: string
+  /** Model alias as configured on that channel. */
+  model: string
+}
+
+/**
+ * Encode one channel+alias pair as a Select value.
+ *
+ * The separator is NUL because a channel id and an alias are both free text:
+ * any printable separator could legally appear in either half and make two
+ * different pairs decode to the same key. Same encoding the image studio uses
+ * (`ImageGenPanel.modelChoiceKey`), so both panels pick models the same way.
+ */
+function videoModelKey(choice: VideoModelChoice): string {
+  return `${choice.channelId}\u0000${choice.model}`
+}
+
+/** Decode a Select value back into a channel+alias pair; '' means "no model". */
+function videoModelFromKey(key: string): VideoModelChoice {
+  const separator = key.indexOf('\u0000')
+  if (separator < 0) return { channelId: '', model: key }
+  return { channelId: key.slice(0, separator), model: key.slice(separator + 1) }
 }
 
 export interface VideoPanelProps {
@@ -120,7 +148,11 @@ export function VideoPanel(props: VideoPanelProps) {
   const options = useMemo(() => videoModelOptions(config), [config])
   const videoModels = options.models
   const [mode, setMode] = useState<VideoMode>('text')
-  const [model, setModel] = useState('')
+  // The selection is a channel AND an alias, not just an alias: the same alias
+  // may be configured on several channels with different upstream ids and keys,
+  // so an alias alone cannot say which channel the user meant.
+  const [choice, setChoice] = useState<VideoModelChoice>({ channelId: '', model: '' })
+  const model = choice.model
   const [prompt, setPrompt] = useState('')
   const [aspectRatio, setAspectRatio] = useState('16:9')
   const [resolution, setResolution] = useState<VideoResolution>('720P')
@@ -166,21 +198,53 @@ export function VideoPanel(props: VideoPanelProps) {
   const lastInput = useRef<HTMLInputElement | null>(null)
 
   // Keep the selected model valid as channels change (a channel may be removed
-  // or its video catalog emptied while the panel stays open).
+  // or its video catalog emptied while the panel stays open). Resolution keeps
+  // the chosen channel while it still offers the alias, which is what makes two
+  // channels sharing one alias stay distinguishable across a settings reload.
+  const groups = options.groups
+  const groupsKey = groups.map(group => `${group.id}:${group.models.join(',')}`).join('|')
+  /**
+   * Aliases configured on more than one channel.
+   *
+   * `options.models` dedupes them, so "how many times does this alias appear"
+   * has to be counted across the groups, not looked up in that flat list. Only
+   * these need the channel name appended to stay distinguishable in the menu.
+   */
+  const sharedAliases = useMemo(() => {
+    const seen = new Map<string, number>()
+    for (const group of groups) {
+      for (const alias of group.models) seen.set(alias, (seen.get(alias) ?? 0) + 1)
+    }
+    return new Set([...seen].filter(([, count]) => count > 1).map(([alias]) => alias))
+  }, [groupsKey])
   useEffect(() => {
-    if (videoModels.length === 0) { setModel(''); return }
-    if (!videoModels.includes(model)) setModel(videoModels[0]!)
-  }, [videoModels, model])
+    if (groups.length === 0) {
+      if (choice.channelId !== '' || choice.model !== '') setChoice({ channelId: '', model: '' })
+      return
+    }
+    const next = resolveModelChoice(groups, choice, options.defaultChannelId)
+    if (next.channelId !== choice.channelId || next.model !== choice.model) setChoice(next)
+  }, [groupsKey, options.defaultChannelId])
 
   /**
    * Capabilities belong to the id the provider receives, not to the alias.
    * A channel can map `seedance-hd` → a fast id that caps at 720p; describing
    * the alias would offer 1080P and then quietly render 720p.
+   *
+   * The chosen channel is searched first: `resolveVideoModelId` stops at the
+   * first channel carrying the alias, which for a shared alias would otherwise
+   * describe the OTHER channel's mapping and offer tiers this run cannot use.
    */
-  const catalogModel = useMemo(
-    () => resolveVideoModelId(model, config?.channels),
-    [config, model],
-  )
+  const catalogModel = useMemo(() => {
+    const channels = config?.channels ?? []
+    const ordered = choice.channelId === ''
+      ? channels
+      : [
+          ...channels.filter(channel => channel.id === choice.channelId),
+          ...channels.filter(channel => channel.id !== choice.channelId),
+        ]
+    return resolveVideoModelId(model, ordered)
+  }, [config, choice.channelId, model])
   const catalog = describeVideoModel(catalogModel)
   const unknownModel = model !== '' && catalog.family === 'unknown'
 
@@ -285,6 +349,10 @@ export function VideoPanel(props: VideoPanelProps) {
   const buildRequest = (): VideoGenerateRequest => ({
     mode,
     model,
+    // Name the channel explicitly: without it the host resolves the alias to the
+    // first channel that happens to configure it, which may be a different
+    // channel (different upstream id, different key) than the one picked here.
+    ...choice.channelId === '' ? {} : { channelId: choice.channelId },
     prompt: prompt.trim(),
     aspectRatio,
     resolution,
@@ -513,11 +581,24 @@ export function VideoPanel(props: VideoPanelProps) {
           <div className={css.videoParams}>
             <div className={css.videoParam}>
               <span className={css.videoLabel}>{tt('video.model')}</span>
-              <Select className={css.videoSelect} value={model} onChange={setModel} aria-label={tt('video.model')}>
-                {options.groups.map(group => (
+              <Select
+                className={css.videoSelect}
+                value={videoModelKey(choice)}
+                onChange={key => { setChoice(videoModelFromKey(key)) }}
+                aria-label={tt('video.model')}
+              >
+                {groups.map(group => (
                   group.models.length === 0 ? null : (
                     <optgroup key={group.id || 'default'} label={group.name}>
-                      {group.models.map(alias => <option key={`${group.id}:${alias}`} value={alias}>{alias}</option>)}
+                      {/* A shared alias reads identically in two optgroups, and the
+                          collapsed trigger shows only the label of the selected one,
+                          so repeats carry their channel name to stay tellable apart. */}
+                      {group.models.map(alias => <option
+                        key={videoModelKey({ channelId: group.id, model: alias })}
+                        value={videoModelKey({ channelId: group.id, model: alias })}
+                      >{sharedAliases.has(alias) && group.name !== ''
+                          ? `${alias} · ${group.name}`
+                          : alias}</option>)}
                     </optgroup>
                   )
                 ))}
@@ -647,6 +728,11 @@ export function VideoPanel(props: VideoPanelProps) {
                     ) : null}
                   </div>
                   <p className={css.videoTaskPrompt} title={task.request.prompt}>{task.request.prompt}</p>
+                  {/* 取消只停掉本地轮询：这个插件没有任何协议族的取消端点（见
+                      video-engine.ts 的 REMOTE_CANCEL），所以不写清楚就等于告诉
+                      用户「钱停了」，而远端仍在按分钟渲染计费（#10-2）。 */}
+                  {task.status === 'cancelled' && task.remoteCancel === 'unsupported' ? <p className={css.videoHint} data-video-cancel-local-only="">{tt('video.cancelLocalOnly')}</p> : null}
+                  {task.resumedAt !== undefined ? <p className={css.videoHint} data-video-resumed="">{tt('video.resumed')}</p> : null}
                   {task.status === 'failed' && task.error !== undefined ? <ErrorDetail message={task.error} summary={tt('video.failed')} /> : null}
                   {/* The plan the run actually used: the request prompt above is
                       what the user typed, this is what the provider received. */}
