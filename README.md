@@ -297,7 +297,7 @@ dsh plugin --profile web add ./q253595422-dsh-imagegen-video-1.15.2.tgz
   <img src="docs/images/wechat-group-qr.png" alt="微信群「龙虾吹水🦞群」的加群二维码" width="360" />
 </div>
 
-> 二维码 7 天内有效（2026 年 10 月 25 日前）。过期或人数已满时，请改到
+> 二维码 7 天内有效（2026 年 11 月 1 日前）。过期或人数已满时，请改到
 > [Issues](https://github.com/q253595422/dsh-imagegen-video/issues) 提问题，
 > 并提醒维护者换一张新码。安全敏感的问题不要发在群里，也不要贴 API 密钥。
 
