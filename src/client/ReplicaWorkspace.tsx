@@ -317,7 +317,7 @@ export function ReplicaWorkspace(props: ReplicaWorkspaceProps): React.JSX.Elemen
 
           {/* The honesty block. Two states, both explicit: nothing dropped, or
               exactly how many of the picked references will not be sent and why. */}
-          <div className={css.capacity} data-tone={capacity.dropped > 0 ? 'warn' : 'info'}>
+          <div className={css.capacity} data-replica-capacity="" data-tone={capacity.dropped > 0 ? 'warn' : 'info'}>
             {capacity.dropped > 0 ? (
               <span>
                 {tt('replica.capacity.dropped', { used: capacity.usable, picked })}
@@ -327,7 +327,7 @@ export function ReplicaWorkspace(props: ReplicaWorkspaceProps): React.JSX.Elemen
             ) : (
               <span>
                 {references.length === 0
-                  ? tt('replica.capacity.none', { count: capacity.usable })
+                  ? tt('replica.capacity.none', { count: capacity.limit })
                   : tt('replica.capacity.all', { used: references.length, limit: capacity.usable })}
               </span>
             )}
@@ -483,7 +483,11 @@ export function ReplicaWorkspace(props: ReplicaWorkspaceProps): React.JSX.Elemen
               data-primary="true"
               disabled={submitDisabled}
             >{busy ? tt('replica.generating') : tt('replica.generate')}</button>
-            <span className={css.fieldNote}>{tt('replica.submitHint', { used: Math.min(capacity.usable, picked), picked })}</span>
+            <span className={css.fieldNote}>
+              {picked === 0
+                ? tt('replica.submitHintEmpty', { limit: capacity.limit })
+                : tt('replica.submitHint', { used: Math.min(capacity.usable, picked), picked })}
+            </span>
             {error !== null ? <p className={css.error}>{error}</p> : null}
           </div>
         </form>

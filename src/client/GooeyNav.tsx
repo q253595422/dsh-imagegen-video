@@ -43,9 +43,30 @@ export function GooeyNav(props: {
     if (container === null || filter === null || text === null) return
     const containerRect = container.getBoundingClientRect()
     const pos = element.getBoundingClientRect()
+    // `.container` is a SCROLL container (`overflow-x: auto`), and both rects
+    // above are VIEWPORT coordinates: `pos.x` is where the tab is on screen and
+    // `containerRect.x` is where the container's viewport edge is on screen.
+    // Their difference is therefore the tab's offset from the container's
+    // visible left edge, which is NOT the same as its offset from the
+    // container's content origin -- once the row is scrolled, the content has
+    // moved left by `scrollLeft` while the viewport edge has not.
+    //
+    // The pill and its ink (`.effect` / `.effectFilter` / `.effectText`) are
+    // children of the container, so `left`/`top` are resolved against the
+    // CONTENT box: they need the content coordinate, not the visible-edge
+    // coordinate. Adding the scroll amount back converts between the two, and
+    // it is also why no scroll listener is needed here -- the decoration is
+    // positioned in the same coordinate space the content scrolls in, so the
+    // browser carries it along for free. Without this the pill was painted at
+    // the tab's pre-scroll position, which is the user-visible "every title
+    // looks like two titles" after clicking a tab on the right-hand end.
+    //
+    // `scrollTop` is 0 today (the row only scrolls horizontally) but is read
+    // anyway: a later `overflow-y` on this container would otherwise reintroduce
+    // the same bug vertically, and nothing would fail loudly.
     const styles = {
-      left: `${pos.x - containerRect.x}px`,
-      top: `${pos.y - containerRect.y}px`,
+      left: `${pos.x - containerRect.x + container.scrollLeft}px`,
+      top: `${pos.y - containerRect.y + container.scrollTop}px`,
       width: `${pos.width}px`,
       height: `${pos.height}px`,
     }

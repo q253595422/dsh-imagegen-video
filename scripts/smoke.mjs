@@ -4768,23 +4768,46 @@ await check('D3 sidebar entry mounts inside desktop and unknown sidebar shells, 
   assert.equal(replacementButton.hasAttribute('data-dsh-imagegen-new-session'), false, 'the replacement action is cleaned up on unload')
   assert.equal(jsdomDocument.querySelector('[data-dsh-imagegen-session-tabs]') === null, true)
 
-  // --- a shell with no New Session affordance must not be mistaken for one: no
-  // tabs, no hidden brand button, and one explicit warning, because the silent
-  // return is exactly what made #20 hard to diagnose.
+  // --- a shell without a New Session affordance must still get an entry. Another
+  // plugin can take the sidebar over and hide that action (`display: none
+  // !important` — ds-bot's team view does exactly this), which used to leave the
+  // switcher with no seat at all and therefore no way into the studio. The column
+  // itself becomes the seat, and only the fallback carries its own marker.
   jsdomDocument.body.innerHTML =
     '<div data-pane="sidebar">'
     + '<div class="logoRow"><button class="brandButton" aria-label="Collapse sidebar">SESSION-TITLE-MUST-NOT-BE-LOGGED</button></div>'
     + '<div class="regionArea"></div>'
     + '</div>'
-  const disposeUnmounted = mount(controller, 'Session', 'Back to the current conversation', 'Image', 'Open the image studio')
-  assert.equal(jsdomDocument.querySelector('[data-dsh-imagegen-session-tabs]') === null, true, 'no tabs mount without a shell button to replace')
-  assert.equal(jsdomDocument.querySelector('[data-dsh-imagegen-history-host]') === null, true, 'no history host mounts either')
+  const fallbackPane = jsdomDocument.querySelector('[data-pane="sidebar"]')
+  const callsBeforeFallback = calls.length
+  const disposeFallback = mount(controller, 'Session', 'Back to the current conversation', 'Image', 'Open the image studio')
+  const fallbackTabs = jsdomDocument.querySelector('[data-dsh-imagegen-session-tabs]')
+  assert.ok(fallbackTabs !== null, 'the switcher mounts even when no shell New Session action is reachable')
+  assert.equal(fallbackTabs.parentElement, fallbackPane, 'the sidebar column itself becomes the seat')
+  assert.equal(fallbackTabs, fallbackPane.firstElementChild, 'the fallback switcher is the column first child')
+  assert.equal(fallbackTabs.getAttribute('data-dsh-imagegen-tabs-seat'), 'top', 'the fallback seat is marked so only that seat is restyled')
   assert.equal(jsdomDocument.querySelector('.brandButton').style.display, '', 'the brand button is not mistaken for the new-session control')
+  assert.equal(jsdomDocument.querySelector('.brandButton').hasAttribute('data-dsh-imagegen-new-session'), false, 'no action marker lands on an unrelated control')
+  fallbackTabs.querySelector('[data-dsh-imagegen-tab="image"]').dispatchEvent(new jsdomWindow.MouseEvent('click', { bubbles: true }))
+  assert.equal(calls.slice(callsBeforeFallback).join(','), 'open', 'the fallback switcher opens the studio like the seated one')
+  assert.equal(jsdomDocument.querySelector('[data-dsh-imagegen-history-host]').parentElement.className, 'regionArea', 'the history host still seats in the region area')
+  await new Promise(resolve => setTimeout(resolve, 60))
+  assert.equal(warnings.length, 0, `a mounted fallback entry logs nothing: ${warnings.join(' | ')}`)
+  disposeFallback()
+  assert.equal(jsdomDocument.querySelector('[data-dsh-imagegen-session-tabs]') === null, true, 'the fallback disposer takes the tabs back out')
+  assert.equal(fallbackPane.hasAttribute('data-dsh-imagegen-sidebar-root'), false, 'the fallback root marker is cleared on unload')
+
+  // --- a page with no sidebar at all reaches no seat, and says so: the silent
+  // return is exactly what made #20 hard to diagnose.
+  jsdomDocument.body.innerHTML = '<main></main>'
+  const disposeUnmounted = mount(controller, 'Session', 'Back to the current conversation', 'Image', 'Open the image studio')
+  assert.equal(jsdomDocument.querySelector('[data-dsh-imagegen-session-tabs]') === null, true, 'a page with no sidebar mounts no tabs')
+  assert.equal(jsdomDocument.querySelector('[data-dsh-imagegen-history-host]') === null, true, 'no history host mounts either')
   await new Promise(resolve => setTimeout(resolve, 60))
   const warning = warnings.find(line => line.includes('sidebar entry stayed unmounted'))
   assert.ok(warning !== undefined, `an unreachable shell is reported instead of failing silently: ${warnings.join(' | ')}`)
-  assert.match(warning, /new-session button not found/)
-  assert.match(warning, /body>div/, 'the warning carries a shell probe for bug reports')
+  assert.match(warning, /sidebar root not found/)
+  assert.match(warning, /body>main/, 'the warning carries a shell probe for bug reports')
   assert.equal(warning.includes('SESSION-TITLE-MUST-NOT-BE-LOGGED'), false, 'the probe never dumps sidebar content')
   disposeUnmounted()
   jsdomWindow.setTimeout = realSetTimeout
@@ -5543,6 +5566,16 @@ await check('E1 client apply mounts the sidebar entry and studio (jsdom)', async
           }),
         }),
       }
+    }
+    // The two routes the form workspaces submit to. Answered here so a submit
+    // click completes instead of landing on the catch-all below: the checks that
+    // count requests need the request to be recorded, and a throw here would
+    // also paint an error into the workspace a later check reads.
+    if (path.endsWith('/generate')) {
+      return { ok: true, json: async () => ({ ok: true, images: [{ mime: 'image/png', b64: pngBytes.toString('base64') }] }) }
+    }
+    if (path.endsWith('/prompt-enhance')) {
+      return { ok: true, json: async () => ({ ok: true, prompt: JSON.stringify({ title: '促销标题', body: '促销正文', tags: ['好物'] }) }) }
     }
     throw new Error(`unexpected fetch: ${path}`)
   }
@@ -7717,6 +7750,13 @@ await check('E1 client apply mounts the sidebar entry and studio (jsdom)', async
     const outfitWorkspace = view.querySelector('[data-outfit]')
     assert.ok(outfitWorkspace !== null, 'outfit workspace is rendered')
     assert.ok(outfitWorkspace.textContent?.includes('最多 4 张服装图'), 'the outfit hint states the real upload limit')
+    // Nothing has been generated yet, so the results column is showing its empty
+    // state. `outfit.resultAlt` is the alt text of a finished picture ("生成结果 1")
+    // and it used to stand in for the empty state, which reads like a result has
+    // already come back. Pin the dedicated empty-state key instead, and pin the
+    // other reading out so nobody quietly swaps it back.
+    assert.ok(outfitWorkspace.textContent?.includes('生成结果会出现在这里'), 'the outfit results area describes an empty state, not a result')
+    assert.equal(outfitWorkspace.textContent?.includes('生成结果 1'), false, 'the empty outfit results area must not read like a finished result')
     assert.equal(view.querySelectorAll('[role="tablist"] button').length, 9, 'outfit keeps the nine top-nav entries')
 
     // Promo mode is the ninth workspace: it has to mount a link field and the four
@@ -7728,8 +7768,84 @@ await check('E1 client apply mounts the sidebar entry and studio (jsdom)', async
     const promoWorkspace = view.querySelector('[data-promo]')
     assert.ok(promoWorkspace !== null, 'promo workspace is rendered')
     assert.ok(promoWorkspace.querySelector('input[placeholder="粘贴商品链接"]') !== null, 'promo workspace offers a product-link field')
-    assert.equal(promoWorkspace.querySelectorAll('select option').length, 4, 'promo workspace offers four platform styles')
+    // task-29: the platform picker became four pills (a <select> hid its current
+    // value until it was opened). The assertion is deliberately NOT "there are
+    // four <option>s" any more — that would pass for a stray select that nobody
+    // renders. It checks the pill group carries the same four values the
+    // <option>s did, because `promoImagePrompt` switches on them.
+    const promoPills = [...promoWorkspace.querySelectorAll('[data-promo-platform]')]
+    assert.deepEqual(promoPills.map(pill => pill.getAttribute('data-promo-platform')), ['xiaohongshu', 'douyin', 'taobao', 'dewu'], 'promo workspace offers the four platform styles as pills')
+    assert.equal(promoWorkspace.querySelectorAll('select option').length, 0, 'the platform picker is no longer a hidden select')
     assert.equal(view.querySelectorAll('[role="tablist"] button').length, 9, 'promo keeps the nine top-nav entries')
+
+    // One click must bill one generation. The submit buttons in both form
+    // workspaces carried `type="submit"` AND an `onClick` that called the same
+    // handler, so a single click ran the submit path and the click path: two
+    // `/generate` requests, two charges, for one press. The count is observed on
+    // the wire (the fetch stub records every path) rather than inferred from the
+    // markup, because only the request count says the user is billed once.
+    const promoNameField = promoWorkspace.querySelector('input[placeholder="商品名称"]')
+    assert.ok(promoNameField !== null, 'promo workspace offers a product-name field')
+    Object.getOwnPropertyDescriptor(jsdomWindow.HTMLInputElement.prototype, 'value').set.call(promoNameField, '测试保温杯')
+    promoNameField.dispatchEvent(new jsdomWindow.Event('input', { bubbles: true }))
+    await new Promise(resolve => setTimeout(resolve, 30))
+    const promoSubmit = promoWorkspace.querySelector('button[type="submit"]')
+    assert.ok(promoSubmit !== null, 'promo submit button is rendered')
+    assert.equal(promoSubmit.disabled, false, 'promo submit enables once a product name exists')
+    const generatePathsBefore = requestPaths.filter(path => path.endsWith('/generate')).length
+    promoSubmit.dispatchEvent(new jsdomWindow.MouseEvent('click', { bubbles: true, cancelable: true }))
+    await new Promise(resolve => setTimeout(resolve, 120))
+    const generatePathsAfter = requestPaths.filter(path => path.endsWith('/generate')).length
+    assert.equal(
+      generatePathsAfter - generatePathsBefore,
+      1,
+      `one click on promo's submit must issue one generation, not ${generatePathsAfter - generatePathsBefore}`,
+    )
+    // The same defect lived in the outfit form. It needs a model and clothing to
+    // reach its handler, so the wire cannot be observed there without a long
+    // fixture; the markup rule that caused both is checked directly instead.
+    for (const file of ['OutfitWorkspace.tsx', 'PromoWorkspace.tsx']) {
+      const source = readFileSync(new URL(`../src/client/${file}`, import.meta.url), 'utf8')
+      for (const tag of source.match(/<button\b[^>]*>/g) ?? []) {
+        const isSubmit = /type="submit"/.test(tag)
+        assert.equal(
+          isSubmit && /onClick=/.test(tag),
+          false,
+          `${file}: a submit button must not also carry onClick — the click and the submit both run: ${tag}`,
+        )
+      }
+    }
+
+    // The remake workspace used to print "参考图上限 0 张" with an empty form,
+    // because the capacity line showed `usable` — a number that is 0 whenever
+    // nothing is picked — where a ceiling belongs. The fixture model resolves to
+    // the generic branch (5), so the number is pinned here: if the line ever
+    // shows anything but the model's real ceiling, this fails.
+    const replicaSwitch = [...view.querySelectorAll('[role="tablist"] button')].find(button => button.textContent === '爆款复刻')
+    assert.ok(replicaSwitch !== undefined, 'replica top-nav entry is present')
+    replicaSwitch.dispatchEvent(new jsdomWindow.MouseEvent('click', { bubbles: true, cancelable: true }))
+    await new Promise(resolve => setTimeout(resolve, 90))
+    const replicaWorkspace = view.querySelector('[data-replica-workspace]')
+    assert.ok(replicaWorkspace !== null, 'replica workspace is rendered')
+    // The bundle renames CSS-module classes (`.capacity` → `MTiGsq_capacity`), so
+    // the honest block is selected by its data attribute and the line by its own
+    // hook, exactly as the other workspaces are.
+    const capacityBlock = replicaWorkspace.querySelector('[data-replica-capacity]')
+    assert.ok(capacityBlock !== null, 'the replica capacity line is rendered')
+    const emptyCapacity = capacityBlock.textContent ?? ''
+    assert.equal(emptyCapacity.includes('0 张'), false, `an empty form must not advertise a ceiling of zero: ${emptyCapacity}`)
+    assert.match(emptyCapacity, /5 张/, `the empty form states the model's real ceiling: ${emptyCapacity}`)
+    const submitNote = [...replicaWorkspace.querySelectorAll('span')].find(node => /本次会带上|先加参考图/.test(node.textContent ?? ''))
+    assert.ok(submitNote !== undefined, 'the replica submit hint is rendered')
+    assert.equal(submitNote.textContent, '先加参考图；这个模型最多带 5 张。', `an empty form must not count 0 of 0 images: ${submitNote.textContent}`)
+    // Uploading one reference restores the counting sentence, which is what
+    // proves the empty wording above is a state and not a rewrite of the line.
+    const replicaInput = replicaWorkspace.querySelector('input[type="file"][accept="image/*"]')
+    assert.ok(replicaInput !== null, 'the replica reference input is rendered')
+    Object.defineProperty(replicaInput, 'files', { value: [new jsdomWindow.File([new Uint8Array([0x89, 0x50, 0x4e, 0x47])], 'shot.png', { type: 'image/png' })], configurable: true })
+    replicaInput.dispatchEvent(new jsdomWindow.Event('change', { bubbles: true }))
+    await new Promise(resolve => setTimeout(resolve, 90))
+    assert.match(capacityBlock.textContent ?? '', /1 张全部会发送/, `a picked reference states how many are sent: ${capacityBlock.textContent}`)
   } finally {
     // Drain pending React work BEFORE restoring the globals. React DOM reads
     // `window` during commit (getActiveElementDeep), so a flush that lands after

@@ -496,6 +496,28 @@ if (tsc.status !== 0) {
 }
 const themeModuleSource = readFileSync(join(themeModuleDir, 'surface-theme.js'), 'utf8')
 
+// The REAL component, transpiled the same way, for the scroll-drift fixture
+// below. Unlike the theme fixture (which re-implements two lines of the
+// component) this one MOUNTS the component: the bug is in `updateEffectPosition`,
+// which only the real code runs. `--noCheck` because the transpile is a loader,
+// not a type gate -- `tsc --noEmit` above is the type gate. The transpile keeps
+// the import specifiers verbatim (`./surface-theme.ts`, `./GooeyNav.module.css`),
+// so the server below has to answer those two URLs as well as the React shims.
+const navModuleDir = join(tmpdir(), `dsh-gooey-nav-${process.pid}`)
+mkdirSync(navModuleDir, { recursive: true })
+const navTsc = spawnSync(join(projectRoot, 'node_modules/.bin/tsc'), [
+  join(projectRoot, 'src/client/GooeyNav.tsx'),
+  '--outDir', navModuleDir,
+  '--module', 'esnext', '--target', 'es2022', '--jsx', 'react-jsx',
+  '--moduleResolution', 'bundler', '--skipLibCheck', '--noCheck',
+], { cwd: projectRoot, encoding: 'utf8' })
+if (navTsc.status !== 0) {
+  console.error('\nFAIL: could not transpile GooeyNav.tsx for the scroll-drift check.')
+  console.error(navTsc.stdout ?? '', navTsc.stderr ?? '')
+  process.exit(1)
+}
+const navModuleSource = readFileSync(join(navModuleDir, 'GooeyNav.js'), 'utf8')
+
 const page = `<!doctype html><html><head><style>
   /* A light surface, then flipped to dark at runtime. */
   body { margin: 0; background: #ffffff; color: #17171c; }
@@ -533,8 +555,134 @@ const page = `<!doctype html><html><head><style>
   </script>
 </body></html>`
 
+// --- the nav row scrolls, and the pill has to follow it ---------------------
+// The user's report: click "A+ 详情页" on the right-hand end of the row and
+// EVERY title looks like two. There is only one `[role="tab"]` per label (the
+// DOM does not double); the duplicate is the decoration layer
+// (`span.effectText`, `z-index: 1`, `pointer-events: none`) plus the pill, which
+// were positioned from VIEWPORT coordinates inside a container that is itself a
+// scroll container (`overflow-x: auto`), so after the row scrolled they stayed
+// at the pre-scroll offset. At 1440px the row does not overflow
+// (`scrollWidth === clientWidth`), which is why it never reproduced there.
+//
+// Mounting the real component is not optional here: `updateEffectPosition` is
+// component code, and the whole defect lives inside it. The scroll is not
+// reported by any event the component listens to (no scroll listener, by
+// design), so the only honest test is: scroll the container, then measure where
+// the decoration is against the tab it belongs to.
+const navScrollPage = `<!doctype html><html><head><style>
+  body { margin: 0; background: #ffffff; color: #17171c; }
+  /* The four tokens .container reads for its palette. They only affect color;
+     the geometry does not depend on them, but a var() that never resolves is
+     noise in the console, so they are supplied. */
+  body {
+    --dsw-alias-brand-primary: #17171c;
+    --dsw-static-red-400: #f25a5a;
+    --dsw-static-neutral-00: #ffffff;
+    --dsw-static-blue-400: #60a5fa;
+  }
+  /* Narrow enough that the nine real labels cannot fit: without an overflow
+     this fixture would measure nothing and pass vacuously. */
+  #host { width: 520px; }
+  ${gooeyCss}
+</style>
+<script type="importmap">
+{ "imports": {
+  "react": "/react.mjs",
+  "react/jsx-runtime": "/jsx-runtime.mjs",
+  "react-dom/client": "/react-dom-client.mjs"
+} }
+</script>
+</head><body>
+  <div id="host"></div>
+  <!-- The UMD builds are classic scripts: they assign window.React /
+       window.ReactDOM, which the three ESM shims above read. They have to load
+       BEFORE the module script, or the shims find no globals. -->
+  <script src="/react.js"></script>
+  <script src="/react-dom.js"></script>
+  <script type="module">
+    import { createRoot } from 'react-dom/client'
+    import { createElement } from 'react'
+    import { GooeyNav } from '/GooeyNav.js'
+    // The real nine workspace labels, in the order the panel renders them: the
+    // overflow has to come from labels a user actually sees, because the widths
+    // are what decides whether the row overflows.
+    const items = ['普通生图','素材库','无限画布','电商模式预览','图片转 PPT','爆款复刻','服饰穿戴','带货图文','A+ 详情页'].map((label, index) => ({ key: String(index), label }))
+    const host = document.getElementById('host')
+    const root = createRoot(host)
+    let activeIndex = 0
+    // createElement, not a direct call to GooeyNav: a component invoked as a
+    // plain function runs its hooks with no React dispatcher installed, which
+    // fails as "Invalid hook call" -- the fixture would report a harness
+    // failure and prove nothing about the drift.
+    const render = () => root.render(createElement(GooeyNav, { items, activeIndex, onSelect: index => { activeIndex = index; render() }, ariaLabel: '工作区' }))
+    render()
+    // The mount effects run synchronously in React 18's createRoot, but the
+    // ResizeObserver callback that positions the pill is a separate task: poll
+    // for the decoration existing rather than assuming a number of frames.
+    const ready = () => host.querySelector('.effectText') !== null && host.querySelector('.effectFilter') !== null
+    const deadline = Date.now() + 2000
+    const wait = () => { if (ready() || Date.now() > deadline) { window.__navReady = ready(); return }; requestAnimationFrame(wait) }
+    requestAnimationFrame(wait)
+  </script>
+</body></html>`
+
 const server = (await import('node:http')).createServer((req, res) => {
   if (req.url?.startsWith('/surface-theme.mjs') === true) {
+    res.writeHead(200, { 'content-type': 'text/javascript; charset=utf-8' })
+    res.end(themeModuleSource)
+    return
+  }
+  // The scroll-drift fixture mounts the real component, so it needs React
+  // itself. The UMD development builds are served as plain scripts (they set
+  // `window.React` / `window.ReactDOM`), and the three `.mjs` shims below turn
+  // those globals into the ESM named exports the importmap points at. Serving
+  // the ESM builds directly would need an import map per React internal
+  // specifier, which is exactly what the shims avoid.
+  if (req.url?.startsWith('/react.js') === true) {
+    res.writeHead(200, { 'content-type': 'text/javascript; charset=utf-8' })
+    res.end(readFileSync(join(projectRoot, 'node_modules/react/umd/react.development.js')))
+    return
+  }
+  if (req.url?.startsWith('/react-dom.js') === true) {
+    res.writeHead(200, { 'content-type': 'text/javascript; charset=utf-8' })
+    res.end(readFileSync(join(projectRoot, 'node_modules/react-dom/umd/react-dom.development.js')))
+    return
+  }
+  if (req.url?.startsWith('/react.mjs') === true) {
+    res.writeHead(200, { 'content-type': 'text/javascript; charset=utf-8' })
+    res.end('const R = window.React; export const useEffect = R.useEffect, useRef = R.useRef, useState = R.useState, useMemo = R.useMemo, useCallback = R.useCallback, createElement = R.createElement, Fragment = R.Fragment; export default R;')
+    return
+  }
+  if (req.url?.startsWith('/jsx-runtime.mjs') === true) {
+    res.writeHead(200, { 'content-type': 'text/javascript; charset=utf-8' })
+    res.end('const R = window.React; export const jsx = (t, p) => { const { children, ...rest } = p || {}; return children === undefined ? R.createElement(t, rest) : R.createElement(t, rest, children) }; export const jsxs = jsx; export const Fragment = R.Fragment;')
+    return
+  }
+  if (req.url?.startsWith('/react-dom-client.mjs') === true) {
+    res.writeHead(200, { 'content-type': 'text/javascript; charset=utf-8' })
+    res.end('export const createRoot = window.ReactDOM.createRoot; export default { createRoot };')
+    return
+  }
+  if (req.url?.startsWith('/GooeyNav.module.css') === true) {
+    // The transpiled component asks for its CSS module as a MODULE and gets a
+    // runtime object back, so this route has to answer with JS, not CSS: the
+    // real stylesheet is inlined in the page above. (No import-shape literal
+    // here on purpose: verify-tracked.mjs reads this file as TEXT, and a
+    // comment containing a relative specifier is indistinguishable from a real
+    // broken import -- it reports the import path as missing from the repo.)
+    res.writeHead(200, { 'content-type': 'text/javascript; charset=utf-8' })
+    res.end('export default new Proxy({}, { get: (_, key) => String(key) })')
+    return
+  }
+  if (req.url?.startsWith('/GooeyNav.js') === true) {
+    res.writeHead(200, { 'content-type': 'text/javascript; charset=utf-8' })
+    res.end(navModuleSource)
+    return
+  }
+  if (req.url?.startsWith('/surface-theme.ts') === true) {
+    // GooeyNav imports './surface-theme.ts' verbatim, so the transpiled module
+    // asks for that exact URL. Same bytes as the .mjs route above.
     res.writeHead(200, { 'content-type': 'text/javascript; charset=utf-8' })
     res.end(themeModuleSource)
     return
@@ -547,6 +695,7 @@ const server = (await import('node:http')).createServer((req, res) => {
   else if (req.url?.includes('mainslot=1') === true) res.end(mainSlotPage)
   else if (req.url?.includes('sourcetabs=1') === true) res.end(sourceTabsPage)
   else if (req.url?.includes('shortcuts=1') === true) res.end(shortcutPage)
+  else if (req.url?.includes('navscroll=1') === true) res.end(navScrollPage)
   else res.end(page)
 })
 await new Promise(r => server.listen(0, '127.0.0.1', r))
@@ -1340,6 +1489,142 @@ if (narrowLegend.overflowing > 0 || narrowLegend.pushed > 0) {
 }
 console.log('shortcut legend: fits the viewport at desktop width, single column on a phone')
 
+// --- the nav pill must not drift when the row scrolls -----------------------
+// A click is how the user reaches the far end of the row, and a click is what
+// repositions the pill (`burstRef` -> `updateEffectPosition`). So the fixture
+// drives a real mouse press on the last tab, at the tab's own centre, after
+// scrolling the row to its end -- the same gesture that produced the report.
+const navTarget = await (await fetch(`http://127.0.0.1:${launched.port}/json/new?${encodeURIComponent(`http://127.0.0.1:${port}/?navscroll=1`)}`, { method: 'PUT' })).json()
+const ws7 = new WebSocket(navTarget.webSocketDebuggerUrl)
+await new Promise(r => { ws7.onopen = r })
+let id7 = 0
+const send7 = (method, params) => new Promise(resolve => {
+  const myId = ++id7
+  const onMessage = e => { const m = JSON.parse(e.data); if (m.id === myId) { ws7.removeEventListener('message', onMessage); resolve(m) } }
+  ws7.addEventListener('message', onMessage)
+  ws7.send(JSON.stringify({ id: myId, method, params }))
+})
+const evaluate7 = async expression => {
+  const res = await send7('Runtime.evaluate', { expression, returnByValue: true, awaitPromise: true })
+  if (res.result?.exceptionDetails !== undefined) {
+    throw new Error(`page threw: ${JSON.stringify(res.result.exceptionDetails.exception?.description ?? res.result.exceptionDetails)}`)
+  }
+  return res.result.result.value
+}
+await send7('Runtime.enable', {})
+let navReady = false
+for (let i = 0; i < 40; i++) {
+  navReady = (await evaluate7('window.__navReady === true')) === true
+  if (navReady) break
+  await new Promise(r => setTimeout(r, 100))
+}
+if (!navReady) {
+  console.error('\nFAIL: the GooeyNav component never mounted in the scroll-drift fixture.')
+  console.error('The decoration spans are what drift, so a page without them proves')
+  console.error('nothing -- this is a broken harness, not a pass.')
+  process.exit(1)
+}
+
+// Measured the way the user sees it: the decoration's own box against the
+// active tab's box. Both are read in viewport coordinates, so a drift between
+// them is visible on screen as two copies of the same label.
+const navDrift = () => evaluate7(`(() => {
+  const container = document.querySelector('.container')
+  const tabs = [...container.querySelectorAll('li')]
+  const active = tabs.find(li => li.classList.contains('active')) ?? tabs[0]
+  const text = container.querySelector('.effectText')
+  const pill = container.querySelector('.effectFilter')
+  const box = active.getBoundingClientRect()
+  const textBox = text.getBoundingClientRect()
+  const pillBox = pill.getBoundingClientRect()
+  const activeX = Math.round(box.left)
+  return {
+    scrollLeft: Math.round(container.scrollLeft),
+    maxScroll: Math.round(container.scrollWidth - container.clientWidth),
+    activeX,
+    textX: Math.round(textBox.left),
+    pillX: Math.round(pillBox.left),
+    textDrift: Math.round(textBox.left) - activeX,
+    pillDrift: Math.round(pillBox.left) - activeX,
+    textWidth: Math.round(textBox.width),
+    activeWidth: Math.round(box.width),
+    tabCount: tabs.length,
+  }
+})()`)
+const navDriftReport = state => `scrollLeft=${state.scrollLeft}/${state.maxScroll}, active li at x=${state.activeX}, effectText at x=${state.textX} (drift ${state.textDrift}px), pill at x=${state.pillX} (drift ${state.pillDrift}px)`
+
+// First prove the fixture actually overflows. A row that fits measures a drift
+// of 0 whether or not the fix is in, which would make every assertion below
+// vacuous -- the same false green the 1440px window produced.
+const overflow = await navDrift()
+console.log(`nav row at 520px: ${overflow.tabCount} tabs, content overflows by ${overflow.maxScroll}px`)
+if (overflow.maxScroll <= 0) {
+  console.error('\nFAIL: the nine nav labels fit inside 520px, so this fixture proves nothing.')
+  console.error('Narrow #host or add labels: the point of the check is the row that')
+  console.error('overflows, because that is the only state where the drift is visible.')
+  process.exit(1)
+}
+
+// State 1: scrolled to the end, then the last tab clicked -- the reported
+// gesture. The click is a real mouse press at the tab's own centre, so it also
+// exercises the burst path (which calls updateEffectPosition itself).
+await evaluate7(`(() => {
+  const container = document.querySelector('.container')
+  container.scrollLeft = container.scrollWidth
+  return container.scrollLeft
+})()`)
+const lastTab = await evaluate7(`(() => {
+  const container = document.querySelector('.container')
+  const li = [...container.querySelectorAll('li')].at(-1)
+  const box = li.getBoundingClientRect()
+  return { x: Math.round(box.left + box.width / 2), y: Math.round(box.top + box.height / 2) }
+})()`)
+await send7('Input.dispatchMouseEvent', { type: 'mousePressed', x: lastTab.x, y: lastTab.y, button: 'left', clickCount: 1 })
+await send7('Input.dispatchMouseEvent', { type: 'mouseReleased', x: lastTab.x, y: lastTab.y, button: 'left', clickCount: 1 })
+// The pill animates over 300ms and the particle burst runs longer; waiting for
+// the transition to settle is what keeps this from reading a mid-animation box.
+await new Promise(r => setTimeout(r, 700))
+const afterSelect = await navDrift()
+console.log(`after selecting the last tab while scrolled right: ${navDriftReport(afterSelect)}`)
+
+// State 2 and 3: the same row, scrolled elsewhere, with the selection held.
+// These are the states that catch a fix that only works for one scroll offset
+// (for instance one that caches the scroll amount at selection time).
+const scrollStates = [0, 140]
+const observed = [afterSelect]
+for (const scrollLeft of scrollStates) {
+  await evaluate7(`(() => { document.querySelector('.container').scrollLeft = ${scrollLeft} })()`)
+  await new Promise(r => setTimeout(r, 250))
+  const state = await navDrift()
+  console.log(`after scrolling the row back to ${scrollLeft}: ${navDriftReport(state)}`)
+  observed.push(state)
+}
+
+for (const state of observed) {
+  if (Math.abs(state.textDrift) > 1 || Math.abs(state.pillDrift) > 1) {
+    console.error(`\nFAIL: the GooeyNav decoration drifts off the active tab by ${state.textDrift}px (ink) / ${state.pillDrift}px (pill) at scrollLeft=${state.scrollLeft}.`)
+    console.error(`  active li at x=${state.activeX}, effectText at x=${state.textX}, pill at x=${state.pillX}`)
+    console.error('The pill and its ink are positioned in the container\'s CONTENT space')
+    console.error('but computed from VIEWPORT coordinates, so after the row scrolls they')
+    console.error('stay at the pre-scroll offset. The user then sees the active label twice:')
+    console.error('once in the row, once painted under it by `span.effectText`.')
+    console.error('Add container.scrollLeft / container.scrollTop to the offsets.')
+    process.exit(1)
+  }
+}
+// And the decoration has to be the same SIZE as the tab it covers, or it is a
+// second, differently-shaped label rather than a copy of the same one.
+for (const state of observed) {
+  if (Math.abs(state.textWidth - state.activeWidth) > 1) {
+    console.error(`\nFAIL: the effect ink is ${state.textWidth}px wide over a ${state.activeWidth}px tab.`)
+    console.error('A decoration that does not cover its own tab reads as a second,')
+    console.error('differently-sized label -- which is the defect this fixture is about.')
+    process.exit(1)
+  }
+}
+console.log('nav pill: follows the active tab at every scroll offset, no double label')
+
+ws7.close()
 ws6.close()
 ws4.close()
 ws3.close()
@@ -1347,4 +1632,5 @@ ws2.close()
 ws5.close()
 ws.close(); launched.close(); server.close()
 rmSync(themeModuleDir, { recursive: true, force: true })
+rmSync(navModuleDir, { recursive: true, force: true })
 console.log('\nUI CONTRACTS VERIFIED')

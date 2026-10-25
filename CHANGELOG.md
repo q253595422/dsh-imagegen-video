@@ -5,6 +5,38 @@ Attribution for third-party code is in [NOTICE](./NOTICE).
 
 ## Releases
 
+### 1.17.1 — 导航不重影、侧栏换座不丢、上限不再自相矛盾
+
+- **修「点 A+ 详情页后导航栏出现两个标题」。** 根因在 `GooeyNav` 的
+  `updateEffectPosition`：它用 `getBoundingClientRect()` 取 tab 的视口坐标，却
+  拿去给一个 `overflow-x: auto` 容器里的子元素设 `left`。行不溢出时两套坐标
+  相等，一旦容器横向滚动，装饰层和滑块就整体偏一个 `scrollLeft`，看上去每项
+  都多印了一份。改成算 `left`/`top` 时加上 `container.scrollLeft`/`scrollTop`。
+  只在窄于 ~1280px（导航真的溢出）时复现，宽窗口上看不见。
+- **修一次点击扣两次费。** 「服饰穿戴」与「带货图文」的提交按钮同时带着
+  `type="submit"` 和指向同一处理函数的 `onClick`，表单提交与点击各触发一次，
+  一次点击发出两个 `/generate` 请求。去掉多余的 `onClick`，只留表单提交。
+- **修侧栏切换器在别的插件抢走侧栏后消失。** `seatOf()` 用 `querySelector`
+  取第一个锚点，而桌面外壳会先渲染一份 `display: none` 的移动端副本，取到的
+  常常是没有盒子、没人看得见的那个。改为按文档顺序取第一个**真的在画**的锚点
+  （`isVisible()` 一路向上查到 `body`）；「新建会话」行被隐藏时切换器退到栏首，
+  靠 `data-dsh-imagegen-tabs-seat='top'` 补间距。
+- **修空表单写着「参考图上限 0 张」。** `referenceCapacity()` 只返回 `usable`，
+  而它同时取决于上限和已选数量，空表单时就是 0，拿来当「上限」显示等于自相
+  矛盾。新增 `limit` 字段（单纯上限），空表单显示它；提交栏在没选图时改用自己的
+  文案。
+- **三个工作区重排。** 服饰穿戴、带货图文改为分区表单（字段分组带标题与说明）；
+  平台选择从 `<select>` 换成四个 pill（当前值在打开前看不见，值与标签不变）；
+  生成的文案落进可编辑输入框，复制按钮复制屏幕上的内容而非模型返回原文；空态
+  改用自己的文案键，不再借用「生成结果 1」这类看起来像已有结果的字符串。
+- **验证**：`tsc` 0 错、`tsdown` 通过、全量 `pnpm test` EXIT=0（245 行 `PASS`、
+  0 `FAIL`、`UI CONTRACTS VERIFIED`）、native-UI 契约 PASS、`verify-reproducible`
+  跨目录逐字节一致。导航漂移与双击提交都在真浏览器/真请求计数下验证，并各做了
+  负向破坏（改回去必红）；另加静态规则「`<button type="submit">` 不许带
+  `onClick`」。
+- **已知缺口**：`scrollTop` 的同款换算保留了，但容器纵向不滚、恒为 0，没有负向
+  对照能证明它必要——如实记在这里，不假装覆盖。
+
 ### 1.17.0 — 电商六件套、A+ 长图、带货图文，参考图按角色真传
 
 - **参考图带角色真传。** 过去 `refRole` 只用来拼一句提示词，真正进 `image` 的

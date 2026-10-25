@@ -1013,6 +1013,38 @@ const CASES = [
     to: '    : segment.outPoint',
     expect: /出点超过素材长度时按素材长度算/,
   },
+  {
+    // This is the user-visible symptom, verbatim: click "A+ 详情页" on the
+    // right-hand end of the nav row and every title looks like two. There is
+    // only one tab per label in the DOM; the second copy is the decoration
+    // layer (`span.effectText`, z-index 1, pointer-events none) plus the pill,
+    // which were placed from VIEWPORT coordinates inside a container that is
+    // itself a scroll container (`overflow-x: auto`). The row only overflows
+    // below ~1280px, which is why it never reproduced on a wide window.
+    //
+    // The mutation removes exactly the scroll amount from the left offset, so
+    // the fixture has to catch it by measuring the decoration against the
+    // active tab -- a source-level "does the string contain scrollLeft" check
+    // would pass on a fix that reads the wrong container.
+    name: 'the nav pill stops following the row when it scrolls',
+    runner: 'contracts',
+    file: 'src/client/GooeyNav.tsx',
+    from: 'pos.x - containerRect.x + container.scrollLeft',
+    to: 'pos.x - containerRect.x',
+    expect: /drifts off the active tab/,
+  },
+  {
+    // One press, one charge. The submit buttons carried `type="submit"` AND an
+    // `onClick` calling the same handler, so a click ran both paths and every
+    // generate was billed twice. Putting the `onClick` back is the exact
+    // mutation: it must make the request-count check go red.
+    name: 'a submit button also fires its own click handler',
+    runner: 'smoke',
+    file: 'src/client/PromoWorkspace.tsx',
+    from: '            <button type="submit" className={css.primary} disabled={!ready}>',
+    to: '            <button type="submit" className={css.primary} disabled={!ready} onClick={() => void generate()}>',
+    expect: /one click on promo's submit must issue one generation/,
+  },
 ]
 
 const RUNNERS = {

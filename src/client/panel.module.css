@@ -382,6 +382,13 @@ html[data-dsh-imagegen-active] [data-dsh-imagegen-sidebar-root][data-dsh-imagege
   background: var(--dsw-alias-bg-layer-1);
 }
 
+/* Fallback seat: another plugin took the shell's sidebar over and hid the New
+   Session row this switcher normally sits above, so it became the column's first
+   child instead. Only spacing differs from the seated row. */
+.sessionTabs[data-dsh-imagegen-tabs-seat='top'] {
+  margin: 0 0 8px;
+}
+
 .sessionTab {
   display: inline-flex;
   align-items: center;
