@@ -25,6 +25,7 @@
  */
 
 import { readFileSync, existsSync, readdirSync, mkdirSync, rmSync } from 'node:fs'
+import { readSourceText } from './lib/source-text.mjs'
 import { tmpdir } from 'node:os'
 import { spawnSync } from 'node:child_process'
 import { join } from 'node:path'
@@ -56,7 +57,7 @@ const launcherUsers = readdirSync(SCRIPT_DIR).filter(name => name.endsWith('.mjs
 const PORT_FLAG = `--remote-debugging-${'port'}=`
 const guessedPorts = []
 for (const name of launcherUsers) {
-  const source = readFileSync(new URL(name, SCRIPT_DIR), 'utf8')
+  const source = readSourceText(new URL(name, SCRIPT_DIR))
   // `=0` means "publish the port"; anything else is a guess. Written out rather
   // than pattern-matched so the offending value stays visible in the report.
   const guess = new RegExp(`${PORT_FLAG}(?!0\\b)([^\\s'"\`]+)`).exec(source)
@@ -75,7 +76,11 @@ console.log(`DevTools port: ${launcherUsers.length} scripts scanned, none guesse
 if (CHROME === null) skipWithoutChrome('the UI contract guards did NOT run.')
 
 const clientDir = new URL('../src/client/', import.meta.url)
-const read = name => readFileSync(new URL(name, clientDir), 'utf8')
+// Every source read below feeds a regex, so it goes through `readSourceText`:
+// a Windows checkout is CRLF and the cross-line patterns here are written with
+// `\n`. Normalising at the read is what makes a newly added pattern correct by
+// default, instead of leaving each one to remember `\r?`.
+const read = name => readSourceText(new URL(name, clientDir))
 
 // --------------------------------------------------------------- 3. stacking
 // Pure source invariant: every layer must read a scale variable, and the scale
@@ -197,7 +202,7 @@ if (!/flex:\s*none/.test(tabRule)) {
 // again further down the file (the favorites view groups by source), and a
 // slice running to EOF would match THAT call and pass no matter what the tab
 // row did -- a check that can never fail.
-const librarySource = readFileSync(new URL('TemplateLibrary.tsx', clientDir), 'utf8')
+const librarySource = readSourceText(new URL('TemplateLibrary.tsx', clientDir))
 const tablistAt = librarySource.indexOf('className={css.sourceTabs}')
 const tablistEnd = librarySource.indexOf('css.toolbar', tablistAt)
 const tabRowSource = tablistAt < 0 || tablistEnd < 0 ? '' : librarySource.slice(tablistAt, tablistEnd)
@@ -209,8 +214,8 @@ if (!/TEMPLATE_SOURCES\.map\(/.test(tabRowSource)) {
 }
 // Every registered source must actually be loadable, or its tab renders an
 // empty library. This is the seam the sources were added along.
-const protocolSource = readFileSync(new URL('protocol.ts', new URL('../src/', import.meta.url)), 'utf8')
-const storeSource = readFileSync(new URL('templates-store.ts', new URL('../src/', import.meta.url)), 'utf8')
+const protocolSource = readSourceText(new URL('protocol.ts', new URL('../src/', import.meta.url)))
+const storeSource = readSourceText(new URL('templates-store.ts', new URL('../src/', import.meta.url)))
 const registered = [...protocolSource.matchAll(/^\s{4}id:\s*'([a-z0-9-]+)',/gm)].map(match => match[1])
 // The label of each source, so the browser fixture below renders the REAL tab
 // labels instead of a hand-written list that would go stale the moment a source
@@ -485,7 +490,13 @@ const gooeySource = read('GooeyNav.tsx')
 const projectRoot = fileURLToPath(new URL('..', import.meta.url))
 const themeModuleDir = join(tmpdir(), `dsh-surface-theme-${process.pid}`)
 mkdirSync(themeModuleDir, { recursive: true })
-const tsc = spawnSync(join(projectRoot, 'node_modules/.bin/tsc'), [
+// `node <tsc's own JS entry>`, never `node_modules/.bin/tsc`. On Windows that
+// .bin entry is a POSIX shell script with `.CMD` and `.ps1` shims beside it, so
+// spawnSync on the extensionless name fails with EACCES or ENOENT -- and the
+// guard then reports "could not transpile surface-theme.ts", which reads like a
+// fault in the source instead of in the way it was invoked.
+const TSC = join(projectRoot, 'node_modules/typescript/bin/tsc')
+const tsc = spawnSync(process.execPath, [TSC,
   join(projectRoot, 'src/client/surface-theme.ts'),
   '--outDir', themeModuleDir,
   '--module', 'esnext', '--target', 'es2022', '--skipLibCheck',
@@ -495,7 +506,7 @@ if (tsc.status !== 0) {
   console.error(tsc.stdout ?? '', tsc.stderr ?? '')
   process.exit(1)
 }
-const themeModuleSource = readFileSync(join(themeModuleDir, 'surface-theme.js'), 'utf8')
+const themeModuleSource = readSourceText(join(themeModuleDir, 'surface-theme.js'))
 
 // The REAL component, transpiled the same way, for the scroll-drift fixture
 // below. Unlike the theme fixture (which re-implements two lines of the
@@ -506,7 +517,7 @@ const themeModuleSource = readFileSync(join(themeModuleDir, 'surface-theme.js'),
 // so the server below has to answer those two URLs as well as the React shims.
 const navModuleDir = join(tmpdir(), `dsh-gooey-nav-${process.pid}`)
 mkdirSync(navModuleDir, { recursive: true })
-const navTsc = spawnSync(join(projectRoot, 'node_modules/.bin/tsc'), [
+const navTsc = spawnSync(process.execPath, [TSC,
   join(projectRoot, 'src/client/GooeyNav.tsx'),
   '--outDir', navModuleDir,
   '--module', 'esnext', '--target', 'es2022', '--jsx', 'react-jsx',
@@ -517,7 +528,7 @@ if (navTsc.status !== 0) {
   console.error(navTsc.stdout ?? '', navTsc.stderr ?? '')
   process.exit(1)
 }
-const navModuleSource = readFileSync(join(navModuleDir, 'GooeyNav.js'), 'utf8')
+const navModuleSource = readSourceText(join(navModuleDir, 'GooeyNav.js'))
 
 const page = `<!doctype html><html><head><style>
   /* A light surface, then flipped to dark at runtime. */

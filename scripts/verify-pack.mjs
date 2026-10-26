@@ -28,6 +28,7 @@ import { execFileSync } from 'node:child_process'
 import { existsSync, readFileSync, readdirSync, rmSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
+import { readSourceText } from './lib/source-text.mjs'
 
 const ROOT = dirname(dirname(fileURLToPath(import.meta.url)))
 
@@ -90,11 +91,19 @@ const pkg = JSON.parse(readFileSync(join(ROOT, 'package.json'), 'utf8'))
 const archiveName = `${String(pkg.name).replace(/^@/, '').replace('/', '-')}-${pkg.version}.tgz`
 const archivePath = join(ROOT, archiveName)
 
-// `--ignore-scripts`: the build already ran (CI builds before testing, and the
-// negative runner's copy is built by its own runner). Re-running `prepare` here
-// would rebuild 24 MiB of output for an archive whose contents are unchanged.
+// The build already ran (CI builds before testing, and the negative runner's
+// copy is built by its own runner), so packing must NOT re-run `prepare`: that
+// rebuilds 24 MiB of output for an archive whose contents are unchanged.
+//
+// Written as `--config.ignore-scripts=true` rather than the `--ignore-scripts`
+// shorthand because pnpm 10 REMOVED that shorthand: it answers
+// `ERROR Unknown option: 'ignore-scripts'` and the pack never happens, which
+// surfaces here as "pnpm pack did not produce <name>" and reads like a
+// packaging bug. The `--config.<key>=<value>` form is the documented escape
+// hatch for exactly this, and pnpm 9/10/12 all accept it (checked on 10.34.9
+// and 12.11.2, the version CI pins).
 rmSync(archivePath, { force: true })
-execFileSync('pnpm', ['pack', '--pack-destination', '.', '--ignore-scripts'], {
+execFileSync('pnpm', ['pack', '--pack-destination', '.', '--config.ignore-scripts=true'], {
   cwd: ROOT, encoding: 'utf8', stdio: 'ignore',
 })
 
@@ -106,8 +115,13 @@ if (!existsSync(archivePath)) {
   ])
 }
 
-const listing = execFileSync('tar', ['-tzf', archivePath], { cwd: ROOT, encoding: 'utf8' })
-  .split('\n').filter(line => line !== '')
+// `archiveName`, not `archivePath`, and always with `cwd: ROOT`: GNU tar reads
+// a colon in its first argument as `host:path`, so an absolute Windows path
+// like `E:/proj/x.tgz` makes it try to open an SSH connection to a host called
+// `E` (`tar: Cannot connect to E: resolve failed`). A relative name plus the
+// working directory has no colon in it on any platform.
+const listing = execFileSync('tar', ['-tzf', archiveName], { cwd: ROOT, encoding: 'utf8' })
+  .split(/\r?\n/).filter(line => line !== '')
 const entries = new Set(listing)
 
 // ------------------------------------------------------- the version, twice
@@ -122,7 +136,10 @@ const entries = new Set(listing)
 //
 // Kept here, next to the notes-sheet check, because both are release-shape
 // assertions: cheap, local, and before anything is packed.
-const protocolSource = readFileSync(join(ROOT, 'src/protocol.ts'), 'utf8')
+// `readSourceText`, not `readFileSync`: this pattern anchors on `$`, which on a
+// CRLF checkout lands after the `\r` and matches nothing -- the guard would then
+// report that PLUGIN_VERSION moved, which is the wrong diagnosis.
+const protocolSource = readSourceText(join(ROOT, 'src/protocol.ts'))
 const declaredVersion = protocolSource.match(/^export const PLUGIN_VERSION = '([^']+)'$/m)?.[1]
 if (declaredVersion === undefined) {
   fail([
@@ -199,7 +216,7 @@ if (!entries.has(`package/${notesEntry}`)) {
 // packing happens from the tree, so what the manifest promises and what got
 // packed can disagree. Read the copy INSIDE the archive, not the one on disk.
 const packedManifest = JSON.parse(
-  execFileSync('tar', ['-xzOf', archivePath, 'package/package.json'], { cwd: ROOT, encoding: 'utf8' }),
+  execFileSync('tar', ['-xzOf', archiveName, 'package/package.json'], { cwd: ROOT, encoding: 'utf8' }),
 )
 const unresolved = declaredEntryPoints(packedManifest)
   .map(([label, target]) => [label, target.replace(/^\.\//, '')])
@@ -215,7 +232,9 @@ if (unresolved.length > 0) {
   ])
 }
 
-const sizeMiB = Number(execFileSync('du', ['-m', archivePath], { encoding: 'utf8' }).split('\t')[0])
+// Same reason as the tar calls above, in the other direction: `du` also reads a
+// colon as a remote host, and it needs `cwd: ROOT` to resolve the relative name.
+const sizeMiB = Number(execFileSync('du', ['-m', archiveName], { cwd: ROOT, encoding: 'utf8' }).split('\t')[0])
 const topLevel = [...new Set(listing.map(line => line.split('/')[1]).filter(Boolean))].sort()
 console.log(`pack: ${archiveName} (${sizeMiB} MiB) -- ${entries.size} entries, top level: ${topLevel.join(', ')}`)
 console.log('pack: required entries present; every declared entry point resolves')
@@ -233,7 +252,7 @@ console.log('pack: no docs/videos, no docs/images')
 // rather than in a browser check: nothing at install time can observe it, and
 // the cost of getting it wrong is a false failure that sends someone hunting
 // for a credential problem.
-const workflow = readFileSync(join(ROOT, '.github/workflows/release.yml'), 'utf8')
+const workflow = readSourceText(join(ROOT, '.github/workflows/release.yml'))
 const windowLoop = /for attempt in \$\(seq 1 (\d+)\); do[\s\S]{0,400}?not visible yet \(attempt \$attempt\/\d+\); waiting (\d+)s/.exec(workflow)
 if (!windowLoop) {
   fail([

@@ -18,20 +18,15 @@
 import assert from 'node:assert/strict'
 import { execFileSync } from 'node:child_process'
 import { promises as fs } from 'node:fs'
-import { homedir, tmpdir } from 'node:os'
+import { tmpdir } from 'node:os'
 import path from 'node:path'
-import { createClipComposer, localVideoToolDirs } from '../src/clip-compose.ts'
+import { createClipComposer, findTool } from '../src/clip-compose.ts'
 
-const ffmpeg = localVideoToolDirs()
-  .map(dir => path.join(dir, 'ffmpeg'))
-  .find(candidate => {
-    try {
-      execFileSync(candidate, ['-version'], { stdio: 'ignore' })
-      return true
-    } catch {
-      return false
-    }
-  })
+// Resolved through the host's own lookup rather than by rebuilding its
+// directory list here. The copy this replaces could only ever find a POSIX
+// layout, so on Windows it skipped this whole check while the plugin itself was
+// perfectly able to encode — a missing-tool skip standing in for a real run.
+const ffmpeg = findTool('ffmpeg')
 
 if (ffmpeg === undefined) {
   console.log('timeline compose: SKIPPED (no ffmpeg on this machine)')

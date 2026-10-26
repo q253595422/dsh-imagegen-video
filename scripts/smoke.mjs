@@ -15,7 +15,7 @@ import assert from 'node:assert/strict'
 import vm from 'node:vm'
 import { EventEmitter } from 'node:events'
 import { Readable } from 'node:stream'
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { chmodSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { homedir, tmpdir } from 'node:os'
 import { join } from 'node:path'
 
@@ -119,6 +119,98 @@ await check('A1 host exports the plugin contract', () => {
 })
 await check('A1b Git dependency prepare hook builds distributable artifacts', () => {
   assert.equal(packageJson.scripts.prepare, 'tsdown')
+})
+
+/**
+ * Windows has to find its own ffmpeg, and the rules that make that work are the
+ * ones a POSIX machine never exercises. So the lookup takes the platform and
+ * the environment as arguments: a scratch directory and a fake `PATH` are enough
+ * to prove, on macOS, that a Windows install is discoverable at all.
+ *
+ * What each assertion is guarding:
+ *  - `.exe` — every Windows installer writes `ffmpeg.exe`, and joining the bare
+ *    name is a lookup that can never match. This was the P0 in issue #15: a
+ *    correctly installed ffmpeg was invisible to the whole video pipeline.
+ *  - `PATH` — winget, scoop and the official zip all install by appending a
+ *    directory to the system PATH. The old candidate list held four POSIX
+ *    directories, none of which exist on Windows, so PATH was the only answer
+ *    and it was not consulted.
+ *  - the execute bit — `X_OK` is emulated on Windows on top of the read-only
+ *    attribute and says nothing about whether a file can run, so a Windows
+ *    lookup must accept a plain regular file.
+ *  - the override — `FFMPEG_PATH` has to be honoured by the shared lookup, not
+ *    only by code rendering, or a user who answers the question still sees the
+ *    clip composer report "not found".
+ */
+await check('A1c tool discovery finds a Windows-style install and honours the override', () => {
+  const scratch = mkdtempSync(join(tmpdir(), 'dsh-toolfind-'))
+  try {
+    const bin = join(scratch, 'Kdenlive', 'bin')
+    mkdirSync(bin, { recursive: true })
+    const exe = join(bin, 'ffmpeg.exe')
+    writeFileSync(exe, 'not a real binary; discovery only stats it\n')
+
+    // `home` points into the scratch directory, and that is not incidental. The
+    // first candidate directory is `<home>/.local/bin`, and on a developer
+    // machine that directory holds a real ffmpeg — so a lookup that could not be
+    // told a different home would return the developer's binary and every
+    // assertion below would pass for the wrong reason.
+    const win = { platform: 'win32', env: { PATH: bin }, home: scratch }
+
+    // The directory is reachable only through PATH, exactly like a winget or
+    // scoop install, and only the `.exe` spelling exists in it.
+    assert.equal(host.findTool('ffmpeg', win), exe,
+      'a Windows lookup must find ffmpeg.exe through PATH')
+    assert.equal(host.findTool('ffprobe', win), undefined,
+      'a missing tool stays missing; discovery must not invent one')
+
+    // The same directory on a POSIX lookup holds nothing usable: there is no
+    // bare `ffmpeg` here, and the guard must not accept `ffmpeg.exe` instead.
+    assert.equal(host.findTool('ffmpeg', { platform: 'posix', env: { PATH: bin }, home: scratch }), undefined,
+      'a POSIX lookup must not accept a .exe as the tool')
+
+    // Windows has no meaningful execute bit, so a regular file is the whole
+    // test. Asserting it here pins that difference instead of leaving it to a
+    // platform nobody runs the suite on.
+    chmodSync(exe, 0o644)
+    assert.equal(host.findTool('ffmpeg', win), exe,
+      'on Windows a regular file counts as runnable regardless of mode bits')
+
+    // POSIX still requires the execute bit, and this proves the two platforms
+    // really do diverge rather than both happening to return the same thing.
+    const bare = join(bin, 'ffmpeg')
+    writeFileSync(bare, 'not executable either\n')
+    chmodSync(bare, 0o644)
+    assert.equal(host.findTool('ffmpeg', { platform: 'posix', env: { PATH: bin }, home: scratch }), undefined,
+      'on POSIX a file without the execute bit is not a tool')
+    chmodSync(bare, 0o755)
+    assert.equal(host.findTool('ffmpeg', { platform: 'posix', env: { PATH: bin }, home: scratch }), bare,
+      'on POSIX the execute bit is what makes it a tool')
+
+    // The override wins over discovery, and an override pointing at nothing is
+    // ignored rather than reported as a found tool.
+    assert.equal(host.findTool('ffmpeg', { ...win, env: { PATH: bin, FFMPEG_PATH: exe } }), exe,
+      'FFMPEG_PATH is honoured by the shared lookup')
+    assert.equal(host.findTool('ffmpeg', { ...win, env: { PATH: bin, FFMPEG_PATH: join(scratch, 'nope.exe') } }), exe,
+      'an override that does not exist falls back to discovery')
+    assert.equal(host.findTool('ffprobe', { ...win, env: { PATH: bin, FFPROBE_PATH: join(scratch, 'nope') } }), undefined,
+      'a stale override must not fabricate a tool')
+
+    // A Windows PATH is semicolon separated. Splitting it on ':' would yield `C`
+    // and the rest of the path as two separate entries, so nothing would match.
+    assert.equal(host.findTool('ffmpeg', { ...win, env: { PATH: `C:\\nowhere;${bin}` } }), exe,
+      'a Windows PATH is split on the semicolon, not the colon')
+
+    // The POSIX-only package-manager directories must not be searched on Windows:
+    // they do not exist there, and listing them only makes the "searched …"
+    // message that accompanies a failure misleading.
+    const winDirs = host.localVideoToolDirs({ platform: 'win32', env: { PATH: bin }, home: scratch })
+    assert.ok(winDirs.includes(bin), 'the Windows PATH entry is searched')
+    assert.ok(!winDirs.includes('/opt/homebrew/bin'), 'Homebrew is not a Windows location')
+    assert.ok(!winDirs.includes('/usr/bin'), '/usr/bin is not a Windows location')
+  } finally {
+    rmSync(scratch, { recursive: true, force: true })
+  }
 })
 await check('A2 Config schema validates + marks apiKey secret', () => {
   const resolvedRefs = host.Config({ apiUrl: 'https://x/v1', apiKey: 'sk-1' })

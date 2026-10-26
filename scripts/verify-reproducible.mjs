@@ -53,11 +53,12 @@
  * rebuilding only what changed would not exercise the path the release takes.
  */
 import { execFileSync } from 'node:child_process'
-import { cpSync, mkdtempSync, readFileSync, readdirSync, rmSync, symlinkSync } from 'node:fs'
+import { existsSync, mkdtempSync, readFileSync, readdirSync, realpathSync, rmSync, symlinkSync } from 'node:fs'
 import { createHash } from 'node:crypto'
-import { dirname, join } from 'node:path'
+import { delimiter, dirname, join } from 'node:path'
 import { tmpdir } from 'node:os'
 import { fileURLToPath } from 'node:url'
+import { copyTree } from './lib/copy-tree.mjs'
 
 const ROOT = dirname(dirname(fileURLToPath(import.meta.url)))
 const LIB = join(ROOT, 'lib')
@@ -103,8 +104,79 @@ const BUILD_INPUTS = [
   'src',
 ]
 
+/**
+ * The JS entry point of the pnpm that is on PATH, or undefined.
+ *
+ * Windows installs `pnpm` as a `.cmd`/`.ps1` shim, and Node refuses to
+ * `execFile` a `.cmd` (parameter-injection hardening, since 18.20.2). The
+ * failure reads `spawnSync pnpm ENOENT`, which points at the wrong thing
+ * entirely: pnpm is installed. `shell: true` is not the way out either — under
+ * Git Bash PATH is spelled `/c/Users/...`, which cmd.exe cannot resolve, and it
+ * answers 127. Running the shim's JS entry point with the current node sidesteps
+ * PATH and the shim both, and is identical in behaviour on posix.
+ *
+ * Several layouts are searched because the installer decides which one exists:
+ * npm's global install puts pnpm under `<prefix>/node_modules`, nvm puts it
+ * under `<bin>/../lib/node_modules`, and corepack — whose shim is what `pnpm`
+ * on PATH actually is on the machine this was measured on — sits in either.
+ * A posix `pnpm` on PATH is usually a symlink into one of those, so it is
+ * followed too. Finding none is a real possibility rather than an error, which
+ * is why the caller keeps its by-name fallback.
+ */
+const PNPM_LAYOUTS = [
+  join('node_modules', 'pnpm', 'bin', 'pnpm.cjs'),
+  join('node_modules', 'corepack', 'dist', 'pnpm.js'),
+  join('..', 'lib', 'node_modules', 'pnpm', 'bin', 'pnpm.cjs'),
+  join('..', 'lib', 'node_modules', 'corepack', 'dist', 'pnpm.js'),
+  'pnpm.cjs',
+]
+
+function findPnpmEntry () {
+  for (const dir of (process.env.PATH ?? '').split(delimiter)) {
+    if (dir === '') continue
+    for (const layout of PNPM_LAYOUTS) {
+      const entry = join(dir, layout)
+      if (existsSync(entry)) return entry
+    }
+    for (const name of ['pnpm', 'pnpm.cjs']) {
+      const shim = join(dir, name)
+      if (!existsSync(shim)) continue
+      let real
+      try {
+        real = realpathSync(shim)
+      } catch {
+        continue
+      }
+      if (/\.[cm]?js$/.test(real)) return real
+    }
+  }
+  return undefined
+}
+
+const PNPM = findPnpmEntry()
+
 function build (cwd) {
-  execFileSync('pnpm', ['build'], { cwd, encoding: 'utf8', stdio: 'ignore' })
+  const options = { cwd, encoding: 'utf8', stdio: 'ignore' }
+  if (PNPM !== undefined) {
+    execFileSync(process.execPath, [PNPM, 'build'], options)
+    return
+  }
+  try {
+    execFileSync('pnpm', ['build'], options)
+  } catch (error) {
+    // A bare ENOENT here names `pnpm` and not the real problem, which is that
+    // this script could not locate an entry point it knows how to run.
+    if (error.code === 'ENOENT') {
+      fail([
+        '',
+        'FAIL: found no pnpm JS entry point on PATH, and spawning `pnpm` by name failed too.',
+        'Searched every PATH directory for node_modules/pnpm/bin/pnpm.cjs,',
+        'node_modules/corepack/dist/pnpm.js and pnpm.cjs. Install pnpm (or run this',
+        'check from a shell where `pnpm build` works), then run it again.',
+      ])
+    }
+    throw error
+  }
 }
 
 /**
@@ -201,9 +273,18 @@ function fail (lines) {
 function mirrorSourceTree () {
   const dir = mkdtempSync(join(tmpdir(), 'dsh-repro-'))
   for (const input of BUILD_INPUTS) {
-    cpSync(join(ROOT, input), join(dir, input), { recursive: true })
+    // Not `cpSync(..., { recursive: true })`: on Windows that call took the
+    // whole process down with exit code 127 and no output at all, which reads
+    // as a syntax error in this script rather than as a failed copy.
+    copyTree(join(ROOT, input), join(dir, input))
   }
-  symlinkSync(join(ROOT, 'node_modules'), join(dir, 'node_modules'))
+  const target = join(ROOT, 'node_modules')
+  const link = join(dir, 'node_modules')
+  // A junction is the only directory link Windows creates without administrator
+  // rights or developer mode — the default type raised EPERM there. The type
+  // argument means nothing on posix, so it is passed only where it exists.
+  if (process.platform === 'win32') symlinkSync(target, link, 'junction')
+  else symlinkSync(target, link)
   return dir
 }
 

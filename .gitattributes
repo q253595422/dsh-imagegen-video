@@ -1,0 +1,13 @@
+# Line endings are part of what these guards read.
+#
+# Several checks in `scripts/` read a source file and match a cross-line regex
+# written with `\n`. Git for Windows defaults to `core.autocrlf=true`, which
+# hands a fresh checkout CRLF and makes every one of those patterns miss — the
+# content is right there in the file, and the guard reports that a source has no
+# label. Normalising at the read (`scripts/lib/source-text.mjs`) is the fix that
+# survives; this file is the second half, keeping the working tree itself LF so
+# a diff, a `git blame` and a regex all see the same bytes.
+#
+# `text=auto` still lets Git detect binaries on its own, so the images and the
+# `.gif`/`.mp4` demo assets are untouched.
+* text=auto eol=lf

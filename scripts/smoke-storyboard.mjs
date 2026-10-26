@@ -24,6 +24,7 @@
 import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
+import { fileURLToPath } from 'node:url'
 import assert from 'node:assert/strict'
 
 const results = []
@@ -51,7 +52,10 @@ async function loadStoreClass() {
   } catch (error) {
     if (!/parameter property is not supported/.test(String(error?.message))) throw error
     const { spawnSync } = await import('node:child_process')
-    const result = spawnSync(process.execPath, ['--experimental-transform-types', '--no-warnings', ...process.execArgv, new URL(import.meta.url).pathname], { stdio: 'inherit' })
+    // `new URL(...).pathname` is not a file path: on Windows it answers
+    // `/E:/%E3%80%90...` — a leading slash and percent-encoded — which the child
+    // then reads as `E:\E:\...` and cannot find.
+    const result = spawnSync(process.execPath, ['--experimental-transform-types', '--no-warnings', ...process.execArgv, fileURLToPath(import.meta.url)], { stdio: 'inherit' })
     process.exit(result.status ?? 0)
   }
 }

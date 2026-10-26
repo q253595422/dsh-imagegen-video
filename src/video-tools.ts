@@ -42,19 +42,77 @@ export interface ProcessResult {
 }
 
 /**
+ * Which platform a lookup should behave as.
+ *
+ * Injected rather than read from `process.platform` at each use, because the
+ * rules that differ — the `.exe` suffix, whether an execute bit means anything
+ * — can then be exercised from a POSIX machine instead of only being reasoned
+ * about. Production callers omit it and get the real platform.
+ */
+export type ToolPlatform = 'win32' | 'posix'
+
+/**
+ * What one lookup should assume about the machine it runs on.
+ *
+ * All three are injectable for the same reason: a Windows install cannot be
+ * reproduced on the machine that runs the tests, so the rules have to be
+ * testable without one. `home` matters as much as the other two — the first
+ * candidate directory is derived from it, and on a developer machine that
+ * directory really does contain an `ffmpeg`, so a lookup that could not be told
+ * a different home would find the developer's binary and silently pass whatever
+ * it was asked. An assertion about PATH order would then be measuring the wrong
+ * file.
+ */
+export interface ToolLookupOptions {
+  /** Lookup rules to apply; defaults to this process's platform. */
+  platform?: ToolPlatform
+  /** Environment to read PATH and the overrides from. */
+  env?: NodeJS.ProcessEnv
+  /** Home directory to derive `~/.local/bin` from. */
+  home?: string
+}
+
+/** The platform this process runs on, in the terms this module uses. */
+function currentPlatform(): ToolPlatform {
+  return process.platform === 'win32' ? 'win32' : 'posix'
+}
+
+/**
  * Absolute directories searched for `ffmpeg`/`ffprobe`, in order.
  *
  * `~/.local/bin` first because that is where this machine actually keeps them;
- * a bare command name is never tried, since the host's PATH cannot see it.
+ * the POSIX package-manager directories follow so a Homebrew or distro install
+ * is found without any PATH lookup.
+ *
+ * PATH is appended rather than trusted. The host process runs with a minimal
+ * PATH that excludes user bin directories — which is why the absolute list came
+ * first — but on Windows there is no `~/.local/bin` convention at all: winget,
+ * scoop and the official zip all install by adding a directory to the system
+ * PATH, so `ffmpeg.exe` lives there and nowhere else. Leaving PATH out meant
+ * discovery was guaranteed to fail on the one platform where it is the only
+ * answer.
+ * @param options - what to assume about the machine; all default to the real one.
+ * @returns absolute directories, de-duplicated, in search order.
  */
-export function localVideoToolDirs(): string[] {
-  const dirs = [
-    path.join(homedir(), '.local', 'bin'),
-    '/opt/homebrew/bin',
-    '/usr/local/bin',
-    '/usr/bin',
-  ]
-  return [...new Set(dirs)]
+export function localVideoToolDirs(options: ToolLookupOptions = {}): string[] {
+  const platform = options.platform ?? currentPlatform()
+  const env = options.env ?? process.env
+  const home = options.home ?? homedir()
+  const dirs = platform === 'win32'
+    ? [path.join(home, '.local', 'bin')]
+    : [
+        path.join(home, '.local', 'bin'),
+        '/opt/homebrew/bin',
+        '/usr/local/bin',
+        '/usr/bin',
+      ]
+  // The separator follows the platform being emulated, not the one running:
+  // a Windows PATH split on ':' would yield `C` and `\Program Files\…` as two
+  // separate "directories". `process.env` already holds PATH in native form,
+  // so no other conversion is needed.
+  const separator = platform === 'win32' ? ';' : ':'
+  const fromPath = (env.PATH ?? env.Path ?? '').split(separator)
+  return [...new Set([...dirs, ...fromPath])].filter(dir => dir !== '')
 }
 
 /** Last printable characters of process output, for an error message. */
@@ -119,15 +177,61 @@ export function runProcess(command: string, args: readonly string[], options: { 
   })
 }
 
-/** First executable candidate for one tool name, or undefined. */
-export function findTool(name: VideoToolName): string | undefined {
-  for (const dir of localVideoToolDirs()) {
-    const candidate = path.join(dir, name)
-    try {
-      if (!statSync(candidate).isFile()) continue
-      accessSync(candidate, FS_CONSTANTS.X_OK)
-      return candidate
-    } catch { /* not here — keep looking */ }
+/**
+ * Filenames to try for one tool name, in order.
+ *
+ * Windows resolves executables by extension. `path.join(dir, 'ffmpeg')` can
+ * never match the `ffmpeg.exe` that every Windows installer writes, so the bare
+ * name has to be joined by its `.exe` spelling — trying only the bare name made
+ * a correctly installed ffmpeg invisible.
+ */
+function toolFileNames(name: VideoToolName, platform: ToolPlatform): string[] {
+  return platform === 'win32' ? [`${name}.exe`, name] : [name]
+}
+
+/** Whether one absolute candidate is a tool this platform would run. */
+function isUsableTool(candidate: string, platform: ToolPlatform): boolean {
+  try {
+    if (!statSync(candidate).isFile()) return false
+    // The execute bit is a POSIX concept. On Windows `X_OK` is emulated on top
+    // of the read-only attribute and says nothing useful about whether a file
+    // can be run, so being a regular file is the whole test — which is also the
+    // answer `where` gives.
+    if (platform === 'win32') return true
+    accessSync(candidate, FS_CONSTANTS.X_OK)
+    return true
+  } catch {
+    return false
+  }
+}
+
+/** Environment variable that overrides discovery for one tool. */
+const OVERRIDE_ENV: Record<VideoToolName, string> = {
+  ffmpeg: 'FFMPEG_PATH',
+  ffprobe: 'FFPROBE_PATH',
+}
+
+/**
+ * First usable candidate for one tool name, or undefined.
+ *
+ * An explicit `FFMPEG_PATH`/`FFPROBE_PATH` wins over discovery. That override
+ * has to be honoured here rather than only in `code-render.ts`: the clip
+ * composer and the poster extractor both resolve through this function, so an
+ * override only one of them saw left the other still reporting "not found" on a
+ * machine where the user had already answered the question.
+ * @param name - tool to resolve.
+ * @param options - what to assume about the machine; all default to the real one.
+ */
+export function findTool(name: VideoToolName, options: ToolLookupOptions = {}): string | undefined {
+  const platform = options.platform ?? currentPlatform()
+  const env = options.env ?? process.env
+  const override = env[OVERRIDE_ENV[name]]
+  if (override !== undefined && override !== '' && isUsableTool(override, platform)) return override
+  for (const dir of localVideoToolDirs(options)) {
+    for (const fileName of toolFileNames(name, platform)) {
+      const candidate = path.join(dir, fileName)
+      if (isUsableTool(candidate, platform)) return candidate
+    }
   }
   return undefined
 }

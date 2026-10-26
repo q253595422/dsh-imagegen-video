@@ -34,12 +34,12 @@
  */
 
 import { spawn } from 'node:child_process'
-import { accessSync, constants as FS_CONSTANTS, promises as fs } from 'node:fs'
-import { homedir } from 'node:os'
+import { promises as fs } from 'node:fs'
 import path from 'node:path'
 import { deflateSync } from 'node:zlib'
 import vm from 'node:vm'
 import type { VideoResolution } from './protocol.ts'
+import { findTool } from './video-tools.ts'
 
 /** Stable wire code for a code-render failure. */
 export class CodeRenderError extends Error {
@@ -113,32 +113,22 @@ export const DEFAULT_RENDER_TIMEOUT_MS = 120_000
 const MAX_IMAGE_BYTES = 64 * 1024 * 1024
 
 /**
- * Locate ffmpeg without relying on PATH.
+ * Locate ffmpeg, deferring to the one discovery implementation.
  *
- * The running host's PATH is `/usr/bin:/bin:/usr/sbin:/sbin` — the same reason
- * `clip-compose.ts` resolves absolute candidates — so `ffmpeg` alone is a
- * guaranteed ENOENT on a machine where it lives in `~/.local/bin` or under
- * Homebrew. Returns undefined when nothing executable is found, which the
- * caller turns into a "install ffmpeg" message rather than a crash.
+ * This used to carry its own candidate list, which drifted from
+ * `video-tools.ts`'s in both directions: `/snap/bin` existed only here, and PATH
+ * was consulted in neither. Two lists are two answers to the same question, and
+ * the caller could not tell which one it had got — the clip composer resolved
+ * `ffmpeg` through `findTool` while code rendering resolved it through this
+ * function, so an override or a PATH-only install fixed one path and left the
+ * other still reporting "not found".
+ *
+ * `FFMPEG_PATH` is honoured by `findTool` itself, so it still wins here. Returns
+ * undefined when nothing usable is found, which the caller turns into an
+ * "install ffmpeg" message rather than a crash.
  */
 export function locateFfmpeg(): string | undefined {
-  const candidates = [
-    process.env.FFMPEG_PATH,
-    '/opt/homebrew/bin/ffmpeg',
-    '/usr/local/bin/ffmpeg',
-    path.join(homedir(), '.local', 'bin', 'ffmpeg'),
-    '/usr/bin/ffmpeg',
-    '/snap/bin/ffmpeg',
-  ].filter((candidate): candidate is string => typeof candidate === 'string' && candidate !== '')
-  for (const candidate of candidates) {
-    try {
-      accessSync(candidate, FS_CONSTANTS.X_OK)
-      return candidate
-    } catch {
-      // Try the next candidate.
-    }
-  }
-  return undefined
+  return findTool('ffmpeg')
 }
 
 /** The drawing API handed to generated code, one frame at a time. */

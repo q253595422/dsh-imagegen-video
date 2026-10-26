@@ -35,8 +35,12 @@ import { readGalleryVideo } from './gallery-store.ts'
 import { describeTools, findTool, localVideoToolDirs, runProcess, tail, type ToolPair } from './video-tools.ts'
 
 // Re-exported for `src/index.ts` (the plugin's public surface) and for the
-// guard scripts, which import it straight from this module.
-export { localVideoToolDirs }
+// guard scripts, which import it straight from this module. `findTool` joins
+// them here rather than each guard keeping its own candidate list: a guard that
+// resolves tools differently from the code under test can report "ffmpeg not
+// found" while the plugin itself runs fine, which is a false negative that
+// hides a real defect instead of exposing it.
+export { findTool, localVideoToolDirs }
 
 // ---------------------------------------------------------------- constants
 

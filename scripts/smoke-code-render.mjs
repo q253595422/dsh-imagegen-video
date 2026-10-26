@@ -33,6 +33,10 @@ const dataRoot = mkdtempSync(join(tmpdir(), 'dsh-code-render-smoke-'))
 process.env.DSH_HOME = dataRoot
 
 const results = []
+// Kept beside `results` rather than parsed back out of the printed line: the
+// check names contain colons (`renderer:code`), so splitting a formatted line
+// on ':' truncates them and the summary names the wrong thing.
+const skippedNames = []
 
 /** Run one check under a hard deadline (a hung render is a failure). */
 async function check(name, fn, timeoutMs = 180_000) {
@@ -47,6 +51,16 @@ async function check(name, fn, timeoutMs = 180_000) {
     ])
     results.push(`PASS  ${name}`)
   } catch (error) {
+    if (error instanceof SkipSignal) {
+      // A skip is recorded as SKIP, never as PASS. The three guards that used
+      // to `return` early here all sit on external tools, and a `return` looks
+      // exactly like success to this function — which is how C5 and C7 reported
+      // "pass" on machines where they never executed a line of the render.
+      results.push(`SKIP  ${name}: ${error.message}`)
+      skippedNames.push(name)
+      process.stderr.write(`\n!!! SKIP ${name}: ${error.message}\n!!! (not a failure; the checks above still ran)\n\n`)
+      return
+    }
     results.push(`FAIL  ${name}: ${error?.stack ?? error?.message ?? error}`)
     process.exitCode = 1
   } finally {
@@ -54,10 +68,22 @@ async function check(name, fn, timeoutMs = 180_000) {
   }
 }
 
-/** Measure a produced file with ffprobe; undefined when the tools are absent. */
-function probeWithFfprobe(file) {
+/** Thrown by skip() so the check is recorded as SKIP, never as PASS or FAIL. */
+class SkipSignal extends Error {}
+
+function skip(why) {
+  throw new SkipSignal(why)
+}
+
+/** Absolute path to ffprobe, or undefined when this machine has none. */
+function locateFfprobe() {
   const candidates = [join(process.env.HOME ?? '', '.local', 'bin', 'ffprobe'), '/opt/homebrew/bin/ffprobe', '/usr/local/bin/ffprobe', '/usr/bin/ffprobe']
-  const ffprobe = candidates.find(candidate => existsSync(candidate))
+  return candidates.find(candidate => existsSync(candidate))
+}
+
+/** Measure a produced file with ffprobe; undefined when the tool is absent. */
+function probeWithFfprobe(file) {
+  const ffprobe = locateFfprobe()
   if (ffprobe === undefined) return undefined
   const json = execFileSync(ffprobe, ['-v', 'error', '-print_format', 'json', '-show_streams', '-show_format', file], { encoding: 'utf8' })
   return JSON.parse(json)
@@ -189,7 +215,14 @@ await check('C3b a prose answer quotes what the model said so the user can tell 
 })
 
 await check('C4c a slow renderer hits the deadline instead of hanging', async () => {
-  const { renderCode } = await import(new URL('../lib/index.js', import.meta.url).href)
+  const { renderCode, locateFfmpeg } = await import(new URL('../lib/index.js', import.meta.url).href)
+  // A video render cannot even start without ffmpeg: `renderCode` answers
+  // render-no-ffmpeg before the first frame, so on such a machine this check
+  // reports the wrong failure and reads as a broken deadline. A missing tool is
+  // not a regression, so it skips like C5 and C7 do.
+  if (locateFfmpeg() === undefined) {
+    skip('a video render needs ffmpeg before the deadline can be reached, and this machine has none')
+  }
   // An infinite loop cannot be interrupted inside a frame; the deadline is
   // checked between frames, so make each frame exceed it and use 2 frames.
   const slow = 'function render(ctx) { ctx.background("#000"); const until = Date.now() + 60; while (Date.now() < until) {} }'
@@ -248,8 +281,14 @@ function startUpstream() {
 await check('C5 renderer:code produces a PLAYABLE clip stored with renderer:code', async () => {
   const { ImageGenerationRuntime, listVideoHistory, locateFfmpeg } = await import(new URL('../lib/index.js', import.meta.url).href)
   if (locateFfmpeg() === undefined) {
-    process.stderr.write('      (skipping: no ffmpeg on this machine, C4d covers that path)\n')
-    return
+    skip('no ffmpeg on this machine, so there is nothing to encode with (C4d covers the missing-tool path)')
+  }
+  // "Playable" is a claim only ffprobe can settle. Without it every assertion
+  // below still passes on file size and URL shape, and the word "playable" in
+  // this check's name would be a claim nobody verified — so the whole check
+  // skips instead of quietly downgrading to the weaker assertions.
+  if (locateFfprobe() === undefined) {
+    skip('no ffprobe on this machine, so the clip cannot be proven playable')
   }
   const chat = scriptedChat(BANNER)
   const runtime = new ImageGenerationRuntime(
@@ -290,13 +329,12 @@ await check('C5 renderer:code produces a PLAYABLE clip stored with renderer:code
   assert.ok(existsSync(file), `the clip file is missing at ${file}`)
   assert.ok(statSync(file).size > 1_000, 'the clip is suspiciously small')
   const probe = probeWithFfprobe(file)
-  if (probe !== undefined) {
-    const stream = probe.streams.find(item => item.codec_type === 'video')
-    assert.equal(Number(stream.width), 1280, `expected 1280px wide, got ${stream.width}`)
-    assert.equal(Number(stream.height), 720, `expected 720px tall, got ${stream.height}`)
-    assert.equal(stream.r_frame_rate, '30/1', `expected 30fps, got ${stream.r_frame_rate}`)
-    assert.ok(Math.abs(Number(probe.format.duration) - 3) < 0.2, `expected ~3s, got ${probe.format.duration}`)
-  }
+  assert.ok(probe !== undefined, 'ffprobe was located above, so it must be able to measure this clip')
+  const stream = probe.streams.find(item => item.codec_type === 'video')
+  assert.equal(Number(stream.width), 1280, `expected 1280px wide, got ${stream.width}`)
+  assert.equal(Number(stream.height), 720, `expected 720px tall, got ${stream.height}`)
+  assert.equal(stream.r_frame_rate, '30/1', `expected 30fps, got ${stream.r_frame_rate}`)
+  assert.ok(Math.abs(Number(probe.format.duration) - 3) < 0.2, `expected ~3s, got ${probe.format.duration}`)
 })
 
 await check('C6 renderer:code produces a real PNG stored with renderer:code', async () => {
@@ -337,16 +375,14 @@ await check('C6 renderer:code produces a real PNG stored with renderer:code', as
 await check('C7 a code-rendered clip is stitchable by the local composer', async () => {
   const { ImageGenerationRuntime, createClipComposer, locateFfmpeg } = await import(new URL('../lib/index.js', import.meta.url).href)
   if (locateFfmpeg() === undefined) {
-    process.stderr.write('      (skipping: stitching needs ffmpeg)\n')
-    return
+    skip('stitching needs ffmpeg, and this machine has none')
   }
   const composer = createClipComposer()
   // `describe()` is a human-readable string, not a tool table — reading a
   // `ffprobe` field off it silently skipped this whole check on every machine.
   // `available()` is the real answer to "can this host stitch at all".
   if (!composer.available()) {
-    process.stderr.write(`      (skipping: stitching needs ffmpeg and ffprobe; ${composer.describe()})\n`)
-    return
+    skip(`the stitcher cannot run here: ${composer.describe()}`)
   }
   const chat = scriptedChat(BANNER)
   const runtime = new ImageGenerationRuntime(
@@ -572,7 +608,22 @@ await check('C10 the host seam reports why it cannot run, instead of failing mid
 try { rmSync(dataRoot, { recursive: true, force: true }) } catch { /* ignore */ }
 
 const failed = results.filter(line => line.startsWith('FAIL')).length
+const skipped = skippedNames
+const passed = results.filter(line => line.startsWith('PASS')).length
 process.stdout.write(`${results.join('\n')}\n\n${'='.repeat(64)}\n`)
-process.stdout.write(failed === 0 ? `${results.length}/${results.length} code-render checks pass\n` : `${failed} of ${results.length} FAILED\n`)
+process.stdout.write(failed === 0
+  ? `${passed}/${results.length} code-render checks pass${skipped.length > 0 ? `, ${skipped.length} not exercised` : ''}\n`
+  : `${failed} of ${results.length} FAILED\n`)
+// A skip is not a failure — a host without ffmpeg must not turn the suite red —
+// but it must never be silent either: C5 and C7 are the only checks that drive a
+// real encode end to end, and when they skip, the encode path is unverified
+// while every other line still reads PASS. Naming them here is what stops the
+// next report from claiming "all green" over a feature nobody exercised.
+if (skipped.length === 0) {
+  process.stdout.write('0 skipped: the real ffmpeg encode path ran\n')
+} else {
+  process.stdout.write(`${skipped.length} skipped: ${skipped.join(', ')}\n`)
+  process.stdout.write('(exit code stays 0 by design: a missing tool is not a regression)\n')
+}
 if (failed > 0) process.exitCode = 1
 void readFileSync

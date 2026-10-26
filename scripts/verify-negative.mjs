@@ -1129,6 +1129,47 @@ const CASES = [
     to: '    const oversized = []\n    const withinSize = allImages\n    const images = allImages',
     expect: /dropped image over the size cap|drop is capped to a maximum|read sequentially/,
   },
+  {
+    // Every Windows installer writes `ffmpeg.exe`; joining the bare name is a
+    // lookup that can never match it. Dropping the `.exe` spelling restores the
+    // P0 from issue #15, where a correctly installed ffmpeg was invisible to the
+    // whole video pipeline.
+    name: 'a Windows lookup only tries the bare tool name',
+    runner: 'smoke',
+    file: 'src/video-tools.ts',
+    from: '  return platform === \'win32\' ? [`${name}.exe`, name] : [name]',
+    to: '  return [name]',
+    expect: /must find ffmpeg\.exe through PATH/,
+  },
+  {
+    // The candidate list used to be four POSIX directories, none of which exist
+    // on Windows, while PATH -- the one place winget, scoop and the official zip
+    // install to -- was never consulted. Removing PATH restores that state.
+    name: 'tool discovery never consults PATH',
+    runner: 'smoke',
+    file: 'src/video-tools.ts',
+    from: "  const separator = platform === 'win32' ? ';' : ':'\n  const fromPath = (env.PATH ?? env.Path ?? '').split(separator)\n  return [...new Set([...dirs, ...fromPath])].filter(dir => dir !== '')",
+    to: "  return [...new Set(dirs)].filter(dir => dir !== '')",
+    expect: /must find ffmpeg\.exe through PATH/,
+  },
+  {
+    // The whole point of normalising at the read. Git for Windows hands a fresh
+    // checkout CRLF, and every cross-line pattern in the guards is written with
+    // `\n`.
+    //
+    // The injected defect CONVERTS to CRLF rather than merely dropping the
+    // normalisation. Dropping it alone is a no-op on this machine — the working
+    // tree is LF, so the check stays green and the case reports FALSE GREEN
+    // while the Windows failure it targets is still reachable. Converting makes
+    // the copy look like the checkout the guard actually gets on Windows, which
+    // is the state the normalisation exists to survive.
+    name: 'source text is read with its CRLF line endings intact',
+    runner: 'contracts',
+    file: 'scripts/lib/source-text.mjs',
+    from: "  return readFileSync(path, 'utf8').replace(/\\r\\n?/g, '\\n')",
+    to: "  return readFileSync(path, 'utf8').replace(/\\n/g, '\\r\\n')",
+    expect: /no readable label|has no host-side fetch definition/,
+  },
 ]
 
 const RUNNERS = {

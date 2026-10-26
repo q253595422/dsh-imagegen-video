@@ -18,6 +18,7 @@ import assert from 'node:assert/strict'
 import { createServer } from 'node:http'
 import { readFileSync, mkdirSync } from 'node:fs'
 import { createRequire } from 'node:module'
+import { fileURLToPath } from 'node:url'
 import { findChrome } from './lib/headless-chrome.mjs'
 
 /** Print the skip block and exit 0: a missing tool is not a regression. */
@@ -112,7 +113,7 @@ try {
   await page.keyboard.press('Escape')
   assert.equal(await page.getByRole('dialog').count(), 0)
   mkdirSync(new URL('../docs/images/', import.meta.url), { recursive: true })
-  await page.locator('.fixture>main').screenshot({ path: new URL('../docs/images/ppt-mode.png', import.meta.url).pathname })
+  await page.locator('.fixture>main').screenshot({ path: fileURLToPath(new URL('../docs/images/ppt-mode.png', import.meta.url)) })
   for (const viewport of [{ width: 390, height: 780 }, { width: 800, height: 360 }, { width: 1280, height: 850 }, { width: 1920, height: 1000 }]) {
     await page.setViewportSize(viewport)
     assert.ok(await page.locator('[data-ppt-workspace]').isVisible())
@@ -129,7 +130,7 @@ try {
   assert.ok(layout.results.left >= layout.sidebar.right, 'desktop results sit to the right of parameters')
   assert.ok(Math.abs(layout.results.top - layout.sidebar.top) < 2, 'desktop panes share their top edge')
   assert.ok(layout.results.width > layout.sidebar.width, 'preview receives the larger pane')
-  await page.locator('[data-ppt-workspace]').screenshot({ path: new URL('../docs/images/ppt-mode-failed-wide.png', import.meta.url).pathname })
+  await page.locator('[data-ppt-workspace]').screenshot({ path: fileURLToPath(new URL('../docs/images/ppt-mode-failed-wide.png', import.meta.url)) })
   await page.locator('[data-ppt-diagnostic]').click()
   const diagnostic = JSON.parse(await page.getByRole('textbox', { name: '任务诊断', exact: true }).inputValue())
   assert.equal(diagnostic.agentSessionId, 'skillagent-preview')
@@ -144,7 +145,7 @@ try {
   assert.equal(fieldValues.get('paddle-ocr-token'), 'fixture-token-not-a-real-secret')
   assert.equal(await page.locator('[data-ppt-setup] input[type=password]').nth(1).inputValue(), '')
   await page.evaluate(() => document.fonts.ready)
-  await page.getByRole('dialog', { name: '图片转 PPT 配置', exact: true }).screenshot({ path: new URL('../docs/images/ppt-settings.png', import.meta.url).pathname })
+  await page.getByRole('dialog', { name: '图片转 PPT 配置', exact: true }).screenshot({ path: fileURLToPath(new URL('../docs/images/ppt-settings.png', import.meta.url)) })
   assert.deepEqual(errors, [])
   console.log('PPT browser checks passed: upload, order, conversion, cancel, result links, configuration, four viewports, inline slide navigation and two-pane desktop layout.')
 } finally {

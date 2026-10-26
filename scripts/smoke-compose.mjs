@@ -78,7 +78,7 @@
  * Run: node scripts/smoke-compose.mjs   (from the package root, after a build)
  */
 
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync, statSync, accessSync, constants as FS } from 'node:fs'
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync, statSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join, basename } from 'node:path'
 import assert from 'node:assert/strict'
@@ -1170,16 +1170,15 @@ await check('V9 a host without a usable local composer refuses instead of callin
 // ------------------------------------------------------------ E1 real ffmpeg
 
 await check('E1 (real ffmpeg) two synthetic clips stitch to roughly twice the length', async () => {
-  const dirs = host.localVideoToolDirs()
-  const findTool = name => dirs
-    .map(dir => join(dir, name))
-    .find(candidate => {
-      try { accessSync(candidate, FS.X_OK); return statSync(candidate).isFile() } catch { return false }
-    })
-  const ffmpeg = findTool('ffmpeg')
-  const ffprobe = findTool('ffprobe')
+  // Resolved through the host's own lookup. This used to rebuild the search from
+  // `localVideoToolDirs()` with its own `join(dir, name)`, which is precisely the
+  // bug it was meant to catch: once the host learned about `.exe` and PATH, this
+  // copy still only tried bare names in POSIX directories. Its skip message even
+  // listed the directory holding the Windows binary and then declared it absent.
+  const ffmpeg = host.findTool('ffmpeg')
+  const ffprobe = host.findTool('ffprobe')
   if (ffmpeg === undefined || ffprobe === undefined) {
-    skip(`no ffmpeg/ffprobe in ${dirs.join(', ')}`)
+    skip(`no ffmpeg/ffprobe in ${host.localVideoToolDirs().join(', ')}`)
   }
 
   // Two synthetic clips in the video store: the first has real audio, the second

@@ -364,7 +364,7 @@ export { buildFilePreview, MAX_PREVIEW_CHARS, type FilePreviewInput } from './fi
 export { classifySource, inspectSkillMarkdown, installableSkillName, installFromArchive, installFromUrl, isDshSkillName, isValidSkillName, KNOWN_SKILL_SOURCES, knownSkillUrl, listLibrary, listLocalSkills, parseSkillFrontmatter, readLocalSkill, removeSkill, SkillStoreError, skillsRoot, MAX_SKILL_ARCHIVE_BYTES, type LocalSkill, type LocalSkillIssue } from './skill-store.ts'
 export { applySkillConfigSteps, configNote, configView, missingFields, parseSkillConfigManifest, readSkillConfigFile, resolveConfigTarget, skillConfigKey, valuesFor, type SkillConfigDeclaration, type SkillConfigIssue, type SkillConfigStore } from './skill-config.ts'
 export { recipeFor, recipeNames } from './skill-config-recipes.ts'
-export { createClipComposer, localVideoToolDirs } from './clip-compose.ts'
+export { createClipComposer, findTool, localVideoToolDirs } from './clip-compose.ts'
 export { isZipDirectory, readZipDirectory, readZipEntry } from './zip.ts'
 export { canvasStore, isBlockedFileName, fileKindOf, MAX_CANVAS_FILE_BYTES, mimeFromFileName, safeFileName } from './canvas-store.ts'
 export { checkForUpdate, clearUpdateCache, compareVersions, CURRENT_VERSION, DESKTOP_PROFILE, installUpdate, isInstallableTarballUrl, ManualUpdateRequiredError, PACKAGE_NAME, profileFromProcess, updateInstallTarget, type UpdateHostContext, type UpdateInstallTarget } from './updater.ts'

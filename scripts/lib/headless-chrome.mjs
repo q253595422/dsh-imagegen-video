@@ -20,7 +20,7 @@
 import { spawn } from 'node:child_process'
 import { existsSync, globSync, mkdtempSync, readFileSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
-import { join } from 'node:path'
+import { basename, join } from 'node:path'
 
 /**
  * Find a Chromium binary, honouring the same two knobs every guard documents:
@@ -42,9 +42,39 @@ export function findChrome (argv = process.argv, env = process.env) {
     '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome',
     '/Applications/Chromium.app/Contents/MacOS/Chromium',
     ...globSync(`${env.HOME ?? ''}/.cache/puppeteer/**/chrome-headless-shell`).sort().reverse(),
+    // Windows. Without these the browser guards skipped on every Windows
+    // machine -- and a skip is not a pass, but it also never fails, so the
+    // contracts simply never ran there. Installed browsers come first because
+    // they are what a Windows user actually has; a bundled headless shell is
+    // the fallback for whoever downloads one.
+    ...WINDOWS_CHROME_PATHS.flatMap(([variable, suffix]) => {
+      const base = env[variable]
+      return base === undefined || base === '' ? [] : [`${base}\\${suffix}`]
+    }),
+    ...globSync(`${env.LOCALAPPDATA ?? ''}/Chromium/**/chrome.exe`).sort().reverse(),
+    ...globSync(`${env.LOCALAPPDATA ?? ''}/ms-playwright/**/chrome.exe`).sort().reverse(),
   ]
   return candidates.find(candidate => existsSync(candidate)) ?? null
 }
+
+/**
+ * Where an installed Chrome, Edge or Chromium lives on Windows.
+ *
+ * Kept as (environment variable, path below it) pairs rather than assembled
+ * literals: `%ProgramFiles%` is `C:\Program Files` on one machine and a
+ * different drive on the next, and `%ProgramFiles(x86)%` cannot even be
+ * written as a plain identifier in some shells. The variable name is looked up
+ * in the environment passed in, so this list stays testable.
+ */
+const WINDOWS_CHROME_PATHS = [
+  ['PROGRAMFILES', 'Google\\Chrome\\Application\\chrome.exe'],
+  ['PROGRAMFILES(X86)', 'Google\\Chrome\\Application\\chrome.exe'],
+  ['LOCALAPPDATA', 'Google\\Chrome\\Application\\chrome.exe'],
+  ['PROGRAMFILES', 'Microsoft\\Edge\\Application\\msedge.exe'],
+  ['PROGRAMFILES(X86)', 'Microsoft\\Edge\\Application\\msedge.exe'],
+  ['LOCALAPPDATA', 'Microsoft\\Edge\\Application\\msedge.exe'],
+  ['PROGRAMFILES', 'Chromium\\Application\\chrome.exe'],
+]
 
 /**
  * Print the loud skip block and exit 0 when no browser exists.
@@ -62,6 +92,26 @@ export function skipWithoutChrome (noBrowserMessage) {
 }
 
 /**
+ * The flags that make a given binary run headless.
+ *
+ * Two kinds of binary answer here and they do not take the same flag.
+ * `chrome-headless-shell` is a purpose-built headless build: it is headless with
+ * no flag at all, and it does not understand `--headless=new`. A full Chrome,
+ * Edge or Chromium needs to be told, and on current versions the old
+ * `--headless` means the deprecated implementation while `--headless=new` is the
+ * real one.
+ *
+ * Decided from the executable's name rather than from how `findChrome()` found
+ * it, so every caller keeps passing a plain path string and none of them has to
+ * know this distinction exists.
+ * @param {string} chrome - the binary about to be launched.
+ * @returns {readonly string[]} flags to put before the rest of the command line.
+ */
+function headlessFlags (chrome) {
+  return /chrome-headless-shell/i.test(basename(chrome)) ? [] : ['--headless=new']
+}
+
+/**
  * Launch a headless Chromium and wait until its DevTools endpoint answers.
  * @param {object} options
  * @param {string} options.chrome - binary to run.
@@ -74,7 +124,7 @@ export function skipWithoutChrome (noBrowserMessage) {
 export async function launchChrome ({ chrome, name, args = [] }) {
   const profileDir = mkdtempSync(join(tmpdir(), `${name}-profile-`))
   const browser = spawn(chrome, [
-    '--headless',
+    ...headlessFlags(chrome),
     '--disable-gpu',
     '--no-sandbox',
     '--remote-debugging-port=0',

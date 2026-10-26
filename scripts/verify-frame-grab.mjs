@@ -24,41 +24,27 @@
  */
 
 import { createServer } from 'node:http'
-import { existsSync, mkdirSync, readFileSync, accessSync, constants } from 'node:fs'
+import { existsSync, mkdirSync, readFileSync } from 'node:fs'
 import { spawnSync } from 'node:child_process'
-import { homedir, tmpdir } from 'node:os'
+import { tmpdir } from 'node:os'
 import path from 'node:path'
 import assert from 'node:assert/strict'
+import { findTool } from '../src/clip-compose.ts'
 import { findChrome, launchChrome } from './lib/headless-chrome.mjs'
 
 /**
  * Tool discovery, not hardcoded personal paths. This script ships publicly, so
  * an absolute /Users/<someone> path would both leak the author's local layout
- * and make the script fail on every other machine. Override with FFMPEG=<path>.
+ * and make the script fail on every other machine.
+ *
+ * The candidate list used to be spelled out here, mirroring the host's own. That
+ * copy is what made this guard lie on Windows: the host had already been taught
+ * about `.exe` and PATH, and this file still only knew four POSIX directories,
+ * so it reported "no ffmpeg" and skipped while the plugin worked. Resolving
+ * through the host's own function means the guard cannot disagree with the code
+ * it is guarding. `FFMPEG` still overrides, because `findTool` honours it.
  */
-function findFfmpeg () {
-  const explicit = process.env.FFMPEG
-  const usable = candidate => {
-    // accessSync is the probe: it throws for a missing or non-executable path,
-    // and "not usable" is a normal answer here (we fall through to the next
-    // candidate), so the throw is swallowed deliberately rather than reported.
-    try { accessSync(candidate, constants.X_OK); return true } catch { return false }
-  }
-  if (explicit !== undefined && explicit !== '') return usable(explicit) ? explicit : null
-  // The same directories the host's own clip composer searches (src/clip-compose.ts).
-  const candidates = [
-    path.join(homedir(), '.local', 'bin', 'ffmpeg'),
-    '/opt/homebrew/bin/ffmpeg',
-    '/usr/local/bin/ffmpeg',
-    '/usr/bin/ffmpeg',
-  ]
-  // A bare `ffmpeg` on PATH is deliberately NOT tried: the DSH host process runs
-  // with a minimal PATH that excludes user bin directories, so a bare name would
-  // resolve differently inside the plugin and outside it.
-  return candidates.find(usable) ?? null
-}
-
-const FFMPEG = findFfmpeg()
+const FFMPEG = findTool('ffmpeg') ?? null
 const CHROME = findChrome()
 if (FFMPEG === null || CHROME === null) {
   const missing = [FFMPEG === null ? 'ffmpeg' : null, CHROME === null ? 'chrome-headless-shell' : null]

@@ -21,10 +21,20 @@
  */
 import { execFileSync } from 'node:child_process'
 import { readdirSync, readFileSync } from 'node:fs'
-import { dirname, join, relative, resolve } from 'node:path'
+import { dirname, join, relative, resolve, sep } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
 const ROOT = dirname(dirname(fileURLToPath(import.meta.url)))
+
+/**
+ * Git's spelling of a path, which is posix on every platform.
+ *
+ * `git ls-files` separates with `/` even on Windows; `path.relative` separates
+ * with `sep`, so there it answers `src\protocol.ts`. Feeding the two into the
+ * same `Set.has()` made every single tracked file read as untracked — the guard
+ * reported 150 missing files in a repository that contained all 150.
+ */
+const toPosix = value => value.split(sep).join('/')
 
 function git (...args) {
   return execFileSync('git', args, {
@@ -85,13 +95,13 @@ for (const file of files) {
   const source = readFileSync(file, 'utf8')
   for (const match of source.matchAll(SPECIFIER)) {
     const specifier = match[1]
-    const rel = relative(ROOT, file)
+    const rel = toPosix(relative(ROOT, file))
     const options = candidates(file, specifier)
     // Any one candidate being tracked is enough: the import resolves.
-    if (options.some(option => tracked.has(relative(ROOT, option)))) continue
+    if (options.some(option => tracked.has(toPosix(relative(ROOT, option))))) continue
     // Not tracked. Name the one the author most likely meant, but only report
     // it when NOTHING in the candidate set is tracked.
-    problems.push(`${rel} imports ${specifier} -> ${relative(ROOT, options[0])}, which is not in the repository`)
+    problems.push(`${rel} imports ${specifier} -> ${toPosix(relative(ROOT, options[0]))}, which is not in the repository`)
   }
 }
 
