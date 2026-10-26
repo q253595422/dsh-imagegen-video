@@ -166,7 +166,15 @@ await check('A1c tool discovery finds a Windows-style install and honours the ov
 
     // The same directory on a POSIX lookup holds nothing usable: there is no
     // bare `ffmpeg` here, and the guard must not accept `ffmpeg.exe` instead.
-    assert.equal(host.findTool('ffmpeg', { platform: 'posix', env: { PATH: bin }, home: scratch }), undefined,
+    //
+    // Asserted as "not this file" rather than "nothing at all", because the
+    // POSIX candidate list also holds the real system directories. CI installs
+    // ffmpeg into /usr/bin before the suite runs, so a lookup there legitimately
+    // finds a working tool -- and an assertion that it must find nothing would
+    // fail on CI while passing on a developer machine that has no
+    // /usr/bin/ffmpeg. The claim under test is that a `.exe` is never accepted,
+    // which holds either way.
+    assert.notEqual(host.findTool('ffmpeg', { platform: 'posix', env: { PATH: bin }, home: scratch }), exe,
       'a POSIX lookup must not accept a .exe as the tool')
 
     // Windows has no meaningful execute bit, so a regular file is the whole
@@ -178,13 +186,23 @@ await check('A1c tool discovery finds a Windows-style install and honours the ov
 
     // POSIX still requires the execute bit, and this proves the two platforms
     // really do diverge rather than both happening to return the same thing.
-    const bare = join(bin, 'ffmpeg')
+    //
+    // The bare file goes in a SEPARATE scratch home. `<home>/.local/bin` is the
+    // first candidate directory on both platforms, so planting a file there
+    // under the Windows home above would give the later Windows assertions a
+    // second candidate to find -- and "the override falls back to discovery"
+    // would then resolve to this POSIX test's file instead of the `.exe`.
+    const posixHome = join(scratch, 'posix-home')
+    const localBin = join(posixHome, '.local', 'bin')
+    mkdirSync(localBin, { recursive: true })
+    const bare = join(localBin, 'ffmpeg')
+    const posix = { platform: 'posix', env: { PATH: bin }, home: posixHome }
     writeFileSync(bare, 'not executable either\n')
     chmodSync(bare, 0o644)
-    assert.equal(host.findTool('ffmpeg', { platform: 'posix', env: { PATH: bin }, home: scratch }), undefined,
+    assert.notEqual(host.findTool('ffmpeg', posix), bare,
       'on POSIX a file without the execute bit is not a tool')
     chmodSync(bare, 0o755)
-    assert.equal(host.findTool('ffmpeg', { platform: 'posix', env: { PATH: bin }, home: scratch }), bare,
+    assert.equal(host.findTool('ffmpeg', posix), bare,
       'on POSIX the execute bit is what makes it a tool')
 
     // The override wins over discovery, and an override pointing at nothing is
