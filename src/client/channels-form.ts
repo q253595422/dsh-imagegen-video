@@ -309,9 +309,40 @@ export class ChannelsForm {
 
   private stageChannels(channels: ChannelDraft[]): void {
     const cleaned = channels.map(stripChannel)
+    // A channel the list no longer contains must not keep a staged key edit:
+    // a pending `set` would be written straight back to the id that was just
+    // deleted, so the user who typed a key and then removed the channel would
+    // get that key persisted instead of discarded. `planOps` emits the unset.
+    const kept = new Set(cleaned.map(channel => channel.id))
+    for (const id of [...this.stagedKeys.keys()]) {
+      if (!kept.has(id)) this.stagedKeys.delete(id)
+    }
     this.stagedChannels = cleaned
     this.clearFailure()
     this.publish()
+  }
+
+  /**
+   * Channel ids this save drops from the persisted list.
+   *
+   * Deleting a channel used to be a plain `channels` rewrite, which left the
+   * channel's plaintext key in `channelSecrets` with no UI entry left to clear
+   * it. The save now derives the removals itself instead of trusting each
+   * caller to remember.
+   */
+  private removedChannelIds(): string[] {
+    if (this.stagedChannels === null) return []
+    const kept = new Set(this.stagedChannels.map(channel => channel.id))
+    return this.storedChannelIds().filter(id => !kept.has(id))
+  }
+
+  /** The persisted channel ids (the scope value, never the staged draft). */
+  private storedChannelIds(): string[] {
+    const stored = scopeChannelsOf(this.scope)
+    if (!Array.isArray(stored)) return []
+    return stored.flatMap((channel: unknown) => typeof channel === 'object' && channel !== null && typeof (channel as { id?: unknown }).id === 'string'
+      ? [(channel as { id: string }).id]
+      : [])
   }
 
   private stageKey(id: string, value: string | undefined): void {
@@ -330,6 +361,7 @@ export class ChannelsForm {
   /** Build the single batch of path ops a save performs. */
   private planOps(): SettingsOp[] {
     const ops: SettingsOp[] = []
+    const removed = this.removedChannelIds()
     if (this.stagedChannels !== null) {
       ops.push({ op: 'set', path: ['channels'], value: this.stagedChannels })
       // Once channels exist, the legacy flat fields are obsolete (idempotent).
@@ -337,22 +369,50 @@ export class ChannelsForm {
       ops.push({ op: 'unset', path: ['apiKey'] })
       ops.push({ op: 'unset', path: ['imageModels'] })
     }
+    // A removed channel takes its secret with it. `unset` (not `set`) is the
+    // only op a removed id may ever appear in.
+    for (const id of removed) ops.push({ op: 'unset', path: ['channelSecrets', id] })
     for (const [id, edit] of this.stagedKeys) {
+      if (removed.includes(id)) continue
       if (edit.kind === 'set') ops.push({ op: 'set', path: ['channelSecrets', id], value: edit.value })
       else ops.push({ op: 'unset', path: ['channelSecrets', id] })
     }
     if (this.stagedDefault !== null) {
       ops.push({ op: 'set', path: ['defaultChannelId'], value: this.stagedDefault })
+    } else if (this.stagedChannels !== null) {
+      // The stored default may name a channel this very save removes. Left
+      // alone it stays in cordis.patch.yml as a dangling id, and `resolve()`
+      // only papers over it at read time.
+      const remaining = this.stagedChannels.map(channel => channel.id)
+      const storedDefault = this.scope.getSnapshot().value?.defaultChannelId ?? ''
+      if (storedDefault !== '' && !remaining.includes(storedDefault)) {
+        ops.push(remaining.length > 0
+          ? { op: 'set', path: ['defaultChannelId'], value: remaining[0] }
+          : { op: 'unset', path: ['defaultChannelId'] })
+      }
     }
     if (this.stagedDefaultModel !== null) {
       ops.push(this.stagedDefaultModel === ''
         ? { op: 'unset', path: ['defaultModel'] }
         : { op: 'set', path: ['defaultModel'], value: this.stagedDefaultModel })
+    } else if (this.stagedChannels !== null) {
+      // Same dangling-default problem for the model aliases: reset to empty so
+      // the stored config is honest. A later channel re-adding the same alias
+      // must not silently inherit the old selection.
+      const storedModel = this.scope.getSnapshot().value?.defaultModel ?? ''
+      if (storedModel !== '' && !this.modelAliases().includes(storedModel)) {
+        ops.push({ op: 'unset', path: ['defaultModel'] })
+      }
     }
     if (this.stagedDefaultVideoModel !== null) {
       ops.push(this.stagedDefaultVideoModel === ''
         ? { op: 'unset', path: ['defaultVideoModel'] }
         : { op: 'set', path: ['defaultVideoModel'], value: this.stagedDefaultVideoModel })
+    } else if (this.stagedChannels !== null) {
+      const storedVideo = this.scope.getSnapshot().value?.defaultVideoModel ?? ''
+      if (storedVideo !== '' && !this.videoModelAliases().includes(storedVideo)) {
+        ops.push({ op: 'unset', path: ['defaultVideoModel'] })
+      }
     }
     return ops
   }

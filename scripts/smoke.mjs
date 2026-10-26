@@ -4957,7 +4957,7 @@ await check('E1 client apply mounts the sidebar entry and studio (jsdom)', async
 
   // Stateful bridge stub: describe + mutate (same wire shapes as the routes).
   // The redacted view never returns the key; the secrets sidecar tracks it.
-  const keyState = { set: false }
+  const keyState = { set: false, ids: {} }
   const configState = {
     enabled: true,
     announceToAgent: true,
@@ -5238,12 +5238,26 @@ await check('E1 client apply mounts the sidebar entry and studio (jsdom)', async
       }
       for (const op of payload.ops) {
         if (op.path[0] === 'channels' && op.op === 'set') configState.channels = op.value
-        if (op.path[0] === 'defaultChannelId' && op.op === 'set') configState.defaultChannelId = op.value
+        if (op.path[0] === 'defaultChannelId') {
+          if (op.op === 'set') configState.defaultChannelId = op.value
+          else delete configState.defaultChannelId
+        }
         if (op.path[0] === 'defaultModel') {
           if (op.op === 'set') configState.defaultModel = op.value
           else delete configState.defaultModel
         }
-        if (op.path[0] === 'channelSecrets' && op.path[1] === 'default') keyState.set = op.op === 'set'
+        if (op.path[0] === 'defaultVideoModel') {
+          if (op.op === 'set') configState.defaultVideoModel = op.value
+          else delete configState.defaultVideoModel
+        }
+        // Every channel id, not just `default`: a delete has to clear the
+        // removed id's entry, and the stub must show that it really went away.
+        if (op.path[0] === 'channelSecrets') {
+          const id = op.path[1]
+          if (op.op === 'set') keyState.ids[id] = op.value
+          else delete keyState.ids[id]
+          if (id === 'default') keyState.set = op.op === 'set'
+        }
       }
       return {
         ok: true,
@@ -6541,6 +6555,61 @@ await check('E1 client apply mounts the sidebar entry and studio (jsdom)', async
     assert.equal(afterRetry.channels.failed, false, 'a successful retry clears the failure state')
     assert.equal(afterRetry.dirty, false, 'a successful retry clears staged edits')
     assert.ok(mutateCalls.at(-1).ops.some(op => op.path[0] === 'channelSecrets' && op.value === 'sk-retry'), 'retry resends the preserved token')
+
+    // #13: deleting a channel must take its plaintext key with it. Before the
+    // fix the save rewrote `channels` and nothing else, so `channelSecrets`
+    // kept an entry for an id the UI could no longer show — the only way left
+    // to clear it was hand-editing cordis.patch.yml.
+    //
+    // The nastier half: a key typed just before the delete was still staged as
+    // `{kind:'set'}`, so committing wrote it straight back to the dead id.
+    face.channels.setChannels([...face.hooks.imageGenSettingsCard.getSnapshot().channels.channels, {
+      id: 'doomed', preset: '', name: 'Doomed', apiUrl: 'https://doomed.test/v1', apiUrlFull: false,
+      models: [{ alias: 'doomed-model', id: 'doomed-model' }], videoModels: [{ alias: 'doomed-video', id: 'doomed-video' }],
+    }])
+    await face.channels.commit()
+    face.channels.setDefaultChannel('doomed')
+    face.channels.setDefaultModel('doomed-model')
+    face.channels.setDefaultVideoModel('doomed-video')
+    face.channels.setChannelKey('doomed', 'sk-doomed')
+    await face.channels.commit()
+    assert.ok(
+      mutateCalls.at(-1).ops.some(op => op.path[0] === 'channelSecrets' && op.path[1] === 'doomed' && op.op === 'set' && op.value === 'sk-doomed'),
+      'the doomed channel really holds a key before it is deleted',
+    )
+
+    // Stage a fresh key and then delete the channel in the SAME save: the
+    // staged `set` must be dropped, never replayed onto the removed id.
+    face.channels.setChannelKey('doomed', 'sk-typed-then-deleted')
+    face.channels.setChannels(face.hooks.imageGenSettingsCard.getSnapshot().channels.channels.filter(channel => channel.id !== 'doomed'))
+    await face.channels.commit()
+    const deleteOps = mutateCalls.at(-1).ops
+    assert.ok(
+      deleteOps.some(op => op.path[0] === 'channelSecrets' && op.path[1] === 'doomed' && op.op === 'unset'),
+      `deleting a channel unsets its secret: ${JSON.stringify(deleteOps)}`,
+    )
+    assert.equal(
+      deleteOps.some(op => op.path[0] === 'channelSecrets' && op.path[1] === 'doomed' && op.op === 'set'),
+      false,
+      `a key staged before the delete must not be written back to the removed id: ${JSON.stringify(deleteOps)}`,
+    )
+    assert.equal(keyState.ids.doomed, undefined, 'the removed channel no longer holds a secret')
+
+    // The defaults that pointed at the removed channel must be reset on disk,
+    // not merely papered over by resolve()'s read-time fallback — otherwise the
+    // stale alias silently wins again the moment a channel re-adds that name.
+    assert.ok(
+      deleteOps.some(op => op.path[0] === 'defaultChannelId' && op.op === 'set' && op.value === 'default'),
+      `defaultChannelId falls back to a surviving channel: ${JSON.stringify(deleteOps)}`,
+    )
+    assert.ok(
+      deleteOps.some(op => op.path[0] === 'defaultModel' && op.op === 'unset'),
+      `a dangling defaultModel is unset: ${JSON.stringify(deleteOps)}`,
+    )
+    assert.ok(
+      deleteOps.some(op => op.path[0] === 'defaultVideoModel' && op.op === 'unset'),
+      `a dangling defaultVideoModel is unset: ${JSON.stringify(deleteOps)}`,
+    )
 
     // Ecommerce submission flow: with the channel key set, confirming the plan
     // fans out one queued task per planned image carrying the set metadata.

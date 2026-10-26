@@ -1045,6 +1045,63 @@ const CASES = [
     to: '            <button type="submit" className={css.primary} disabled={!ready} onClick={() => void generate()}>',
     expect: /one click on promo's submit must issue one generation/,
   },
+  {
+    // #13: a deleted channel used to keep its plaintext key in `channelSecrets`
+    // forever — the row vanished from the UI, so no control was left to clear
+    // it. Dropping the derived removals restores exactly that: the `channels`
+    // rewrite still happens, only the secret survives.
+    name: 'a deleted channel keeps its api key in channelSecrets',
+    runner: 'smoke',
+    file: 'src/client/channels-form.ts',
+    from: '    for (const id of removed) ops.push({ op: \'unset\', path: [\'channelSecrets\', id] })',
+    to: '    void removed',
+    expect: /deleting a channel unsets its secret/,
+  },
+  {
+    // #13, the nastier half: a key typed just before the delete stayed staged
+    // as `{kind:'set'}`, so the save wrote it straight back to the id that was
+    // being removed. Two independent guards stop that — `stageChannels` drops
+    // the stale edit, and `planOps` skips any removed id — so the case has to
+    // remove both, or the surviving one keeps the check green and the case
+    // reports FALSE GREEN while the write-back it targets is still reachable.
+    name: 'a key typed before the delete is written back to the removed id',
+    runner: 'smoke',
+    file: 'src/client/channels-form.ts',
+    from: [
+      '    const kept = new Set(cleaned.map(channel => channel.id))\n    for (const id of [...this.stagedKeys.keys()]) {\n      if (!kept.has(id)) this.stagedKeys.delete(id)\n    }',
+      '      if (removed.includes(id)) continue',
+    ],
+    to: [
+      '    // stale staged edits kept',
+      '      // removed ids not skipped',
+    ],
+    expect: /must not be written back to the removed id/,
+  },
+  {
+    // #14: `.channelBadge` was `white-space: nowrap` with no way to shrink, so a
+    // long model-alias list set the channel row's min-content width and pushed
+    // it past the card — where `.settingsSection`'s `overflow: clip` swallowed
+    // it with no scrollbar. Three declarations together make the row survive at
+    // 850px (the badge can shrink, and `.card`/`.body` keep `min-width: 0` so a
+    // grid track cannot be widened by a child), so the case restores all three:
+    // removing only the badge rule leaves the row green and reports FALSE GREEN.
+    name: 'a long model-alias badge pushes the channel row out of the card',
+    runner: 'contracts',
+    file: 'src/client/settings-card.module.css',
+    from: [
+      '  min-width: 0;\n  overflow: hidden;\n  text-overflow: ellipsis;\n  white-space: nowrap;\n  font-weight: 500;',
+      '  transition: border-color 0.16s, background 0.16s;\n  /* The settings host can mount this card as a grid item. There `min-width:\n     auto` resolves to min-content, so a wide child widened the track and the\n     card hung over both edges of the pane instead of wrapping inside it. */\n  min-width: 0;',
+      '  margin: 0 16px;\n  padding-bottom: 8px;\n  min-width: 0;',
+      '  overflow-x: auto;\n  overflow-y: visible;',
+    ],
+    to: [
+      '  white-space: nowrap;\n  font-weight: 500;',
+      '  transition: border-color 0.16s, background 0.16s;',
+      '  margin: 0 16px;\n  padding-bottom: 8px;',
+      '  overflow: clip;',
+    ],
+    expect: /card hangs outside its pane|channel row is wider|clips its overflow|settings page scrolls horizontally/,
+  },
 ]
 
 const RUNNERS = {

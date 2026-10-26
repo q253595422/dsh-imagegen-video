@@ -11,6 +11,10 @@
   border-radius: var(--dsw-radius-md);
   background: var(--dsw-alias-bg-layer-3);
   transition: border-color 0.16s, background 0.16s;
+  /* The settings host can mount this card as a grid item. There `min-width:
+     auto` resolves to min-content, so a wide child widened the track and the
+     card hung over both edges of the pane instead of wrapping inside it. */
+  min-width: 0;
 }
 
 .card:hover {
@@ -93,6 +97,7 @@
   border-top: 1px solid var(--dsw-alias-border-l2);
   margin: 0 16px;
   padding-bottom: 8px;
+  min-width: 0;
 }
 
 .versionRow {
@@ -617,6 +622,10 @@
   align-items: center;
   flex-wrap: wrap;
   gap: 4px 8px;
+  /* A flex item's automatic minimum is its content, so without this the
+     wrapped meta row still reports the badge's full single-line width as the
+     row's floor. */
+  min-width: 0;
 }
 
 .channelHost {
@@ -635,6 +644,15 @@
   padding: 0 7px;
   font-size: 11px;
   line-height: 17px;
+  /* The badge names the channel's whole model catalog (`keySet · 5 个模型`
+     can be a long alias list). `nowrap` alone let it set the row's min-content
+     width, so a 640px settings pane — 850px window minus the host nav — had its
+     channel rows run wider than the card and get silently clipped by
+     `.settingsSection`'s `overflow: clip`. It may still keep one line; it just
+     has to be allowed to shrink and ellipsize instead of pushing the row. */
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
   white-space: nowrap;
   font-weight: 500;
   background: var(--dsw-alias-bg-module-platform);
@@ -1368,7 +1386,11 @@
   border: 1px solid var(--dsw-alias-border-l2);
   border-radius: var(--dsw-radius-md);
   background: var(--dsw-alias-bg-layer-3);
-  overflow: clip;
+  /* `clip` silently swallowed anything wider than the card: no scrollbar, no
+     hint that content was reachable, just a cut edge. `auto` keeps the visual
+     containment but makes the overflow reachable instead of lost. */
+  overflow-x: auto;
+  overflow-y: visible;
 }
 
 .settingsSection[data-open] {

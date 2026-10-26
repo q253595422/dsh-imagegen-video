@@ -696,6 +696,7 @@ const server = (await import('node:http')).createServer((req, res) => {
   else if (req.url?.includes('sourcetabs=1') === true) res.end(sourceTabsPage)
   else if (req.url?.includes('shortcuts=1') === true) res.end(shortcutPage)
   else if (req.url?.includes('navscroll=1') === true) res.end(navScrollPage)
+  else if (req.url?.includes('settings850=1') === true) res.end(settingsPage)
   else res.end(page)
 })
 await new Promise(r => server.listen(0, '127.0.0.1', r))
@@ -1623,6 +1624,121 @@ for (const state of observed) {
   }
 }
 console.log('nav pill: follows the active tab at every scroll offset, no double label')
+
+// --- #14: a long model-alias badge must not push the channel row out --------
+// `.channelBadge` carried `white-space: nowrap` with no way to shrink, so a
+// channel whose catalog is a long alias list set the row's min-content width.
+// In the host's 850px settings window (≈640px of pane) the rows ran wider than
+// the card, and `.settingsSection`'s `overflow: clip` swallowed the excess with
+// no scrollbar -- the user saw a cut edge and had no way to know content was
+// there. Measured in a real browser because this is entirely a layout outcome:
+// jsdom has no layout engine and would report a width of 0 for everything.
+const settingsCss = read('settings-card.module.css')
+const longAliases = '已设置密钥 · qwen-image-3.0-pro · qwen-image-3.0 · qwen-vl-max-2025-08-13 · qwen-image-edit-plus · wan-2.5-i2v'
+const settingsRow = name => `
+  <li class="channelRow">
+    <span class="channelDotReady" aria-hidden="true"></span>
+    <button type="button" class="channelMain">
+      <span class="channelName">★ ${name}</span>
+      <span class="channelMeta"><span class="channelBadge">${longAliases}</span></span>
+    </button>
+    <button type="button" class="channelAction">编辑</button>
+    <button type="button" class="channelAction" data-danger>删除</button>
+  </li>`
+const settingsPage = `<!doctype html><html><head><style>
+  body { margin: 0; display: flex; }
+  /* The host's settings window is 850px wide and its nav takes ~210px. */
+  #nav { flex: none; width: 210px; }
+  /* 'auto' is the hostile case: as a grid item the card's automatic minimum
+     becomes min-content, so a wide child widens the track instead of wrapping. */
+  #pane { flex: 1 1 auto; min-width: 0; padding: 12px; box-sizing: border-box; display: grid; grid-template-columns: auto; }
+  ${settingsCss}
+</style></head><body>
+  <div id="nav"></div>
+  <div id="pane">
+    <section class="card">
+      <div class="body">
+        <section class="settingsSection" data-open>
+          <ul class="channelList">
+            ${settingsRow('即梦方舟 (Seedream / Seedance)')}
+            ${settingsRow('清衍 API')}
+          </ul>
+        </section>
+        <div class="footer"><button type="button" class="save">保存</button></div>
+      </div>
+    </section>
+  </div>
+</body></html>`
+
+const settingsTarget = await (await fetch(`http://127.0.0.1:${launched.port}/json/new?${encodeURIComponent(`http://127.0.0.1:${port}/?settings850=1`)}`, { method: 'PUT' })).json()
+const ws8 = new WebSocket(settingsTarget.webSocketDebuggerUrl)
+await new Promise(r => { ws8.onopen = r })
+let id8 = 0
+const send8 = (method, params) => new Promise(resolve => {
+  const myId = ++id8
+  const onMessage = e => { const m = JSON.parse(e.data); if (m.id === myId) { ws8.removeEventListener('message', onMessage); resolve(m) } }
+  ws8.addEventListener('message', onMessage)
+  ws8.send(JSON.stringify({ id: myId, method, params }))
+})
+const evaluate8 = async expression => {
+  const res = await send8('Runtime.evaluate', { expression, returnByValue: true, awaitPromise: true })
+  if (res.result?.exceptionDetails !== undefined) {
+    throw new Error(`page threw: ${JSON.stringify(res.result.exceptionDetails.exception?.description ?? res.result.exceptionDetails)}`)
+  }
+  return res.result.result.value
+}
+await send8('Runtime.enable', {})
+await send8('Emulation.setDeviceMetricsOverride', { width: 850, height: 800, deviceScaleFactor: 1, mobile: false })
+await new Promise(r => setTimeout(r, 400))
+
+const settingsFit = await evaluate8(`(() => {
+  const pane = document.getElementById('pane')
+  const pb = pane.getBoundingClientRect()
+  const card = document.querySelector('.card')
+  const cb = card.getBoundingClientRect()
+  const rows = [...document.querySelectorAll('.channelRow')]
+  const doc = document.documentElement
+  return {
+    pane: Math.round(pb.width),
+    cardWidth: Math.round(cb.width),
+    cardInside: cb.left >= pb.left - 0.5 && cb.right <= pb.right + 0.5,
+    rowOverflow: rows.map(r => r.scrollWidth - r.clientWidth),
+    docOverflow: doc.scrollWidth > doc.clientWidth,
+    sectionOverflowX: getComputedStyle(document.querySelector('.settingsSection')).overflowX,
+  }
+})()`)
+console.log(`settings card at 850px: pane ${settingsFit.pane}px, card ${settingsFit.cardWidth}px, row overflow ${JSON.stringify(settingsFit.rowOverflow)}, section overflow-x=${settingsFit.sectionOverflowX}`)
+
+if (!settingsFit.cardInside) {
+  console.error('\nFAIL: at the host\'s default 850px settings window the card hangs outside its pane.')
+  console.error(`  card is ${settingsFit.cardWidth}px in a ${settingsFit.pane}px pane (cardInside=${settingsFit.cardInside})`)
+  console.error('A card that is a grid item takes its automatic minimum from min-content,')
+  console.error('so one wide child widens the track and the card overhangs both edges —')
+  console.error('which is what the user reported as "titles cut off on both sides".')
+  console.error('Keep `min-width: 0` on .card / .body and let the badge shrink.')
+  process.exit(1)
+}
+if (settingsFit.rowOverflow.some(delta => delta > 1)) {
+  console.error('\nFAIL: a channel row is wider than its container, so its content is clipped.')
+  console.error(`  row scrollWidth - clientWidth = ${JSON.stringify(settingsFit.rowOverflow)}`)
+  console.error('The badge names the whole model catalog with `white-space: nowrap`;')
+  console.error('without `min-width: 0; overflow: hidden` it sets the row\'s floor and')
+  console.error('pushes the trailing 编辑/删除 buttons out of the visible card.')
+  process.exit(1)
+}
+if (settingsFit.docOverflow) {
+  console.error('\nFAIL: the settings page scrolls horizontally at 850px.')
+  process.exit(1)
+}
+if (settingsFit.sectionOverflowX === 'clip') {
+  console.error('\nFAIL: `.settingsSection` clips its overflow, so any excess is lost')
+  console.error('silently — no scrollbar, no hint that content was reachable. That was')
+  console.error('the third symptom in #14: the user could not tell the page overflowed.')
+  process.exit(1)
+}
+console.log('settings card: fits the 850px pane, no row overflows, overflow stays reachable')
+
+ws8.close()
 
 ws7.close()
 ws6.close()
