@@ -29,7 +29,7 @@ import { tmpdir } from 'node:os'
 import { spawnSync } from 'node:child_process'
 import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { findChrome, launchChrome, skipWithoutChrome } from './lib/headless-chrome.mjs'
+import { findChrome, launchChrome, openPage, skipWithoutChrome } from './lib/headless-chrome.mjs'
 
 const CHROME = findChrome()
 
@@ -1670,28 +1670,11 @@ const settingsPage = `<!doctype html><html><head><style>
   </div>
 </body></html>`
 
-const settingsTarget = await (await fetch(`http://127.0.0.1:${launched.port}/json/new?${encodeURIComponent(`http://127.0.0.1:${port}/?settings850=1`)}`, { method: 'PUT' })).json()
-const ws8 = new WebSocket(settingsTarget.webSocketDebuggerUrl)
-await new Promise(r => { ws8.onopen = r })
-let id8 = 0
-const send8 = (method, params) => new Promise(resolve => {
-  const myId = ++id8
-  const onMessage = e => { const m = JSON.parse(e.data); if (m.id === myId) { ws8.removeEventListener('message', onMessage); resolve(m) } }
-  ws8.addEventListener('message', onMessage)
-  ws8.send(JSON.stringify({ id: myId, method, params }))
-})
-const evaluate8 = async expression => {
-  const res = await send8('Runtime.evaluate', { expression, returnByValue: true, awaitPromise: true })
-  if (res.result?.exceptionDetails !== undefined) {
-    throw new Error(`page threw: ${JSON.stringify(res.result.exceptionDetails.exception?.description ?? res.result.exceptionDetails)}`)
-  }
-  return res.result.result.value
-}
-await send8('Runtime.enable', {})
-await send8('Emulation.setDeviceMetricsOverride', { width: 850, height: 800, deviceScaleFactor: 1, mobile: false })
+const settingsPageSession = await openPage(launched.port, `http://127.0.0.1:${port}/?settings850=1`)
+await settingsPageSession.send('Emulation.setDeviceMetricsOverride', { width: 850, height: 800, deviceScaleFactor: 1, mobile: false })
 await new Promise(r => setTimeout(r, 400))
 
-const settingsFit = await evaluate8(`(() => {
+const settingsFit = await settingsPageSession.evaluate(`(() => {
   const pane = document.getElementById('pane')
   const pb = pane.getBoundingClientRect()
   const card = document.querySelector('.card')
@@ -1738,7 +1721,7 @@ if (settingsFit.sectionOverflowX === 'clip') {
 }
 console.log('settings card: fits the 850px pane, no row overflows, overflow stays reachable')
 
-ws8.close()
+settingsPageSession.close()
 
 ws7.close()
 ws6.close()
