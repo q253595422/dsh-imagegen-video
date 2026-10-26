@@ -30,6 +30,7 @@ import { spawnSync } from 'node:child_process'
 import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { findChrome, launchChrome, openPage, skipWithoutChrome } from './lib/headless-chrome.mjs'
+import { WCAG_CONTRAST_SOURCE } from './lib/wcag-contrast.mjs'
 
 const CHROME = findChrome()
 
@@ -1780,28 +1781,18 @@ await lightboxSession.send('Page.setDocumentContent', {
 })
 await new Promise(r => setTimeout(r, 300))
 const lightboxContrast = await lightboxSession.evaluate(`(() => {
-  const parse = c => {
-    // color-mix yields color(srgb 1 1 1 / 0.72): 0..1 components + optional alpha.
-    if (c.startsWith('color(srgb')) {
-      const m = (c.match(/[\\d.]+/g) || []).map(Number)
-      return { r: (m[0] ?? 0) * 255, g: (m[1] ?? 0) * 255, b: (m[2] ?? 0) * 255, a: m.length > 3 ? m[3] : 1 }
-    }
-    const m = (c.match(/[\\d.]+/g) || []).map(Number); return { r: m[0]||0, g: m[1]||0, b: m[2]||0, a: m.length > 3 ? m[3] : 1 }
-  }
-  const over = (t, b) => ({ r: t.r*t.a + b.r*(1-t.a), g: t.g*t.a + b.g*(1-t.a), b: t.b*t.a + b.b*(1-t.a), a: 1 })
-  const lum = c => { const f = v => { v/=255; return v<=0.03928 ? v/12.92 : Math.pow((v+0.055)/1.055, 2.4) }; return 0.2126*f(c.r)+0.7152*f(c.g)+0.0722*f(c.b) }
-  const ratio = (x, y) => { const a = lum(x), b = lum(y); return Math.round(((Math.max(a,b)+0.05)/(Math.min(a,b)+0.05))*100)/100 }
+  ${WCAG_CONTRAST_SOURCE}
   const white = { r:255,g:255,b:255,a:1 }
   const lb = document.querySelector('.lightbox')
-  const maskBg = over(parse(getComputedStyle(lb).backgroundColor), white)
+  const maskBg = composite(parseColour(getComputedStyle(lb).backgroundColor), white)
   const out = []
   for (const id of ['lbOut','lbLevel','lbIn','lbCopy','lbDl','lbEd','lbClose','lbCap','lbIndex']) {
     const el = document.getElementById(id)
     if (el === null) continue
     const cs = getComputedStyle(el)
-    const own = parse(cs.backgroundColor)
-    const bg = own.a === 0 ? maskBg : over(own, maskBg)
-    out.push({ id, ratio: ratio(parse(cs.color), bg), color: cs.color })
+    const own = parseColour(cs.backgroundColor)
+    const bg = own === null || own.a === 0 ? maskBg : composite(own, maskBg)
+    out.push({ id, ratio: Math.round(contrastRatio(parseColour(cs.color), bg) * 100) / 100, color: cs.color })
   }
   return out
 })()`)

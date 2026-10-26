@@ -23,6 +23,7 @@
 import { createReadStream, existsSync, mkdirSync, readFileSync, statSync, writeFileSync } from 'node:fs'
 import { createServer } from 'node:http'
 import { dirname, join } from 'node:path'
+import { WCAG_CONTRAST_SOURCE } from './lib/wcag-contrast.mjs'
 import { fileURLToPath } from 'node:url'
 import { findChrome, launchChrome, skipWithoutChrome } from './lib/headless-chrome.mjs'
 
@@ -481,23 +482,11 @@ try {
   // colours (including inherited transparency), so a token that resolves to a
   // low-contrast pair shows up here instead of needing an eye on the PNG.
   const contrastPass = () => page.evaluate(`(() => {
-    // Parsed by hand rather than with a regex: this whole function is sent to
-    // the page as a template literal, and every backslash in it is eaten on the
-    // way out, which silently turned escaped regexes into different regexes.
-    const parse = value => {
-      const open = value.indexOf('(')
-      const close = value.indexOf(')')
-      if (open < 0 || close < open) return null
-      const parts = value.slice(open + 1, close).split(',').map(part => parseFloat(part))
-      if (parts.length < 3 || parts.some(part => !Number.isFinite(part))) return null
-      return { r: parts[0], g: parts[1], b: parts[2], a: parts.length > 3 ? parts[3] : 1 }
-    }
-    const over = (top, bottom) => ({
-      r: top.r * top.a + bottom.r * (1 - top.a),
-      g: top.g * top.a + bottom.g * (1 - top.a),
-      b: top.b * top.a + bottom.b * (1 - top.a),
-      a: 1,
-    })
+    // Colour parsing, alpha compositing, luminance and the ratio itself come
+    // from scripts/lib/wcag-contrast.mjs, embedded as source: this runs inside
+    // the page, and a second hand-written copy is how the two drifted (the old
+    // one here could not read the color(srgb …) form color-mix() produces).
+    ${WCAG_CONTRAST_SOURCE}
     // A painted ::after/::before sits BETWEEN an element and its own content,
     // and the selected pill in a segmented control is exactly that: opaque
     // pseudo-element, transparent element. Walking only element backgrounds
@@ -565,18 +554,10 @@ try {
         trace,
       }
     }
-    const luminance = colour => {
-      const channel = value => {
-        const scaled = value / 255
-        return scaled <= 0.03928 ? scaled / 12.92 : ((scaled + 0.055) / 1.055) ** 2.4
-      }
-      return 0.2126 * channel(colour.r) + 0.7152 * channel(colour.g) + 0.0722 * channel(colour.b)
-    }
-    const ratio = (a, b) => {
-      const one = luminance(a)
-      const two = luminance(b)
-      return (Math.max(one, two) + 0.05) / (Math.min(one, two) + 0.05)
-    }
+    const luminance = relativeLuminance
+    const ratio = contrastRatio
+    const parse = parseColour
+    const over = composite
     // Text that is not painted cannot be unreadable. Hover-only captions sit at
     // opacity 0 until the pointer arrives, so counting them would report a
     // contrast failure for something no user can see on this screenshot.
