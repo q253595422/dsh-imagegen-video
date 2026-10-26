@@ -5,6 +5,39 @@ Attribution for third-party code is in [NOTICE](./NOTICE).
 
 ## Releases
 
+### 1.17.2 — Windows 上 ffmpeg 找得到、失败不再被记成通过、视频任务重启不丢
+
+- **修 Windows 上所有 ffmpeg 能力不可用。** 「本机找不到 ffmpeg」但
+  `where ffmpeg` 有输出——因为同一个问题有四份独立实现，没有一份能在
+  Windows 上成立：候选目录只列 POSIX 路径且从不查 PATH（而 winget / scoop /
+  官方 zip 全靠加 PATH 安装）、`path.join(dir, 'ffmpeg')` 匹配不到
+  `ffmpeg.exe`、`X_OK` 在 Windows 上无意义。现在收敛成一个入口，
+  `locateFfmpeg()` 只剩 `return findTool('ffmpeg')`，两个测试脚本也改用宿主
+  自己的查找。`FFMPEG_PATH`/`FFPROBE_PATH` 由共享查找处理，「填了路径只修好
+  一半功能」不再出现。
+- **修「缺工具的用例被记成 PASS」。** `smoke-code-render` 用 `return` 静默跳过，
+  而 `check()` 把正常返回记 PASS，于是 C5（产出可播放 MP4）、C7（片段可拼接）
+  在缺 ffmpeg 的机器上一直显示「通过」却一行没执行——这正是上一条能藏那么久的
+  原因。三处改为 `skip()`（含顺带发现的 C4c：它原来在缺工具时反而**报红**），
+  汇总固定打印 `N skipped: <名字列表>`。跳过仍退出 0。
+- **修其余 10 处 Windows 假设。** `verify-tracked` 的路径分隔符（150 个文件全被
+  判成未跟踪）、`pnpm` 的 `.cmd` shim、目录符号链接改 junction、
+  `cpSync({recursive:true})` 静默退出 127、`URL.pathname` 当文件路径、
+  `pnpm pack --ignore-scripts` 在 pnpm 10 已移除、tar/du 把盘符冒号当远程主机、
+  `.bin/tsc` 在 Windows 是 POSIX 脚本、`findChrome()` 缺 Windows 候选、
+  跨行正则与 CRLF 检出。CRLF 做了两层：读取处统一归一（`scripts/lib/source-text.mjs`）
+  加 `.gitattributes`。
+- **带上 v1.17.1 之后未发布的五条视频可靠性修复。** 重启后重连正在渲染的远端
+  任务（不再重复提交和扣费）、取消只停本地并如实报 `unsupported`、工作流
+  fail-fast 不再误杀独立分支、分镜 carry 重跑标脏下游、跨渠道模型别名歧义以
+  显式 `channelId` 优先。
+- **验证**：`tsc` 0 错、`tsdown` 通过、全量 `pnpm test` EXIT=0 零 FAIL
+  （`16/16 code-render checks pass`、`0 skipped`、`UI CONTRACTS VERIFIED` 等）。
+  Windows 规则靠 `platform`/`env`/`home` 可注入在 macOS 上验证 15 项断言；
+  「跳过真的显示成 SKIP」用空 `HOME` 实测确认；新增三条反向用例均确认变红。
+- **已知缺口**：Windows 上的行为未在真机实测，机理依据报告者实测的根因；
+  `verify-native-ui` 的 DSH token 检查在 Windows 上仍跳过（宿主包在 `app.asar`）。
+
 ### 1.17.1 — 导航不重影、侧栏换座不丢、上限不再自相矛盾
 
 - **修「点 A+ 详情页后导航栏出现两个标题」。** 根因在 `GooeyNav` 的
