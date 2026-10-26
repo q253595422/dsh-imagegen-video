@@ -1102,6 +1102,33 @@ const CASES = [
     ],
     expect: /card hangs outside its pane|channel row is wider|clips its overflow|settings page scrolls horizontally/,
   },
+  {
+    // The lightbox chrome followed the theme's inversion while sitting on a
+    // fixed dark mask: white text on the light theme's white input background
+    // = 1:1, invisible until :hover. Restoring the theme tokens restores that
+    // exact pair, and the contrast guard must go red.
+    name: 'the lightbox buttons follow the theme instead of the dark mask',
+    runner: 'contracts',
+    file: 'src/client/panel.module.css',
+    from: [
+      '  color: var(--lightbox-ink);\n  background: var(--lightbox-surface);\n  border: 1px solid var(--lightbox-edge);\n  cursor: pointer;\n}',
+    ],
+    to: [
+      '  color: var(--dsw-alias-label-primary-inverted);\n  background: var(--dsw-specific-input-major);\n  border: 1px solid var(--lightbox-edge);\n  cursor: pointer;\n}',
+    ],
+    expect: /lightbox chrome is unreadable in a light theme|unreadable in a light theme/,
+  },
+  {
+    // A canvas drop used to read every dropped image at once with Promise.all
+    // and no size or count cap, which seized the page on a large selection.
+    // Removing the caps restores exactly that path.
+    name: 'a canvas drop reads every image at once with no caps',
+    runner: 'smoke',
+    file: 'src/client/CanvasWorkspace.tsx',
+    from: '    const oversized = allImages.filter(file => file.size > DROP_IMAGE_MAX_BYTES)\n    const withinSize = allImages.filter(file => file.size <= DROP_IMAGE_MAX_BYTES)\n    const images = withinSize.slice(0, DROP_IMAGE_MAX_COUNT)',
+    to: '    const oversized = []\n    const withinSize = allImages\n    const images = allImages',
+    expect: /dropped image over the size cap|drop is capped to a maximum|read sequentially/,
+  },
 ]
 
 const RUNNERS = {

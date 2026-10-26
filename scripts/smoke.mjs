@@ -7785,6 +7785,30 @@ await check('E1 client apply mounts the sidebar entry and studio (jsdom)', async
       /event\.target\.value = ''/,
       'the picker clears its file input so the same file can be re-picked',
     )
+
+    // A drop of images used to read EVERY file at once with Promise.all and no
+    // size or count cap, so dragging a large selection in from Finder seized
+    // the page (each FileReader holds the whole file, then the base64 string).
+    // A real drop is not reproducible in jsdom, so the honest check is the
+    // invariant: the caps are applied BEFORE any reader runs, and the reads are
+    // sequential.
+    const dropSource = readFileSync(new URL('../src/client/CanvasWorkspace.tsx', import.meta.url), 'utf8')
+    const dropBlock = dropSource.match(/const onDrop = useCallback\([\s\S]{0,3000}?\[addAssets, api, screenToWorld, uploadCanvasFile\]\)/)?.[0] ?? ''
+    assert.ok(dropBlock !== '', 'the canvas drop handler is findable')
+    assert.match(
+      dropBlock,
+      /file\.size > DROP_IMAGE_MAX_BYTES/,
+      'a dropped image over the size cap is filtered out',
+    )
+    assert.match(
+      dropBlock,
+      /\.slice\(0, DROP_IMAGE_MAX_COUNT\)/,
+      'a drop is capped to a maximum number of images',
+    )
+    assert.ok(
+      !/Promise\.all\(images\.map/.test(dropBlock),
+      'dropped images are read sequentially, not all at once (a big drop used to freeze the page)',
+    )
     // Leave the canvas as this check found it.
     const closePicker = view.querySelector('[data-canvas-no-zoom][class*="modalBackdrop"] [aria-label="关闭"]')
     closePicker?.dispatchEvent(new jsdomWindow.MouseEvent('click', { bubbles: true }))

@@ -3006,7 +3006,28 @@ html[data-dsh-imagegen-chat-collapsed] [data-dsh-imagegen-chat-resizer] {
 
 /* --- full-screen image preview (lightbox) -------------------------------------- */
 
+/*
+ * The lightbox is a FIXED dark surface: `.lightbox` paints a dark photo mask and
+ * sits on top of whatever the app looks like. Its chrome therefore must not
+ * follow the theme's inversion — `--dsw-alias-label-primary-inverted` flips to
+ * white in a light theme while `--dsw-specific-input-major` is the theme's input
+ * background (white), so every button became white-on-white with a contrast
+ * ratio of 1.0 and only appeared once :hover swapped the background for the dark
+ * mask. Measured in headless Chromium: normal state 1.0, hover 21.0.
+ *
+ * These two are pinned to the mask instead, so the chrome reads the same in both
+ * themes. Hover still goes one step brighter than rest.
+ */
 .lightbox {
+  /* Chrome for a fixed dark surface, derived from tokens rather than written as
+     literals (the native-UI contract forbids those). `label-primary-foreground`
+     is the "text laid on a solid colour" token, so it stays readable whatever
+     the theme; the translucent surfaces are mixed from it, which keeps the
+     buttons visible at rest instead of only on :hover. */
+  --lightbox-ink: var(--dsw-alias-label-primary-foreground);
+  --lightbox-surface: color-mix(in srgb, var(--dsw-alias-label-primary-foreground) 16%, transparent);
+  --lightbox-surface-hover: color-mix(in srgb, var(--dsw-alias-label-primary-foreground) 28%, transparent);
+  --lightbox-edge: color-mix(in srgb, var(--dsw-alias-label-primary-foreground) 22%, transparent);
   position: fixed;
   inset: 0;
   z-index: var(--z-lightbox);
@@ -3027,15 +3048,15 @@ html[data-dsh-imagegen-chat-collapsed] [data-dsh-imagegen-chat-resizer] {
   justify-content: center;
   width: 38px;
   height: 38px;
-  color: var(--dsw-alias-label-primary-inverted);
-  background: var(--dsw-specific-input-major);
-  border: 1px solid var(--dsw-alias-border-l2-darkmode-thin);
+  color: var(--lightbox-ink);
+  background: var(--lightbox-surface);
+  border: 1px solid var(--lightbox-edge);
   border-radius: 50%;
   cursor: pointer;
 }
 
 .lightboxClose:hover {
-  background: var(--dsw-alias-bg-mask-2);
+  background: var(--lightbox-surface-hover);
 }
 
 .lightboxNav {
@@ -3047,15 +3068,15 @@ html[data-dsh-imagegen-chat-collapsed] [data-dsh-imagegen-chat-resizer] {
   justify-content: center;
   width: 42px;
   height: 42px;
-  color: var(--dsw-alias-label-primary-inverted);
-  background: var(--dsw-specific-input-major);
-  border: 1px solid var(--dsw-alias-border-l2-darkmode-thin);
+  color: var(--lightbox-ink);
+  background: var(--lightbox-surface);
+  border: 1px solid var(--lightbox-edge);
   border-radius: 50%;
   cursor: pointer;
 }
 
 .lightboxNav:hover {
-  background: var(--dsw-alias-bg-mask-2);
+  background: var(--lightbox-surface-hover);
 }
 
 .lightboxNav[data-dir='prev'] {
@@ -3083,6 +3104,9 @@ html[data-dsh-imagegen-chat-collapsed] [data-dsh-imagegen-chat-resizer] {
   position: relative;
   overflow: auto;
   border-radius: var(--dsw-radius-md);
+  /* The stage sits BEHIND the photo, so it keeps the mask's own darkness rather
+     than the translucent chrome surface: a light wash here would halo every
+     transparent PNG. */
   background: var(--dsw-alias-bg-mask-2);
 }
 
@@ -3116,9 +3140,9 @@ html[data-dsh-imagegen-chat-collapsed] [data-dsh-imagegen-chat-resizer] {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  color: var(--dsw-alias-label-primary-inverted);
-  background: var(--dsw-specific-input-major);
-  border: 1px solid var(--dsw-alias-border-l2-darkmode-thin);
+  color: var(--lightbox-ink);
+  background: var(--lightbox-surface);
+  border: 1px solid var(--lightbox-edge);
   cursor: pointer;
 }
 
@@ -3144,7 +3168,7 @@ html[data-dsh-imagegen-chat-collapsed] [data-dsh-imagegen-chat-resizer] {
 .lightboxTool:hover,
 .lightboxZoomLevel:hover,
 .lightboxCopy:hover {
-  background: var(--dsw-alias-bg-mask-2);
+  background: var(--lightbox-surface-hover);
 }
 
 .lightboxCaptionRow {
@@ -3159,7 +3183,7 @@ html[data-dsh-imagegen-chat-collapsed] [data-dsh-imagegen-chat-resizer] {
   min-width: 0;
   font-size: 12px;
   line-height: 1.6;
-  color: var(--dsw-alias-label-primary-inverted);
+  color: var(--lightbox-ink);
   display: -webkit-box;
   -webkit-line-clamp: 3;
   -webkit-box-orient: vertical;
@@ -3186,7 +3210,10 @@ html[data-dsh-imagegen-chat-collapsed] [data-dsh-imagegen-chat-resizer] {
 
 .lightboxIndex {
   font-size: 12px;
-  color: var(--dsw-alias-label-dimmed);
+  /* Same rule as the rest of the lightbox chrome: this text sits on the dark
+     mask, so a theme-following dim colour drops to ~2.8:1 against it in a light
+     theme. Mixed from the on-solid text token instead. */
+  color: color-mix(in srgb, var(--dsw-alias-label-primary-foreground) 72%, transparent);
   font-variant-numeric: tabular-nums;
 }
 
@@ -3202,9 +3229,9 @@ html[data-dsh-imagegen-chat-collapsed] [data-dsh-imagegen-chat-resizer] {
   font: inherit;
   font-size: 12px;
   font-weight: 500;
-  color: var(--dsw-alias-label-primary-inverted);
-  background: var(--dsw-specific-input-major);
-  border: 1px solid var(--dsw-alias-border-l2-darkmode-thin);
+  color: var(--lightbox-ink);
+  background: var(--lightbox-surface);
+  border: 1px solid var(--lightbox-edge);
   border-radius: 999px;
   text-decoration: none;
   cursor: pointer;
@@ -3212,13 +3239,13 @@ html[data-dsh-imagegen-chat-collapsed] [data-dsh-imagegen-chat-resizer] {
 
 .lightboxDownload:hover,
 .lightboxEdit:hover {
-  background: var(--dsw-alias-bg-mask-2);
+  background: var(--lightbox-surface-hover);
 }
 
 .lightboxEdit {
-  color: var(--dsw-alias-label-primary-inverted);
-  background: var(--dsw-specific-input-major);
-  border: 1px solid var(--dsw-alias-border-l2-darkmode-thin);
+  color: var(--lightbox-ink);
+  background: var(--lightbox-surface);
+  border: 1px solid var(--lightbox-edge);
   border-radius: 999px;
 }
 

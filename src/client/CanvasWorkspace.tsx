@@ -753,6 +753,21 @@ const BLOCKED_UPLOAD_EXTENSIONS = new Set([
 const MAX_UPLOAD_BYTES = 50 * 1024 * 1024
 
 /**
+ * Caps for a canvas drop of images.
+ *
+ * Images take the base64 data-URL path (they double as generation references),
+ * so every file is read fully into memory and then re-encoded ~33% larger for
+ * the JSON upload. Reading them all at once on a large drop is what made the
+ * page seize: a Finder multi-selection of a dozen 20 MB photos queued a dozen
+ * concurrent FileReaders plus their data URLs. Both caps exist in the sibling
+ * drop paths already (ecommerce: 10 MB / 4 files; file nodes: 50 MB) — the
+ * canvas was the one entry that had neither.
+ */
+const DROP_IMAGE_MAX_BYTES = 20 * 1024 * 1024
+/** Per-drop cap; anything beyond is reported, not silently discarded. */
+const DROP_IMAGE_MAX_COUNT = 20
+
+/**
  * A control's label with the key that does the same thing appended, e.g.
  * `撤销 (Ctrl/⌘+Z)`.
  *
@@ -5360,14 +5375,36 @@ export function CanvasWorkspace(props: CanvasWorkspaceProps): React.JSX.Element 
     const dropped = [...(event.dataTransfer.files ?? [])]
     if (dropped.length === 0) return
     const world = screenToWorld(event.clientX, event.clientY)
-    const images = dropped.filter(file => file.type.startsWith('image/'))
+    const allImages = dropped.filter(file => file.type.startsWith('image/'))
+    // Both caps are checked BEFORE any FileReader runs. Reading first and
+    // discarding later is the freeze this guards against: the data URLs are
+    // already in memory by then, and there are as many of them as the user
+    // dragged in.
+    const oversized = allImages.filter(file => file.size > DROP_IMAGE_MAX_BYTES)
+    const withinSize = allImages.filter(file => file.size <= DROP_IMAGE_MAX_BYTES)
+    const images = withinSize.slice(0, DROP_IMAGE_MAX_COUNT)
+    const overflowCount = withinSize.length - images.length
     const others = dropped.filter(file => !file.type.startsWith('image/'))
+    if (oversized.length > 0 || overflowCount > 0) {
+      setError(tt('canvas.dropLimit', {
+        max: Math.round(DROP_IMAGE_MAX_BYTES / (1024 * 1024)),
+        count: DROP_IMAGE_MAX_COUNT,
+        skipped: oversized.length + overflowCount,
+      }))
+    }
     if (images.length > 0) {
-      void Promise.all(images.map(async file => {
-        const dataUrl = await new Promise<string>((resolve, reject) => { const reader = new FileReader(); reader.onload = () => resolve(String(reader.result)); reader.onerror = () => reject(new Error(tt('image.readFailed'))); reader.readAsDataURL(file) })
-        const dimensions = await readImageSize(dataUrl)
-        return api.canvasUpload(dataUrl, dimensions.width, dimensions.height, { origin: 'upload', originId: file.name })
-      })).then(assets => addAssets(assets, world)).catch(caught => setError(errorMessage(caught)))
+      // Sequential, not Promise.all: N concurrent FileReaders each hold a full
+      // copy of their file plus the base64 string, and a drop of many large
+      // photos exhausted memory before the first upload even started.
+      void (async () => {
+        const assets: CanvasAssetRef[] = []
+        for (const file of images) {
+          const dataUrl = await new Promise<string>((resolve, reject) => { const reader = new FileReader(); reader.onload = () => resolve(String(reader.result)); reader.onerror = () => reject(new Error(tt('image.readFailed'))); reader.readAsDataURL(file) })
+          const dimensions = await readImageSize(dataUrl)
+          assets.push(await api.canvasUpload(dataUrl, dimensions.width, dimensions.height, { origin: 'upload', originId: file.name }))
+        }
+        return assets
+      })().then(assets => addAssets(assets, world)).catch(caught => setError(errorMessage(caught)))
     }
     let cascade = 0
     for (const file of others) {

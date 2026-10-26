@@ -1723,6 +1723,103 @@ console.log('settings card: fits the 850px pane, no row overflows, overflow stay
 
 settingsPageSession.close()
 
+// --- the lightbox chrome must not follow the theme's inversion --------------
+// The full-screen preview is a FIXED dark surface (`.lightbox` paints a dark
+// photo mask). Its buttons used `--dsw-alias-label-primary-inverted` for text
+// and `--dsw-specific-input-major` for the pill, and in a LIGHT theme those
+// resolve to white text on the theme's white input background: contrast 1.0,
+// so every control was invisible until :hover swapped the background for the
+// dark mask. Measured rather than read, because the failure is a computed
+// colour pair, and composited rather than compared raw — the surface is
+// translucent, so it has to be blended onto the mask before the ratio means
+// anything.
+const lightboxCss = read('panel.module.css')
+const lightboxTheme = `--dsw-alias-label-primary: #17171c;
+  --dsw-alias-label-primary-inverted: #ffffff;
+  --dsw-alias-label-primary-foreground: #ffffff;
+  --dsw-alias-label-dimmed: #6b7280;
+  --dsw-alias-bg-mask-2: rgba(0,0,0,.55);
+  --dsw-alias-bg-mask-photo: rgba(0,0,0,.82);
+  --dsw-alias-border-l2: #d9dade;
+  --dsw-specific-input-major: #ffffff;
+  --dsw-radius-md: 10px;
+  --dsw-elevation-prominent: 0 10px 30px rgba(0,0,0,.3);
+  --z-lightbox: 1000;`
+const lightboxPage = `<!doctype html><html><head><meta charset="utf-8"><style>
+:root { ${lightboxTheme} }
+body { margin: 0; background: #ffffff; }
+${lightboxCss}
+</style></head><body>
+<div class="lightbox">
+  <figure class="lightboxFigure">
+    <div class="lightboxStage">
+      <div class="lightboxTools" role="group">
+        <button type="button" class="lightboxTool" id="lbOut">−</button>
+        <button type="button" class="lightboxZoomLevel" id="lbLevel">100%</button>
+        <button type="button" class="lightboxTool" id="lbIn">+</button>
+      </div>
+      <div class="lightboxCaptionRow"><figcaption class="lightboxCaption" id="lbCap">prompt</figcaption>
+        <button type="button" class="lightboxCopy" id="lbCopy">copy</button></div>
+      <div class="lightboxMeta">
+        <span class="lightboxIndex" id="lbIndex">1 / 4</span>
+        <div class="lightboxActions">
+          <a class="lightboxDownload" id="lbDl" href="#">download</a>
+          <button type="button" class="lightboxEdit" id="lbEd">edit</button>
+        </div>
+      </div>
+    </div>
+  </figure>
+  <button type="button" class="lightboxClose" id="lbClose">×</button>
+</div>
+</body></html>`
+
+const lightboxSession = await openPage(launched.port, 'about:blank')
+await lightboxSession.send('Page.setDocumentContent', {
+  frameId: (await lightboxSession.send('Page.getFrameTree')).result.frameTree.frame.id,
+  html: lightboxPage,
+})
+await new Promise(r => setTimeout(r, 300))
+const lightboxContrast = await lightboxSession.evaluate(`(() => {
+  const parse = c => {
+    // color-mix yields color(srgb 1 1 1 / 0.72): 0..1 components + optional alpha.
+    if (c.startsWith('color(srgb')) {
+      const m = (c.match(/[\\d.]+/g) || []).map(Number)
+      return { r: (m[0] ?? 0) * 255, g: (m[1] ?? 0) * 255, b: (m[2] ?? 0) * 255, a: m.length > 3 ? m[3] : 1 }
+    }
+    const m = (c.match(/[\\d.]+/g) || []).map(Number); return { r: m[0]||0, g: m[1]||0, b: m[2]||0, a: m.length > 3 ? m[3] : 1 }
+  }
+  const over = (t, b) => ({ r: t.r*t.a + b.r*(1-t.a), g: t.g*t.a + b.g*(1-t.a), b: t.b*t.a + b.b*(1-t.a), a: 1 })
+  const lum = c => { const f = v => { v/=255; return v<=0.03928 ? v/12.92 : Math.pow((v+0.055)/1.055, 2.4) }; return 0.2126*f(c.r)+0.7152*f(c.g)+0.0722*f(c.b) }
+  const ratio = (x, y) => { const a = lum(x), b = lum(y); return Math.round(((Math.max(a,b)+0.05)/(Math.min(a,b)+0.05))*100)/100 }
+  const white = { r:255,g:255,b:255,a:1 }
+  const lb = document.querySelector('.lightbox')
+  const maskBg = over(parse(getComputedStyle(lb).backgroundColor), white)
+  const out = []
+  for (const id of ['lbOut','lbLevel','lbIn','lbCopy','lbDl','lbEd','lbClose','lbCap','lbIndex']) {
+    const el = document.getElementById(id)
+    if (el === null) continue
+    const cs = getComputedStyle(el)
+    const own = parse(cs.backgroundColor)
+    const bg = own.a === 0 ? maskBg : over(own, maskBg)
+    out.push({ id, ratio: ratio(parse(cs.color), bg), color: cs.color })
+  }
+  return out
+})()`)
+const lightboxBad = lightboxContrast.filter(entry => entry.ratio < 3)
+console.log(`lightbox chrome in a LIGHT theme: ${lightboxContrast.length} elements, lowest contrast ${Math.min(...lightboxContrast.map(e => e.ratio))}:1`)
+if (lightboxBad.length > 0) {
+  console.error('\nFAIL: lightbox chrome is unreadable in a light theme.')
+  for (const entry of lightboxBad) console.error(`  ${entry.id}: contrast ${entry.ratio}:1 (color ${entry.color})`)
+  console.error('The lightbox is a fixed DARK surface, so its text and pills must not')
+  console.error('follow the theme: `--dsw-alias-label-primary-inverted` is white in a')
+  console.error('light theme and `--dsw-specific-input-major` is the theme input')
+  console.error('background (white), which lands on 1:1 — invisible until :hover.')
+  console.error('Keep the chrome on the --lightbox-ink / --lightbox-surface pair.')
+  process.exit(1)
+}
+console.log('lightbox chrome: readable in both themes, nothing waits for :hover')
+lightboxSession.close()
+
 ws7.close()
 ws6.close()
 ws4.close()
