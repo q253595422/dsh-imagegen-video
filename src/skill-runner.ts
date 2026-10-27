@@ -53,6 +53,8 @@ import {
 import { orderByPosition } from './clip-order.ts'
 import { readZipDirectory, readZipEntry } from './zip.ts'
 import { fileKindOf } from './canvas-store.ts'
+import { PptTaskStore } from './ppt-task-store.ts'
+import { pptActivity, PptProgressMonitor } from './ppt-progress.ts'
 
 // ---------------------------------------------------------------- contracts
 
@@ -161,6 +163,8 @@ export interface SkillRunnerOptions {
   pptInstallUrl?: string
   /** The isolated editppt CLI this host installed, when it has one. */
   pptCommand?: () => Promise<string>
+  /** Durable task storage seam; defaults to immutable filesystem checkpoints. */
+  pptTasks?: Pick<PptTaskStore, 'write' | 'list'>
   /**
    * Local clip stitcher (ffmpeg) for the `local` tier. Optional so every other
    * path — and the smoke suites — can run without ffmpeg installed; a compose
@@ -498,9 +502,11 @@ export class SkillRunner {
   private readonly cancellers = new Map<string, { dispose: () => Promise<void> }>()
   private tail: Promise<void> = Promise.resolve()
   private backend: SkillRunnerBackend
+  private readonly pptStore: Pick<PptTaskStore, 'write' | 'list'>
 
   constructor(private readonly options: SkillRunnerOptions) {
     this.backend = { ...options.backend }
+    this.pptStore = options.pptTasks ?? new PptTaskStore(options.dataRoot)
   }
 
   /**
@@ -624,7 +630,7 @@ export class SkillRunner {
     this.tasks.set(task.id, task)
     // A conversion the user cannot see in the list is a run they cannot recover
     // after a reload, so failing to record it fails the run instead.
-    try { await this.persistPpt(task) } catch (error) { this.tasks.delete(task.id); throw error }
+    try { await this.persistPpt(task, true) } catch (error) { this.tasks.delete(task.id); throw error }
     this.pruneTasks()
     const job = this.enqueue(task, skill, inputs, request)
     // The caller polls the task; the job never rejects outward.
@@ -659,6 +665,7 @@ export class SkillRunner {
     const canceller = this.cancellers.get(id)
     this.cancellers.delete(id)
     if (canceller !== undefined) await canceller.dispose().catch(() => { /* best effort */ })
+    pptActivity(task, task.stage!, 'warning')
     await this.persistPpt(task)
     return true
   }
@@ -712,16 +719,19 @@ export class SkillRunner {
 
   /** Conversion history, so a panel reload or a host restart does not lose it. */
   async pptTasks(): Promise<CanvasSkillTask[]> {
-    const dir = path.join(this.options.dataRoot(), 'ppt-tasks')
-    const files = await fs.readdir(dir).catch(() => [])
-    const persisted: CanvasSkillTask[] = []
-    for (const name of files.filter(entry => /^skillrun-[\w-]+\.json$/.test(entry))) {
-      const task = await fs.readFile(path.join(dir, name), 'utf8')
-        .then(raw => JSON.parse(raw) as CanvasSkillTask)
-        .catch(() => undefined)
-      if (task === undefined || task.canvasId !== 'ppt' || task.id !== name.slice(0, -5)) continue
+    let saved: CanvasSkillTask[]
+    try { saved = await this.pptStore.list() }
+    catch (error) {
+      // A history read failure must not hide work that is alive in this process:
+      // the deck may still be converting, and its result is what the user needs.
+      const live = [...this.tasks.values()].filter(task => task.canvasId === 'ppt')
+      if (live.length === 0) throw error
+      for (const task of live) task.persistenceError = redactDiagnosticText(messageOf(error))
+      return live.sort((a, b) => b.startedAt - a.startedAt)
+    }
+    for (const task of saved) {
       const live = this.tasks.get(task.id)
-      if (live !== undefined) { persisted.push(live); continue }
+      if (live !== undefined) continue
       // A run that was in flight when the host stopped is not still working;
       // saying so is the only honest state for it.
       if (task.status === 'queued' || task.status === 'running') {
@@ -730,23 +740,29 @@ export class SkillRunner {
         task.finishedAt = Date.now()
         await this.persistPpt(task)
       }
-      persisted.push(task)
     }
+    const persisted = saved.map(task => this.tasks.get(task.id) ?? task)
     for (const task of this.tasks.values()) {
       if (task.canvasId === 'ppt' && !persisted.some(item => item.id === task.id)) persisted.push(task)
     }
     return persisted.sort((a, b) => b.startedAt - a.startedAt)
   }
 
-  /** Write one conversion task to disk; a no-op for canvas runs. */
-  private async persistPpt(task: CanvasSkillTask): Promise<void> {
+  /** Write one conversion task to disk; a no-op for canvas runs.
+   *  @param required - true for the initial queue record: if that cannot be
+   *    written the run must not start. Later checkpoints are best effort — a
+   *    history failure never aborts the agent or invalidates a finished deck. */
+  private async persistPpt(task: CanvasSkillTask, required = false): Promise<void> {
     if (task.canvasId !== 'ppt') return
-    const dir = path.join(this.options.dataRoot(), 'ppt-tasks')
-    await fs.mkdir(dir, { recursive: true })
-    const file = path.join(dir, `${task.id}.json`)
-    const temporary = `${file}.${randomUUID()}.tmp`
-    await fs.writeFile(temporary, JSON.stringify(task), 'utf8')
-    await fs.rename(temporary, file)
+    // The snapshot is the durable record; the live in-memory field is not part of it.
+    const { persistenceError: _previous, ...snapshot } = task
+    try {
+      await this.pptStore.write(snapshot)
+      delete task.persistenceError
+    } catch (error) {
+      task.persistenceError = redactDiagnosticText(messageOf(error))
+      if (required) throw error
+    }
   }
 
   // ------------------------------------------------------------- compose
@@ -971,12 +987,14 @@ export class SkillRunner {
           task.status = 'completed'
           task.stage = this.translate(task.language)('canvas.skills.stageDone')
           task.phase = undefined
+          pptActivity(task, task.stage, 'done')
         }
       } catch (error) {
         if (!cancelled()) {
           task.status = 'failed'
           task.error = messageOf(error)
           task.phase = undefined
+          pptActivity(task, this.translate(task.language)('ppt.activityFailed'), 'warning')
         }
       } finally {
         task.finishedAt = Date.now()
@@ -1321,6 +1339,7 @@ export class SkillRunner {
     ].join('\n\n')
     task.stage = t('canvas.skills.stageRunning')
     task.phase = 'running'
+    pptActivity(task, task.stage)
     const controller = new AbortController()
     const timeout = this.options.heavyTimeoutMs()
     const timer = timeout > 0 ? setTimeout(() => controller.abort(), timeout) : undefined
@@ -1334,6 +1353,7 @@ export class SkillRunner {
       if (cancelled()) throw new Error(t('canvas.skills.stageCancelled'))
       const sessionId = newId('skillagent')
       if (task.canvasId === 'ppt') { task.agentSessionId = sessionId; await this.persistPpt(task) }
+      pptActivity(task, t('ppt.activityAgent'))
       handle = await agents.create({
         sessionId,
         cwd: runDir,
@@ -1351,13 +1371,18 @@ export class SkillRunner {
         },
       })
       handle.followup(this.heavyUserPrompt(skill, skillName, inputDir, outputDir, body !== undefined, t))
-      // The agent thinks for minutes on a deck pipeline; the only honest live
-      // signal is what it has already written into the output directory.
-      const watch = this.watchOutputDir(task, outputDir, t)
+      // A deck pipeline runs for minutes and reports through its own run
+      // directory, so the ppt branch reads real page records instead of counting
+      // files. Only one of the two may write `task.stage`: they would overwrite
+      // each other and the progress card would flicker between the two.
+      const progress = task.canvasId === 'ppt' ? new PptProgressMonitor(task, handle.session, runDir, t) : undefined
+      progress?.start()
+      const watch = task.canvasId === 'ppt' ? undefined : this.watchOutputDir(task, outputDir, t)
       try {
         await handle.whenIdle()
       } finally {
-        watch.stop()
+        watch?.stop()
+        await progress?.stop()
       }
       // Nothing collected after a cancel is a result the user asked for.
       controller.signal.throwIfAborted()

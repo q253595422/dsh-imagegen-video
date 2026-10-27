@@ -16,7 +16,7 @@ const api = {
   async canvasSkillsList() { return { skills: [], installed: ['image-to-editable-ppt'], agentAvailable: true, registryAvailable: true } },
   async canvasSkillLibrary() { return { entries: [{ name: 'image-to-editable-ppt', config: { values: [{ id: 'paddle-ocr-token', set: true }] } }] } },
   async pptRun(request: { images: typeof assets }) {
-    task = { id: 'ppt-preview', canvasId: 'ppt', skillId: 'ppt.fromImages', label: 'PPT', tier: 'heavy', status: 'running', startedAt: Date.now(), pptImages: request.images, stage: '正在执行技能流程' }
+    task = { id: 'ppt-preview', canvasId: 'ppt', skillId: 'ppt.fromImages', label: 'PPT', tier: 'heavy', status: 'running', startedAt: Date.now() - 104000, pptImages: request.images, stage: '正在执行技能流程', progress: { lastActivityAt: Date.now() - 75000, currentOperation: '正在执行工具：shell · 正在处理页面文字提示', pages: [{ page: 1, state: 'validated' }, { page: 2, state: 'running' }], events: [{ time: Date.now() - 104000, label: '正在准备输入图片', state: 'done' }, { time: Date.now() - 75000, label: '正在执行工具：shell · 正在处理页面文字提示', state: 'running' }] } }
     return task
   },
   async canvasSkillCancel() { if (task) task = { ...task, status: 'cancelled', stage: '已取消' }; return true },

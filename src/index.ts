@@ -353,6 +353,8 @@ export { codeRenderSystemPrompt, codeRenderUserPrompt, readGeneratedCode, fallba
 export { registerAgentImageTools, resolveAgentImageModel } from './agent-image-tools.ts'
 export { registerAgentVideoTools, resolveAgentVideoModel, AGENT_VIDEO_TOOL_NAMES } from './agent-video-tools.ts'
 export { latestSessionImage, registerEditImageCommand } from './edit-image-command.ts'
+export { PptTaskStore } from './ppt-task-store.ts'
+export { pptActivity, PptProgressMonitor } from './ppt-progress.ts'
 export { appendGallery, appendGalleryVideo, clearGallery, GALLERY_TRASH_RETENTION_MS, listGallery, listGalleryTrash, purgeGallery, readGalleryImage, readGalleryVideo, removeGallery, restoreGallery, updateGalleryTags } from './gallery-store.ts'
 export { listTemplates, readTemplateImage, refreshTemplates, sampleTemplates, syncAllTemplates, clearTemplateMemo } from './templates-store.ts'
 export { addTemplateFavorite, clearTemplateFavoritesMemo, listTemplateFavorites, removeTemplateFavorite } from './template-favorites.ts'

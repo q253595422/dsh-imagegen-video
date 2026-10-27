@@ -72,6 +72,9 @@
  * 1010  select-menu       any <Select> dropdown: must clear every modal that
  *                          can contain a select
  * 1100  guide             the host-adjacent config guide
+ * 1150  session-picker    the "which conversation gets this image" modal: it
+ *                          opens over the guide, and below every viewer so a
+ *                          preview opened from it still covers it
  * 1200  fullscreen        the comparison full-screen view
  */
 :root {
@@ -126,6 +129,7 @@
 
   /* host-adjacent surfaces */
   --z-guide: 1100;
+  --z-session-picker: 1150;
   --z-fullscreen: 1200;
 }
 
@@ -469,7 +473,13 @@ html[data-dsh-imagegen-active] [data-dsh-imagegen-sidebar-root][data-dsh-imagege
   min-height: 0;
   padding: 6px 4px;
   overflow: hidden;
-  background: var(--dsw-alias-bg-base);
+  /* A shell or wallpaper theme may set --dsw-alias-bg-base to transparent, and
+     then this host shows whatever is painted underneath it. Canvas is the OS
+     system colour, so the host stays opaque without hardcoding a value. */
+  background-color: Canvas;
+  background-image:
+    linear-gradient(var(--dsw-alias-bg-base, transparent), var(--dsw-alias-bg-base, transparent)),
+    linear-gradient(var(--dsw-alias-bg-layer-1, Canvas), var(--dsw-alias-bg-layer-1, Canvas));
 }
 
 html[data-dsh-imagegen-active] .sidebarHistoryHost {
@@ -529,7 +539,10 @@ html[data-dsh-imagegen-active] .sidebarHistoryHost {
   overflow: hidden;
   padding: 14px 16px 16px;
   gap: 10px;
-  background: var(--dsw-alias-bg-base);
+  background-color: Canvas;
+  background-image:
+    linear-gradient(var(--dsw-alias-bg-base, transparent), var(--dsw-alias-bg-base, transparent)),
+    linear-gradient(var(--dsw-alias-bg-layer-1, Canvas), var(--dsw-alias-bg-layer-1, Canvas));
   color: var(--dsw-alias-label-primary);
   font-family: var(--dsw-font-family);
 }
@@ -1154,6 +1167,20 @@ html[data-dsh-imagegen-active] .sidebarHistoryHost {
 .configGuideBody { display: flex; width: min(360px, 100%); flex-direction: column; gap: 12px; padding: 18px; border: 1px solid var(--dsw-alias-border-l2); border-radius: var(--dsw-radius-md); color: var(--dsw-alias-label-primary); background: var(--dsw-alias-bg-layer-1); box-shadow: var(--dsw-elevation-panel); }
 .configGuideBody span { color: var(--dsw-alias-label-secondary); font-size: 13px; line-height: 1.55; }
 .configGuideBody button { align-self: flex-end; min-height: 30px; padding: 0 12px; border: 0; border-radius: var(--dsw-radius-sm); color: var(--dsw-alias-bg-layer-1); background: var(--dsw-alias-brand-primary); cursor: pointer; font: inherit; font-size: 12px; }
+
+/* Fallback for "add this image to a conversation" when the host cannot tell us
+   which conversation is current. The user has to name the target: guessing from
+   history is how an image lands in the wrong thread. */
+.conversationPicker { position: fixed; z-index: var(--z-session-picker); inset: 0; display: grid; place-items: center; padding: 20px; background: var(--dsw-alias-bg-mask-1); }
+.conversationPickerBody { display: flex; width: min(420px, 100%); flex-direction: column; gap: 12px; padding: 20px; border: 1px solid var(--dsw-alias-border-l2); border-radius: var(--dsw-radius-lg); color: var(--dsw-alias-label-primary); background: var(--dsw-alias-bg-layer-1); box-shadow: var(--dsw-elevation-panel); }
+.conversationPickerBody h2 { margin: 0; font-size: 16px; font-weight: 650; }
+.conversationPickerBody p { margin: 0; color: var(--dsw-alias-label-secondary); font-size: 13px; line-height: 1.5; }
+.conversationPickerBody label { display: flex; flex-direction: column; gap: 6px; color: var(--dsw-alias-label-secondary); font-size: 12px; }
+.conversationPickerBody select { width: 100%; min-height: 36px; padding: 0 10px; border: 1px solid var(--dsw-alias-border-l2); border-radius: var(--dsw-radius-sm); color: var(--dsw-alias-label-primary); background: var(--dsw-alias-bg-base); font: inherit; }
+.conversationPickerBody footer { display: flex; justify-content: flex-end; gap: 8px; margin-top: 2px; }
+.conversationPickerBody footer button { min-height: 32px; padding: 0 12px; border: 1px solid var(--dsw-alias-border-l2); border-radius: var(--dsw-radius-sm); color: var(--dsw-alias-label-secondary); background: var(--dsw-alias-bg-layer-2); cursor: pointer; font: inherit; font-size: 12px; }
+.conversationPickerBody footer button:last-child { border-color: var(--dsw-alias-brand-primary); color: var(--dsw-alias-label-primary-foreground); background: var(--dsw-alias-brand-primary); }
+.conversationPickerBody footer button:disabled { cursor: not-allowed; opacity: .5; }
 
 /* --- history surface (rendered into the shell sidebar) ----------------------- */
 

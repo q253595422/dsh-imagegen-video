@@ -215,3 +215,108 @@
 .reason {
   overflow-wrap: anywhere;
 }
+
+/* Persistence failures are shown next to the deck, not instead of it: a saved
+   history error must never make a finished conversion look broken. */
+.persistenceWarning {
+  padding: 10px 12px;
+  border: 1px solid var(--dsw-alias-state-warn-primary);
+  border-radius: var(--dsw-radius-sm);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.progressCard {
+  flex: none;
+  padding: 16px;
+  margin-top: 12px;
+  border: 1px solid var(--dsw-alias-border-l2);
+  border-radius: var(--dsw-radius-md);
+  background: var(--dsw-alias-bg-layer-2);
+}
+
+.progressCard > header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 10px;
+  font-size: 13px;
+}
+
+.progressCard > small {
+  font-size: 11px;
+  color: var(--dsw-alias-label-secondary);
+}
+
+.progressCard .currentOperation {
+  margin-bottom: 5px;
+  color: var(--dsw-alias-label-primary);
+  font-weight: 500;
+}
+
+.progressCard .idleNote {
+  margin-top: 8px;
+  padding: 9px 12px;
+  border-left: 2px solid var(--dsw-alias-state-warn-primary);
+}
+
+.activityLog {
+  max-height: 220px;
+  overflow: auto;
+  list-style: none;
+  padding: 0;
+  margin: 12px 0 0;
+  font-size: 12px;
+}
+
+.activityLog li {
+  display: flex;
+  gap: 12px;
+  padding: 7px 0;
+  border-top: 1px solid var(--dsw-alias-border-l2);
+}
+
+.activityLog time {
+  flex: none;
+  color: var(--dsw-alias-label-secondary);
+  font-size: 11px;
+}
+
+.activityLog span {
+  overflow-wrap: anywhere;
+}
+
+.activityLog [data-state='warning'] span {
+  color: var(--dsw-alias-state-warn-primary);
+}
+
+.pageProgress {
+  margin-top: 14px;
+  font-size: 12px;
+}
+
+.pageProgress ul {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  list-style: none;
+  margin: 10px 0;
+  padding: 0;
+}
+
+.pageProgress li {
+  display: flex;
+  gap: 10px;
+  padding: 7px 10px;
+  border: 1px solid var(--dsw-alias-border-l2);
+  border-radius: var(--dsw-radius-sm);
+}
+
+.pageProgress li span {
+  color: var(--dsw-alias-label-secondary);
+}
+
+.pageProgress li[data-state='validated'] {
+  border-color: var(--dsw-alias-brand-primary);
+}

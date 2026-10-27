@@ -16,6 +16,7 @@ import vm from 'node:vm'
 import { EventEmitter } from 'node:events'
 import { Readable } from 'node:stream'
 import { chmodSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { promises as fsPromises } from 'node:fs'
 import { homedir, tmpdir } from 'node:os'
 import { join } from 'node:path'
 
@@ -3818,6 +3819,81 @@ await check('C11i a contained host Agent failure is surfaced instead of a missin
     },
   )
   await created.dispose()
+})
+
+// PPT checkpoints and live progress: the deck pipeline needs two guarantees —
+// a Windows replacement lock can never lose a checkpoint, and the progress card
+// reports only what the upstream run directory actually recorded.
+await check('C11ppt-progress exposes real host activity and validated page records without model reasoning or tool output', async () => {
+  const root = mkdtempSync(join(tmpdir(), 'dsh-ppt-progress-'))
+  const events = []
+  const session = { get seq() { return events.length }, eventAt(index) { return events[index] }, deriveMessages: () => [] }
+  const task = { id: 'skillrun-progress', canvasId: 'ppt', startedAt: Date.now(), pptImages: [{}, {}] }
+  const monitor = new host.PptProgressMonitor(task, session, root, host.canvasSkillCopy('zh'))
+  try {
+    events.push({ type: 'step/start', data: { turn: 1, step: 1 } }, { type: 'tool/call', data: { callId: 'shell-1', name: 'shell', arguments: JSON.stringify({ command: 'editppt page hints --token sk-secret-do-not-show' }) } })
+    await monitor.refresh()
+    assert.match(task.progress.currentOperation, /shell/)
+    assert.match(task.progress.currentOperation, /文字提示/)
+    events.push({ type: 'tool/result', data: { message: { callId: 'shell-1', isError: true, content: [{ type: 'text', text: 'tool-secret-output' }] } } }, { type: 'assistant/message', data: { message: { content: [{ type: 'reasoning', text: 'private-model-reasoning' }] } } })
+    await monitor.refresh()
+    assert.ok(task.progress.events.some(event => event.state === 'warning'))
+    const jobs = { pages: [{ status: 'recorded', result: { validation_passed: true } }, { status: 'dispatched', result: { validation_passed: false } }] }
+    writeFileSync(join(root, 'page_jobs.json'), JSON.stringify(jobs))
+    writeFileSync(join(root, 'run_state.json'), JSON.stringify({ status: 'pages_dispatched' }))
+    await monitor.refresh()
+    assert.deepEqual(task.progress.pages.map(page => page.state), ['validated', 'running'])
+    assert.equal(task.progress.upstreamStage, 'pages_dispatched')
+    const count = task.progress.events.length, activity = task.progress.lastActivityAt
+    await monitor.refresh()
+    assert.equal(task.progress.events.length, count, 'polling unchanged files does not invent progress')
+    assert.equal(task.progress.lastActivityAt, activity, 'polling does not reset the last actual activity time')
+    jobs.pages[1] = { status: 'accepted', result: { validation_passed: true } }
+    writeFileSync(join(root, 'page_jobs.json'), JSON.stringify(jobs))
+    writeFileSync(join(root, 'run_state.json'), JSON.stringify({ status: 'deck_validated' }))
+    await monitor.refresh()
+    assert.equal(task.progress.pages.filter(page => page.state === 'validated').length, 2)
+    assert.equal(task.status, undefined, 'upstream page records cannot mark the overall task completed')
+    const serialized = JSON.stringify(task.progress)
+    for (const secret of ['sk-secret', 'tool-secret-output', 'private-model-reasoning']) assert.ok(!serialized.includes(secret))
+    assert.ok(!serialized.includes('%'), 'there is no fabricated percentage')
+    await monitor.stop()
+    const stoppedCount = task.progress.events.length
+    events.push({ type: 'step/start', data: {} })
+    await monitor.refresh()
+    assert.equal(task.progress.events.length, stoppedCount, 'cancelled or settled monitors cannot emit late progress')
+  } finally { await monitor.stop(); rmSync(root, { recursive: true, force: true }) }
+})
+await check('C11ppt-store immutable checkpoints survive Windows replacement locks, overlapping writes and partial files', async () => {
+  const root = mkdtempSync(join(tmpdir(), 'dsh-ppt-checkpoint-'))
+  let activeWrites = 0, maximumWrites = 0, renames = 0
+  const io = { ...fsPromises,
+    async rename() { renames++; throw Object.assign(new Error('Windows destination sharing violation'), { code: 'EPERM' }) },
+    async writeFile(...args) { activeWrites++; maximumWrites = Math.max(maximumWrites, activeWrites); try { await new Promise(r => setTimeout(r, 10)); return await fsPromises.writeFile(...args) } finally { activeWrites-- } },
+  }
+  const store = new host.PptTaskStore(() => root, io)
+  const task = { id: 'skillrun-lock-test', canvasId: 'ppt', skillId: 'ppt.fromImages', label: 'PPT', tier: 'heavy', status: 'queued', startedAt: 1 }
+  try {
+    mkdirSync(join(root, 'ppt-tasks'))
+    writeFileSync(join(root, 'ppt-tasks', task.id + '.json'), JSON.stringify(task))
+    const first = store.write(task)
+    task.status = 'running'
+    const second = store.write(task)
+    task.status = 'completed'; task.finishedAt = 3
+    const third = store.write(task)
+    await Promise.all([first, second, third])
+    assert.equal(renames, 0, 'PPT persistence must not replace a locked Windows destination')
+    assert.equal(maximumWrites, 1, 'writes for the same task are serialized')
+    const names = await fsPromises.readdir(join(root, 'ppt-tasks'))
+    const snapshots = await Promise.all(names.filter(n => n !== task.id + '.json').sort().map(n => fsPromises.readFile(join(root, 'ppt-tasks', n), 'utf8').then(JSON.parse)))
+    assert.deepEqual(snapshots.map(t => t.status), ['queued', 'running', 'completed'], 'each queued write captures its own immutable state')
+    writeFileSync(join(root, 'ppt-tasks', `${task.id}.${Date.now()+60000}.dead-beef.json`), '{"status":')
+    writeFileSync(join(root, 'ppt-tasks', `${task.id}.json.dead-beef.tmp`), '{"status":')
+    const restored = await new host.PptTaskStore(() => root).list()
+    assert.equal(restored.length, 1)
+    assert.equal(restored[0].status, 'completed', 'partial checkpoints cannot hide the preceding complete snapshot')
+    assert.equal(JSON.parse(readFileSync(join(root, 'ppt-tasks', task.id+'.json'), 'utf8')).status, 'queued', 'the legacy record was never overwritten')
+  } finally { rmSync(root, { recursive: true, force: true }) }
 })
 
 await check('C11ppt standalone PPT validates input, preserves order, persists results and rejects incomplete outputs', async () => {
