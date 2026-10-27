@@ -1148,10 +1148,25 @@ export interface CanvasSkillOutput {
   warnings: string[]
 }
 
+/** Live PPT execution progress, read from the skill's own run directory.
+ *  Page states come from the upstream `page_jobs.json` validation records, never
+ *  from a timer, so a stalled run shows its last observable state instead of a
+ *  made-up percentage. */
+export interface PptTaskProgress {
+  lastActivityAt: number
+  currentOperation?: string
+  upstreamStage?: string
+  pages?: Array<{ page: number; state: 'pending' | 'running' | 'validated' }>
+  events: Array<{ time: number; label: string; state: 'running' | 'done' | 'warning' }>
+}
+
 export interface CanvasSkillTask {
+  progress?: PptTaskProgress
   /** Trace identifiers for finding the corresponding host execution log. */
   agentSessionId?: string
   runDirectory?: string
+  /** History/checkpoint failure, separate from conversion success or failure. */
+  persistenceError?: string
   /** Standalone PPT conversions retain their ordered input thumbnails. */
   pptImages?: CanvasAssetRef[]
   id: string
