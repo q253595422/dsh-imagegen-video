@@ -1384,10 +1384,11 @@ html[data-dsh-imagegen-active] .sidebarHistoryHost {
   font-size: 12px;
   line-height: 1.4;
   color: var(--dsw-alias-label-primary);
-  display: -webkit-box;
-  -webkit-line-clamp: 2;
-  -webkit-box-orient: vertical;
-  overflow: hidden;
+  /* 生成用的提示词常常是多段写的，换行是内容的一部分：压成一行再看不出原样，
+     用户没法据此复用或对比。所以保留换行，也不做行数截断——历史行本来就在
+     可滚动列表里，多高一点比看不全有用。 */
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
 }
 
 .historyMeta {

@@ -48,10 +48,14 @@ export function ReferenceImages(props: {
     return () => { if (previousFocus.current?.isConnected) previousFocus.current.focus() }
   }, [previewOpen])
 
+  // 拖放不能在这里 stopPropagation：宿主的拖放覆盖层挂在 document 上，用
+  // dragenter/dragleave 计数、只在 document 收到 drop 时才 reset。拦下冒泡就
+  // 等于让那个计数永远归不了零，覆盖层会一直盖在界面上关不掉。这里只阻止
+  // 默认行为（浏览器别把图片当链接打开），事件本身继续往上走。
   return <>
     <section className={css.root} data-edit-references="" aria-label={tt('edit.references')} tabIndex={0}
-      onDragOver={event => { event.preventDefault(); event.stopPropagation() }}
-      onDrop={event => { event.preventDefault(); event.stopPropagation(); props.onAdd(Array.from(event.dataTransfer.files)) }}
+      onDragOver={event => { event.preventDefault() }}
+      onDrop={event => { event.preventDefault(); props.onAdd(Array.from(event.dataTransfer.files)) }}
       onPaste={event => { const files = clipboardImageFiles(event.clipboardData); if (files.length > 0) { event.preventDefault(); event.stopPropagation(); props.onAdd(files) } }}>
       <header className={css.header}><strong>{tt('edit.references')}</strong><span className={css.count} aria-live="polite">{tt('edit.addedCount', { count: props.images.length })}</span><button type="button" className={css.clear} disabled={props.images.length === 0 && !props.reading} onClick={props.onClear}>{tt('edit.clearAll')}</button></header>
       {props.images.length === 0 ? <button type="button" className={css.empty} onClick={() => input.current?.click()}><ImagePlus size={22} aria-hidden="true" /><span>{tt('edit.uploadMultiple')}</span></button> : <div className={css.grid}>

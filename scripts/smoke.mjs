@@ -3821,6 +3821,29 @@ await check('C11i a contained host Agent failure is surfaced instead of a missin
   await created.dispose()
 })
 
+// Two reports from real use, both invisible to a jsdom render:
+//  1. A multi-line prompt showed up as one squashed line, so the user could not
+//     read back what they had generated from.
+//  2. Dropping an image into the edit-reference strip left the host's drag
+//     overlay ("drop files here") stuck on screen: the host counts dragenter/
+//     dragleave on document and only resets when document receives the drop, so
+//     a stopPropagation() in between leaves that counter permanently above zero.
+await check('C15 history prompts keep their line breaks and plugin drops reach the host', async () => {
+  const panelCss = readFileSync(new URL('../src/client/panel.module.css', import.meta.url), 'utf8')
+  const promptRule = panelCss.slice(panelCss.indexOf('.historyPrompt {'), panelCss.indexOf('.historyMeta')) || ''
+  assert.ok(promptRule !== '', 'the history prompt rule is findable')
+  assert.match(promptRule, /white-space:\s*pre-wrap/, 'a history prompt keeps the newlines the user typed')
+  assert.ok(!/-webkit-line-clamp/.test(promptRule), 'a history prompt is not clamped to two lines')
+  // A real drag is not reproducible in jsdom, so the invariant is what gets
+  // checked: every drop handler this plugin registers lets the event bubble.
+  for (const file of ['ReferenceImages.tsx', 'ReplicaWorkspace.tsx', 'PptWorkspace.tsx', 'ImageGenPanel.tsx']) {
+    const source = readFileSync(new URL(`../src/client/${file}`, import.meta.url), 'utf8')
+    for (const match of source.matchAll(/onDrop=\{[^}]*\}/g)) {
+      assert.ok(!/stopPropagation/.test(match[0]), `${file} drop handlers must not stop propagation (the host drag overlay would never reset)`)
+    }
+  }
+})
+
 // PPT checkpoints and live progress: the deck pipeline needs two guarantees —
 // a Windows replacement lock can never lose a checkpoint, and the progress card
 // reports only what the upstream run directory actually recorded.

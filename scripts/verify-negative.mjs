@@ -147,6 +147,29 @@ const bumped = (version, by) => {
 }
 
 const CASES = [
+  // ---------------------------------------- history prompt and host drag overlay
+  {
+    // Two reports from real use. The prompt one: a multi-line prompt was clamped
+    // to two lines with no `pre-wrap`, so a generated prompt could not be read
+    // back. Restoring the clamp is exactly the defect.
+    name: 'a history prompt is squashed to two lines again',
+    runner: 'smoke',
+    file: 'src/client/panel.module.css',
+    from: '  white-space: pre-wrap;\n  overflow-wrap: anywhere;\n}\n\n.historyMeta {',
+    to: '  display: -webkit-box;\n  -webkit-line-clamp: 2;\n  -webkit-box-orient: vertical;\n  overflow: hidden;\n}\n\n.historyMeta {',
+    expect: /history prompt keeps the newlines|not clamped to two lines/,
+  },
+  {
+    // The overlay one: the host counts dragenter/dragleave on document and only
+    // resets on a drop that reaches it, so one stopPropagation() leaves the
+    // "drop files here" overlay stuck on screen. Re-adding it is the defect.
+    name: 'a plugin drop stops the event before the host drag overlay can reset',
+    runner: 'smoke',
+    file: 'src/client/ReferenceImages.tsx',
+    from: 'onDrop={event => { event.preventDefault(); props.onAdd',
+    to: 'onDrop={event => { event.preventDefault(); event.stopPropagation(); props.onAdd',
+    expect: /must not stop propagation/,
+  },
   // ------------------------------------------------ the poster recipe guard
   {
     // Accepting the recipe without validating it is the dangerous direction: a
