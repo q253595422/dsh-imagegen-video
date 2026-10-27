@@ -1,0 +1,488 @@
+<!doctype html>
+<html lang="zh-CN" data-layout="wide">
+<head>
+<meta charset="utf-8">
+<title>VisioWork — 演示教程</title>
+<style>
+/* ── tokens ─────────────────────────────────────────────────────────── */
+:root{
+  --ink:#09090b;
+  --paper:#f2f2f3;
+  --white:#ffffff;
+  --dim:#6b6b74;
+  --line:#d9d9de;
+  --accent:#ff5a1f;
+  --ok:#16a34a;
+  --sans:"PingFang SC","Hiragino Sans GB","Helvetica Neue",Helvetica,Arial,sans-serif;
+  --mono:"SF Mono",ui-monospace,SFMono-Regular,Menlo,monospace;
+  --pad:76px;
+}
+html[data-layout="wide"]{--w:1920px;--h:1080px}
+html[data-layout="tall"]{--w:1080px;--h:1920px;--pad:56px;--safe-top:150px;--safe-bottom:230px}
+
+*{margin:0;padding:0;box-sizing:border-box}
+html,body{width:var(--w);height:var(--h);overflow:hidden;background:#000}
+body{font-family:var(--sans);-webkit-font-smoothing:antialiased}
+img{display:block}
+video{display:block}
+
+#stage{position:relative;width:var(--w);height:var(--h);overflow:hidden;background:var(--ink)}
+
+/* ── scene shell ────────────────────────────────────────────────────── */
+.scene{position:absolute;inset:0;display:none}
+.scene[data-tone="paper"]{background:var(--paper);color:var(--ink)}
+.scene[data-tone="ink"]{background:var(--ink);color:var(--white)}
+
+html[data-layout="wide"] .scene{
+  display:grid;
+  grid-template-columns:600px 1fr;
+  column-gap:60px;
+  align-items:center;
+  padding:0 var(--pad);
+}
+html[data-layout="wide"] .scene[data-layout="stack"]{
+  display:flex;flex-direction:column;justify-content:center;align-items:center;
+  text-align:center;
+}
+html[data-layout="tall"] .scene{
+  display:flex;flex-direction:column;justify-content:flex-start;
+  padding-top:var(--safe-top);padding-bottom:var(--safe-bottom);
+}
+html[data-layout="tall"] .copy{padding:0 var(--pad)}
+html[data-layout="tall"] .shot-hold{padding:0 var(--pad);margin-top:34px}
+html[data-layout="tall"] .notes{margin-top:28px;padding:0 var(--pad);align-items:center}
+html[data-layout="tall"] .scene[data-layout="stack"]{
+  justify-content:center;align-items:center;text-align:center;padding:0 var(--pad);
+}
+
+/* ── copy ───────────────────────────────────────────────────────────── */
+.copy{position:relative;z-index:3}
+.eyebrow{
+  display:flex;align-items:center;gap:14px;
+  font:500 20px/1 var(--sans);letter-spacing:.15em;
+  color:var(--dim);margin-bottom:26px;
+}
+.eyebrow::before{content:"";width:38px;height:2px;background:var(--accent);flex:none}
+html[data-layout="tall"] .eyebrow{font-size:24px;margin-bottom:22px;justify-content:center}
+html[data-layout="tall"] .scene[data-layout="stack"] .eyebrow::before{display:none}
+
+.headline{
+  font:600 82px/1.06 var(--sans);
+  letter-spacing:-.025em;
+  text-wrap:balance;
+}
+html[data-layout="tall"] .headline{font-size:72px;line-height:1.08;letter-spacing:-.02em;text-align:center}
+
+.sub{
+  margin-top:24px;
+  font:400 31px/1.5 var(--sans);
+  color:var(--dim);max-width:560px;letter-spacing:-.004em;
+}
+html[data-layout="tall"] .sub{font-size:29px;max-width:none;text-align:center;margin-top:16px;line-height:1.45}
+
+.notes{margin-top:34px;display:flex;flex-direction:column;gap:14px}
+.note{display:flex;align-items:flex-start;gap:13px;font:400 24px/1.35 var(--sans);color:var(--dim)}
+.note::before{content:"";flex:none;width:6px;height:6px;border-radius:50%;background:var(--accent);margin-top:13px}
+html[data-layout="tall"] .notes{gap:10px}
+html[data-layout="tall"] .note{font-size:23px;text-align:left;line-height:1.3}
+
+/* step number badge — makes the tutorial order legible at a glance */
+.step-no{
+  display:inline-flex;align-items:center;justify-content:center;
+  width:62px;height:62px;border-radius:50%;
+  background:var(--accent);color:#fff;
+  font:600 30px/1 var(--sans);margin-bottom:24px;
+}
+html[data-layout="tall"] .step-no{width:56px;height:56px;font-size:27px;margin-bottom:18px}
+
+/* ── shot ───────────────────────────────────────────────────────────── */
+/* The card is driven by an aspect ratio, so it has to be capped on BOTH axes:
+   without the max-height a wide crop grows taller than the stage and the
+   lower edge (and the tag pinned to it) gets clipped. Centring the cap keeps
+   the card optically centred in its column. */
+.shot-hold{
+  position:relative;min-width:0;
+  display:flex;align-items:center;justify-content:center;
+}
+html[data-layout="tall"] .shot-hold{padding:0 var(--pad);margin-top:34px}
+/* Portrait: keep the card off the phone edges too — a border-to-border card
+   reads as a glitch next to the padded copy above it. */
+html[data-layout="tall"] .shot{border-radius:12px}
+/* The card is sized by aspect-ratio, and `max-height:100%` cannot bite when the
+   parent's height is indefinite (a percentage against it resolves to none), so
+   the cap is expressed as a width limit derived from the stage height instead:
+   the card can never grow taller than the room it has, and the entrance scale
+   (drift) still has room to breathe. --ar is set per scene from its crop. */
+.shot{
+  position:relative;
+  width:100%;
+  max-width:min(100%, calc((var(--h) - 300px) * var(--ar, 1.6)));
+  overflow:hidden;
+  border-radius:14px;background:var(--white);
+  box-shadow:0 36px 90px -38px rgba(9,9,11,.5), 0 0 0 1px rgba(9,9,11,.08);
+  transform-origin:center center;will-change:transform,opacity;
+}
+html[data-layout="tall"] .shot{border-radius:0;box-shadow:none;border-top:1px solid var(--line);border-bottom:1px solid var(--line)}
+.crop{position:absolute;inset:0;overflow:hidden}
+.crop img{
+  position:absolute;
+  width:calc(100% / var(--w));
+  height:calc(100% / var(--h));
+  left:calc(-100% * var(--x) / var(--w));
+  top:calc(-100% * var(--y) / var(--h));
+  max-width:none;
+}
+
+/* dim everything but the region of interest */
+.spot{
+  position:absolute;pointer-events:none;border-radius:5px;
+  box-shadow:0 0 0 4000px rgba(9,9,11,.58);
+  outline:2px solid var(--accent);
+  opacity:0;
+}
+.shot-tag{
+  position:absolute;z-index:4;display:inline-flex;align-items:center;
+  padding:8px 15px;border-radius:999px;
+  background:var(--accent);color:var(--white);
+  font:600 18px/1 var(--sans);white-space:nowrap;
+  box-shadow:0 8px 22px -8px rgba(255,90,31,.65);
+}
+html[data-layout="tall"] .shot-tag{font-size:20px}
+
+/* a real rendered clip playing inside the frame */
+.clip{
+  position:absolute;z-index:5;border-radius:11px;overflow:hidden;background:#000;
+  box-shadow:0 26px 60px -22px rgba(9,9,11,.7),0 0 0 1px rgba(255,255,255,.16);
+}
+.clip video{width:100%;height:100%;object-fit:cover}
+
+/* ── intro / outro ──────────────────────────────────────────────────── */
+.mark{font:600 150px/1 var(--sans);letter-spacing:-.045em}
+html[data-layout="tall"] .mark{font-size:112px}
+.mark-sub{margin-top:30px;font:400 34px/1.5 var(--sans);color:#a1a1aa}
+html[data-layout="tall"] .mark-sub{font-size:31px}
+.kicker{font:500 19px/1 var(--sans);letter-spacing:.2em;color:#5b5b64;text-transform:uppercase}
+html[data-layout="tall"] .kicker{font-size:22px}
+
+.cmd{
+  font:500 31px/1.5 var(--mono);color:var(--white);
+  padding:23px 31px;border:1px solid #27272a;border-radius:12px;background:#101012;
+  white-space:nowrap;
+}
+.cmd .p{color:var(--accent)}
+html[data-layout="tall"] .cmd{font-size:24px;white-space:normal;overflow-wrap:anywhere;text-align:left;max-width:940px}
+html[data-layout="tall"] .cmd-pkg{display:block;margin-left:1.15em}
+.repo{font:400 24px/1.4 var(--mono);color:#71717a}
+html[data-layout="tall"] .repo{font-size:23px}
+
+/* ── chapter list on the intro ──────────────────────────────────────── */
+.toc{margin-top:44px;display:grid;grid-template-columns:1fr 1fr;gap:16px 40px;max-width:900px;text-align:left}
+.toc div{display:flex;align-items:baseline;gap:12px;font:400 23px/1.35 var(--sans);color:#a1a1aa}
+.toc b{font:600 21px/1 var(--mono);color:var(--accent);flex:none}
+
+/* ── HUD + subtitle ─────────────────────────────────────────────────── */
+#hud{position:absolute;inset:0;z-index:20;pointer-events:none;opacity:0}
+.hud-top{
+  position:absolute;left:var(--pad);right:var(--pad);top:44px;
+  display:flex;align-items:center;justify-content:space-between;
+  font:500 16px/1 var(--sans);letter-spacing:.14em;color:var(--dim);text-transform:uppercase;
+}
+.hud-top b{font-weight:600;color:var(--ink)}
+html[data-layout="tall"] .hud-top{display:none}
+.hud-bar{position:absolute;left:0;bottom:0;height:3px;background:var(--accent);width:0}
+
+#sub{
+  position:absolute;z-index:22;pointer-events:none;
+  left:var(--pad);right:var(--pad);bottom:92px;
+  display:flex;justify-content:center;
+}
+html[data-layout="tall"] #sub{bottom:calc(var(--safe-bottom) - 120px)}
+#sub span{
+  display:inline-block;
+  font:500 33px/1.45 var(--sans);
+  letter-spacing:-.005em;
+  padding:15px 29px;border-radius:10px;
+  background:rgba(9,9,11,.86);color:#fafafa;
+  max-width:100%;
+}
+html[data-layout="tall"] #sub span{font-size:30px;text-align:center;padding:13px 25px}
+</style>
+</head>
+<body>
+<div id="stage">
+
+  <!-- ══ 0 · 片头 ════════════════════════════════════════════════════ -->
+  <section class="scene" data-scene data-in="0" data-out="4.2" data-tone="ink" data-layout="stack" data-hud="off">
+    <div class="eyebrow" style="justify-content:center" data-a="fade" data-d="0" data-dur="0.45">DeepSeek Harness 插件 · 演示教程</div>
+    <div class="mark" data-a="rise" data-d="0.06" data-dur="0.75">VisioWork</div>
+    <div class="mark-sub" data-a="rise" data-d="0.5" data-dur="0.65">从装好到出片，八步走完</div>
+    <div class="toc" data-a="rise" data-d="1.0" data-dur="0.7">
+      <div><b>01</b> 安装与进入</div>
+      <div><b>02</b> 配好渠道</div>
+      <div><b>03</b> 第一张图</div>
+      <div><b>04</b> 图生图与参考图</div>
+      <div><b>05</b> 第一条视频</div>
+      <div><b>06</b> 画布串流程</div>
+      <div><b>07</b> 分镜 · 拼接 · 时间线</div>
+      <div><b>08</b> 电商与模板库</div>
+    </div>
+  </section>
+
+  <!-- ══ 1 · 安装与进入 ══════════════════════════════════════════════ -->
+  <section class="scene" data-scene data-in="4.2" data-out="11.2" data-tone="paper"
+           data-crop="0,0,0.62,1" data-crop-tall="0.02,0.02,0.72,0.42">
+    <div class="copy">
+      <div class="step-no" data-a="pop" data-d="0" data-dur="0.5">01</div>
+      <div class="eyebrow" data-a="fade" data-d="0.02" data-dur="0.45">安装与进入</div>
+      <h1 class="headline" data-a="rise" data-d="0.08" data-dur="0.65">装好之后<br>侧栏多一个「生图」</h1>
+      <p class="sub" data-a="rise" data-d="0.26" data-dur="0.6">一条命令装上，重启 dsh web，侧边栏就多出「会话 / 生图」两个页签。</p>
+      <div class="notes" data-a="rise" data-d="0.46" data-dur="0.6">
+        <div class="note">需要 DeepSeek Harness + Node.js 20 以上</div>
+        <div class="note">别和 @dickpy/dsh-imagegen 同时装，路由会撞</div>
+      </div>
+    </div>
+    <div class="shot-hold">
+      <div class="shot" data-a="slideR" data-d="0.14" data-dur="0.85" data-drift="1.05">
+        <div class="crop"><img src="assets/ui-studio.png" alt=""></div>
+        <div class="spot" data-spot="0,2,26,12" data-d="1.0" data-dur="0.55"></div>
+        <div class="shot-tag" data-anchor="27,5" data-a="pop" data-d="1.3" data-dur="0.5">会话 / 生图</div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ══ 2 · 配好渠道 ════════════════════════════════════════════════ -->
+  <section class="scene" data-scene data-in="11.2" data-out="18.4" data-tone="paper"
+           data-crop="0.24,0.06,0.76,0.94" data-crop-tall="0.1,0.05,0.8,0.55">
+    <div class="copy">
+      <div class="step-no" data-a="pop" data-d="0" data-dur="0.5">02</div>
+      <div class="eyebrow" data-a="fade" data-d="0.02" data-dur="0.45">配置渠道</div>
+      <h1 class="headline" data-a="rise" data-d="0.08" data-dur="0.65">先告诉它<br>去哪儿生成</h1>
+      <p class="sub" data-a="rise" data-d="0.26" data-dur="0.6">设置 → 生图配置：填 API 地址与密钥，点「检测模型」勾选，保存。</p>
+      <div class="notes" data-a="rise" data-d="0.46" data-dur="0.6">
+        <div class="note">图片模型与视频模型分开配</div>
+        <div class="note">没配好时面板会直接提示「尚未配置 API」</div>
+      </div>
+    </div>
+    <div class="shot-hold">
+      <div class="shot" data-a="slideL" data-d="0.14" data-dur="0.85" data-drift="1.045">
+        <div class="crop"><img src="assets/ui-settings.png" alt=""></div>
+        <div class="spot" data-spot="24,10,30,10" data-d="1.0" data-dur="0.6"></div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ══ 3 · 第一张图 ════════════════════════════════════════════════ -->
+  <section class="scene" data-scene data-in="18.4" data-out="26.4" data-tone="paper"
+           data-crop="0,0,0.60,1" data-crop-tall="0.02,0.03,0.74,0.44">
+    <div class="copy">
+      <div class="step-no" data-a="pop" data-d="0" data-dur="0.5">03</div>
+      <div class="eyebrow" data-a="fade" data-d="0.02" data-dur="0.45">第一张图</div>
+      <h1 class="headline" data-a="rise" data-d="0.08" data-dur="0.65">写一句话<br>点「开始生成」</h1>
+      <p class="sub" data-a="rise" data-d="0.26" data-dur="0.6">尺寸、清晰度、张数按需调；不满意就改提示词重来，历史都在。</p>
+      <div class="notes" data-a="rise" data-d="0.46" data-dur="0.6">
+        <div class="note">尺寸：1:1 / 16:9 / 9:16 等九档</div>
+        <div class="note">清晰度 1K–4K · 一次最多 4 张</div>
+      </div>
+    </div>
+    <div class="shot-hold">
+      <div class="shot" data-a="rise" data-d="0.14" data-dur="0.9" data-drift="1.06">
+        <div class="crop"><img src="assets/ui-studio.png" alt=""></div>
+        <div class="spot" data-spot="1,60,28,26" data-d="1.0" data-dur="0.6"></div>
+        <!-- the real image this run produced -->
+        <div class="clip" style="right:3%;bottom:6%;width:42%;aspect-ratio:1792/1024"
+             data-a="pop" data-d="1.4" data-dur="0.65">
+          <img src="assets/gen-image.png" alt="" style="width:100%;height:100%;object-fit:cover">
+        </div>
+        <div class="shot-tag" style="right:3%;bottom:calc(6% + 42%*0.5714 + 12px)" data-a="pop" data-d="1.85" data-dur="0.5">真机生成</div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ══ 4 · 图生图与参考图 ══════════════════════════════════════════ -->
+  <section class="scene" data-scene data-in="26.4" data-out="34.0" data-tone="paper"
+           data-crop="0,0,0.60,1" data-crop-tall="0.02,0.03,0.74,0.44">
+    <div class="copy">
+      <div class="step-no" data-a="pop" data-d="0" data-dur="0.5">04</div>
+      <div class="eyebrow" data-a="fade" data-d="0.02" data-dur="0.45">图生图</div>
+      <h1 class="headline" data-a="rise" data-d="0.08" data-dur="0.65">五张参考图<br>一起喂</h1>
+      <p class="sub" data-a="rise" data-d="0.26" data-dur="0.6">风格、人物、构图分开给；拖拽、粘贴、批量选择都行。</p>
+      <div class="notes" data-a="rise" data-d="0.46" data-dur="0.6">
+        <div class="note">最多 5 张 · 单张 ≤10MB · 合计 ≤16MB</div>
+        <div class="note">超出张数在提交前就拦下，不靠服务端截断</div>
+      </div>
+    </div>
+    <div class="shot-hold">
+      <div class="shot" data-a="slideR" data-d="0.14" data-dur="0.85" data-drift="1.05">
+        <div class="crop"><img src="assets/ui-multiref.png" alt=""></div>
+        <div class="spot" data-spot="1,52,28,30" data-d="1.0" data-dur="0.55"></div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ══ 5 · 第一条视频 ══════════════════════════════════════════════ -->
+  <section class="scene" data-scene data-in="34.0" data-out="43.0" data-tone="paper"
+           data-crop="0,0,0.58,1" data-crop-tall="0.02,0.03,0.74,0.44">
+    <div class="copy">
+      <div class="step-no" data-a="pop" data-d="0" data-dur="0.5">05</div>
+      <div class="eyebrow" data-a="fade" data-d="0.02" data-dur="0.45">生视频</div>
+      <h1 class="headline" data-a="rise" data-d="0.08" data-dur="0.65">图片定好<br>一句话让它动</h1>
+      <p class="sub" data-a="rise" data-d="0.26" data-dur="0.6">文生视频 / 图生视频 / 首尾帧 / 参考图，异步渲染，关掉页面也在跑。</p>
+      <div class="notes" data-a="rise" data-d="0.46" data-dur="0.6">
+        <div class="note">先规划：先把一句话拆成镜头与运镜再发</div>
+        <div class="note">5s / 10s · 480P–1080P</div>
+      </div>
+    </div>
+    <div class="shot-hold">
+      <div class="shot" data-a="slideL" data-d="0.14" data-dur="0.85" data-drift="1.045">
+        <div class="crop"><img src="assets/ui-video.png" alt=""></div>
+        <!-- a real rendered clip, playing -->
+        <div class="clip" style="right:4%;bottom:7%;width:40%;aspect-ratio:16/9"
+             data-a="pop" data-d="1.1" data-dur="0.6">
+          <video data-hook="video" src="assets/clip-a.mp4" muted playsinline preload="auto"></video>
+        </div>
+        <div class="shot-tag" style="right:4%;bottom:calc(7% + 22.5% + 13px)" data-a="pop" data-d="1.5" data-dur="0.5">真实成片 · 5s</div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ══ 6 · 画布串流程 ══════════════════════════════════════════════ -->
+  <section class="scene" data-scene data-in="43.0" data-out="50.6" data-tone="paper"
+           data-crop="0.06,0.02,0.94,1" data-crop-tall="0.04,0.04,0.9,0.62">
+    <div class="copy">
+      <div class="step-no" data-a="pop" data-d="0" data-dur="0.5">06</div>
+      <div class="eyebrow" data-a="fade" data-d="0.02" data-dur="0.45">无限画布</div>
+      <h1 class="headline" data-a="rise" data-d="0.08" data-dur="0.65">整条流程<br>摊在画布上</h1>
+      <p class="sub" data-a="rise" data-d="0.26" data-dur="0.6">图片、视频、文本、配置节点连线；改哪步只重跑哪步。</p>
+      <div class="notes" data-a="rise" data-d="0.46" data-dur="0.6">
+        <div class="note">图片与视频节点同一套控制</div>
+        <div class="note">按 ? 呼出快捷键表</div>
+      </div>
+    </div>
+    <div class="shot-hold">
+      <div class="shot" data-a="zoomIn" data-d="0.14" data-dur="0.85" data-drift="1.05">
+        <div class="crop"><img src="assets/ui-canvas.png" alt=""></div>
+        <div class="spot" data-spot="8,10,50,70" data-d="1.0" data-dur="0.6"></div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ══ 7 · 分镜 / 拼接 / 时间线 ════════════════════════════════════ -->
+  <section class="scene" data-scene data-in="50.6" data-out="59.4" data-tone="paper"
+           data-crop="0.06,0.02,0.94,1" data-crop-tall="0.04,0.04,0.9,0.62">
+    <div class="copy">
+      <div class="step-no" data-a="pop" data-d="0" data-dur="0.5">07</div>
+      <div class="eyebrow" data-a="fade" data-d="0.02" data-dur="0.45">分镜 · 拼接 · 时间线</div>
+      <h1 class="headline" data-a="rise" data-d="0.08" data-dur="0.65">多段合成<br>一条成片</h1>
+      <p class="sub" data-a="rise" data-d="0.26" data-dur="0.6">分镜一镜一段；框选几段按画布位置拼；要剪再接就开时间线。</p>
+      <div class="notes" data-a="rise" data-d="0.46" data-dur="0.6">
+        <div class="note">顺序按画布位置：从上到下、从左到右</div>
+        <div class="note">本机 ffmpeg，不联网、不消耗额度</div>
+      </div>
+    </div>
+    <div class="shot-hold">
+      <div class="shot" data-a="rise" data-d="0.14" data-dur="0.9" data-drift="1.05">
+        <div class="crop"><img src="assets/ui-canvas.png" alt=""></div>
+        <!-- three real clips stacked as a strip, standing in for the stitch -->
+        <div class="clip" style="left:4%;bottom:8%;width:27%;aspect-ratio:16/9" data-a="pop" data-d="1.0" data-dur="0.5">
+          <video data-hook="video" src="assets/clip-b.mp4" muted playsinline preload="auto"></video>
+        </div>
+        <div class="clip" style="left:33.5%;bottom:8%;width:27%;aspect-ratio:16/9" data-a="pop" data-d="1.25" data-dur="0.5">
+          <video data-hook="video" src="assets/clip-c.mp4" muted playsinline preload="auto"></video>
+        </div>
+        <div class="clip" style="left:63%;bottom:8%;width:27%;aspect-ratio:16/9" data-a="pop" data-d="1.5" data-dur="0.5">
+          <video data-hook="video" src="assets/clip-a.mp4" muted playsinline preload="auto"></video>
+        </div>
+        <div class="shot-tag" style="left:4%;bottom:calc(8% + 15.2% + 12px)" data-a="pop" data-d="1.8" data-dur="0.5">① ② ③ 按画布顺序</div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ══ 8 · 电商与模板库 ════════════════════════════════════════════ -->
+  <section class="scene" data-scene data-in="59.4" data-out="67.4" data-tone="paper"
+           data-crop="0.06,0.02,0.94,1" data-crop-tall="0.04,0.03,0.9,0.52">
+    <div class="copy">
+      <div class="step-no" data-a="pop" data-d="0" data-dur="0.5">08</div>
+      <div class="eyebrow" data-a="fade" data-d="0.02" data-dur="0.45">电商套图与模板库</div>
+      <h1 class="headline" data-a="rise" data-d="0.08" data-dur="0.65">成套出图<br>不用从零写</h1>
+      <p class="sub" data-a="rise" data-d="0.26" data-dur="0.6">商品参考图生成主图、卖点图、场景图；模板库里挑现成提示词。</p>
+      <div class="notes" data-a="rise" data-d="0.46" data-dur="0.6">
+        <div class="note">八个来源的模板库，可搜索、可收藏</div>
+        <div class="note">删除进回收站，30 天内可恢复</div>
+      </div>
+    </div>
+    <div class="shot-hold">
+      <div class="shot" data-a="slideR" data-d="0.14" data-dur="0.85" data-drift="1.05">
+        <div class="crop"><img src="assets/ui-templates.png" alt=""></div>
+        <div class="spot" data-spot="10,8,80,84" data-d="1.0" data-dur="0.6"></div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ══ 9 · 片尾 ════════════════════════════════════════════════════ -->
+  <section class="scene" data-scene data-in="67.4" data-out="72" data-tone="ink" data-layout="stack" data-hud="off">
+    <div class="kicker" style="color:#71717a" data-a="fade" data-d="0" data-dur="0.45">装上就能用</div>
+    <div style="margin-top:36px" data-a="rise" data-d="0.16" data-dur="0.6">
+      <div class="cmd"><span class="p">$</span> dsh plugin --profile web add <span class="cmd-pkg">@q253595422/dsh-imagegen-video</span></div>
+    </div>
+    <div class="repo" style="margin-top:34px" data-a="fade" data-d="0.7" data-dur="0.55">github.com/q253595422/dsh-imagegen-video</div>
+    <div class="mark" style="font-size:68px;margin-top:70px;letter-spacing:-.03em" data-a="fade" data-d="1.45" data-dur="0.7">VisioWork</div>
+  </section>
+
+  <div id="sub"></div>
+
+  <div id="hud">
+    <div class="hud-top"><span><b>VisioWork</b> &nbsp;·&nbsp; 演示教程</span><span id="hud-idx">01 / 08</span></div>
+    <div class="hud-bar" id="hud-bar"></div>
+  </div>
+</div>
+
+<script src="../../shared/timeline.js"></script>
+<script>
+(() => {
+  const DURATION = 72
+
+  // Frames are seeked, never played, so a re-render is identical.
+  const videoNodes = [...document.querySelectorAll('[data-hook="video"]')]
+  for (const v of videoNodes) v.pause()
+
+  // Burned-in subtitles: no voice-over, so the line carries the instruction.
+  const CUES = [
+    [4.2, 11.2, '一条命令装上，重启 dsh web，侧栏多出「生图」。'],
+    [11.2, 18.4, '先配渠道：API 地址、密钥，检测模型，保存。'],
+    [18.4, 26.4, '写一句话，点「开始生成」，第一张图就出来了。'],
+    [26.4, 34.0, '图生图能一次喂五张参考图，风格人物分开给。'],
+    [34.0, 43.0, '图片定好，一句话让它动起来。'],
+    [43.0, 50.6, '把整条流程摊在画布上，改哪步只跑哪步。'],
+    [50.6, 59.4, '多段按画布顺序拼成一条，要剪再接就开时间线。'],
+    [59.4, 67.4, '电商成套出图，模板库里挑现成提示词。'],
+  ]
+
+  window.createTimeline({
+    duration: DURATION,
+    cues: CUES,
+    hudTotal: 8,
+    // Drive the real clips from the same clock, so a seek is reproducible.
+    onFrame: (t) => {
+      for (const v of videoNodes) {
+        if (!v.duration || !isFinite(v.duration)) continue
+        const want = t % v.duration
+        if (Math.abs(v.currentTime - want) > 0.25) {
+          try { v.currentTime = want } catch {}
+        }
+      }
+    },
+  })
+
+  window.__ready = Promise.all([
+    ...[...document.images].map(img => img.decode().catch(() => {})),
+    ...videoNodes.map(v => new Promise(res => {
+      if (v.readyState >= 1) return res()
+      v.addEventListener('loadedmetadata', res, { once: true })
+      v.addEventListener('error', res, { once: true })
+      setTimeout(res, 4000)
+    })),
+  ])
+})()
+</script>
+</body>
+</html>

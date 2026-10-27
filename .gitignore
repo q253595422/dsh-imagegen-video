@@ -11,6 +11,8 @@ node_modules/
 /.upstream/
 # 推广片逐帧渲染的中间产物（900 帧 × 两版，约 300MB）。成片与源文件在 docs/promo/。
 /docs/promo/src/frames/
+# 演示教程片逐帧渲染的中间产物（2160 帧 × 两版，约 500MB）。成片与源文件在 docs/tutorial/。
+/docs/tutorial/src/frames/
 # `pnpm run ppt:preview` 的产物：单文件组件预览包，用于 pnpm run test:ppt-browser。
 /.ppt-preview/
 # `pnpm run studio:preview` + `scripts/studio-preview-shot.mjs` 的产物：6MB 预览包
