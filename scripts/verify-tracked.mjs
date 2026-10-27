@@ -12,8 +12,9 @@
  *  1. For every relative import under `scripts/` and `src/`, the target must
  *     exist AND be tracked by git. "It works on my machine" is exactly what an
  *     untracked-but-imported file looks like.
- *  2. No file may be sitting in the tree untracked and un-ignored. That is the
- *     look of a new source file somebody forgot to `git add` before pushing.
+ *  2. No file under `src/`, `scripts/` or `docs/` may be sitting in the tree
+ *     untracked and un-ignored. That is the look of a new source file somebody
+ *     forgot to `git add` before pushing.
  *
  * A directory that is not a git checkout (an unpacked tarball) SKIPS with an
  * explicit line rather than passing: a check that quietly does nothing on the
@@ -107,24 +108,41 @@ for (const file of files) {
 
 // Untracked-and-not-ignored: a file that would simply not travel with the code.
 //
-// Scoped to `src/` and `scripts/` on purpose. A scratch note at the repository
-// root is nobody's bug, but a source file that was never `git add`ed is exactly
-// the shape of the incident this guard exists for -- and it would otherwise only
-// surface after pushing.
-for (const line of git('status', '--porcelain', '--untracked-files=all').split('\n')) {
-  if (!line.startsWith('?? ')) continue
-  const path = line.slice(3)
-  if (path.startsWith('src/') || path.startsWith('scripts/')) {
-    problems.push(`${path} is in the tree but neither committed nor ignored`)
+// Scoped to `src/`, `scripts/` and `docs/` on purpose. A scratch note at the
+// repository root is nobody's bug, but a source file that was never `git add`ed
+// is exactly the shape of the incident this guard exists for -- and it would
+// otherwise only surface after pushing.
+//
+// `docs/` is checked for untracked files but NOT added to the import walk above:
+// what lives there is demo pages and their render scripts, whose specifiers are
+// mostly assets resolved by a browser, not modules resolved by the bundler. Rule
+// 1 over that tree would report every `<img src="...">`-shaped reference as a
+// missing import -- a false alarm loud enough to get the whole guard deleted.
+// The gap that mattered is already closed from the other side: the modules those
+// pages DO import live under `scripts/lib/`, and rule 1 covers them there.
+const GUARDED = ['src/', 'scripts/', 'docs/']
+
+// `-z` rather than newline records: with the default `core.quotePath=true` git
+// wraps any path holding a non-ASCII byte in quotes and escapes it to octal, so
+// `docs/推广片-备注.md` arrives as `"docs/\346\216\250..."`. That string starts
+// with `"`, not `docs/`, and the prefix test below silently skipped the file --
+// on a fresh machine, for exactly the filenames this repository uses. `-z` hands
+// over the raw bytes, one record per NUL, with no quoting to undo.
+for (const record of git('status', '--porcelain', '-z', '--untracked-files=all').split('\0')) {
+  if (!record.startsWith('?? ')) continue
+  const path = record.slice(3)
+  if (GUARDED.some(prefix => path.startsWith(prefix))) {
+    problems.push(`${path} is in the tree but neither committed nor ignored -- git add it, or add it to .gitignore if it is generated`)
   }
 }
 
 if (problems.length > 0) {
   console.error('\nFAIL: a file this code needs is not in the repository.')
   console.error([...new Set(problems)].map(line => `  ${line}`).join('\n'))
-  console.error('A clean clone then fails at import time, on somebody else\'s machine,')
+  console.error('A clean clone does not have it, so the failure lands on somebody else\'s')
+  console.error('machine first -- an ERR_MODULE_NOT_FOUND, or a page missing an asset --')
   console.error('with an error that names the missing file and not this rule.')
   process.exit(1)
 }
 
-console.log(`imports tracked: ${files.length} source files, every relative import is committed`)
+console.log(`imports tracked: ${files.length} source files, every relative import is committed; no untracked files under ${GUARDED.join(', ')}`)
