@@ -24,7 +24,7 @@
  */
 
 import { createServer } from 'node:http'
-import { existsSync, mkdirSync, readFileSync } from 'node:fs'
+import { mkdtempSync, readFileSync, rmSync } from 'node:fs'
 import { spawnSync } from 'node:child_process'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
@@ -56,11 +56,19 @@ if (FFMPEG === null || CHROME === null) {
   console.error('='.repeat(72) + '\n')
   process.exit(0)
 }
-const WORK_DIR = path.join(tmpdir(), 'framegrab')
-// Build the fixture if it is missing, so the script is self-contained.
+// A directory per run, not the fixed `tmpdir()/framegrab` this used to be: two
+// concurrent runs shared it, so one run's fixture build or cleanup deleted the
+// clip the other was still serving.
+const WORK_DIR = mkdtempSync(path.join(tmpdir(), 'dsh-framegrab-'))
+// Removed from the 'exit' hook rather than from a finally: this script also
+// exits early on purpose further down, and process.exit() does not unwind a
+// try/finally. The hook fires for the normal end, for a thrown assertion and for
+// those explicit exits alike.
+process.on('exit', () => rmSync(WORK_DIR, { recursive: true, force: true }))
+// The directory is new every run, so the fixture is always built here; a stale
+// clip from an earlier run can no longer be picked up instead.
 const FIXTURE = `${WORK_DIR}/test.mp4`
-if (!existsSync(FIXTURE)) {
-  mkdirSync(WORK_DIR, { recursive: true })
+{
   // red (0-1s) -> green (1-2s) -> blue (2-3s): seeking to duration/2 must land
   // in the green segment, which is what makes the check meaningful.
   const made = spawnSync(FFMPEG, [
