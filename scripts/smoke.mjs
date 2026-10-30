@@ -3892,8 +3892,10 @@ await check('C15 history prompts keep their line breaks and plugin drops reach t
   const panelCss = readFileSync(new URL('../src/client/panel.module.css', import.meta.url), 'utf8')
   const promptRule = panelCss.slice(panelCss.indexOf('.historyPrompt {'), panelCss.indexOf('.historyMeta')) || ''
   assert.ok(promptRule !== '', 'the history prompt rule is findable')
-  assert.match(promptRule, /white-space:\s*pre-wrap/, 'a history prompt keeps the newlines the user typed')
-  assert.ok(!/-webkit-line-clamp/.test(promptRule), 'a history prompt is not clamped to two lines')
+  assert.match(promptRule, /-webkit-line-clamp:\s*2/, 'the sidebar history prompt is clamped to 2 lines to keep cards balanced')
+  const resultPromptRule = panelCss.slice(panelCss.indexOf('.canvasPromptText {'), panelCss.indexOf('.grid {')) || ''
+  assert.ok(resultPromptRule !== '', 'the canvas prompt rule above the result image is findable')
+  assert.match(resultPromptRule, /white-space:\s*pre-wrap/, 'the result image prompt line preserves user newlines')
   // A real drag is not reproducible in jsdom, so the invariant is what gets
   // checked: every drop handler this plugin registers lets the event bubble.
   for (const file of ['ReferenceImages.tsx', 'ReplicaWorkspace.tsx', 'PptWorkspace.tsx', 'ImageGenPanel.tsx']) {

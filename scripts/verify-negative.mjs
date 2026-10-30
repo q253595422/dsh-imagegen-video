@@ -149,15 +149,14 @@ const bumped = (version, by) => {
 const CASES = [
   // ---------------------------------------- history prompt and host drag overlay
   {
-    // Two reports from real use. The prompt one: a multi-line prompt was clamped
-    // to two lines with no `pre-wrap`, so a generated prompt could not be read
-    // back. Restoring the clamp is exactly the defect.
-    name: 'a history prompt is squashed to two lines again',
+    // The prompt one: the result prompt above the image must preserve newlines
+    // with pre-wrap, while the sidebar remains clamped to 2 lines.
+    name: 'the result image prompt loses its pre-wrap formatting',
     runner: 'smoke',
     file: 'src/client/panel.module.css',
-    from: '  white-space: pre-wrap;\n  overflow-wrap: anywhere;\n}\n\n.historyMeta {',
-    to: '  display: -webkit-box;\n  -webkit-line-clamp: 2;\n  -webkit-box-orient: vertical;\n  overflow: hidden;\n}\n\n.historyMeta {',
-    expect: /history prompt keeps the newlines|not clamped to two lines/,
+    from: '  white-space: pre-wrap;\n  overflow-wrap: anywhere;\n  user-select: text;\n}\n\n/* --- result grid',
+    to: '  white-space: nowrap;\n  overflow-wrap: anywhere;\n  user-select: text;\n}\n\n/* --- result grid',
+    expect: /result image prompt line preserves user newlines/,
   },
   {
     // The overlay one: the host counts dragenter/dragleave on document and only

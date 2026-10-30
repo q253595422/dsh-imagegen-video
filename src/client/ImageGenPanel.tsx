@@ -4260,15 +4260,12 @@ export function ImageGenPanel(props: {
               <div className={css.canvasMeta}>
                 <span>{tt('history.video')}</span>
                 <span className={css.canvasHistoryTag}>{tt('history.viewing', { time: formatTime(resultSurface.clip.createdAt) })}</span>
-                {/* Every value below is read off the entry, never off the form:
-                    the form holds what you would generate *next*, so reading it
-                    here is what made a re-opened clip look like it had been made
-                    with today's settings. `historyMeta` keeps a long prompt on one
-                    line; the full text stays reachable through `title`. */}
-                <span className={css.historyMeta} title={resultSurface.clip.prompt}>{resultSurface.clip.prompt}</span>
-                {resultSurface.clip.resolution ? (
-                  <span className={css.canvasHistoryTag}>{tt('video.resolution')} {resultSurface.clip.resolution}</span>
-                ) : null}
+                <div className={css.canvasPromptLine}>
+                  <span className={css.canvasPromptText}>{resultSurface.clip.prompt}</span>
+                  {resultSurface.clip.resolution ? (
+                    <span className={css.canvasHistoryTag}>{tt('video.resolution')} {resultSurface.clip.resolution}</span>
+                  ) : null}
+                </div>
               </div>
               {resultSurface.clip.videos.map(clip => (
                 <figure key={clip.url} className={css.imageCard} data-clip-figure="">
@@ -4314,19 +4311,15 @@ export function ImageGenPanel(props: {
                       : tt('gallery.viewing', { time: formatTime(viewingGalleryEntry!.createdAt) })}
                   </span>
                 ) : null}
-                {/* One source for both shapes: a history entry and a gallery entry
-                    are the same record, so the parameter line cannot drift between
-                    them. Values are the stored ones -- not the form's, which holds
-                    what you would generate next. */}
                 {viewingImageEntry !== null ? (
-                  <>
-                    <span className={css.historyMeta} title={viewingImageEntry.prompt}>{viewingImageEntry.prompt}</span>
+                  <div className={css.canvasPromptLine}>
+                    <span className={css.canvasPromptText}>{viewingImageEntry.prompt}</span>
                     <span className={css.canvasHistoryTag}>{tt('params.size')} {viewingImageEntry.size}</span>
                     <span className={css.canvasHistoryTag}>{tt('params.quality')} {viewingImageEntry.quality}</span>
                     {viewingImageEntry.detail ? (
                       <span className={css.canvasHistoryTag}>{tt('params.detail')} {viewingImageEntry.detail}</span>
                     ) : null}
-                  </>
+                  </div>
                 ) : null}
               </div>
               <div className={css.grid} data-count={images.length}>

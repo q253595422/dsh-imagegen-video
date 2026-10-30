@@ -5,6 +5,14 @@ Attribution for third-party code is in [NOTICE](./NOTICE).
 
 ## Releases
 
+### 1.19.1 — 修正历史提示词换行展示位置
+
+- **左侧边栏历史卡片恢复 2 行截断。** 修复之前误将左侧卡片提示词取消截断导致长文本撑高卡片、
+  破坏列表平衡的问题；左侧 `.historyPrompt` 恢复 `-webkit-line-clamp: 2` 与省略号展示。
+- **右侧大图上方提示词独立完整展示。** 真正需要看完整提示词的大图顶部区域增加 `.canvasPromptLine`，
+  支持多行换行（`white-space: pre-wrap`）与文本选择（`user-select: text`），图文与视频生成视图均生效。
+- **验证**：`tsc` 0 错、`smoke.mjs` 全套通过、反向测试覆盖左侧截断与右侧换行断言。
+
 ### 1.19.0 — Seedream 水印开关与技能目录隔离
 
 - **合并上游 v1.10.0 的 Seedream 水印开关。** 渠道配置新增「图片添加「AI 生成」水印」
