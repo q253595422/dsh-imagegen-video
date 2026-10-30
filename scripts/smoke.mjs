@@ -5016,39 +5016,6 @@ await check('D3 sidebar entry mounts inside desktop and unknown sidebar shells, 
   assert.equal(shellButton.hasAttribute('data-dsh-imagegen-new-session'), false, 'the temporary action marker is removed on unload')
   assert.equal(desktopRoot.hasAttribute('data-dsh-imagegen-sidebar-root'), false, 'the root marker is cleared on unload')
 
-  // --- sidebar mode: one row in the shell's global panel list, no top tabs.
-  jsdomDocument.body.innerHTML =
-    '<div class="panelShell">'
-    + '<div class="logoRow"><span data-slot="sidebar.brand.mark" style="display: contents"></span></div>'
-    + '<button aria-label="New session">+</button>'
-    + '<nav class="panelList">'
-    + '<button class="panelRow" aria-label="插件"><span class="panelGlyph"><span data-slot="sidebar.panellist" style="display: contents"></span></span><span class="panelTitle">插件</span></button>'
-    + '<button class="panelRow" aria-label="自动化任务"><span class="panelGlyph"><span data-slot="sidebar.panellist" style="display: contents"></span></span><span class="panelTitle">自动化任务</span></button>'
-    + '<button class="panelRow" aria-label="SSH"><span class="panelGlyph"><span data-slot="sidebar.panellist" style="display: contents"></span></span><span class="panelTitle">SSH</span></button>'
-    + '<span class="moreAnchor"><button class="panelRow" aria-label="更多" aria-haspopup="menu"><span class="panelGlyph"></span><span class="panelTitle">更多</span></button></span>'
-    + '</nav>'
-    + '<div class="regionArea"><div data-slot="sidebar.workspaces" style="display: contents"></div></div>'
-    + '</div>'
-  panelOpen = false
-  const callsBeforePanel = calls.length
-  const disposePanelMode = mount(controller, 'Session', 'Back to the current conversation', 'Image', 'Open the image studio', 'sidebar')
-  assert.equal(jsdomDocument.querySelector('[data-dsh-imagegen-session-tabs]') === null, true, 'sidebar mode does not mount the top tab pair')
-  const panelEntry = jsdomDocument.querySelector('[data-dsh-imagegen-panel-entry]')
-  assert.ok(panelEntry !== null, 'sidebar mode mounts the global panel row')
-  assert.equal(panelEntry.parentElement?.tagName.toLowerCase(), 'nav', 'the row lands inside the global panel list')
-  assert.equal(panelEntry.getAttribute('aria-label'), 'Image')
-  assert.equal(jsdomDocument.querySelectorAll('[data-dsh-imagegen-panel-entry]').length, 1, 'repairing the panel list never duplicates the row')
-  panelEntry.dispatchEvent(new jsdomWindow.MouseEvent('click', { bubbles: true }))
-  assert.equal(calls.slice(callsBeforePanel).join(','), 'open', 'the panel row opens the studio')
-  panelOpen = true
-  for (const listener of [...listeners]) listener()
-  assert.equal(panelEntry.hasAttribute('data-active'), true, 'the open panel marks the sidebar row')
-  panelEntry.dispatchEvent(new jsdomWindow.MouseEvent('click', { bubbles: true }))
-  assert.equal(calls.slice(callsBeforePanel).join(','), 'open,close', 'clicking the open row returns to the conversation')
-  disposePanelMode()
-  assert.equal(jsdomDocument.querySelector('[data-dsh-imagegen-panel-entry]') === null, true, 'the sidebar-mode disposer takes the row back out')
-  panelOpen = false
-
   // --- unknown shell: no marker class and no data hook anywhere, only the brand
   // row plus the shell button's accessible name.
   jsdomDocument.body.innerHTML =

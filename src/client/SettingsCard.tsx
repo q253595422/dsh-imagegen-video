@@ -46,7 +46,6 @@ export interface ImageGenSettings {
   enabled?: boolean
   announceToAgent?: boolean
   allowAgentImageGeneration?: boolean
-  sidebarEntry?: boolean
   promptApiUrl?: string
   promptApiKey?: string
   promptModel?: string
@@ -76,7 +75,6 @@ export interface ImageGenSettingsCardState extends CardShell {
   /** System-prompt announcement flag. */
   announceToAgent: CardFieldState
   allowAgentImageGeneration: CardFieldState
-  sidebarEntry: CardFieldState
   promptApiUrl: CardFieldState
   promptApiKey: CardFieldState
   promptModel: CardFieldState
@@ -131,7 +129,6 @@ export class ImageGenSettingsCardController {
       booleanField('enabled'),
       booleanField('announceToAgent'),
       booleanField('allowAgentImageGeneration'),
-      booleanField('sidebarEntry'),
       textField('promptApiUrl'),
       secretField('promptApiKey'),
       textField('promptModel'),
@@ -165,7 +162,6 @@ export class ImageGenSettingsCardController {
       enabled: this.form.field('enabled'),
       announceToAgent: this.form.field('announceToAgent'),
       allowAgentImageGeneration: this.form.field('allowAgentImageGeneration'),
-      sidebarEntry: this.form.field('sidebarEntry'),
       promptApiUrl: this.form.field('promptApiUrl'),
       promptApiKey: this.form.field('promptApiKey'),
       promptModel: this.form.field('promptModel'),
@@ -1176,18 +1172,6 @@ export function ImageGenSettingsSection(props: ImageGenSettingsSectionProps) {
               {...state.allowAgentImageGeneration}
               onEdit={(text) => { props.edit('allowAgentImageGeneration', text) }}
               onReset={() => { props.resetField('allowAgentImageGeneration') }}
-            />
-            <BooleanField
-              id="dsh-imagegen-settings-sidebar-entry"
-              label={t('settings.sidebarEntry')}
-              hint={t('settings.sidebarEntryHint')}
-              inheritLabel={t('settings.inherit')}
-              onLabel={t('settings.on')}
-              offLabel={t('settings.off')}
-              {...fieldProps}
-              {...state.sidebarEntry}
-              onEdit={(text) => { props.edit('sidebarEntry', text) }}
-              onReset={() => { props.resetField('sidebarEntry') }}
             />
             </SettingsSection>
             <div className={css.footer}>

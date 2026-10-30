@@ -456,13 +456,6 @@ html[data-dsh-imagegen-active] [data-dsh-imagegen-sidebar-root][data-dsh-imagege
   text-overflow: ellipsis;
 }
 
-/* Left-sidebar global-panel row. Its structure is cloned from the shell's own
-   panel rows, so only the active mark is owned here. */
-.panelEntry[data-active] {
-  color: var(--dsw-alias-label-primary);
-  background: var(--dsw-specific-sidebar-nav-item-active);
-}
-
 /* The history surface occupies the shell's workspace/session region while
    image generation is active. The shell's own tree stays mounted underneath
    so closing the tab restores it without a React remount. */

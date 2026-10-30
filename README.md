@@ -260,8 +260,6 @@ dsh plugin --profile web add ./q253595422-dsh-imagegen-video-X.Y.Z.tgz
 
 在「设置 → 生图配置」添加渠道，填写 API 地址与密钥，检测并选择生图模型。可配置多个提供方，并设置默认生图模型和可选的提示词增强聊天模型。
 
-「通用设置」里可以把「生图」入口从顶部「会话 / 生图」并排标签改为左侧「插件 / 自动化任务」列表中的一行。
-
 支持 OpenAI 兼容的 Images API / Chat Completions，以及 xAI Grok、Google Nano Banana、Seedream、Qwen-Image、GLM-Image、MiniMax 等预置渠道；也可手动添加兼容模型。
 
 <details>
