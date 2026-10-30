@@ -5959,7 +5959,12 @@ await check('E1 client apply mounts the sidebar entry and studio (jsdom)', async
     effect(fn) { return fn() },
     on() { return () => {} },
     get(name) {
-      if (name === 'connection') return { isLoopback: true }
+      // A page served through a loopback reverse proxy is NOT a loopback
+      // authority in the browser (the address bar carries the LAN/public
+      // hostname), yet its requests reach the host from 127.0.0.1. The
+      // settings card must probe the bridge instead of pre-blocking on this
+      // flag; every settings assertion below is the regression guard for that.
+      if (name === 'connection') return { isLoopback: false }
       // The panel reads the conversation service from the context; without it
       // the "add to chat" actions cannot be exercised at all.
       if (name === 'conversation') return conversationStub
@@ -6613,6 +6618,13 @@ await check('E1 client apply mounts the sidebar entry and studio (jsdom)', async
     assert.equal(typeof sectionRegistration?.label, 'function')
     assert.equal(sectionRegistration?.label(), '生图配置')
     assert.equal(typeof sectionRegistration?.inject, 'function')
+    // The page below reports isLoopback: false, the authority a LAN/public
+    // reverse-proxied page carries while its requests still reach the host
+    // from 127.0.0.1. The settings bridge must have been probed, not skipped.
+    assert.ok(
+      requestPaths.some(path => path.endsWith('/settings/describe')),
+      'a non-loopback page probes the settings bridge instead of pre-blocking',
+    )
     assert.equal(registered.some(item => item.name === 'main' || item.name === 'sidebar.panellist'), false)
 
     // The asset library must not inherit the normal generation inspiration wall.

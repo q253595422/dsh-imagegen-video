@@ -1,11 +1,12 @@
 /**
  * Browser-side settings scope for the dsh-imagegen namespace, served by the
- * plugin's own loopback bridge routes (/api/dsh-imagegen/settings). The
+ * plugin's own same-origin bridge routes (/api/dsh-imagegen/settings). The
  * official rc.6 settings scope answers "unavailable" for every third-party
  * namespace (the host-apiproxy allowlist is hard-coded), so this package
- * re-serves its namespace through the host settings seam over a same-origin,
- * loopback-only HTTP pair — the same pattern the dsh-web-ui family bridge
- * uses, self-contained per plugin.
+ * re-serves its namespace through the host settings seam over a same-origin
+ * HTTP pair — the same pattern the dsh-web-ui family bridge uses,
+ * self-contained per plugin. The host route owns the access fence; this
+ * browser side must not infer it from the page authority.
  */
 
 import {
@@ -283,7 +284,7 @@ export interface ImageGenScope extends SettingsScope<ImageGenConfig> {
 /**
  * Bind the dsh-imagegen settings scope over the bridge routes and start its
  * initial read (the caller mounts nothing until the scope settles).
- * @param fetchFn - the fetch implementation (the global fetch on loopback).
+ * @param fetchFn - the fetch implementation (the global fetch on the page).
  * @returns the scope; unavailable when the bridge is unreachable.
  */
 export function bindImageGenScope(fetchFn: typeof fetch = fetch): ImageGenScope {

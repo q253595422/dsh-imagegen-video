@@ -12,7 +12,6 @@
  */
 import type { Context as ClientContext } from '@deepseek-ai/cordis'
 import type { ISessions } from '@deepseek-ai/dsh-api-session-controller/client'
-import type { ConnectionHandle } from '@deepseek-ai/dsh-client-connection/client'
 // Type-only: pulls the locale plugin's Context merge (ctx.locale).
 import type {} from '@deepseek-ai/dsh-client-locale/client'
 import type {} from '@deepseek-ai/dsh-client-ui-renderer/client'
@@ -106,13 +105,14 @@ export function apply(ctx: ClientContext): void {
   }, 'dsh-imagegen: follow host locale')
   registerImageToolviews(ctx)
 
-  const connection = ctx.get('connection') as ConnectionHandle | undefined
-  const loopback = connection?.isLoopback === true
-  // The bridge routes are loopback-fenced; remote browsers get an unavailable
-  // scope (the panel explains the gap) instead of failing fetches.
-  const scope: ImageGenScope = bindImageGenScope(loopback
-    ? (input, init) => fetch(input, init)
-    : () => { throw new Error('settings bridge is loopback-only') })
+  // The host route, not the page origin, decides whether the settings bridge
+  // is reachable. A deployment commonly puts DSH behind a loopback reverse
+  // proxy (the LAN/public page authority is not a loopback hostname) while the
+  // host still receives the request from 127.0.0.1; the old page-origin gate
+  // refused those pages before they even asked. Probe the bridge and let the
+  // host's loopback fence answer: a disallowed page still lands in the
+  // unavailable state from the 403 response.
+  const scope: ImageGenScope = bindImageGenScope()
 
   // Re-read the scope whenever the connection resets (same invalidation the
   // official settings binder wires).
