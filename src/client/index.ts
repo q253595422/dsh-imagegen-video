@@ -25,7 +25,7 @@ import { ImageGenController } from './controller.ts'
 import { tt, applyHostLocale } from './helpers.ts'
 import { en, ru, zh, type ImageGenKey } from './locales.ts'
 import { mountPanel } from './mount.tsx'
-import { mountSidebarEntry } from './sidebar-entry.ts'
+import { mountSidebarEntry, type SidebarEntryMode } from './sidebar-entry.ts'
 import { ImageGenSettingsSection, ImageGenSettingsCardController } from './SettingsCard.tsx'
 import { IMAGE_GEN_SECTION_ID, OPEN_IMAGE_GEN_CONFIG_EVENT } from './config-entry.tsx'
 import { bindImageGenScope, type ImageGenScope } from './settings-scope.ts'
@@ -192,6 +192,7 @@ export function apply(ctx: ClientContext): void {
   // the scope is still loading, the composition default is unknown, so nothing
   // mounts yet. Only an unavailable scope falls back to the default (enabled).
   let uiDisposer: (() => void) | undefined
+  let mountedSidebarMode: SidebarEntryMode | undefined
   let scopeDisposer: (() => void) | undefined
   let uiLeaseReleased = false
   let uiLease: UiMountLease
@@ -210,7 +211,16 @@ export function apply(ctx: ClientContext): void {
   }
   const mountUi = (): void => {
     if (uiLeaseReleased) return
-    if (uiDisposer !== undefined) return
+    // The entry placement is a live setting: switching it rebuilds the same
+    // controller and panel rather than leaving the previous entry mode behind.
+    const sidebarMode: SidebarEntryMode = scope.getSnapshot().value?.sidebarEntry === true ? 'sidebar' : 'tabs'
+    if (uiDisposer !== undefined && mountedSidebarMode === sidebarMode) return
+    if (uiDisposer !== undefined) {
+      const release = uiDisposer
+      uiDisposer = undefined
+      release()
+    }
+    mountedSidebarMode = sidebarMode
     const controller = new ImageGenController()
     const api = new ImageGenApi()
     const sessions = ctx.get('sessions') as ISessions | undefined
@@ -223,6 +233,7 @@ export function apply(ctx: ClientContext): void {
         tt('entry.sessionTooltip'),
         tt('entry.image'),
         tt('entry.tooltip'),
+        sidebarMode,
       ))
       disposers.push(mountPanel(controller, api, scope, { sessions, conversation }))
       // The imperative sidebar tabs render their labels once; relabel them on
@@ -252,6 +263,7 @@ export function apply(ctx: ClientContext): void {
     uiDisposer = () => {
       for (const dispose of disposers.splice(0)) dispose()
       uiDisposer = undefined
+      mountedSidebarMode = undefined
     }
   }
   const syncEnabled = (): void => {
