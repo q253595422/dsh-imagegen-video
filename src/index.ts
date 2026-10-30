@@ -391,6 +391,8 @@ export interface Config {
   announceToAgent?: boolean
   /** Allow Agents to submit and retrieve image-generation tasks. */
   allowAgentImageGeneration?: boolean
+  /** Show the studio entry in the left global panel list instead of the top tab pair. */
+  sidebarEntry?: boolean
   /** Configured channels (each: name, endpoint, model catalog). */
   channels?: ChannelConfig[]
   /** Per-channel API keys, keyed by channel id. */
@@ -462,6 +464,7 @@ const configSchema = z.object({
   enabled: z.boolean().default(true).volatile(),
   announceToAgent: z.boolean().default(true).volatile(),
   allowAgentImageGeneration: z.boolean().default(true).volatile(),
+  sidebarEntry: z.boolean().default(false).volatile(),
   channels: z.array(z.object({
     id: z.string(),
     preset: z.string().default(''),

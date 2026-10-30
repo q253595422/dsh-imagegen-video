@@ -349,6 +349,14 @@ export function mountPanel(
     const target = event.target as HTMLElement | null
     if (target === null) return
     if (target.closest(NEW_SESSION_MARKER) !== null) controller.close()
+    // The left-panel placement leaves the global panel list visible while the
+    // studio is open; choosing another panel there is a navigation away.
+    const nav = target.closest('nav')
+    if (
+      target.closest('[data-dsh-imagegen-panel-entry]') === null
+      && nav !== null
+      && nav.querySelector('[data-slot="sidebar.panellist"]') !== null
+    ) controller.close()
   }
   document.addEventListener('click', onClickSidebarRow, true)
   document.addEventListener(ACTIVATE_EVENT, onOtherActivate)

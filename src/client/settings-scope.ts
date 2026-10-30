@@ -32,6 +32,8 @@ export interface ImageGenConfig {
   enabled?: boolean
   announceToAgent?: boolean
   allowAgentImageGeneration?: boolean
+  /** Show the studio entry in the left global panel list instead of the top tab pair. */
+  sidebarEntry?: boolean
   /** Configured channels (each: name, endpoint, model catalog). */
   channels?: ChannelConfig[]
   /** Per-channel API keys, keyed by channel id. The redacted wire view returns

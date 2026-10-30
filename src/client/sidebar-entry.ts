@@ -1,10 +1,11 @@
 /**
- * Add a two-tab switcher above the shell's own New Session affordance:
- * Session (the conversation view) and Image Generation. The shell button stays
- * visible underneath, so creating a new session keeps its old position and the
- * switcher never doubles as the only way out of the studio. When image
- * generation is active, the plugin also uses the shell's region area as a
- * dedicated history surface; the original workspace/session tree remains
+ * Add the studio entry in one of two places, selected by the plugin setting:
+ * the default two-tab switcher above the shell's own New Session affordance
+ * (Session / Image Generation), or one row in the shell's global panel list
+ * beside Plugins and Automation tasks. The shell button stays visible
+ * underneath in both modes, so creating a new session keeps its old position.
+ * When image generation is active, the plugin also uses the shell's region area
+ * as a dedicated history surface; the original workspace/session tree remains
  * underneath and is restored when the panel closes.
  *
  * ## How the shell is found (no class names)
@@ -41,11 +42,19 @@ import css from './panel.module.css'
 
 /** Stable selector for the injected two-tab host. */
 export const ENTRY_SELECTOR = '[data-dsh-imagegen-session-tabs]'
+/** Stable selector for the injected global-panel row. */
+export const PANEL_ENTRY_SELECTOR = '[data-dsh-imagegen-panel-entry]'
 /** Stable selector for the history surface in the shell region area. */
 export const HISTORY_HOST_SELECTOR = '[data-dsh-imagegen-history-host]'
 
+/** Where the studio entry lives: the top tab pair, or the global panel list. */
+export type SidebarEntryMode = 'tabs' | 'sidebar'
+
 /** Inline picture glyph kept deliberately small for the sidebar rail. */
 const IMAGE_ICON = '<svg viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="2" y="2.5" width="12" height="11" rx="1.5"/><circle cx="5.6" cy="5.8" r="1"/><path d="M2.5 12.5l3.6-3.4 2.4 2.2 3-3 2 2.4"/></svg>'
+
+/** Same glyph at the 16px size the shell's global panel rows use. */
+const PANEL_ICON = '<svg viewBox="0 0 16 16" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="2" y="2.5" width="12" height="11" rx="1.5"/><circle cx="5.6" cy="5.8" r="1"/><path d="M2.5 12.5l3.6-3.4 2.4 2.2 3-3 2 2.4"/></svg>'
 
 /** Inline conversation glyph for the session-view tab. */
 const SESSION_ICON = '<svg viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M2.5 3h11v8H7l-3 2.4V11H2.5z"/></svg>'
@@ -370,6 +379,86 @@ function placeTabs(
   return tabs
 }
 
+/**
+ * The visible global panel list that owns the shell's Plugins / Automation
+ * rows. Each row carries a `sidebar.panellist` anchor, so the first visible
+ * anchor's `nav` is the list container.
+ */
+function panelListSeat(root: HTMLElement): HTMLElement | undefined {
+  for (const anchor of document.querySelectorAll<HTMLElement>('[data-slot="sidebar.panellist"]')) {
+    if (!isVisible(anchor)) continue
+    const nav = anchor.closest('nav')
+    if (nav !== null && root.contains(nav)) return nav
+  }
+  return undefined
+}
+
+/**
+ * Mount or repair the single global-panel row.
+ *
+ * The row is cloned from one of the shell's own panel rows: their class names
+ * are build hashes, but the clone keeps them structurally and lets the shell's
+ * own stylesheet handle the expanded/collapsed geometry. Only the active mark is
+ * ours (`data-active`), because this row does not participate in the layout
+ * store — clicking it drives the studio controller directly.
+ */
+function placePanelEntry(
+  root: HTMLElement,
+  controller: ImageGenController,
+  label: string,
+  tooltip: string,
+): HTMLButtonElement | undefined {
+  const list = panelListSeat(root)
+  if (list === undefined) return undefined
+  const installed = list.querySelector<HTMLButtonElement>(PANEL_ENTRY_SELECTOR)
+  if (installed !== null) return installed
+
+  const buttons = Array.from(list.querySelectorAll<HTMLButtonElement>('button')).filter((button) => (
+    button.getAttribute('aria-haspopup') === null
+    && button.getAttribute('data-sidebar-nav-toggle') === null
+    && button.hasAttribute(PANEL_ENTRY_SELECTOR) === false
+  ))
+  const sample = buttons.find(button => button.getAttribute('aria-current') !== 'page') ?? buttons[0]
+  if (sample === undefined) return undefined
+
+  const row = sample.cloneNode(true) as HTMLButtonElement
+  row.removeAttribute('aria-current')
+  row.removeAttribute('aria-expanded')
+  row.removeAttribute('draggable')
+  row.removeAttribute('style')
+  row.setAttribute('aria-label', label)
+  row.setAttribute('title', tooltip)
+  row.setAttribute('data-dsh-imagegen-panel-entry', '')
+  row.classList.add(css.panelEntry)
+
+  const spans = Array.from(sample.children).filter((child): child is HTMLSpanElement => child.tagName === 'SPAN')
+  const glyphClass = spans[0]?.className ?? ''
+  const titleClass = spans[1]?.className ?? ''
+  row.replaceChildren()
+  if (glyphClass !== '') {
+    const glyph = document.createElement('span')
+    glyph.className = glyphClass
+    glyph.setAttribute('aria-hidden', 'true')
+    glyph.innerHTML = PANEL_ICON
+    row.append(glyph)
+  }
+  if (titleClass !== '') {
+    const title = document.createElement('span')
+    title.className = titleClass
+    title.textContent = label
+    row.append(title)
+  }
+  row.addEventListener('click', () => {
+    if (controller.getSnapshot().panelOpen) controller.close()
+    else controller.open()
+  })
+
+  const moreBlock = list.querySelector<HTMLButtonElement>('button[aria-haspopup="menu"]')?.parentElement
+  if (moreBlock !== null && moreBlock !== undefined) moreBlock.before(row)
+  else list.append(row)
+  return row
+}
+
 /** Mount an overlay host over the workspace/session tree for image history. */
 function placeHistoryHost(root: HTMLElement, region: HTMLElement | undefined): HTMLDivElement | undefined {
   // Reuse the host already in place: the seat is recomputed on every shell
@@ -399,9 +488,11 @@ export function mountSidebarEntry(
   sessionTooltip: string,
   imageLabel: string,
   imageTooltip: string,
+  mode: SidebarEntryMode = 'tabs',
 ): () => void {
   let root: HTMLElement | undefined
   let tabs: HTMLDivElement | undefined
+  let panelRow: HTMLButtonElement | undefined
   let historyHost: HTMLDivElement | undefined
   let markedButton: HTMLButtonElement | undefined
   /** Blocks carrying {@link BLOCK_ATTR}/{@link REGION_ATTR}; released on unload. */
@@ -429,7 +520,7 @@ export function mountSidebarEntry(
   // A shell we have never seen must not fail silently: the reporter of #20 had
   // no console output at all to work from.
   const warnUnmounted = (): void => {
-    if (warnedUnmounted || tabs !== undefined) return
+    if (warnedUnmounted || tabs !== undefined || panelRow !== undefined) return
     warnedUnmounted = true
     const reason = root === undefined ? 'sidebar root not found' : 'no seat for the switcher'
     console.warn(`[dsh-imagegen] sidebar entry stayed unmounted (${reason}); shell probe: ${describeShell()}`)
@@ -438,15 +529,26 @@ export function mountSidebarEntry(
   const unmountedTimer = window.setTimeout(warnUnmounted, 5000)
 
   const syncActive = (): void => {
-    if (tabs === undefined) return
-    const sessionTab = tabs.querySelector<HTMLElement>('[data-dsh-imagegen-tab="session"]')
-    const imageTab = tabs.querySelector<HTMLElement>('[data-dsh-imagegen-tab="image"]')
-    if (controller.getSnapshot().panelOpen) {
-      if (sessionTab !== null) delete sessionTab.dataset.active
-      if (imageTab !== null) imageTab.dataset.active = ''
-    } else {
-      if (sessionTab !== null) sessionTab.dataset.active = ''
-      if (imageTab !== null) delete imageTab.dataset.active
+    const open = controller.getSnapshot().panelOpen
+    if (tabs !== undefined) {
+      const sessionTab = tabs.querySelector<HTMLElement>('[data-dsh-imagegen-tab="session"]')
+      const imageTab = tabs.querySelector<HTMLElement>('[data-dsh-imagegen-tab="image"]')
+      if (open) {
+        if (sessionTab !== null) delete sessionTab.dataset.active
+        if (imageTab !== null) imageTab.dataset.active = ''
+      } else {
+        if (sessionTab !== null) sessionTab.dataset.active = ''
+        if (imageTab !== null) delete imageTab.dataset.active
+      }
+    }
+    if (panelRow !== undefined) {
+      if (open) {
+        panelRow.dataset.active = ''
+        panelRow.setAttribute('aria-current', 'page')
+      } else {
+        delete panelRow.dataset.active
+        panelRow.removeAttribute('aria-current')
+      }
     }
   }
 
@@ -466,8 +568,10 @@ export function mountSidebarEntry(
       // different container, and leaving a copy behind would either duplicate
       // the switcher or keep the invisible one alive.
       tabs?.remove()
+      panelRow?.remove()
       historyHost?.remove()
       tabs = undefined
+      panelRow = undefined
       historyHost = undefined
       if (root.isConnected) delete root.dataset.dshImagegenSidebarRoot
       root = undefined
@@ -489,11 +593,30 @@ export function mountSidebarEntry(
       markedButton.removeAttribute('data-dsh-imagegen-new-session')
       markedButton = undefined
     }
-    tabs = placeTabs(root, button, controller, sessionLabel, sessionTooltip, imageLabel, imageTooltip)
+    if (mode === 'sidebar') {
+      tabs?.remove()
+      tabs = undefined
+      panelRow = placePanelEntry(root, controller, imageLabel, imageTooltip)
+    } else {
+      panelRow?.remove()
+      panelRow = undefined
+      tabs = placeTabs(root, button, controller, sessionLabel, sessionTooltip, imageLabel, imageTooltip)
+    }
     // The seat is resolved once here and shared: the history host has to sit in
     // it, and the stylesheet has to be able to spare it.
     const region = regionSeat(root)
     const nextBlocks = markBlocks(root, region, button)
+    if (mode === 'sidebar') {
+      // The global panel list itself is shell chrome. Without this mark the
+      // studio's "hide foreign entries" rule hides the whole nav (including
+      // this entry) while the studio is open, leaving no way back to the
+      // conversation from the row that opened it.
+      const panelList = panelListSeat(root)
+      if (panelList !== undefined && nextBlocks.includes(panelList) === false) {
+        panelList.setAttribute(BLOCK_ATTR, '')
+        nextBlocks.push(panelList)
+      }
+    }
     for (const block of markedBlocks) {
       if (nextBlocks.includes(block)) continue
       block.removeAttribute(BLOCK_ATTR)
@@ -514,6 +637,7 @@ export function mountSidebarEntry(
     bodyObserver.disconnect()
     unsubscribe()
     tabs?.remove()
+    panelRow?.remove()
     historyHost?.remove()
     markedButton?.removeAttribute('data-dsh-imagegen-new-session')
     for (const block of markedBlocks) {
