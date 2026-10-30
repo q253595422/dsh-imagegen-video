@@ -25,6 +25,8 @@ export interface UpstreamConfig {
   protocol?: ChannelProtocolPreference
   /** Channel display name, recorded in diagnostics so a failure maps to a settings row. */
   channelName?: string
+  /** Seedream 水印开关：缺省为开启，仅在 false 且上游支持时发送 watermark=false (#56)。 */
+  watermark?: boolean
 }
 
 /** A generation failure with a user-presentable message. */
@@ -157,6 +159,27 @@ function isGlmImage(model: string): boolean {
 /** Whether this is the official Volcengine Ark model naming convention. */
 function isVolcSeedream(model: string): boolean {
   return /^doubao-seedream(?:-|$)/i.test(model.trim())
+}
+
+/** Whether the channel points at an official ByteDance image host (Volcengine
+ *  Ark or BytePlus). Only these document Seedream's `watermark` field, so the
+ *  opt-out stays off third-party relays, which may reject unknown body fields
+ *  with a 400. */
+function isByteDanceImageHost(apiUrl: string): boolean {
+  try {
+    const host = new URL(apiUrl).hostname.toLowerCase()
+    return host.endsWith('volces.com') || host.endsWith('byteplus.com') || host.endsWith('bytepluses.com')
+  } catch {
+    return false
+  }
+}
+
+/** Whether Seedream's watermark switch may travel to this upstream: the
+ *  official model id (`doubao-seedream-…`) or any model on an official
+ *  ByteDance host. Model-name matching alone would miss the bundled Ark preset
+ *  (`seedream-5.0-pro`) and inference-endpoint aliases (#56). */
+function supportsSeedreamWatermark(model: string, upstream: UpstreamConfig): boolean {
+  return isVolcSeedream(model) || isByteDanceImageHost(upstream.apiUrl)
 }
 
 /**
@@ -423,7 +446,7 @@ function clampCount(n: number): number {
 /** Pick the effective per-model request parameters. Never includes `n`: the
  *  batch parameter is rejected by Responses-API-based gateways (tools[0].n),
  *  so the count is satisfied by parallel single-image requests instead. */
-function effectiveParams(request: GenerateRequest): {
+function effectiveParams(request: GenerateRequest, upstream: UpstreamConfig): {
   model: string
   size?: string
   quality?: string
@@ -477,15 +500,17 @@ function effectiveParams(request: GenerateRequest): {
   }
   // ByteDance Seedream: the official Volcengine Ark API has no aspect-ratio
   // parameter and defaults `watermark` to TRUE (a visible "AI生成" stamp), so
-  // an Ark request carries an explicit pixel size for the chosen ratio and
-  // turns the watermark off. Gateways keep the plain tier + base64 fallback.
+  // an Ark request carries an explicit pixel size for the chosen ratio.
+  // Gateways keep the plain tier + base64 fallback. The platform watermark
+  // is on by default upstream; a channel may opt out, and the field is only
+  // ever sent on hosts that document it (#56).
   if (isSeedream(model)) {
     const ark = isVolcSeedream(model)
     return {
       model,
       size: ark ? arkSeedreamSize(model, request.quality, request.size) : seedreamSize(request.quality),
       response_format: ark ? 'url' : 'b64_json',
-      ...ark ? { watermark: false } : {},
+      ...upstream.watermark === false && supportsSeedreamWatermark(model, upstream) ? { watermark: false } : {},
     }
   }
   // Zhipu's official image API accepts OpenAI-style JSON but uses its own
@@ -991,7 +1016,7 @@ async function requestOneImage(
         ...params.size !== undefined ? { size: params.size } : {},
         ...params.resolution !== undefined ? { resolution: params.resolution } : {},
         response_format: isVolcSeedream(params.model) ? 'url' : 'b64_json',
-        ...isVolcSeedream(params.model) ? { watermark: false } : {},
+        ...params.watermark !== undefined ? { watermark: params.watermark } : {},
       })
     } else {
       const form = new FormData()
@@ -1506,7 +1531,7 @@ export async function generateImage(upstream: UpstreamConfig, request: GenerateR
       throw new ImageGenError('智谱 GLM-Image 当前仅支持文生图，请切换到文生图模式或选择支持图生图的模型', 'edit-unsupported')
     }
   }
-  const params = effectiveParams(request)
+  const params = effectiveParams(request, upstream)
   const count = effectiveCount(request)
   const batches = await Promise.all(
     Array.from({ length: count }, () => requestOneImage(baseUrl, upstream, request, params, options.signal)),

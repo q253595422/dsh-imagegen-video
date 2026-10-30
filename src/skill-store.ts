@@ -50,8 +50,12 @@ export function knownSkillUrl(name: string): string | undefined {
   return KNOWN_SKILL_SOURCES.find(entry => entry.name === name)?.url
 }
 
-/** Resolve the skills root: `DSH_HOME/skills` when known, else `~/.dsh/skills`. */
+/** Resolve the skills root: `DSH_SKILLS_HOME` when set, else `DSH_HOME/skills` when known, else `~/.dsh/skills`. */
 export function skillsRoot(dshHome?: string): string {
+  const skillsHome = (process.env.DSH_SKILLS_HOME ?? '').trim()
+  if (skillsHome !== '') {
+    return path.resolve(skillsHome)
+  }
   const home = (dshHome ?? process.env.DSH_HOME ?? '').trim()
   const base = home === '' ? path.join(homedir(), '.dsh') : home
   return path.join(base, 'skills')

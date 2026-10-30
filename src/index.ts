@@ -468,6 +468,8 @@ const configSchema = z.object({
     name: z.string().default(''),
     apiUrl: z.string().default(''),
     apiUrlFull: z.boolean().default(false),
+    /** Seedream watermark opt-out (#56): absent/true keeps the badge on. */
+    watermark: z.boolean().default(true),
     protocol: z.union([z.const('auto'), z.const('images'), z.const('chat-completions')]).default('auto'),
     auth: z.union([z.const('api-key'), z.const('subscription')]).default('api-key'),
     subscription: z.string().default(''),
@@ -608,6 +610,7 @@ function normalizeChannels(value: unknown): ChannelConfig[] {
       name: typeof raw.name === 'string' ? raw.name.trim() : '',
       apiUrl: typeof raw.apiUrl === 'string' ? raw.apiUrl.trim() : '',
       apiUrlFull: raw.apiUrlFull === true,
+      watermark: raw.watermark !== false,
       ...isChannelProtocolPreference(raw.protocol) ? { protocol: raw.protocol } : {},
       ...raw.auth === 'subscription' ? { auth: 'subscription' as const } : {},
       ...isSubscriptionProvider(raw.subscription) ? { subscription: raw.subscription } : {},
