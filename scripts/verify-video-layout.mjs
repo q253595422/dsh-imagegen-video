@@ -227,6 +227,22 @@ const send = (method, params) => new Promise(resolve => {
   ws.send(JSON.stringify({ id: myId, method, params }))
 })
 await send('Runtime.enable', {})
+// The fixture is a WIDE window around a NARROW centre column (480 + 1010 +
+// the right column), so the viewport has to actually be that wide. A fresh
+// headless Chrome defaults to about 756x469, which is BELOW the stylesheet's
+// own `@media (max-width: 760px)` breakpoint: the generation row collapses to
+// one column and the composer is measured at 39px wide, reporting a layout
+// regression that never happened. Pinning the metrics here keeps the guard
+// measuring the situation it documents; `Emulation.setDeviceMetricsOverride`
+// is used rather than `--window-size` because chrome-headless-shell ignores
+// window flags, so a flag-only fix would work for one binary and not the
+// other.
+await send('Emulation.setDeviceMetricsOverride', {
+  width: 1520,
+  height: 900,
+  deviceScaleFactor: 1,
+  mobile: false,
+})
 await new Promise(r => setTimeout(r, 400))
 const res = await send('Runtime.evaluate', {
   expression: `JSON.stringify((() => {

@@ -761,7 +761,14 @@ const upstream = createServer(async (req, res) => {
     if (body.prompt === 'parallel one' || body.prompt === 'parallel two') {
       activeGenerationRequests += 1
       maxGenerationRequests = Math.max(maxGenerationRequests, activeGenerationRequests)
-      await new Promise(resolve => setTimeout(resolve, 50))
+      // C4 asserts these two overlap here. The window has to be wide enough
+      // for the SECOND submit to arrive while the first is still in flight:
+      // both submits are awaited one after the other, so under a loaded
+      // machine (the full suite runs this beside a dozen other processes)
+      // 50ms was not enough and C4 failed with maxGenerationRequests===1
+      // while passing on a standalone run. Widening it tests the same thing
+      // and no longer doubles as a timing assertion about the harness.
+      await new Promise(resolve => setTimeout(resolve, 300))
       activeGenerationRequests -= 1
     }
     res.writeHead(200, { 'content-type': 'application/json' })
