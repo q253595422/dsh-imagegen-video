@@ -5,6 +5,28 @@ Attribution for third-party code is in [NOTICE](./NOTICE).
 
 ## Releases
 
+### 1.20.0 — 接入 snapgen.ai 视频模型
+
+- **新增 snapgen.ai 视频协议族。** 渠道预设新增 `snapgen.ai`，支持 `grok-1.5-lite`、`grok-video`、
+  `grok-lower`、`muse-ai-video`、`vela-ai-video` 五个模型。该服务不是 OpenAI 兼容接口：提交是
+  multipart 加自研反爬守卫头 `x-guard-id`，返回历史 uuid 而不是任务 id，状态接口 `GET /history/{uuid}`
+  用数字状态（1 生成中 / 2 完成 / 3 失败），成片地址在 `generated_video[0].video_url`。这四条都在
+  `src/snapgen-engine.ts` 里单独实现，`video-engine.ts` 只负责编排。
+- **密钥填 refresh_token，Access Token 自动续期。** Access Token 只有约 10 分钟有效期，过期时上游
+  返回的是 HTTP 403 `TOKEN_EXPIRED` 而不是 401，所以引擎按 JWT `exp` 提前续期，并在收到带 TOKEN
+  字样的 403 时强制刷新后重试一次。密钥栏接受原始 refresh_token、`{"refresh_token":"…","cdp_port":9333}`
+  形式的 JSON，或一枚仍在有效期内的 access_token。
+- **每次提交现场换取一次性 Cloudflare Turnstile token。** 上游强制校验，token 一次性且绑定 site key，
+  无法缓存或本地计算，因此通过本机 CDP Chrome（默认端口 9333，无头亦可）在真实 snapgen.ai 页面上换取。
+- **按模型区分能力。** 时长与比例词表按模型收窄后渲染：`grok-*` 为 6/10/15 秒，`muse-ai-video` 固定
+  10 秒，`vela-ai-video` 固定 5 秒；五个模型都支持文生视频，`muse`/`vela` 另有图生视频。视频面板与画布
+  的时长、比例、分辨率选项改为读目录数据，不再写死 `[5, 10]`。
+- **只有视频模型的渠道可以保存了。** 以前渠道至少需要一个图片模型标识才能保存，只接视频的 snapgen
+  渠道因此存不下来；校验与「已就绪」判定改为图片或视频模型任一非空即可。
+- **验证**：`tsc` 0 错；离线冒烟新增两组断言（守卫字节与实测值逐字节对齐、提交前失败不触网），
+  `smoke-video.mjs` 33 项全过；通过插件本体对 api.snapgen.ai 实跑成功出片：文生视频 10 秒 4.3 MB、
+  图生视频 10 秒 7.7 MB，均为 h264 + aac 的有效 MP4。
+
 ### 1.19.1 — 修正历史提示词换行展示位置
 
 - **左侧边栏历史卡片恢复 2 行截断。** 修复之前误将左侧卡片提示词取消截断导致长文本撑高卡片、
