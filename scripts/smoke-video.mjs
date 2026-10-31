@@ -616,6 +616,133 @@ await check('V1h a status endpoint that keeps failing gives up with its own erro
   assert.match(exhausted.requestExcerpt ?? '', /retries/, 'the record says the budget was spent')
 })
 
+// ---------------------------------------------------------------------- V1i
+await check('V1i the snapgen protocol pins the measured wire contract', async () => {
+  // snapgen is hand-rolled (anti-bot guard + two aspect dialects), so the
+  // primitives are pinned against values measured from the live site. Offline:
+  // no network, no Chrome.
+  const stableId = 'PLCMCfNYgsGNevfsHMB-X2'
+  // A fixed clock makes the time bucket deterministic (bucket 29891520).
+  const fixedNow = 1793491200000
+  assert.equal(
+    host.snapgenGuard('/api/video-gen/meta', 'POST', stableId, fixedNow),
+    'AXqzKwplznqKeksMMUuwW1sByBvArGHVJL2yFYOC_tMvzc9YmoroAtA989oET2edzDA_yT0sC5dfZYa6MCwLl19lhrowK_34HWWGuhFWZoIhVmaCIQ',
+    'the submit guard matches the bytes the shipped page emits',
+  )
+  assert.equal(
+    host.snapgenGuard('/api/history/abc', 'GET', stableId, fixedNow),
+    'AXqzKwplznqKeksMMUuwW1sByBvAPSW7aGGqcNFM6tzmgjGE4qll5Bmg5P9Q3OxjHYlpaL0sC5dfZYa6MCwLl19lhrowK_34HWWGuhFWZoIhVmaCIQ',
+    'the request mac covers the path and the method, so a different route signs differently',
+  )
+  const guard = host.snapgenGuard('/api/video-gen/meta', 'POST', stableId, fixedNow)
+  assert.equal(guard.length, 114, 'the header is 85 bytes of base64url, padding stripped')
+  assert.equal(Buffer.from(guard, 'base64url').length, 85, 'version + digest + bucket + mac + fingerprint')
+
+  // The guard signs the path the SERVER routes on. Signing the bare route was
+  // answered with GUARD_INVALID by the live API, so this stays pinned.
+  // Byte layout: [1 version][16 device digest][4 bucket][32 request mac][32 fingerprint].
+  // The digest and the bucket do not depend on the route, the mac does.
+  const bareBytes = Buffer.from(host.snapgenGuard('/video-gen/meta', 'POST', stableId, fixedNow), 'base64url')
+  const mountedBytes = Buffer.from(guard, 'base64url')
+  assert.deepEqual(bareBytes.subarray(0, 21), mountedBytes.subarray(0, 21), 'version, device digest and time bucket are route-independent')
+  assert.notDeepEqual(bareBytes.subarray(21), mountedBytes.subarray(21), 'the request mac signs the full path, so the /api mount is inside it, not stripped from it')
+
+  // Two aspect dialects: grok-video forwards ratios, everything else speaks
+  // orientations and fixes its duration.
+  assert.deepEqual(
+    host.snapgenWireParams('grok-1.5-lite', { aspectRatio: '16:9', resolution: '1080P', seconds: 10 }),
+    { aspectRatio: 'landscape', resolution: '1080p', seconds: 10 },
+    'grok-1.5-lite takes an orientation and a lowercase tier',
+  )
+  assert.deepEqual(
+    host.snapgenWireParams('grok-video', { aspectRatio: '4:3', resolution: '720P', seconds: 6 }),
+    { aspectRatio: '4:3', resolution: '720p', seconds: 6 },
+    'grok-video forwards the ratio verbatim',
+  )
+  assert.deepEqual(
+    host.snapgenWireParams('muse-ai-video', { aspectRatio: '9:16', resolution: '1080P', seconds: 5 }),
+    { aspectRatio: 'portrait', resolution: '', seconds: 10 },
+    'muse has no tiers and only renders 10 seconds',
+  )
+  assert.deepEqual(
+    host.snapgenWireParams('vela-ai-video', { aspectRatio: '1:1', resolution: '720P', seconds: 10 }),
+    { aspectRatio: 'square', resolution: '', seconds: 5 },
+    'vela only renders 5 seconds',
+  )
+  assert.throws(
+    () => host.snapgenWireParams('muse-ai-video', { aspectRatio: '4:3', resolution: '720P', seconds: 10 }),
+    (error) => error.code === 'snapgen-aspect',
+    'an aspect the model cannot express is refused here, not by a 400 after the upload',
+  )
+  assert.equal(host.snapgenWire('grok-video').endpoint, '/video-gen/grok-stream')
+  assert.equal(host.snapgenWire('muse-ai-video').endpoint, '/video-gen/meta')
+  assert.equal(host.snapgenWire('vela-ai-video').endpoint, '/video-gen/vela')
+  assert.equal(host.snapgenWire('grok-video').streaming, true, 'grok answers with an SSE stream')
+  assert.equal(host.snapgenWire('muse-ai-video').streaming, false, 'muse answers with plain JSON')
+  assert.equal(host.snapgenWire('nope'), undefined)
+
+  // Durations are per family: the panel used to hardcode 5/10, which would have
+  // hidden every snapgen clip length.
+  assert.deepEqual(host.videoDurationsFor('grok-video'), [6, 10, 15])
+  assert.deepEqual(host.videoDurationsFor('muse-ai-video'), [10], 'one fixed length, so the picker offers one pill')
+  assert.deepEqual(host.videoDurationsFor('vela-ai-video'), [5])
+  assert.deepEqual(host.videoDurationsFor('agnes-video-2.5-flash'), [5, 10], 'other families keep the default list')
+  assert.deepEqual(host.videoDurationsFor(''), [5, 10], 'an unknown model must not lose the picker')
+
+  // The snapgen ids must not be mistaken for the OpenAI-shaped fallback:
+  // 'grok-imagine-video-1.5' is xAI and posts /videos/generations.
+  assert.equal(host.describeVideoModel('grok-1.5-lite').family, 'snapgen')
+  assert.equal(host.describeVideoModel('muse-ai-video').family, 'snapgen')
+  assert.equal(host.describeVideoModel('grok-imagine-video-1.5').family, 'xai')
+  assert.deepEqual(host.describeVideoModel('grok-1.5-lite').modes, ['text'], 'grok image-mode was never measured, so it is not offered')
+  assert.deepEqual(host.describeVideoModel('muse-ai-video').modes, ['text', 'image'], 'a muse submit with one PNG finished normally')
+  assert.deepEqual(host.describeVideoModel('muse-ai-video').resolutions, [], 'muse has no tiers to pick')
+
+  // One string per channel, so all three credential shapes are accepted.
+  const bare = host.parseSnapgenCredentials('some-refresh-token')
+  assert.equal(bare.refreshToken, 'some-refresh-token')
+  assert.equal(bare.accessToken, '', 'a refresh token alone is enough: the access token is minted on demand')
+  assert.equal(bare.stableId.length, 22, 'a device id is derived when the user does not pin one')
+  assert.equal(bare.cdpPort, 9333)
+  const json = host.parseSnapgenCredentials('{"refresh_token":"r","cdp_port":9444}')
+  assert.equal(json.cdpPort, 9444, 'the port of the Chrome that mints Turnstile is configurable')
+  const jwt = 'aaa.bbb.cccccccccccccccccccccccccccccccccccccccccccccccc'
+  assert.equal(host.parseSnapgenCredentials(jwt).accessToken, jwt, 'a JWT is read as the access token')
+  assert.equal(
+    host.parseSnapgenCredentials('some-refresh-token').stableId,
+    bare.stableId,
+    'the derived device id is stable across restarts',
+  )
+})
+
+// ---------------------------------------------------------------------- V1j
+await check('V1j a snapgen submit is refused before the network when it cannot work', async () => {
+  host.clearDiagnostics()
+  // An unmetered host would still be a wrong test: these two refusals have to
+  // happen locally, so the URL points nowhere on purpose.
+  const upstream = { apiUrl: 'http://127.0.0.1:9/v1', apiKey: '', channelName: 'SnapgenEmpty' }
+  await assert.rejects(
+    () => generateVideo(upstream, { mode: 'text', model: 'grok-1.5-lite', prompt: 'p', aspectRatio: '16:9', resolution: '720P', seconds: 10 }),
+    (error) => error.code === 'snapgen-credentials',
+    'an empty secret explains what to paste instead of failing at the guard',
+  )
+  const recorded = host.listDiagnostics().find(entry => entry.channel === 'SnapgenEmpty')
+  assert.ok(recorded !== undefined, 'the refusal is on the diagnostics record like every other family')
+  assert.match(recorded.url, /api\.snapgen\.ai\/api\/video-gen\/grok-1\.5-lite$/, 'the record names the node it would have called')
+
+  // Only the measured modes are wired: first/last frame and multi-reference
+  // were never exercised against the real API.
+  await assert.rejects(
+    () => generateVideo(
+      { apiUrl: 'http://127.0.0.1:9/v1', apiKey: 'r', channelName: 'SnapgenMode' },
+      { mode: 'keyframe', model: 'muse-ai-video', prompt: 'p', aspectRatio: '16:9', resolution: '720P', seconds: 10, firstFrame: 'data:image/png;base64,AAAA', lastFrame: 'data:image/png;base64,AAAA' },
+    ),
+    (error) => error.code === 'video-bad-reference',
+    'an unmeasured mode is refused up front, not after a paid submit',
+  )
+})
+
+// ---------------------------------------------------------------------- V2/V3
 // ---------------------------------------------------------------------- V2/V3
 await check('V2 the runtime persists a clip and the store serves it', async () => {
   const upstream = await startUpstream()

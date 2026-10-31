@@ -71,7 +71,12 @@ export function validateChannelDraft(draft: ChannelDraft): ChannelIssue[] {
   }
   // `stripChannel` drops blank aliases, so a list of blanks saves as a channel
   // with no models — selectable in the pickers and unusable at generate time.
-  if (!draft.models.some(model => model.alias.trim() !== '')) issues.push({ field: 'models', code: 'modelsRequired' })
+  // A video-only channel is legitimate (snapgen wires no image models at all):
+  // both catalogs count, so the user never has to invent an image alias just
+  // to save a channel that only generates video.
+  const hasImage = draft.models.some(model => model.alias.trim() !== '')
+  const hasVideo = (draft.videoModels ?? []).some(model => model.alias.trim() !== '')
+  if (!hasImage && !hasVideo) issues.push({ field: 'models', code: 'modelsRequired' })
   return issues
 }
 

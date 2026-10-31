@@ -576,7 +576,7 @@ export function ImageGenSettingsSection(props: ImageGenSettingsSectionProps) {
     .filter(group => group.models.length > 0)
   const modelAliases = [...new Set(modelGroups.flatMap(group => group.models))]
   const editing = editingId === null ? undefined : channels.find(channel => channel.id === editingId)
-  const readyChannels = channels.filter(channel => state.channels.keySet[channel.id] === true && channel.models.length > 0).length
+  const readyChannels = channels.filter(channel => state.channels.keySet[channel.id] === true && channelModelCount(channel) > 0).length
   const totalModels = channels.reduce((total, channel) => total + channel.models.length, 0)
   const channelSummary = channels.length === 0
     ? t('settings.summaryNotConfigured')
@@ -691,7 +691,7 @@ export function ImageGenSettingsSection(props: ImageGenSettingsSectionProps) {
                       const keyHeld = state.channels.keySet[channel.id] === true
                       const subscriptionProvider = isSubscriptionProvider(channel.subscription) ? channel.subscription : undefined
                       const subscriptionState = subscriptionProvider === undefined ? undefined : subscriptionStatus[subscriptionProvider]
-                      const ready = subscriptionProvider === undefined ? keyHeld && channel.models.length > 0 : subscriptionState?.state === 'logged-in'
+                      const ready = subscriptionProvider === undefined ? keyHeld && channelModelCount(channel) > 0 : subscriptionState?.state === 'logged-in'
                       const isDefault = channel.id === state.channels.defaultChannelId
                       if (confirmDeleteId === channel.id) {
                         return (
@@ -710,7 +710,7 @@ export function ImageGenSettingsSection(props: ImageGenSettingsSectionProps) {
                             <span className={css.channelMeta}>
                               <span className={css.channelBadge} data-warn={!ready ? '' : undefined}>
                                 {subscriptionProvider === undefined
-                                  ? <>{keyHeld ? t('channels.keySet') : t('channels.keyMissing')}{' · '}{channel.models.length > 0 ? t('channels.modelCount', { n: channel.models.length }) : t('channels.noModels')}</>
+                                  ? <>{keyHeld ? t('channels.keySet') : t('channels.keyMissing')}{' · '}{channelModelCount(channel) > 0 ? t('channels.modelCount', { n: channelModelCount(channel) }) : t('channels.noModels')}</>
                                   : <>{SUBSCRIPTION_PROVIDER_DISPLAY_NAMES[subscriptionProvider]}{' · '}{subscriptionState?.state === 'logged-in' ? t('settings.subscriptionLoggedIn') : t('settings.subscriptionLoggedOut')}</>}
                               </span>
                             </span>
@@ -1232,6 +1232,14 @@ export function ImageGenSettingsSection(props: ImageGenSettingsSectionProps) {
 
 /** Channel row + dialog helpers -------------------------------------------------- */
 
+/** Aliases a preset offers in either catalog, image first then video. */
+function presetCatalogAliases(preset: PresetProviderView): string[] {
+  return [
+    ...preset.models.map(model => model.alias),
+    ...(preset.videoModels ?? []).map(model => model.alias),
+  ].filter(alias => alias.trim() !== '')
+}
+
 function newChannelDraft(preset: PresetProviderView | undefined): ChannelDraft {
   return {
     id: clientId(),
@@ -1245,6 +1253,11 @@ function newChannelDraft(preset: PresetProviderView | undefined): ChannelDraft {
     models: (preset?.models ?? []).map(model => ({ ...model })),
     ...preset?.videoModels === undefined ? {} : { videoModels: preset.videoModels.map(model => ({ ...model })) },
   }
+}
+
+/** Models a channel offers in either catalog (image + video). */
+function channelModelCount(channel: ChannelDraft): number {
+  return channel.models.length + (channel.videoModels ?? []).length
 }
 
 /** Whether a channel's catalog targets Seedream, the only family whose platform
@@ -1297,7 +1310,7 @@ function PresetPicker(props: {
   const tabPresets = props.presets.filter(preset => tab === 'subscription' ? preset.subscription !== undefined : preset.subscription === undefined)
   const needle = query.trim().toLowerCase()
   const visiblePresets = needle === '' ? tabPresets : tabPresets.filter(preset =>
-    preset.name.toLowerCase().includes(needle) || preset.models.some(model => model.alias.toLowerCase().includes(needle) || model.id.toLowerCase().includes(needle)),
+    preset.name.toLowerCase().includes(needle) || presetCatalogAliases(preset).some(alias => alias.toLowerCase().includes(needle)),
   )
   return (
     <div
@@ -1339,7 +1352,7 @@ function PresetPicker(props: {
           {visiblePresets.map(preset => (
             <button key={preset.id} type="button" className={css.presetRow} disabled={props.disabled} onClick={() => { props.onPick(preset) }}>
               <span className={css.presetName}>{preset.name}</span>
-              <span className={css.presetMeta}>{preset.models.map(model => model.alias).join(' · ')}</span>
+              <span className={css.presetMeta}>{presetCatalogAliases(preset).join(' · ')}</span>
               {preset.subscription === undefined ? null : <span className={css.presetAction}>{t('channels.presetClickToLogin')}</span>}
             </button>
           ))}

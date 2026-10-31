@@ -13,6 +13,7 @@
  */
 
 import type { ModelMapping, VideoModelFamily, VideoMode, VideoResolution } from './protocol.ts'
+import { VIDEO_DURATIONS } from './protocol.ts'
 
 /** Capability/identity annotation for one video model id. */
 export interface VideoCatalogEntry {
@@ -30,6 +31,13 @@ export interface VideoCatalogEntry {
   resolutions: VideoResolution[]
   /** Aspect ratios this family accepts (empty = send whatever the panel has). */
   aspectRatios: string[]
+  /**
+   * Concrete durations (seconds) the family accepts, when its wire values are
+   * not the panel's default list. Empty/omitted = the panel's VIDEO_DURATIONS.
+   */
+  durations?: number[]
+  /** Display label per aspect value, when the wire word is not human readable. */
+  aspectLabels?: Record<string, string>
   /** Whether the family accepts a deterministic seed. */
   supportsSeed: boolean
   /** Whether the family requires at least one reference image in image mode. */
@@ -100,6 +108,45 @@ const ENTRIES: Record<Exclude<VideoModelFamily, 'unknown'>, Omit<VideoCatalogEnt
     supportsSeed: false,
     requiresReference: false,
   },
+  // snapgen.ai is not an OpenAI-compatible endpoint: the submit is a multipart
+  // POST behind a hand-rolled anti-bot guard header, it answers with a history
+  // uuid instead of a task id, progress is a NUMERIC status on GET /history/{id}
+  // (1 = running, 2 = finished, 3 = failed), and images are minted per request
+  // through a Cloudflare Turnstile widget. `snapgen-engine.ts` owns all of it.
+  // Duration and aspect vocabularies differ per model, so they are narrowed
+  // per id in `describeVideoModel`.
+  snapgen: {
+    label: 'snapgen',
+    labelZh: 'snapgen.ai',
+    known: true,
+    modes: ['text', 'image'],
+    resolutions: ['480P', '720P', '1080P'],
+    aspectRatios: ['16:9', '9:16', '1:1'],
+    durations: [6, 10, 15],
+    supportsSeed: false,
+    requiresReference: false,
+  },
+}
+
+/**
+ * snapgen.ai video ids this plugin can drive.
+ *
+ * Spelled out here rather than imported from `snapgen-engine.ts`: that module
+ * pulls in node:crypto, and this catalog is inlined into the browser bundle.
+ * The ids are the contract between the two, so they are also asserted by the
+ * smoke test.
+ */
+const SNAPGEN_VIDEO_MODELS = new Set([
+  'grok-video',
+  'grok-lower',
+  'grok-1.5-lite',
+  'muse-ai-video',
+  'vela-ai-video',
+])
+
+/** Whether a model id belongs to the snapgen.ai video family. */
+export function isSnapgenVideoModel(model: string): boolean {
+  return SNAPGEN_VIDEO_MODELS.has(model.trim())
 }
 
 /** comemoe model ids (they do not start with a vendor prefix). */
@@ -158,6 +205,26 @@ export function describeVideoModel(model: string): VideoCatalogEntry {
     return id === 'wan2.2-t2v' || /t2v/i.test(id)
       ? { family: 'comemoe', ...base, modes: ['text'] }
       : { family: 'comemoe', ...base }
+  }
+  // snapgen.ai: one family, five ids with different wire vocabularies. The guard
+  // is the model LIST, not a prefix, so an unrelated `*-video` id still falls
+  // through to the generic branch below.
+  if (isSnapgenVideoModel(id)) {
+    const base = ENTRIES.snapgen
+    if (id === 'muse-ai-video') {
+      // Muse takes no resolution at all and fixes the clip at ten seconds.
+      return { family: 'snapgen', ...base, modes: ['text', 'image'], resolutions: [], aspectRatios: ['16:9', '9:16', '1:1'], durations: [10] }
+    }
+    if (id === 'vela-ai-video') {
+      // Vela is the five-second one; it is also the only id that needs no
+      // Turnstile token, which the engine handles per endpoint.
+      return { family: 'snapgen', ...base, modes: ['text', 'image'], resolutions: [], aspectRatios: ['16:9', '9:16', '1:1'], durations: [5] }
+    }
+    // The grok ids all take 6/10/15 seconds. `grok-video` alone reaches 4k,
+    // which the panel has no tier for, so 1080P is the top it can offer.
+    // The grok ids take the same `files` field, but whether the grok endpoints
+    // honour it was never measured: the free daily cap was already spent.
+    return { family: 'snapgen', ...base, modes: ['text'], aspectRatios: ['16:9', '9:16', '1:1', '4:3', '3:4'], durations: [6, 10, 15] }
   }
   // A well-known generic-video naming convention: anything that is clearly a
   // video model but not one of the families above still gets the generic
@@ -246,6 +313,24 @@ export function resolveVideoModelId(
     }
   }
   return wanted
+}
+
+
+/**
+ * Durations one catalog entry offers, in seconds.
+ *
+ * Families whose wire values are not the panel's own list (snapgen speaks
+ * 6/10/15, muse only 10, vela only 5) declare them on the entry; everything
+ * else falls back to the shared list, so the pickers stay single-sourced here
+ * instead of each rendering its own hardcoded copy.
+ */
+export function durationsOf(entry: VideoCatalogEntry): number[] {
+  return entry.durations !== undefined && entry.durations.length > 0 ? [...entry.durations] : [...VIDEO_DURATIONS]
+}
+
+/** Durations the given model id offers (alias resolved by the caller). */
+export function videoDurationsFor(model: string): number[] {
+  return durationsOf(describeVideoModel(model))
 }
 
 /** Clamp a requested duration into what the family accepts. */

@@ -338,7 +338,11 @@ export { makeRoutes } from './routes.ts'
 export { SubscriptionManager, vendorOf, subscriptionOauthRef } from './subscription/manager.ts'
 export { generateImage, ImageGenError } from './engine.ts'
 export { generateVideo, VideoGenError, isVideoModel } from './video-engine.ts'
-export { describeVideoModel, DEFAULT_VIDEO_MODELS, normalizeVideoResolution, resolveVideoModelId } from './video-model-catalog.ts'
+export { describeVideoModel, DEFAULT_VIDEO_MODELS, durationsOf, isSnapgenVideoModel, normalizeVideoResolution, resolveVideoModelId, videoDurationsFor } from './video-model-catalog.ts'
+// The snapgen protocol is hand-rolled, so its primitives are exported too: the
+// offline smoke suite pins the guard bytes and the wire vocabulary against the
+// values measured from the real site, with no network and no browser.
+export { parseSnapgenCredentials, snapgenGuard, snapgenWire, snapgenWireParams } from './snapgen-engine.ts'
 export { applyPlan, hasMotion, looksChinese, MAX_PLANNED_PROMPT_CHARS, MAX_PROMPT_CHARS, parsePlanAnswer, planVideo, planVideoLocally, requirePrompt, VideoPlanError, type ChatCompleter, type VideoPlan, type VideoPlanInput } from './video-director.ts'
 export { appendVideoHistory, backfillVideoPosters, clearVideoHistory, listVideoHistory, readVideoFile, removeVideoHistory, VIDEO_HISTORY_MAX } from './video-store.ts'
 export { VideoTaskQueue } from './video-task-queue.ts'

@@ -107,6 +107,23 @@ export const IMAGE_PRESETS: PresetProvider[] = [
     ],
   },
   {
+    id: 'snapgen',
+    name: 'snapgen.ai',
+    apiUrl: 'https://api.snapgen.ai',
+    hint: 'snapgen.ai 视频接口（非 OpenAI 兼容）：密钥填 refresh_token，提交时还需要本机 CDP Chrome 换取 Turnstile',
+    models: [],
+    // Only the video half is wired: the endpoints speak multipart + a history
+    // uuid + a numeric status, so neither the image nor the generic video
+    // schema applies.
+    videoModels: [
+      { alias: 'grok-1.5-lite', id: 'grok-1.5-lite' },
+      { alias: 'grok-video', id: 'grok-video' },
+      { alias: 'grok-lower', id: 'grok-lower' },
+      { alias: 'muse-ai-video', id: 'muse-ai-video' },
+      { alias: 'vela-ai-video', id: 'vela-ai-video' },
+    ],
+  },
+  {
     id: 'chatgpt-subscription',
     name: 'ChatGPT 订阅（实验）',
     apiUrl: '',

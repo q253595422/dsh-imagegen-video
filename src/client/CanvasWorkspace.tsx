@@ -13,7 +13,7 @@ import {
   SquareDashedMousePointer, Trash2, Type, Undo2, Upload, Wand2, Wallpaper, X,
 } from 'lucide-react'
 import type { CanvasAnnotation, CanvasAssetRef, CanvasConnection, CanvasDocument, CanvasFileKind, CanvasLayerInfo, CanvasLayerPlanItem, CanvasNode, CanvasRect, CanvasStoryboard, CanvasVideoRef, CanvasSkillConfigApplyResult, CanvasSkillConfigField, CanvasSkillConfigSaveResult, CanvasSkillConfigStep, CanvasSkillConfigView, CanvasSkillDescriptor, CanvasSkillLibrary, CanvasSkillOutput, CanvasSkillRunRequest, CanvasSkillTask, CanvasSketchStroke, GenerateRequest, GenerationTask, HistoryEntry, VideoGenerateRequest, VideoTaskSummary, VideoMode, VideoResolution } from '../protocol.ts'
-import { VIDEO_DURATIONS } from '../protocol.ts'
+import { describeVideoModel, durationsOf } from '../video-model-catalog.ts'
 // The stitch order is a SHARED rule: the host builds its ffmpeg concat list with
 // the same function, so the numbers on the badges are the order of the file.
 import { TimelinePanel, type TimelineClipView } from './TimelinePanel.tsx'
@@ -1956,6 +1956,26 @@ export function CanvasWorkspace(props: CanvasWorkspaceProps): React.JSX.Element 
   const [composerAspect, setComposerAspect] = useState('16:9')
   const [composerSeconds, setComposerSeconds] = useState(5)
   const [composerResolution, setComposerResolution] = useState<VideoResolution>('720P')
+  // The composer offers the same per-family choices the studio panel does:
+  // snapgen speaks 6/10/15 and only some aspect words, so a shared constant
+  // would show values the selected model rejects.
+  const composerVideoCatalog = useMemo(() => describeVideoModel(composerVideoModel), [composerVideoModel])
+  const composerAspectOptions = useMemo(() => (
+    composerVideoCatalog.aspectRatios.length > 0 ? composerVideoCatalog.aspectRatios : ['16:9', '9:16', '1:1']
+  ), [composerVideoCatalog])
+  const composerDurationOptions = useMemo(() => durationsOf(composerVideoCatalog), [composerVideoCatalog])
+  const composerResolutionOptions = useMemo<VideoResolution[]>(() => (
+    composerVideoCatalog.resolutions.length > 0 ? composerVideoCatalog.resolutions : ['480P', '720P', '1080P']
+  ), [composerVideoCatalog])
+  useEffect(() => {
+    if (!composerAspectOptions.includes(composerAspect)) setComposerAspect(composerAspectOptions[0] ?? '16:9')
+  }, [composerAspectOptions, composerAspect])
+  useEffect(() => {
+    if (!composerDurationOptions.includes(composerSeconds)) setComposerSeconds(composerDurationOptions[0] ?? 5)
+  }, [composerDurationOptions, composerSeconds])
+  useEffect(() => {
+    if (!composerResolutionOptions.includes(composerResolution)) setComposerResolution(composerResolutionOptions[0] ?? '720P')
+  }, [composerResolutionOptions, composerResolution])
   const channelIsConnected = useCallback((channelId: string): boolean => {
     if (connectedChannelIds !== undefined && channelId !== '') return connectedChannelIds.has(channelId)
     return connected
@@ -6192,19 +6212,19 @@ export function CanvasWorkspace(props: CanvasWorkspaceProps): React.JSX.Element 
           <ComposerSelect
             ariaLabel={tt('canvas.videoAspect')}
             value={composerAspect}
-            options={['16:9', '9:16', '1:1'].map(item => ({ value: item, label: item }))}
+            options={composerAspectOptions.map(item => ({ value: item, label: composerVideoCatalog.aspectLabels?.[item] ?? item }))}
             onChange={setComposerAspect}
           />
           <ComposerSelect
             ariaLabel={tt('canvas.videoSeconds')}
             value={String(composerSeconds)}
-            options={VIDEO_DURATIONS.map(item => ({ value: String(item), label: tt('canvas.videoDuration', { seconds: item }) }))}
+            options={composerDurationOptions.map(item => ({ value: String(item), label: tt('canvas.videoDuration', { seconds: item }) }))}
             onChange={value => setComposerSeconds(Number(value))}
           />
           <ComposerSelect
             ariaLabel={tt('canvas.videoResolution')}
             value={composerResolution}
-            options={(['480P', '720P', '1080P'] as const).map(item => ({ value: item, label: item }))}
+            options={composerResolutionOptions.map(item => ({ value: item, label: item }))}
             onChange={value => setComposerResolution(value as VideoResolution)}
           />
         </> : composerRenderer === 'model' ? <ModelPicker

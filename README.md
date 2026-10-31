@@ -188,6 +188,7 @@ dsh plugin --profile web add ./q253595422-dsh-imagegen-video-X.Y.Z.tgz
 | 火山 Seedance（方舟） | `doubao-seedance-2-0-260128`、`doubao-seedance-2-0-fast-260128`、`doubao-seedance-1-0-pro-250528` | 方舟原生任务协议：提交 `POST /contents/generations/tasks`，轮询 `GET /contents/generations/tasks/{id}`，成片在 `content.video_url`。提示词与参考图放在 `content` 数组里（参考图带 `role`：`first_frame` / `last_frame` / `reference_image`），比例字段是 `ratio`，分辨率小写。时长：2.x 为 4–15 秒、1.0 为 2–12 秒。分辨率：2.0 支持 480p/720p/1080p/4k，`fast` / `mini` 只到 720p；1.0 为 480p/720p/1080p。1.0 不支持 `reference_image` 角色，`1.0 pro fast` 也不支持尾帧，面板会把这两种模式从该型号上收起来。 |
 | 算力萌 comemoe | `wan2.2-t2v`、`zhimeng-h3-local` | `wan2.2-t2v` 仅文生视频；`zhimeng-h3-local` 支持图生视频。比例只接受 16:9 / 9:16 / 1:1；5 秒片子实测约 9 分钟。 |
 | xAI Grok | `grok-imagine-video-1.5`、`grok-imagine-video-1.5-lite` | 提交 `POST /videos/generations`（注意不是 `/videos`），轮询 `GET /videos/{id}`，取 `video.url` 与 `video.duration`。 |
+| snapgen.ai | `grok-1.5-lite`、`grok-video`、`grok-lower`、`muse-ai-video`、`vela-ai-video` | 非 OpenAI 兼容：`multipart` 提交 + 反爬守卫头 `x-guard-id`，返回历史 `uuid` 而不是任务 id，`GET /history/{uuid}` 用**数字状态** 1 生成中 / 2 完成 / 3 失败，成片在 `generated_video[0].video_url`（预签名，未鉴权即可下载）。每次提交要一枚一次性 Cloudflare Turnstile token，由本机 CDP Chrome 现场换取。详见下文。 |
 | 通用视频 | 其他视频模型 id | 按 OpenAI 兼容视频端点尽力适配；未识别的协议族会明确报错，不会静默发出错误请求。 |
 
 - **生成模式**：文生视频、图生视频（单张参考图）、首尾帧（首帧+尾帧插值）、参考图（多张风格/主体参考）；不同模型支持的模式不同，面板只会给出该模型支持的选项。
@@ -203,6 +204,37 @@ dsh plugin --profile web add ./q253595422-dsh-imagegen-video-X.Y.Z.tgz
 - **模型 ID**：请填方舟控制台的模型 ID（`doubao-seedream-*` / `doubao-seedance-*`）——协议族是从这个 id 前缀判断的。方舟的**推理接入点**（`ep-…`）目前无法判断协议族：图片会被当成通用渠道、生视频会在提交前直接报「协议族未知」而不是静默发一个形状错误的请求。要在接入点上用，请把该渠道的模型 ID 填成对应的方舟模型 ID。
 
 </details>
+
+#### snapgen.ai 视频（需要本机 Chrome）
+
+预置渠道里选 **snapgen.ai** 即可带出五个视频模型。这条链路和别的渠道有三处不一样，配置时要注意：
+
+**1. 密钥填 refresh_token，不是 access_token。** snapgen 的 access_token 只有十分钟寿命，过期后接口返回的是 `403 TOKEN_EXPIRED` 而不是 401。渠道密钥可以填三样东西之一：
+
+- 直接填 `refresh_token`（形如 `"邮箱".xxxx.yyyy`）——最简单；
+- 或者填 JSON：`{"refresh_token":"…","cdp_port":9333}`，其中 `cdp_port` 指定去哪个 CDP 端口换 Turnstile；
+- 或者填一个还没过期的 `access_token`（JWT，`eyJ…` 开头），只在它过期前能用。
+
+宿主每次提交前都会用 refresh_token 换新 token，所以刷新失效时只需更新这一个字段。
+
+**2. 提交前要一枚 Turnstile token，只能由真浏览器换来。** snapgen 不接受没有 `turnstile_token` 的提交（`400 TURNSTILE_REQUIRED`），也不接受复用的 token。插件会在提交时连上本机带调试端口的 Chrome，在 snapgen.ai 页面里现场渲染并执行一次 Turnstile 组件，把拿到的 token 塞进这次 `multipart` 请求。所以：
+
+- 需要本机有一个开了 `--remote-debugging-port` 的 Chrome（默认 9333），并且有（或能自动打开）一个 snapgen.ai 标签页；无头模式同样可用。
+- 换不到 token 时提交会直接报 `snapgen-turnstile`，不会发一个注定被拒的请求。
+- 这一步与登录状态无关，用的是站点公开的 Turnstile sitekey。
+
+**3. 参数与模式按模型收窄。** 面板会按所选模型给出该模型真正接受的比例/分辨率/时长：
+
+| 模型 | 模式 | 比例 | 分辨率 | 时长 | 额度 |
+| --- | --- | --- | --- | --- | --- |
+| `grok-1.5-lite` | 文生视频 | 16:9 / 9:16 / 1:1 / 4:3 / 3:4（线上映射成 landscape / portrait / square / 3:2 / 2:3） | 480p / 720p / 1080p | 6 / 10 / 15 秒 | 免费账号每天 5 条；1080p 需要付费套餐 |
+| `grok-video`、`grok-lower` | 文生视频 | 同上 | 480p / 720p / 1080p（`grok-video` 另有 4k） | 6 / 10 / 15 秒 | 免费账号不可用（`main_limit 0/0`） |
+| `muse-ai-video` | 文生 / 图生视频 | landscape / portrait / square | — | 固定 10 秒 | 每天 100 条 |
+| `vela-ai-video` | 文生 / 图生视频 | landscape / portrait / square | — | 固定 5 秒 | 每天 10 条，但服务端长期维护中，实测常返回 `HIGH_TRAFFIC_ERROR` |
+
+超出套餐或额度时返回的是 `snapgen-premium` / `snapgen-quota` / `snapgen-credit`，面板与 Agent 会原样转述上游文案（例如「Daily limit reached (main_limit: 5/5)」）。
+
+代码落点：`src/snapgen-engine.ts`（守卫头、Turnstile、`multipart` 提交、数字状态轮询、token 刷新）与 `src/video-engine.ts` 的 `snapgen` 分支。
 
 #### 代码生成路径（不调生图/生视频模型）
 

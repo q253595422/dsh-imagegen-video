@@ -19,7 +19,7 @@ import { tt } from './helpers.ts'
 import { videoModelOptions, type ImageGenConfig, type ImageGenScope } from './settings-scope.ts'
 import type { VideoDirectorPlan, VideoGenerateRequest, VideoHistoryEntry, VideoMode, VideoTask, VideoTaskSummary } from '../protocol.ts'
 import { VIDEO_ASPECT_RATIOS, VIDEO_DURATIONS, type VideoResolution } from '../protocol.ts'
-import { describeVideoModel, isLikelyVideoModelId, resolveVideoModelId } from '../video-model-catalog.ts'
+import { describeVideoModel, durationsOf, isLikelyVideoModelId, resolveVideoModelId } from '../video-model-catalog.ts'
 import { Select } from './Select.tsx'
 import { resolveModelChoice } from './ModelPicker.tsx'
 import { ErrorDetail } from './ErrorDetail.tsx'
@@ -271,6 +271,13 @@ export function VideoPanel(props: VideoPanelProps) {
       setResolution(catalog.resolutions[0]!)
     }
   }, [catalog.resolutions, resolution])
+
+  // Durations are per family too: snapgen speaks 6/10/15 and muse only 10, so
+  // the pills come from the catalog instead of a shared constant.
+  const durations = useMemo(() => durationsOf(catalog), [catalog])
+  useEffect(() => {
+    if (!durations.includes(seconds)) setSeconds(durations[0] ?? 5)
+  }, [durations, seconds])
 
   // Poll the host queue. The task lives host-side, so this also picks up a
   // render started before the page was reloaded.
@@ -610,7 +617,7 @@ export function VideoPanel(props: VideoPanelProps) {
               <span className={css.videoLabel}>{tt('video.aspectRatio')}</span>
               <div className={css.videoPills}>
                 {ratios.map(ratio => (
-                  <button key={ratio} type="button" data-active={aspectRatio === ratio ? '' : undefined} onClick={() => { setAspectRatio(ratio) }}>{ratio}</button>
+                  <button key={ratio} type="button" data-active={aspectRatio === ratio ? '' : undefined} onClick={() => { setAspectRatio(ratio) }}>{catalog.aspectLabels?.[ratio] ?? ratio}</button>
                 ))}
               </div>
             </div>
@@ -627,7 +634,7 @@ export function VideoPanel(props: VideoPanelProps) {
             <div className={css.videoParam}>
               <span className={css.videoLabel}>{tt('video.seconds')}</span>
               <div className={css.videoPills}>
-                {VIDEO_DURATIONS.map(value => (
+                {durations.map(value => (
                   <button key={value} type="button" data-active={seconds === value ? '' : undefined} onClick={() => { setSeconds(value) }}>{value}</button>
                 ))}
               </div>

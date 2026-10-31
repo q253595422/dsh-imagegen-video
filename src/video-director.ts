@@ -37,6 +37,7 @@
 import {
   clampVideoSeconds,
   describeVideoModel,
+  durationsOf,
   type VideoCatalogEntry,
 } from './video-model-catalog.ts'
 import type { PromptModelConfig } from './prompt-enhancer.ts'
@@ -279,10 +280,10 @@ function renderPrompt(raw: RawPlan, input: VideoPlanInput): string {
 /** Clamp one duration onto the step the family actually accepts. */
 function clampToFamilySeconds(seconds: number, entry: VideoCatalogEntry): number {
   const clamped = clampVideoSeconds(seconds)
-  // The panel offers 5 / 10; a planner asking for 7 is legal but produces a
-  // clip the user cannot compare with the rest, so it snaps to the offered set
-  // only when the family has no finer preference of its own.
-  const offered = [5, 10]
+  // The offered set is the family's own: the panel renders the same list, so a
+  // planner asking for 7 snaps to a duration the user could have picked rather
+  // than to a stale constant (snapgen speaks 6/10/15, muse only 10).
+  const offered = durationsOf(entry)
   if (offered.includes(clamped)) return clamped
   const nearest = offered.reduce((best, candidate) =>
     Math.abs(candidate - clamped) < Math.abs(best - clamped) ? candidate : best, offered[0]!)

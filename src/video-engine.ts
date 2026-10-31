@@ -27,6 +27,17 @@ import {
   type VideoCatalogEntry,
 } from './video-model-catalog.ts'
 import {
+  SNAPGEN_API_BASE,
+  SnapgenError,
+  SnapgenSession,
+  fetchSnapgenHistory,
+  mintSnapgenTurnstile,
+  parseSnapgenCredentials,
+  snapgenWire,
+  snapgenWireParams,
+  submitSnapgenVideo,
+} from './snapgen-engine.ts'
+import {
   bodyByteLength,
   excerptOf,
   networkErrorFields,
@@ -92,7 +103,8 @@ const REMOTE_CANCEL: Record<string, 'supported' | 'unsupported'> = {
   'openai-video': 'unsupported',
   seedance: 'unsupported',
   xai: 'unsupported',
-  unknown: 'unsupported',
+  unknown: 'unsupported',  snapgen: 'unsupported',
+
 }
 
 /** The families this build knows how to cancel remotely (none, today). */
@@ -181,6 +193,10 @@ const POLL_POLICY: Record<string, { intervalMs: number; deadlineMs: number }> = 
   // xAI renders take "up to several minutes"; the default poll cadence is fine,
   // the deadline matches the other async video families.
   xai: { intervalMs: 5_000, deadlineMs: 20 * 60_000 },
+  // snapgen answers with a history uuid and a numeric status; measured renders
+  // of a 6s clip landed in 1-2 minutes, and a queue slot can add a wait, so the
+  // shared cadence with a 20-minute ceiling is enough.
+  snapgen: { intervalMs: 5_000, deadlineMs: 20 * 60_000 },
   unknown: { intervalMs: 5_000, deadlineMs: 20 * 60_000 },
 }
 
@@ -1113,6 +1129,310 @@ function publishSubmit(event: VideoSubmitEvent): void {
   }
 }
 
+/** Build the credential session one snapgen channel carries. */
+function snapgenSessionOf(upstream: VideoUpstreamConfig): SnapgenSession {
+  return new SnapgenSession(parseSnapgenCredentials(upstream.apiKey))
+}
+
+/**
+ * Translate a snapgen protocol failure into the shared video failure type.
+ *
+ * Every other family already speaks VideoGenError; keeping one error class at
+ * the engine boundary is what lets routes.ts forward the code unchanged and the
+ * panel render a single failure shape.
+ */
+function snapgenToVideoError(error: unknown): VideoGenError {
+  if (error instanceof VideoGenError) return error
+  if (error instanceof SnapgenError) {
+    return new VideoGenError(error.message, error.code, error.retryable, error.status)
+  }
+  const reason = error instanceof Error ? error.message : String(error)
+  return new VideoGenError('snapgen 调用失败：' + reason, 'snapgen-failed', true)
+}
+
+/** Convert a snapgen failure and record it on the leg that raised it. */
+function failSnapgen(attempt: VideoAttempt, error: unknown): VideoGenError {
+  const failure = snapgenToVideoError(error)
+  const excerpt = error instanceof SnapgenError ? error.bodyExcerpt : undefined
+  recordVideoFailure(attempt, failure, {
+    ...failure.status === undefined ? {} : { status: failure.status },
+    ...excerpt === undefined ? {} : { bodyExcerpt: excerpt },
+  })
+  return failure
+}
+
+/**
+ * Poll one snapgen history uuid until it reports a terminal status.
+ *
+ * snapgen answers with a NUMERIC status (1 running, 2 finished, 3 failed) that
+ * the shared readPoll cannot interpret, so this mirrors pollUntilDone -- same
+ * delay policy, same transient-retry budget, same deadline rules -- on top of
+ * the snapgen history reader.
+ */
+async function pollSnapgenUntilDone(
+  attempt: VideoAttempt,
+  upstream: VideoUpstreamConfig,
+  session: SnapgenSession,
+  uuid: string,
+  signal?: AbortSignal,
+  since: { submittedAt?: number } = {},
+): Promise<{ source: VideoClipSource; duration?: number; poster?: string }> {
+  const policy = POLL_POLICY.snapgen ?? POLL_POLICY.unknown!
+  const already = since.submittedAt === undefined ? 0 : Math.max(0, Date.now() - since.submittedAt)
+  const deadline = since.submittedAt === undefined
+    ? Date.now() + policy.deadlineMs
+    : since.submittedAt + policy.deadlineMs
+  // Same rule as the shared loop: a resume whose budget is already spent still
+  // gets one poll, because the render may have finished while nobody watched.
+  let mustPollOnce = already >= policy.deadlineMs
+  const statusAttempt: VideoAttempt = { ...attempt, phase: 'video-poll', method: 'GET' }
+  let attemptCount = 0
+  let transientRetries = 0
+  while (mustPollOnce || Date.now() < deadline) {
+    mustPollOnce = false
+    await waitForPoll(pollDelayMs(policy, attemptCount), signal)
+    attemptCount += 1
+    const budget = requestSignal(signal, SUBMIT_TIMEOUT_MS)
+    try {
+      const state = await fetchSnapgenHistory(session, uuid, { signal: budget.signal })
+      transientRetries = 0
+      if (state.status === 2) {
+        // The pre-signed object URL is preferred: the worker-proxied fallback
+        // is unreachable from this machine and both point at the same object.
+        const url = state.videoUrl !== '' ? state.videoUrl : state.fallbackUrl
+        if (url === '') {
+          const failure = new VideoGenError('snapgen 报告渲染完成，但没有返回视频地址', 'video-download-failed')
+          recordVideoFailure(statusAttempt, failure, { requestExcerpt: excerptOf({ uuid, status: state.status }) })
+          throw failure
+        }
+        return {
+          source: { kind: 'url', url },
+          ...state.durationSeconds === undefined ? {} : { duration: state.durationSeconds },
+          ...state.poster === undefined ? {} : { poster: state.poster },
+        }
+      }
+      if (state.status !== 0 && state.status !== 1) {
+        // 3 is the measured failure status; any other unrecognised number is
+        // treated the same way, because waiting on a status this build cannot
+        // name would only turn a provider failure into a local timeout.
+        const message = state.errorMessage !== undefined && state.errorMessage !== ''
+          ? state.errorMessage
+          : 'snapgen 渲染失败（status ' + state.status + '）'
+        const failure = new VideoGenError(message, 'video-failed')
+        recordVideoFailure(statusAttempt, failure, {
+          requestExcerpt: excerptOf({ uuid, status: state.status, errorCode: state.errorCode }),
+        })
+        throw failure
+      }
+    } catch (error) {
+      if (signal?.aborted === true) throw error
+      // A named failure is final; a transport problem (timeout, dropped
+      // connection, 5xx from the history endpoint) is worth another ask inside
+      // the same deadline, exactly like the shared poll loop.
+      const transient = error instanceof VideoGenError
+        ? error.retryable
+        : error instanceof SnapgenError
+          ? error.retryable
+          : error instanceof TypeError
+            || (error instanceof DOMException && (error.name === 'TimeoutError' || error.name === 'AbortError'))
+      if (!transient) throw snapgenToVideoError(error)
+      transientRetries += 1
+      if (transientRetries > MAX_POLL_TRANSIENT_RETRIES) {
+        const failure = snapgenToVideoError(error)
+        recordPollExhausted(statusAttempt, failure, uuid, 'snapgen', transientRetries)
+        throw failure
+      }
+      if (Date.now() + pollRetryDelayMs(transientRetries) >= deadline) break
+      await waitForPoll(pollRetryDelayMs(transientRetries), signal)
+    } finally {
+      budget.dispose()
+    }
+  }
+  const timeout = new VideoGenError(
+    '视频生成超时（已等待 ' + Math.round(policy.deadlineMs / 60_000) + ' 分钟）',
+    'video-timeout',
+  )
+  recordVideoFailure(statusAttempt, timeout, {
+    requestExcerpt: excerptOf({ uuid, family: 'snapgen', polls: attemptCount, waitedMs: policy.deadlineMs }),
+  })
+  throw timeout
+}
+
+/**
+ * Reattach to a submitted snapgen render: poll the history uuid, then download.
+ *
+ * Shares pollSnapgenUntilDone with the submit path so both shape the result and
+ * record failures identically.
+ */
+async function resumeSnapgenVideo(
+  upstream: VideoUpstreamConfig,
+  request: VideoGenerateRequest,
+  resume: { taskId: string; submittedAt?: number },
+  options: { signal?: AbortSignal } = {},
+): Promise<VideoEngineResult> {
+  const model = (request.upstream ?? request.model).trim()
+  const attempt = videoAttempt(
+    upstream,
+    request,
+    model,
+    'video-poll',
+    displayUrl(SNAPGEN_API_BASE + '/history/' + encodeURIComponent(resume.taskId)),
+    'GET',
+  )
+  let session: SnapgenSession
+  try {
+    session = snapgenSessionOf(upstream)
+  } catch (error) {
+    throw failSnapgen(attempt, error)
+  }
+  const finished = await pollSnapgenUntilDone(
+    attempt,
+    upstream,
+    session,
+    resume.taskId,
+    options.signal,
+    resume.submittedAt === undefined ? {} : { submittedAt: resume.submittedAt },
+  )
+  const downloadAttempt: VideoAttempt = {
+    ...attempt,
+    phase: 'video-download',
+    url: displayUrl(finished.source.url),
+    method: 'GET',
+  }
+  const downloaded = await downloadVideo(downloadAttempt, upstream, finished.source.url, options.signal)
+  return {
+    videos: [{
+      ...downloaded,
+      ...finished.duration === undefined ? {} : { duration: finished.duration },
+      ...finished.poster === undefined ? {} : { poster: finished.poster },
+    }],
+  }
+}
+
+/**
+ * Submit one snapgen render, then poll and download it.
+ *
+ * None of generateVideo transport applies here: the submit is multipart behind
+ * the x-guard-id anti-bot header, the task id is a history uuid, and most models
+ * additionally refuse the submit without a single-use Cloudflare Turnstile token
+ * that only a running Chrome can mint.
+ */
+async function generateSnapgenVideo(
+  upstream: VideoUpstreamConfig,
+  request: VideoGenerateRequest,
+  model: string,
+  options: { signal?: AbortSignal } = {},
+): Promise<VideoEngineResult> {
+  if (request.mode !== 'text' && request.mode !== 'image') {
+    // Measured: reference images ride the same multipart submit as `files`, and
+    // the job reports them back as `reference_item` (a muse render with one PNG
+    // finished normally). Only the single-frame mode is wired; first/last-frame
+    // and multi-reference were never measured, so they stay refused up front
+    // instead of failing after the user has waited for a submit.
+    throw new VideoGenError('snapgen 渠道目前支持文生视频与单张图生视频：请把生成模式切成「文本」或「图生视频」', 'video-bad-reference')
+  }
+  const wire = snapgenWire(model)
+  if (wire === undefined) {
+    throw new VideoGenError('未知的 snapgen 视频模型：' + model, 'video-unknown-model')
+  }
+  const submitAttempt = videoAttempt(
+    upstream,
+    request,
+    model,
+    'video-submit',
+    displayUrl(SNAPGEN_API_BASE + wire.endpoint),
+    'POST',
+  )
+  if (upstream.apiKey.trim() === '') {
+    const failure = new VideoGenError(
+      'snapgen 渠道还没有填写密钥：请填入 refresh_token，或 {"refresh_token":"…","cdp_port":9333} 形式的 JSON',
+      'snapgen-credentials',
+    )
+    recordVideoFailure(submitAttempt, failure)
+    throw failure
+  }
+  let session: SnapgenSession
+  let params: { aspectRatio: string; resolution: string; seconds: number }
+  try {
+    session = snapgenSessionOf(upstream)
+    params = snapgenWireParams(model, {
+      aspectRatio: request.aspectRatio,
+      resolution: request.resolution,
+      seconds: request.seconds,
+    })
+  } catch (error) {
+    throw failSnapgen(submitAttempt, error)
+  }
+/** File name handed to snapgen for one decoded reference frame. */
+function snapgenReferenceName(mime: string, index: number): string {
+  const extension = mime === 'image/jpeg' ? 'jpg' : mime === 'image/webp' ? 'webp' : mime === 'image/gif' ? 'gif' : 'png'
+  return 'reference-' + (index + 1) + '.' + extension
+}
+
+  let turnstileToken: string | undefined
+  if (wire.turnstile) {
+    try {
+      turnstileToken = await mintSnapgenTurnstile({ cdpPort: session.credentials.cdpPort })
+    } catch (error) {
+      throw failSnapgen(submitAttempt, error)
+    }
+  }
+  // Image mode sends the single primary frame; text mode sends nothing.
+  const references = referencesOf(request)
+  if (request.mode === 'image' && references.primary === undefined) {
+    throw new VideoGenError('图生视频需要一张参考图片', 'video-bad-reference')
+  }
+  const files = references.all.map((reference, index) => ({
+    bytes: Buffer.from(reference.base64, 'base64'),
+    mime: reference.mime,
+    filename: snapgenReferenceName(reference.mime, index),
+  }))
+  const budget = requestSignal(options.signal, SUBMIT_TIMEOUT_MS)
+  let uuid = ''
+  try {
+    const submitted = await submitSnapgenVideo(session, {
+      model,
+      prompt: request.prompt,
+      aspectRatio: params.aspectRatio,
+      resolution: params.resolution,
+      seconds: params.seconds,
+      ...turnstileToken === undefined ? {} : { turnstileToken },
+      ...files.length === 0 ? {} : { files },
+    }, { signal: budget.signal })
+    uuid = submitted.uuid
+  } catch (error) {
+    throw failSnapgen(submitAttempt, error)
+  } finally {
+    budget.dispose()
+  }
+  // Publish before polling: the poll leg takes minutes, and a restart reattaches
+  // to this uuid instead of paying for a second render.
+  publishSubmit({
+    ...options.signal === undefined ? {} : { signal: options.signal },
+    remoteTaskId: uuid,
+    family: 'snapgen',
+    model,
+    submittedAt: Date.now(),
+    upstream,
+    request,
+  })
+  const finished = await pollSnapgenUntilDone(submitAttempt, upstream, session, uuid, options.signal)
+  const downloadAttempt: VideoAttempt = {
+    ...submitAttempt,
+    phase: 'video-download',
+    url: displayUrl(finished.source.url),
+    method: 'GET',
+  }
+  const downloaded = await downloadVideo(downloadAttempt, upstream, finished.source.url, options.signal)
+  return {
+    videos: [{
+      ...downloaded,
+      ...finished.duration === undefined ? {} : { duration: finished.duration },
+      ...finished.poster === undefined ? {} : { poster: finished.poster },
+    }],
+  }
+}
+
 /**
  * Poll one already-submitted render and download its clip.
  *
@@ -1136,6 +1456,11 @@ export async function resumeVideo(
   const model = (request.upstream ?? request.model).trim()
   if (model === '') throw new VideoGenError('未指定视频模型', 'video-no-model')
   const family = resume.family.trim() === '' ? describeVideoModel(model).family : resume.family
+  // snapgen subscribes to nothing OpenAI-shaped: the uuid is a history id whose
+  // numeric status has to be read by the snapgen poller.
+  if (family === 'snapgen') {
+    return await resumeSnapgenVideo(upstream, request, resume, options)
+  }
   const baseUrl = upstream.apiUrl.replace(/\/+$/, '')
   const statusUrl = statusUrlFor(upstream, baseUrl, family, resume.taskId)
   const attempt = videoAttempt(upstream, request, model, 'video-poll', statusUrl, 'GET')
@@ -1190,6 +1515,11 @@ export async function generateVideo(
   // checks would reject a request that is perfectly valid — the provider
   // already has the frames and only polling is left.
   if (request.resume !== undefined) return await resumeVideo(upstream, request, request.resume, options)
+  // snapgen cannot ride the shared submit path: multipart plus a guard header,
+  // a history uuid instead of a task id, and a Turnstile token for most models.
+  if (family === 'snapgen') {
+    return await generateSnapgenVideo(upstream, request, model, options)
+  }
   const references = referencesOf(request)
   if (request.mode === 'keyframe' && references.all.length === 0) {
     throw new VideoGenError('首尾帧模式至少需要一张首帧图片', 'video-bad-reference')
