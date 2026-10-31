@@ -9,6 +9,7 @@ import type {} from '@deepseek-ai/dsh-tools'
 import { ImageGenError } from './engine.ts'
 import { ImageGenerationRuntime, type RuntimeChannel } from './generation-runtime.ts'
 import { detectImageMime } from './image-format.ts'
+import { historyImageAbsolutePath } from './history-store.ts'
 import type { GenerationTask, GeneratedImage } from './protocol.ts'
 
 export interface AgentImageToolConfig {
@@ -33,6 +34,8 @@ interface AgentTaskResult {
   status: string
   message: string
   error?: string
+  embed_id?: string
+  files?: string[]
   images: AgentImageRef[]
 }
 
@@ -57,6 +60,8 @@ const taskResultSchema = {
     status: { type: 'string', required: true },
     message: { type: 'string', required: true },
     error: { type: 'string' },
+    embed_id: { type: 'string' },
+    files: { type: 'array', items: { type: 'string' } },
     images: { type: 'array', required: true, items: imageRefSchema },
   },
 } as const
@@ -303,6 +308,22 @@ export function registerAgentImageTools(ctx: Context, runtime: ImageGenerationRu
   }
   const taskResult = async (task: GenerationTask): Promise<AgentTaskResult> => {
     const images = await materializeTaskImages(task)
+    const resultFiles = (() => {
+      const embedId = typeof task.result?.embedId === 'string' ? task.result.embedId : null
+      if (embedId === null) return []
+      const entry = (task.result?.history ?? []).find(item => item.id === embedId)
+      return (entry?.images ?? []).map(image => {
+        const raw = typeof image.url === 'string' ? image.url : ''
+        const name = raw === '' ? '' : raw.slice(raw.lastIndexOf('/') + 1)
+        let file = ''
+        try {
+          file = name === '' ? '' : decodeURIComponent(name)
+        } catch {
+          file = ''
+        }
+        return file === '' ? null : historyImageAbsolutePath(file)
+      }).filter((file): file is string => typeof file === 'string' && file.length > 0)
+    })()
     return {
       task_id: task.id,
       status: task.status,
@@ -314,6 +335,8 @@ export function registerAgentImageTools(ctx: Context, runtime: ImageGenerationRu
             ? 'Generation was cancelled.'
             : 'Generation is still running. Query the task again when you need its current status.',
       ...task.error === undefined ? {} : { error: task.error },
+      ...typeof task.result?.embedId === 'string' && task.result.embedId !== '' ? { embed_id: task.result.embedId } : {},
+      ...resultFiles.length > 0 ? { files: resultFiles } : {},
       images,
     }
   }
@@ -352,6 +375,7 @@ export function registerAgentImageTools(ctx: Context, runtime: ImageGenerationRu
           quality: args.quality ?? 'auto',
           n: Math.min(4, Math.max(1, args.count ?? 1)),
           detail: args.detail ?? '',
+          agentTool: 'generate_image',
         })
         return taskResult(args.wait_for_completion === false ? task : await waitForTask(task.id, exec.signal))
       },
@@ -390,6 +414,7 @@ export function registerAgentImageTools(ctx: Context, runtime: ImageGenerationRu
           quality: args.quality ?? 'auto',
           n: Math.min(4, Math.max(1, args.count ?? 1)),
           detail: args.detail ?? '',
+          agentTool: 'edit_image',
           image: imageDataUrl(reference),
           ...reference.ref.name === undefined ? {} : { refName: reference.ref.name },
         })

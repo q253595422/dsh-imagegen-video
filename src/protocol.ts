@@ -1735,6 +1735,8 @@ export type ListingCopyResult =
 
 /** A client → host generate request (what the panel collects). */
 export interface GenerateRequest extends EcommerceTaskMeta {
+  /** Tool name marker for Agent-submitted generations (history bookkeeping). */
+  agentTool?: string
   /** text-to-image (images/generations) or image-to-image (images/edits). */
   mode: GenerateMode
   /**
@@ -1812,6 +1814,8 @@ export interface GeneratedImage {
 /** Successful generate outcome. */
 export interface GenerateResult {
   images: GeneratedImage[]
+  /** Id of the history entry persisted for this generation (files[] paths key off it). */
+  embedId?: string
   /** Updated host-persisted history, when returned by the generate route. */
   history?: HistoryEntry[]
   /** Persistence failure after images were successfully generated. */
@@ -1995,6 +1999,8 @@ export interface HistoryImageRef {
 /** A saved generation as the browser consumes it (metadata + served images). */
 export interface HistoryEntry extends EcommerceTaskMeta {
   id: string
+  /** Tool name marker for Agent-submitted generations (absent for panel generations). */
+  agentTool?: string
   createdAt: number
   mode: StoredEntryMode
   model: string
@@ -2050,6 +2056,8 @@ export interface GalleryVideoRef {
 /** A history entry the client submits for persistence (images still carry base64). */
 export interface HistoryEntryInput extends EcommerceTaskMeta {
   id: string
+  /** Tool name marker for Agent-submitted generations. */
+  agentTool?: string
   createdAt: number
   mode: StoredEntryMode
   model: string
