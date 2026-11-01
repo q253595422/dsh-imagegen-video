@@ -38,6 +38,8 @@ interface StoredImage {
 /** One entry's on-disk record. */
 interface StoredEntry {
   id: string
+  /** Tool name marker for Agent-submitted generations (absent for panel generations). */
+  agentTool?: string
   createdAt: number
   mode: StoredEntryMode
   model: string
@@ -179,6 +181,7 @@ function toWire(entry: StoredEntry): HistoryEntry {
     ...entry.slotKey === undefined ? {} : { slotKey: entry.slotKey },
     ...entry.slotLabel === undefined ? {} : { slotLabel: entry.slotLabel },
     ...entry.canvas === undefined ? {} : { canvas: entry.canvas },
+    ...entry.agentTool === undefined ? {} : { agentTool: entry.agentTool },
     ...entry.renderer === undefined ? {} : { renderer: entry.renderer },
   }
 }
@@ -233,6 +236,7 @@ export async function appendHistory(input: HistoryEntryInput): Promise<HistoryEn
       ...input.slotKey === undefined ? {} : { slotKey: input.slotKey },
       ...input.slotLabel === undefined ? {} : { slotLabel: input.slotLabel },
       ...input.canvas === undefined ? {} : { canvas: input.canvas },
+      ...input.agentTool === undefined ? {} : { agentTool: input.agentTool },
       ...input.renderer === undefined ? {} : { renderer: input.renderer },
     }
     const merged = [entry, ...await readIndex()]
@@ -266,6 +270,11 @@ export async function clearHistory(): Promise<HistoryEntry[]> {
 }
 
 /** Read one stored image file by its (validated) file name. */
+/** Absolute on-disk path of one stored history image (for Agent result reporting). */
+export function historyImageAbsolutePath(file: string): string {
+  return path.join(imagesDir(), file)
+}
+
 export async function readHistoryImage(file: string): Promise<{ data: Buffer; mime: string } | undefined> {
   // Only accept <id>-<index>.<png|jpg|jpeg|webp|gif> — the exact names this
   // store writes — so the route can never escape the images directory.
