@@ -26,7 +26,8 @@
 
 import { readFileSync } from 'node:fs'
 import { createServer } from 'node:http'
-import { findChrome, launchChrome, skipWithoutChrome } from './lib/headless-chrome.mjs'
+import { findChrome, launchChrome, openPage, skipWithoutChrome } from './lib/headless-chrome.mjs'
+import { assertFixtureClasses } from './lib/fixture-classes.mjs'
 
 const CHROME = findChrome()
 if (CHROME === null) skipWithoutChrome('the canvas chrome layout guard did NOT run.')
@@ -53,49 +54,9 @@ const DOCK_TILES = [
 const DIVIDERS_AT = new Set([2, 10, 14])
 
 // ------------------------------------------------- fixture vs. real component
-/**
- * Every class the fixture uses must be one the component renders AND the
- * stylesheet defines. Both directions matter: a renamed class in the TSX means
- * the fixture is measuring markup that is gone, and a dropped rule means the
- * arrangement being measured is not the one that ships.
- */
-const FIXTURE_CLASSES = [
-  'root', 'viewport', 'canvasChrome', 'chromeSide', 'minimap', 'minimapCanvas',
-  'minimapViewport', 'zoomDock', 'zoomValue', 'dockOuter', 'dock', 'dockItem',
-  'dockDivider', 'topBar', 'topBarSpacer', 'iconButton',
-]
-
-const renderedClasses = new Set([...componentSource.matchAll(/\bcss\.([A-Za-z_$][A-Za-z0-9_$]*)/g)].map(m => m[1]))
-const definedClasses = new Set([...css.matchAll(/\.([A-Za-z_][A-Za-z0-9_-]*)/g)].map(m => m[1]))
-
-/** Names missing from the component or the stylesheet. */
-function missingFixtureClasses (names) {
-  const unknown = []
-  for (const name of names) {
-    if (!renderedClasses.has(name)) unknown.push(`${name} (not rendered by CanvasWorkspace.tsx)`)
-    else if (!definedClasses.has(name)) unknown.push(`${name} (not defined in canvas-workspace.module.css)`)
-  }
-  return unknown
-}
-
-// Self-test on names of its own, so this proves the validator rather than the
-// fixture: an invented class must be reported, a real one must not.
-if (missingFixtureClasses(['canvasThisClassDoesNotExist']).length !== 1
-  || missingFixtureClasses(['dock']).length !== 0) {
-  console.error('STALE FIXTURE GUARD: the class validator does not discriminate')
-  process.exit(1)
-}
-const unknownClasses = missingFixtureClasses(FIXTURE_CLASSES)
-if (unknownClasses.length > 0) {
-  console.error('\n' + '='.repeat(72))
-  console.error('FAIL: the layout fixture no longer matches the real component.')
-  for (const entry of unknownClasses) console.error(`  - ${entry}`)
-  console.error('Update the fixture to the classes the canvas really renders, or the')
-  console.error('layout measured here is not the layout that ships.')
-  console.error('='.repeat(72) + '\n')
-  process.exit(1)
-}
-console.log(`fixture classes verified against CanvasWorkspace.tsx + canvas-workspace.module.css: ${FIXTURE_CLASSES.length}`)
+// Validation runs on the fixture MARKUP below, not on a hand-kept list: a list
+// can be edited to match a renamed class and quietly re-green the guard. The
+// validator is shared with verify-video-layout.mjs, which had the only copy.
 
 // The tokens the stylesheet reads, stood up with flat values. Layout does not
 // depend on what they resolve to, only that they resolve.
@@ -135,24 +96,19 @@ const server = createServer((_req, res) => {
 await new Promise(resolve => server.listen(0, '127.0.0.1', resolve))
 const serverPort = server.address().port
 
-const launched = await launchChrome({ chrome: CHROME, name: 'dsh-canvas-layout' })
-const target = await (await fetch(
-  `http://127.0.0.1:${launched.port}/json/new?${encodeURIComponent(`http://127.0.0.1:${serverPort}/`)}`,
-  { method: 'PUT' },
-)).json()
-const ws = new WebSocket(target.webSocketDebuggerUrl)
-await new Promise(resolve => { ws.onopen = resolve })
-let messageId = 0
-const send = (method, params = {}) => new Promise(resolve => {
-  const myId = ++messageId
-  const onMessage = event => {
-    const message = JSON.parse(event.data)
-    if (message.id === myId) { ws.removeEventListener('message', onMessage); resolve(message) }
-  }
-  ws.addEventListener('message', onMessage)
-  ws.send(JSON.stringify({ id: myId, method, params }))
+assertFixtureClasses({
+  page,
+  componentSource,
+  componentName: 'CanvasWorkspace.tsx',
+  stylesheet: css,
+  stylesheetName: 'canvas-workspace.module.css',
+  // Names of its own, so this proves the validator rather than the fixture.
+  selfTest: ['canvasThisClassDoesNotExist', 'dock'],
 })
-await send('Runtime.enable', {})
+
+const launched = await launchChrome({ chrome: CHROME, name: 'dsh-canvas-layout' })
+const session = await openPage(launched.port, `http://127.0.0.1:${serverPort}/`)
+const { send, evaluate } = session
 
 const MEASURE = `JSON.stringify((() => {
   const box = id => document.getElementById(id).getBoundingClientRect()
@@ -176,7 +132,7 @@ for (const width of PANEL_WIDTHS) {
   // flags), and the page is one column so the viewport IS the panel.
   await send('Emulation.setDeviceMetricsOverride', { width, height: 767, deviceScaleFactor: 1, mobile: false })
   await new Promise(resolve => setTimeout(resolve, 250))
-  const measured = JSON.parse((await send('Runtime.evaluate', { expression: MEASURE, returnByValue: true })).result.result.value)
+  const measured = JSON.parse(await evaluate(MEASURE))
 
   const overlaps = measured.dockZoom + measured.dockMinimap + measured.zoomMinimap
   const inside = measured.dockInside && measured.zoomInside && measured.minimapInside
@@ -188,7 +144,7 @@ for (const width of PANEL_WIDTHS) {
   if (problem !== null) failures.push(`${width}px: ${problem}`)
 }
 
-ws.close(); launched.close(); server.close()
+session.close(); launched.close(); server.close()
 
 if (failures.length > 0) {
   console.error('\n' + '='.repeat(72))

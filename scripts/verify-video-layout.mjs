@@ -16,6 +16,7 @@
 
 import { readFileSync } from 'node:fs'
 import { findChrome, launchChrome, skipWithoutChrome } from './lib/headless-chrome.mjs'
+import { assertFixtureClasses } from './lib/fixture-classes.mjs'
 
 /**
  * Find a headless Chromium to drive.
@@ -59,23 +60,11 @@ const shellSource = readFileSync(new URL('../src/client/ImageGenPanel.tsx', impo
  *    the fixture is measuring markup the panel does not render any more;
  *  - the stylesheet no longer defines it (`.videoComposer` gone from the CSS):
  *    the width being measured is not the width the panel gets.
+ *
+ * The validator itself lives in lib/fixture-classes.mjs, shared with the canvas
+ * guard: two copies would disagree about what "unknown class" means the first
+ * time either was edited.
  */
-const componentClasses = new Set(
-  [...`${panelSource}\n${shellSource}`.matchAll(/\bcss\.([A-Za-z_$][A-Za-z0-9_$]*)/g)].map(match => match[1]),
-)
-const stylesheetClasses = new Set(
-  [...css.matchAll(/\.([A-Za-z_][A-Za-z0-9_-]*)/g)].map(match => match[1]),
-)
-
-/** The fixture's classes that the component or the stylesheet does not know. */
-function missingFixtureClasses (names) {
-  const unknown = []
-  for (const name of names) {
-    if (!componentClasses.has(name)) unknown.push(`${name} (not rendered by VideoPanel.tsx)`)
-    else if (!stylesheetClasses.has(name)) unknown.push(`${name} (not defined in panel.module.css)`)
-  }
-  return unknown
-}
 
 /**
  * The fixture's `data-*` hooks must exist in the sources too.
@@ -154,37 +143,21 @@ const page = `<!doctype html><html><head><style>
   <div class="right"></div>
 </body></html>`
 
-// Read the class list OUT of the fixture markup rather than keeping a second
-// copy of it: a hand-maintained list can be edited to match a renamed class and
-// quietly re-green the guard, while this one cannot drift from what Chrome gets.
 // `sidebar` / `centre` / `right` are the page scaffolding around the panel (they
-// stand in for the DSH shell and are styled by the inline block below), not
+// stand in for the DSH shell and are styled by the inline block above), not
 // panel classes, so they are excluded by name.
 const SCAFFOLD_CLASSES = new Set(['sidebar', 'centre', 'right'])
-const fixtureClasses = [...new Set(
-  [...page.matchAll(/class="([^"]+)"/g)].flatMap(match => match[1].trim().split(/\s+/)),
-)].filter(name => !SCAFFOLD_CLASSES.has(name))
-
-// Self-test, on names of its own so it proves the validator rather than the
-// fixture: an invented class must be reported and a real one must not. A
-// validator that always returned [] would let every stale fixture through.
-if (missingFixtureClasses(['videoThisClassDoesNotExist']).length !== 1
-  || missingFixtureClasses(['videoWorkspace']).length !== 0) {
-  console.error('STALE FIXTURE GUARD: the class validator does not discriminate')
-  process.exit(1)
-}
-const unknownClasses = missingFixtureClasses(fixtureClasses)
-if (unknownClasses.length > 0) {
-  console.error('\n' + '='.repeat(72))
-  console.error('FAIL: the layout fixture no longer matches the real component.')
-  console.error('These fixture classes are gone from the source:')
-  for (const entry of unknownClasses) console.error(`  - ${entry}`)
-  console.error('Update the fixture to the classes VideoPanel really renders, or the')
-  console.error('width measured here is not the panel\'s width.')
-  console.error('='.repeat(72) + '\n')
-  process.exit(1)
-}
-console.log(`fixture classes verified against VideoPanel.tsx + panel.module.css: ${fixtureClasses.length}`)
+const fixtureClasses = assertFixtureClasses({
+  page,
+  scaffold: SCAFFOLD_CLASSES,
+  componentSource: `${panelSource}\n${shellSource}`,
+  componentName: 'VideoPanel.tsx + ImageGenPanel.tsx',
+  stylesheet: css,
+  stylesheetName: 'panel.module.css',
+  // Names of its own, so this proves the validator rather than the fixture: an
+  // invented class must be reported and a real one must not.
+  selfTest: ['videoThisClassDoesNotExist', 'videoWorkspace'],
+})
 
 // The same discrimination self-test for the attribute validator, then the real
 // check: the fixture's data hooks must be rendered by the shell.
