@@ -817,20 +817,71 @@
 
 /* --------------------------------------------------- bottom dock */
 
-/* reactbits.dev "Dock" port: dark pill panel; a spring engine (see the dock
- * effect in CanvasWorkspace) scales each tile by pointer distance so items
- * part apart like the macOS dock, and the outer wrapper breathes taller on
- * hover to make room for the floating labels. */
-.dockOuter {
+/* ------------------------------------------------------------ bottom chrome */
+
+/**
+ * Everything pinned to the bottom edge, laid out as ONE flex row.
+ *
+ * WHY a container instead of three absolute layers: the dock, the zoom dock and
+ * the minimap used to position themselves independently (`left: 50%`,
+ * `left: 14px`, `left: 14px; bottom: 62px`), so none of them knew the others'
+ * size. At a panel width of ~1000px — the three-column studio on a 1280px
+ * window — the 711px job dock overlapped the 236px zoom dock by 107px, covering
+ * its leftmost buttons (select / pan / add image / add text). No breakpoint can
+ * fix that: the overlap depends on the PANEL's width, not the window's, and the
+ * two docks only know about it once they are in the same layout.
+ *
+ * `flex-wrap` is the adaptation itself: when the row cannot hold both, the dock
+ * moves to a second line instead of painting over the zoom controls.
+ * `align-items: flex-end` keeps the two bottom-aligned while the side column
+ * (minimap above zoom) is taller.
+ */
+.canvasChrome {
   position: absolute;
   left: 0;
   right: 0;
   bottom: 14px;
   z-index: var(--z-dock);
   display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  /* NOT `justify-content: center`: that centres BOTH lines once the row wraps,
+   * leaving the minimap floating in the middle of the canvas. The side column
+   * stays pinned left; the dock centres itself with `margin-inline: auto`,
+   * which works on its own wrapped line as well as beside the side column. */
+  justify-content: flex-start;
+  gap: 8px 12px;
+  padding: 0 14px;
+  /* The row spans the whole width; only its children take clicks. */
+  pointer-events: none;
+}
+
+/** Left column of the chrome: the minimap sits above the zoom controls. */
+.chromeSide {
+  flex: 0 0 auto;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 8px;
+}
+
+/* reactbits.dev "Dock" port: dark pill panel; a spring engine (see the dock
+ * effect in CanvasWorkspace) scales each tile by pointer distance so items
+ * part apart like the macOS dock, and the outer wrapper breathes taller on
+ * hover to make room for the floating labels. */
+.dockOuter {
+  flex: 0 1 auto;
+  min-width: 0;
+  margin-inline: auto;
+  display: flex;
   justify-content: center;
   align-items: flex-end;
-  height: 42px;
+  /* `min-height`, never `height`: the dock wraps to a second row on a narrow
+   * panel, and a fixed height would let the extra row overflow UPWARDS into the
+   * minimap/zoom row (flex-end aligns the box, not its overflowing content).
+   * The spring engine writes the same property — see the dock effect in
+   * CanvasWorkspace — so the hover breathing still works. */
+  min-height: 42px;
   pointer-events: none;
 }
 
@@ -838,8 +889,15 @@
   pointer-events: auto;
   position: relative;
   display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
   align-items: flex-end;
   gap: 6px;
+  /* Never wider than the canvas it sits on: 17 tiles at 34px are ~710px, which
+   * a three-column studio at 560px cannot hold. Wrapping is the fallback; the
+   * row grows upward from the bottom edge, and the canvas measures its real top
+   * (see the `chromeHeight` effect in CanvasWorkspace). */
+  max-width: 100%;
   padding: 0 7px 7px;
   border-radius: var(--dsw-radius-lg);
   border: 1px solid var(--dsw-alias-border-l1);
@@ -1278,10 +1336,9 @@
 /* ------------------------------------------------------------ zoom dock */
 
 .zoomDock {
-  position: absolute;
-  left: 14px;
-  bottom: 14px;
-  z-index: var(--z-dock);
+  position: relative;
+  flex: none;
+  pointer-events: auto;
   display: flex;
   align-items: center;
   gap: 6px;
@@ -1309,10 +1366,9 @@
 /* -------------------------------------------------------------- minimap */
 
 .minimap {
-  position: absolute;
-  left: 14px;
-  bottom: 62px;
-  z-index: var(--z-dock);
+  position: relative;
+  flex: none;
+  pointer-events: auto;
   width: 220px;
   height: 150px;
   border-radius: var(--dsw-radius-md);
@@ -3570,4 +3626,59 @@
   .storyboardShot[data-state='generating'] .storyboardShotIndex {
     animation: storyboardTagPulse 1.6s ease-in-out infinite;
   }
+}
+
+/* --- fullscreen -------------------------------------------------------------- */
+
+/**
+ * The Browser Fullscreen API promotes this element to the top layer, where the
+ * UA paints it against the viewport instead of the host's grid item. What is
+ * left for the sheet to do is give it the viewport's size: the element was
+ * sized by `height: 100%` inside the panel, and a top-layer element has no
+ * such containing block to inherit from. `100dvh` rather than `100vh` because
+ * a mobile browser's chrome shrinks the visible area, and 100vh would leave
+ * the dock sitting under it.
+ *
+ * The border and radius are dropped: they were drawn to separate the canvas
+ * from the panel's padding, and in fullscreen there is no panel around it.
+ */
+.root:fullscreen {
+  width: 100vw;
+  height: 100dvh;
+  border: 0;
+  border-radius: 0;
+  background: var(--dsw-alias-bg-base, Canvas);
+}
+
+/* The UA paints the promoted element over a default black backdrop. Match the
+   canvas surface instead, so entering fullscreen does not flash a dark band
+   behind a light-themed canvas. */
+.root:fullscreen::backdrop {
+  background: var(--dsw-alias-bg-base, Canvas);
+}
+
+/* --- overlay host ------------------------------------------------------------ */
+
+/**
+ * The mount point for menus and dialogs owned by the canvas.
+ *
+ * They used to portal to <body>. While the workspace is fullscreen that is
+ * fatal: a fullscreen element is promoted to the browser's TOP LAYER, which
+ * paints above the entire document, so a menu appended to <body> ends up
+ * behind the canvas no matter how high its z-index (this is what made 模板库 and
+ * 技能库 appear only after leaving fullscreen). Mounting them here puts them
+ * inside the promoted element, so they travel into the top layer with it.
+ *
+ * `display: contents` is what makes that free: the host generates no box, so
+ * its children lay out exactly as if they were direct children of `.root`,
+ * and a `position: fixed` child still resolves against the viewport — which is
+ * the coordinate space every one of these overlays is positioned in. A real
+ * box here would become their containing block and move them all.
+ *
+ * No `pointer-events` guard on purpose: the host has no box to hit-test, and
+ * setting `none` would inherit into every dialog, since none of them set it
+ * back. There is nothing to click through — an empty host renders nothing.
+ */
+.overlayHost {
+  display: contents;
 }

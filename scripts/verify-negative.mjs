@@ -555,6 +555,30 @@ const CASES = [
     expect: /two scale entries share a number/,
   },
   {
+    // The regression the canvas layout guard exists for: the three bottom
+    // pieces go back to being independently positioned absolute layers, which
+    // is what let a 711px job dock paint over the 236px zoom dock by 107px.
+    // Every source invariant still holds — the classes exist, the tokens
+    // resolve, the z-index scale is untouched — so only a real browser can see
+    // the overlap.
+    name: 'the bottom chrome goes back to independent absolute layers',
+    runner: 'canvas-layout',
+    file: 'src/client/canvas-workspace.module.css',
+    from: [
+      '  display: flex;\n  flex-wrap: wrap;\n  align-items: flex-end;',
+      '.minimap {\n  position: relative;\n  flex: none;\n  pointer-events: auto;',
+      '.zoomDock {\n  position: relative;\n  flex: none;\n  pointer-events: auto;',
+      '.dockOuter {\n  flex: 0 1 auto;\n  min-width: 0;\n  margin-inline: auto;',
+    ],
+    to: [
+      '  position: static;\n  display: block;',
+      '.minimap {\n  position: absolute;\n  left: 14px;\n  bottom: 62px;',
+      '.zoomDock {\n  position: absolute;\n  left: 14px;\n  bottom: 14px;',
+      '.dockOuter {\n  position: absolute;\n  left: 0;\n  right: 0;\n  bottom: 14px;\n  height: 42px;\n  margin: 0;',
+    ],
+    expect: /does not fit the canvas|overlaps itself/,
+  },
+  {
     name: 'a layer references an undeclared scale entry',
     runner: 'contracts',
     file: 'src/client/panel.module.css',
@@ -1196,6 +1220,11 @@ const CASES = [
 
 const RUNNERS = {
   contracts: { script: 'scripts/verify-ui-contracts.mjs', build: false },
+  // The canvas's bottom chrome (dock / zoom dock / minimap) is a layout
+  // question that only a real browser can answer: jsdom has no layout engine,
+  // and `.canvasChrome` wraps based on the PANEL's width, which no media query
+  // measures. No rebuild: the guard reads the stylesheet and the component.
+  'canvas-layout': { script: 'scripts/verify-canvas-layout.mjs', build: false },
   smoke: { script: 'scripts/smoke.mjs', build: true },
   video: { script: 'scripts/smoke-video.mjs', build: true },
   // The gallery/store half of the video chain: smoke-canvas-video drives the

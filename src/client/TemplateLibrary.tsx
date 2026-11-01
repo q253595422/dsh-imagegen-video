@@ -140,6 +140,10 @@ export function TemplateLibrary(props: {
   appendOnly?: boolean
   /** Text the caller already holds, used to pre-merge the picked prompt. */
   currentPrompt?: string
+  /** Mount node for the drawer. Passed when the canvas opens it, so the dialog
+   *  stays inside the workspace root — a portal to <body> is painted UNDER a
+   *  fullscreen canvas, because fullscreen elements live in the top layer. */
+  container?: HTMLElement | null
   onClose: () => void
 }) {
   const { api, onUse, onClose } = props
@@ -843,6 +847,6 @@ export function TemplateLibrary(props: {
         </div>
       ) : null}
     </div>,
-    document.body,
+    props.container ?? document.body,
   )
 }

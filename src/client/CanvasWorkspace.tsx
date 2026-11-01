@@ -8,9 +8,9 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type ChangeEvent, type CSSProperties, type PointerEvent as ReactPointerEvent, type ReactNode } from 'react'
 import { createPortal } from 'react-dom'
 import {
-  Bold, BookOpen, ChevronDown, Copy, Download, Eraser, FileText as FileTextIcon, Film, FolderX, Hand, Image as ImageIcon,
+  Bold, BookOpen, ChevronDown, Copy, Download, Eraser, Expand, FileText as FileTextIcon, Film, FolderX, Hand, Image as ImageIcon,
   GitBranch, Keyboard, Layers, Map as MapIcon, Maximize, Maximize2, MousePointer2, Palette, Pencil, Plus, Redo2, Scissors, SendHorizonal, Sparkles, Star,
-  SquareDashedMousePointer, Trash2, Type, Undo2, Upload, Wand2, Wallpaper, X,
+  Shrink, SquareDashedMousePointer, Trash2, Type, Undo2, Upload, Wand2, Wallpaper, X,
 } from 'lucide-react'
 import type { CanvasAnnotation, CanvasAssetRef, CanvasConnection, CanvasDocument, CanvasFileKind, CanvasLayerInfo, CanvasLayerPlanItem, CanvasNode, CanvasRect, CanvasStoryboard, CanvasVideoRef, CanvasSkillConfigApplyResult, CanvasSkillConfigField, CanvasSkillConfigSaveResult, CanvasSkillConfigStep, CanvasSkillConfigView, CanvasSkillDescriptor, CanvasSkillLibrary, CanvasSkillOutput, CanvasSkillRunRequest, CanvasSkillTask, CanvasSketchStroke, GenerateRequest, GenerationTask, HistoryEntry, VideoGenerateRequest, VideoTaskSummary, VideoMode, VideoResolution } from '../protocol.ts'
 import { describeVideoModel, durationsOf } from '../video-model-catalog.ts'
@@ -692,7 +692,7 @@ function rasterizeSketch(strokes: CanvasSketchStroke[], boardWidth: number, boar
   return { dataUrl: canvas.toDataURL('image/png'), width: canvas.width, height: canvas.height }
 }
 
-type ToolbarIconName = 'new' | 'select' | 'pan' | 'image' | 'text' | 'file' | 'sketch' | 'eraser' | 'trash' | 'undo' | 'redo' | 'fit' | 'minimap' | 'background' | 'template' | 'download' | 'duplicate' | 'sparkle' | 'send' | 'close' | 'deleteProject' | 'annotate' | 'removeBg' | 'layers' | 'bold' | 'color' | 'skill' | 'upload' | 'expand' | 'favorite' | 'favoriteFilled' | 'help' | 'workflow' | 'timeline'
+type ToolbarIconName = 'new' | 'select' | 'pan' | 'image' | 'text' | 'file' | 'sketch' | 'eraser' | 'trash' | 'undo' | 'redo' | 'fit' | 'minimap' | 'background' | 'template' | 'download' | 'duplicate' | 'sparkle' | 'send' | 'close' | 'deleteProject' | 'annotate' | 'removeBg' | 'layers' | 'bold' | 'color' | 'skill' | 'upload' | 'expand' | 'favorite' | 'favoriteFilled' | 'help' | 'workflow' | 'timeline' | 'fullscreen' | 'exitFullscreen'
 
 /** Lucide icons (stroke matches the DSH line style); one shared component so
  *  every dock/toolbar icon comes from the same well-drawn set. */
@@ -738,6 +738,8 @@ function ToolbarIcon({ name, size = 16 }: { name: ToolbarIconName; size?: number
     case 'workflow': return <GitBranch {...common} />
     // 几段胶片并排：时间线是「把已成片的几段排成一条」这个动作。
     case 'timeline': return <Film {...common} />
+    case 'fullscreen': return <Expand {...common} />
+    case 'exitFullscreen': return <Shrink {...common} />
   }
 }
 
@@ -807,6 +809,8 @@ function SkillPicker(props: {
   /** Open the skill library focused on one skill's configuration form. */
   onConfigure: (skill: CanvasSkillDescriptor) => void
   onClose: () => void
+  /** Mount node. Inside the canvas root so fullscreen keeps it on top. */
+  container: HTMLElement | null
 }): React.JSX.Element {
   const [query, setQuery] = useState('')
   const term = query.trim().toLowerCase()
@@ -901,7 +905,7 @@ function SkillPicker(props: {
       </div>
       {props.catalog?.reason !== undefined ? <p className={css.skillHint}>{props.catalog.reason}</p> : null}
     </div>
-  </>, globalThis.document.body)
+  </>, props.container ?? globalThis.document.body)
 }
 
 /**
@@ -1059,6 +1063,8 @@ function SkillLibraryDialog(props: {
   onSaveConfig: (name: string, values: Array<{ id: string; value: string }>) => Promise<CanvasSkillConfigSaveResult>
   onApplyConfig: (name: string) => Promise<CanvasSkillConfigApplyResult>
   onClose: () => void
+  /** Mount node. Inside the canvas root so fullscreen keeps it on top. */
+  container: HTMLElement | null
 }): React.JSX.Element {
   const [urls, setUrls] = useState(props.presetUrl)
   const [force, setForce] = useState(false)
@@ -1197,7 +1203,7 @@ function SkillLibraryDialog(props: {
         <button type="button" className={css.skillGhost} onClick={props.onClose}>{tt('canvas.close')}</button>
       </div>
     </div>
-  </>, globalThis.document.body)
+  </>, props.container ?? globalThis.document.body)
 }
 
 /**
@@ -1211,6 +1217,8 @@ function PolishMenu(props: {
   busy: boolean
   onPick: (style: string, instruction?: string) => void
   onClose: () => void
+  /** Mount node. Inside the canvas root so fullscreen keeps it on top. */
+  container: HTMLElement | null
 }): React.JSX.Element {
   const [custom, setCustom] = useState('')
   const styles = (['formal', 'casual', 'shorter', 'expand'] as const).map(style => ({
@@ -1258,7 +1266,7 @@ function PolishMenu(props: {
         >{tt('canvas.polish.run')}</button>
       </div>
     </div>
-  </>, globalThis.document.body)
+  </>, props.container ?? globalThis.document.body)
 }
 
 /**
@@ -1277,6 +1285,8 @@ function SkillConfirmDialog(props: {
   composeIds?: readonly string[]
   onConfirm: (instruction: string) => void
   onClose: () => void
+  /** Mount node. Inside the canvas root so fullscreen keeps it on top. */
+  container: HTMLElement | null
 }): React.JSX.Element {
   const [instruction, setInstruction] = useState('')
   const requires = props.skill.requires ?? []
@@ -1321,7 +1331,7 @@ function SkillConfirmDialog(props: {
             </div>
           </>}
     </div>
-  </>, globalThis.document.body)
+  </>, props.container ?? globalThis.document.body)
 }
 
 /** One shot's label, used for its state chip and its button. */
@@ -1858,7 +1868,10 @@ export function CanvasWorkspace(props: CanvasWorkspaceProps): React.JSX.Element 
         outerSize = outerTarget
         outerVelocity = 0
       }
-      outer.style.height = `${outerSize.toFixed(2)}px`
+      // `minHeight`, not `height`: the dock wraps to a second row on a narrow
+      // panel, and a hard height would clip/overflow it back over the zoom row.
+      outer.style.minHeight = `${outerSize.toFixed(2)}px`
+      outer.style.height = 'auto'
       if (settled) {
         running = false
         return
@@ -2020,7 +2033,64 @@ export function CanvasWorkspace(props: CanvasWorkspaceProps): React.JSX.Element 
   }, [videoGroupsKey, defaultChannelId])
 
   const rootRef = useRef<HTMLElement>(null)
+  /**
+   * Fullscreen is the browser Fullscreen API on the workspace root, not a
+   * z-index trick. The panel lives inside the host conversation grid, so a
+   * fixed overlay would still sit inside that grid item — `position: fixed`
+   * is bound to the nearest ancestor that creates a containing block, and the
+   * host sets `position: relative` on the center column. The API promotes the
+   * element out of that tree entirely and gives the real viewport size.
+   *
+   * Tracked in state (not read off document.fullscreenElement during render)
+   * so the button label follows Esc and every other exit path.
+   */
+  const [fullscreen, setFullscreen] = useState(false)
+
+  /**
+   * The state above is a MIRROR of the browser, never its own truth: Esc, the
+   * browser's own exit affordance and the API call all end in the same
+   * event. Subscribing (instead of only setting state where we call the API)
+   * is what keeps the button from showing 'Exit fullscreen' over a
+   * window that already left fullscreen.
+   */
+  useEffect(() => {
+    const sync = (): void => {
+      setFullscreen(globalThis.document !== undefined && globalThis.document.fullscreenElement === rootRef.current && rootRef.current !== null)
+    }
+    globalThis.document?.addEventListener('fullscreenchange', sync)
+    sync()
+    return () => { globalThis.document?.removeEventListener('fullscreenchange', sync) }
+  }, [])
+
+  const toggleFullscreen = useCallback((): void => {
+    const root = rootRef.current
+    if (root === null) return
+    // Both branches swallow their rejection: a browser can refuse the request
+    // (an 'allowfullscreen'-less iframe, a permissions policy), and an
+    // unhandled rejection would surface as a console error with no user-facing
+    // meaning. The button simply stays in its un-fullscreened state.
+    if (globalThis.document?.fullscreenElement === root) {
+      void globalThis.document.exitFullscreen?.().catch(() => {})
+      return
+    }
+    void root.requestFullscreen?.().catch(() => {})
+  }, [])
   const viewportRef = useRef<HTMLDivElement>(null)
+  /**
+   * How much of the canvas's bottom edge the chrome covers, in pixels.
+   *
+   * The bottom chrome (minimap + zoom dock + job dock) floats OVER the canvas
+   * instead of taking layout space from it, so "the centre of the viewport" is
+   * behind the docks on a narrow panel. Measured rather than assumed: the dock
+   * is one row on a wide panel and two on the three-column studio.
+   */
+  const [chromeHeight, setChromeHeight] = useState(0)
+  /**
+   * Where every canvas-owned overlay mounts. See the host div in the render:
+   * portals to <body> are invisible while the canvas is fullscreen, because the
+   * promoted element is in the top layer and paints above the document.
+   */
+  const overlayHostRef = useRef<HTMLDivElement>(null)
   const documentRef = useRef<CanvasDocument | null>(null)
   const selectedIdsRef = useRef<Set<string>>(selectedIds)
   const dragRef = useRef<NodeDragState | null>(null)
@@ -2064,12 +2134,22 @@ export function CanvasWorkspace(props: CanvasWorkspaceProps): React.JSX.Element 
     }
   }, [])
 
+  /**
+   * The middle of the canvas area that is NOT covered by the bottom chrome.
+   *
+   * Every "where does the new node go" path lands here, and the chrome (minimap
+   * + zoom dock + job dock) floats over the canvas rather than taking layout
+   * space from it, so the geometric centre of the viewport sits behind the
+   * docks. On the three-column studio that is exactly how a new node appeared
+   * with its title row under the job dock.
+   */
   const canvasCenter = useCallback((): Point => {
     const bounds = viewportRef.current?.getBoundingClientRect()
     const current = documentRef.current
     if (bounds === undefined || current === null) return { x: 0, y: 0 }
-    return screenToWorld(bounds.left + bounds.width / 2, bounds.top + bounds.height / 2)
-  }, [screenToWorld])
+    const freeHeight = Math.max(80, bounds.height - chromeHeight - 26)
+    return screenToWorld(bounds.left + bounds.width / 2, bounds.top + freeHeight / 2)
+  }, [screenToWorld, chromeHeight])
 
   const beginHistory = useCallback((): string | null => {
     const current = documentRef.current
@@ -2214,8 +2294,12 @@ export function CanvasWorkspace(props: CanvasWorkspaceProps): React.JSX.Element 
     if (created.nodes.length > 0) return created
     const bounds = viewportRef.current?.getBoundingClientRect()
     const viewport = created.viewport
+    // Same reservation as `canvasCenter`: the seed pair is the FIRST thing a
+    // user sees, and centring it behind the bottom dock is how a brand-new
+    // canvas opens with both nodes half-covered.
+    const freeHeight = bounds !== undefined ? Math.max(80, bounds.height - chromeHeight - 26) : 0
     const center = bounds !== undefined && bounds.width > 0 && bounds.height > 0
-      ? { x: (bounds.width / 2 - viewport.x) / viewport.k, y: (bounds.height / 2 - viewport.y) / viewport.k }
+      ? { x: (bounds.width / 2 - viewport.x) / viewport.k, y: (freeHeight / 2 - viewport.y) / viewport.k }
       : { x: 480, y: 320 }
     const config = createConfigNode(center)
     const text: CanvasNode = {
@@ -2228,7 +2312,7 @@ export function CanvasWorkspace(props: CanvasWorkspaceProps): React.JSX.Element 
       nodes: [text, config],
       connections: [{ id: newId('edge'), fromNodeId: text.id, toNodeId: config.id }],
     }
-  }, [createConfigNode, createTextNode])
+  }, [createConfigNode, createTextNode, chromeHeight])
 
   const updateNodes = useCallback((updater: (nodes: CanvasNode[]) => CanvasNode[]): void => {
     updateDocument(previous => ({ ...previous, nodes: updater(previous.nodes) }))
@@ -5042,6 +5126,34 @@ export function CanvasWorkspace(props: CanvasWorkspaceProps): React.JSX.Element 
     return () => { observer.disconnect(); container.removeEventListener('wheel', preventWheel) }
   }, [])
 
+  /**
+   * How much of the canvas's bottom edge the chrome actually covers.
+   *
+   * Not the chrome's own height: the minimap is 220px wide at the left and does
+   * not cover the middle, so reserving its full 150px would waste most of the
+   * canvas on a wide panel. What a centred node can collide with is the job
+   * dock, so the number is `viewport bottom - dock top`. It is measured rather
+   * than assumed because the row wraps to a second line on a narrow panel.
+   */
+  useEffect(() => {
+    const viewport = viewportRef.current
+    // `.dock`, not `.dockOuter`: the outer box has a height the spring engine
+    // animates, and the wrapped dock can be taller than it. The dock is what
+    // the user sees, so it is what the canvas reserves.
+    const dock = dockRef.current
+    if (viewport === null || dock === null) return
+    const measure = (): void => {
+      const viewportBox = viewport.getBoundingClientRect()
+      const dockBox = dock.getBoundingClientRect()
+      setChromeHeight(Math.max(0, Math.round(viewportBox.bottom - dockBox.top)))
+    }
+    measure()
+    const observer = new ResizeObserver(measure)
+    observer.observe(viewport)
+    observer.observe(dock)
+    return () => { observer.disconnect() }
+  }, [])
+
   const temporaryPanTool = spacePressed || ctrlPressed
 
   /**
@@ -5132,15 +5244,23 @@ export function CanvasWorkspace(props: CanvasWorkspaceProps): React.JSX.Element 
     }
     const content = nodesBounds(current.nodes)
     const padding = 80
+    // The bottom chrome (minimap + zoom dock + job dock) floats OVER the canvas,
+    // so padding alone lets a fitted node land underneath it. Reserve its real
+    // height instead of a guess: it is one row on a wide panel and two on the
+    // three-column studio, which is exactly where "fitted" still looked cramped.
+    const bottomInset = chromeHeight + 22
     const contentWidth = Math.max(1, content.maxX - content.minX)
     const contentHeight = Math.max(1, content.maxY - content.minY)
-    const scale = clampScale(Math.min((bounds.width - padding * 2) / contentWidth, (bounds.height - padding * 2) / contentHeight))
+    const scale = clampScale(Math.min(
+      (bounds.width - padding * 2) / contentWidth,
+      Math.max(1, bounds.height - padding - bottomInset) / contentHeight,
+    ))
     setViewport({
       k: scale,
       x: (bounds.width - contentWidth * scale) / 2 - content.minX * scale,
-      y: (bounds.height - contentHeight * scale) / 2 - content.minY * scale,
+      y: (bounds.height - bottomInset - contentHeight * scale) / 2 - content.minY * scale,
     })
-  }, [setViewport])
+  }, [setViewport, chromeHeight])
 
   // -------------------------------------------------- global move / up
 
@@ -6426,6 +6546,12 @@ export function CanvasWorkspace(props: CanvasWorkspaceProps): React.JSX.Element 
   })()
 
   return <section ref={rootRef} className={css.root} data-canvas-workspace="">
+    {/* Overlays that used to portal to <body> render here instead.
+        A fullscreen element is promoted to the browser's TOP LAYER, which
+        paints above the whole document — so a menu appended to <body> is
+        behind the canvas no matter how high its z-index. Keeping them inside
+        the root means they ride into the top layer with it. */}
+    <div ref={overlayHostRef} className={css.overlayHost} data-canvas-overlay-host="" />
     <header className={css.topBar} data-canvas-no-zoom="">
       <Select
         className={css.projectSelect}
@@ -6470,6 +6596,14 @@ export function CanvasWorkspace(props: CanvasWorkspaceProps): React.JSX.Element 
             onKeyDown={event => { if (event.key === 'Enter' || event.key === 'Escape') setRenamingTitle(false) }}
           />
         : <button type="button" className={css.titleButton} onDoubleClick={() => setRenamingTitle(true)} title={tt('canvas.renameHint')}>{document?.title ?? ''}</button>}
+      {/* Beside the title, not in the bottom dock: the dock is the canvas's
+          object-building verbs, while this changes the surface itself. */}
+      <IconButton
+        name={fullscreen ? 'exitFullscreen' : 'fullscreen'}
+        label={fullscreen ? tt('canvas.fullscreen.exit') : tt('canvas.fullscreen.enter')}
+        active={fullscreen}
+        onClick={toggleFullscreen}
+      />
       <span className={css.topBarSpacer} />
       <span className={css.saveState} data-state={saveState}>{saveState === 'saving' ? tt('canvas.saving') : saveState === 'saved' ? tt('canvas.saved') : saveState === 'error' ? tt('canvas.saveFailed') : tt('canvas.loading')}</span>
     </header>
@@ -6548,8 +6682,26 @@ export function CanvasWorkspace(props: CanvasWorkspaceProps): React.JSX.Element 
       >{tt('canvas.composeStart', { count: composeIds.length })}</button>
     </div> : null}
 
-    <div className={css.dockOuter} data-canvas-no-zoom="" ref={dockOuterRef}>
-      <div className={`${css.dock} ${cursorClass}`} ref={dockRef} data-canvas-no-zoom="" role="toolbar">
+    <div className={css.canvasChrome} data-canvas-no-zoom="">
+      <div className={css.chromeSide}>
+        {minimapOpen ? renderMinimap() : null}
+        <div className={css.zoomDock}>
+          <IconButton name="minimap" label={minimapOpen ? tt('canvas.minimapClose') : tt('canvas.minimapOpen')} active={minimapOpen} onClick={() => setMinimapOpen(previous => !previous)} />
+          <IconButton name="fit" label={tt('canvas.fitView')} onClick={fitView} />
+          <input
+            type="range"
+            min={5}
+            max={500}
+            step={1}
+            value={Math.round((document?.viewport.k ?? 1) * 100)}
+            onChange={event => setZoomAtCenter(Number(event.target.value) / 100)}
+            aria-label={tt('canvas.zoom')}
+          />
+          <span className={css.zoomValue}>{Math.round((document?.viewport.k ?? 1) * 100)}%</span>
+        </div>
+      </div>
+      <div className={css.dockOuter} ref={dockOuterRef}>
+        <div className={`${css.dock} ${cursorClass}`} ref={dockRef} data-canvas-no-zoom="" role="toolbar">
         <div className={css.dockItem} data-dock-item="" data-label={tt('canvas.toolSelect')}>
           <IconButton name="select" size={18} label={tt('canvas.toolSelect')} active={tool === 'select'} onClick={() => setTool('select')} />
         </div>
@@ -6647,6 +6799,7 @@ export function CanvasWorkspace(props: CanvasWorkspaceProps): React.JSX.Element 
         </div>
       </div>
     </div>
+    </div>
 
     {imageMenu !== null ? <div
       className={css.backgroundMenu}
@@ -6720,6 +6873,7 @@ export function CanvasWorkspace(props: CanvasWorkspaceProps): React.JSX.Element 
           openSkillConfig(skill.id.startsWith('skill:') ? skill.id.slice('skill:'.length) : (skill.skillName ?? skill.name))
         }}
         onClose={() => setSkillMenu(null)}
+        container={overlayHostRef.current}
       />
     })() : null}
     {pendingSkill !== null ? <SkillConfirmDialog
@@ -6734,6 +6888,7 @@ export function CanvasWorkspace(props: CanvasWorkspaceProps): React.JSX.Element 
         void startSkillRun(pending.skill, pending.nodeIds, instruction)
       }}
       onClose={() => setPendingSkill(null)}
+      container={overlayHostRef.current}
     /> : null}
     {polishNode !== null ? <PolishMenu
       anchor={polishNode.screen}
@@ -6741,6 +6896,7 @@ export function CanvasWorkspace(props: CanvasWorkspaceProps): React.JSX.Element 
       busy={polishBusy !== null}
       onPick={(style, instruction) => runPolish(polishNode.nodeId, style, instruction)}
       onClose={() => setPolishNode(null)}
+      container={overlayHostRef.current}
     /> : null}
     {backgroundMenu !== null ? <div
       className={css.backgroundMenu}
@@ -6797,22 +6953,6 @@ export function CanvasWorkspace(props: CanvasWorkspaceProps): React.JSX.Element 
       {nodeAddMenu.nodeType !== 'config' ? <button type="button" role="menuitem" onClick={() => { addConnectedNode(nodeAddMenu.nodeId, position => createConfigNode(position)); setNodeAddMenu(null) }}><ToolbarIcon name="sparkle" size={16} />{tt('canvas.addConfigNode')}</button> : null}
     </div> : null}
 
-    <div className={css.zoomDock} data-canvas-no-zoom="">
-      <IconButton name="minimap" label={minimapOpen ? tt('canvas.minimapClose') : tt('canvas.minimapOpen')} active={minimapOpen} onClick={() => setMinimapOpen(previous => !previous)} />
-      <IconButton name="fit" label={tt('canvas.fitView')} onClick={fitView} />
-      <input
-        type="range"
-        min={5}
-        max={500}
-        step={1}
-        value={Math.round((document?.viewport.k ?? 1) * 100)}
-        onChange={event => setZoomAtCenter(Number(event.target.value) / 100)}
-        aria-label={tt('canvas.zoom')}
-      />
-      <span className={css.zoomValue}>{Math.round((document?.viewport.k ?? 1) * 100)}%</span>
-    </div>
-
-    {minimapOpen ? renderMinimap() : null}
     {renderComposer()}
     {renderContextMenu()}
     {filePreviewNode !== undefined ? <CanvasFileOverlay
@@ -6850,7 +6990,7 @@ export function CanvasWorkspace(props: CanvasWorkspaceProps): React.JSX.Element 
         onClick={() => { setVideoPreviewNodeId(null) }}
       >×</button>
     </div> : null}
-    {libraryOpen ? <TemplateLibrary api={api} onClose={() => setLibraryOpen(false)} onUse={prompt => { applyTemplate(prompt); setLibraryOpen(false) }} /> : null}
+    {libraryOpen ? <TemplateLibrary api={api} container={overlayHostRef.current} onClose={() => setLibraryOpen(false)} onUse={prompt => { applyTemplate(prompt); setLibraryOpen(false) }} /> : null}
     {skillLibraryOpen ? <SkillLibraryDialog
       library={skillLibrary}
       loading={libraryLoading}
@@ -6864,6 +7004,7 @@ export function CanvasWorkspace(props: CanvasWorkspaceProps): React.JSX.Element 
       onSaveConfig={saveSkillValues}
       onApplyConfig={applySkillValues}
       onClose={() => { setSkillLibraryOpen(false); setLibraryFocusSkill('') }}
+      container={overlayHostRef.current}
     /> : null}
 
     {error !== null ? <div className={css.errorToast} role="status" data-canvas-no-zoom="">

@@ -8085,7 +8085,69 @@ await check('E1 client apply mounts the sidebar entry and studio (jsdom)', async
       'unpinning reaches the saved document',
     )
 
-    // (6) The keyboard map has to be REACHABLE. Every binding existed before
+    // (6) Fullscreen. jsdom implements no Fullscreen API at all, so the test
+    // installs one: the point is not to prove the browser can go fullscreen
+    // (it can) but that our button drives the real API call, that the label
+    // flips, and — the state that actually regresses — that leaving fullscreen
+    // by ANY route (Esc, the browser's own control) is mirrored back into the
+    // button. A component that only sets state where it calls the API passes
+    // the first half and lies in the second.
+    const fsRoot = view.querySelector('[data-canvas-workspace]')
+    assert.ok(fsRoot !== null, 'the canvas root is addressable for the fullscreen call')
+    const fullscreenCalls = []
+    let fsElement = null
+    Object.defineProperty(jsdomDocument, 'fullscreenElement', { configurable: true, get: () => fsElement })
+    jsdomDocument.exitFullscreen = () => {
+      fullscreenCalls.push('exit')
+      fsElement = null
+      jsdomDocument.dispatchEvent(new jsdomWindow.Event('fullscreenchange'))
+      return Promise.resolve()
+    }
+    fsRoot.requestFullscreen = () => {
+      fullscreenCalls.push('enter')
+      fsElement = fsRoot
+      jsdomDocument.dispatchEvent(new jsdomWindow.Event('fullscreenchange'))
+      return Promise.resolve()
+    }
+    const fsButton = () => [...view.querySelectorAll('[data-canvas-workspace] header button')]
+      .find(button => (button.getAttribute('aria-label') ?? '').includes('全屏'))
+    assert.ok(fsButton() !== undefined, 'the top bar carries a fullscreen control')
+    assert.equal(fsButton().getAttribute('aria-label'), '全屏', 'it starts in the enter state')
+    fsButton().dispatchEvent(new jsdomWindow.MouseEvent('click', { bubbles: true }))
+    assert.deepEqual(fullscreenCalls, ['enter'], 'the control calls the real Fullscreen API on the canvas root')
+    assert.ok(await waitUntil(() => fsButton()?.getAttribute('aria-label') === '退出全屏'), 'the label flips to exit')
+    // Esc / the browser's own exit button never go through our handler: only
+    // the event fires. The mirror has to follow it or the button keeps saying
+    // "exit" over a window that is already back in the panel.
+    fsElement = null
+    jsdomDocument.dispatchEvent(new jsdomWindow.Event('fullscreenchange'))
+    assert.ok(await waitUntil(() => fsButton()?.getAttribute('aria-label') === '全屏'), 'an external exit is mirrored into the label')
+    fsButton().dispatchEvent(new jsdomWindow.MouseEvent('click', { bubbles: true }))
+    assert.deepEqual(fullscreenCalls, ['enter', 'enter'], 'clicking again re-enters rather than calling exit out of order')
+    fsButton().dispatchEvent(new jsdomWindow.MouseEvent('click', { bubbles: true }))
+    assert.deepEqual(fullscreenCalls, ['enter', 'enter', 'exit'], 'and the second click exits')
+    delete jsdomDocument.exitFullscreen
+    Object.defineProperty(jsdomDocument, 'fullscreenElement', { configurable: true, get: () => null })
+
+    // (6b) Overlays must live INSIDE the canvas root, not in <body>. A
+    // fullscreen element is promoted to the browser's top layer, which paints
+    // above the whole document, so anything appended to <body> is painted
+    // underneath the canvas — that is why 模板库 and 技能库 only appeared after
+    // leaving fullscreen. This asserts the arrangement that prevents it, since
+    // jsdom has no top layer to observe it in.
+    const overlayHost = view.querySelector('[data-canvas-workspace] [data-canvas-overlay-host]')
+    assert.ok(overlayHost !== null, 'the canvas owns an overlay host')
+    assert.equal(overlayHost.closest('[data-canvas-workspace]') !== null, true, 'the overlay host is inside the canvas root')
+    const canvasSource = readFileSync(new URL('../src/client/CanvasWorkspace.tsx', import.meta.url), 'utf8')
+    const portalTargets = canvasSource.match(/<\/>, props\.container \?\? globalThis\.document\.body\)/g) ?? []
+    assert.equal(portalTargets.length, 4, 'every canvas menu/dialog accepts a container instead of hard-coding <body>')
+    assert.equal(
+      /<\/>, globalThis\.document\.body\)/.test(canvasSource),
+      false,
+      'no canvas overlay still portals straight to <body>',
+    )
+
+    // (7) The keyboard map has to be REACHABLE. Every binding existed before
     // this round; none of them was discoverable anywhere in the UI, which is
     // why the legend exists at all. Four things must hold, and each one fails
     // independently: the dock opens it, `?` opens it, Esc closes it, and the
