@@ -414,9 +414,12 @@ export class ImageGenerationRuntime {
       { ...signal === undefined ? {} : { signal }, persist: false },
     )
     const images: GeneratedImage[] = [{ b64: outcome.bytes.toString('base64'), mime: 'image/png' }]
+    // The entry id has to be known BEFORE the append: the caller echoes it back
+    // as `embedId` so an Agent tool can resolve the files this write produced.
+    const entryId = randomUUID()
     try {
       const history = await this.history.append({
-        id: randomUUID(),
+        id: entryId,
         createdAt: Date.now(),
         mode: request.mode,
         model: config.model,
@@ -432,6 +435,9 @@ export class ImageGenerationRuntime {
       })
       return {
         images,
+        // Only when the store really lists this entry: a write that silently
+        // dropped it must not hand out paths that are not on disk.
+        ...history.some(entry => entry.id === entryId) ? { embedId: entryId } : {},
         history,
         renderer: 'code',
         renderSource: outcome.source,
@@ -465,8 +471,11 @@ export class ImageGenerationRuntime {
       ? { images: await this.generateSubscription(channel.subscription, request, signal) }
       : await generateImage({ apiUrl: channel.apiUrl, apiKey: channel.apiKey, apiUrlFull: channel.apiUrlFull, protocol: channel.protocol, channelName: channel.name, watermark: channel.watermark } satisfies UpstreamConfig, request, { signal })
     try {
+      // Same contract as the code path: the id must exist before the append so
+      // the caller can echo it back as `embedId` and resolve the written files.
+      const entryId = randomUUID()
       const history = await this.history.append({
-        id: randomUUID(),
+        id: entryId,
         createdAt: Date.now(),
         mode: request.mode,
         model: request.model,
@@ -488,7 +497,11 @@ export class ImageGenerationRuntime {
         ...request.slotLabel === undefined ? {} : { slotLabel: request.slotLabel },
         ...request.canvas === undefined ? {} : { canvas: request.canvas },
       })
-      return { ...result, history }
+      return {
+        ...result,
+        ...history.some(entry => entry.id === entryId) ? { embedId: entryId } : {},
+        history,
+      }
     } catch (error) {
       return { ...result, historyError: error instanceof Error ? error.message : String(error) }
     }

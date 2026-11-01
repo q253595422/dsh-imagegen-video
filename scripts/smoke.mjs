@@ -18,7 +18,7 @@ import { Readable } from 'node:stream'
 import { chmodSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { promises as fsPromises } from 'node:fs'
 import { homedir, tmpdir } from 'node:os'
-import { join } from 'node:path'
+import { isAbsolute, join } from 'node:path'
 
 const root = new URL('../', import.meta.url)
 const results = []
@@ -2781,6 +2781,27 @@ await check('C9 Agent tools wait for results, keep images in the UI view, edit, 
   let lastReadImageAttachmentId
   const sent = []
   const agent = { send: (...args) => { sent.push(args) } }
+  // The sink has to behave like the real store: hand back a wire entry for the
+  // id it was given. A sink that answers `[]` would make the runtime's
+  // "only publish embedId when the entry is really listed" guard untestable.
+  const appendedEntries = []
+  const historySink = {
+    async append(entry) {
+      appendedEntries.push(entry)
+      return [{
+        id: entry.id,
+        createdAt: entry.createdAt,
+        mode: entry.mode,
+        model: entry.model,
+        prompt: entry.prompt,
+        size: entry.size,
+        quality: entry.quality,
+        detail: entry.detail,
+        n: entry.n,
+        images: entry.images.map((image, index) => ({ url: `/api/dsh-imagegen/history/image/${entry.id}-${index}.png`, mime: image.mime })),
+      }]
+    },
+  }
   const runtime = new host.ImageGenerationRuntime(
     () => ({
       channels: [{
@@ -2793,7 +2814,7 @@ await check('C9 Agent tools wait for results, keep images in the UI view, edit, 
       }],
       defaultChannelId: 'default',
     }),
-    { append: async () => [] },
+    historySink,
   )
   const dispose = host.registerAgentImageTools({
     tools: { register: definition => { tools.set(definition.name, definition); return () => { tools.delete(definition.name) } } },
@@ -2828,6 +2849,19 @@ await check('C9 Agent tools wait for results, keep images in the UI view, edit, 
     assert.equal(generatedView?.content?.filter(block => block.type === 'image').length, 2, 'completed tool results keep image attachments in the UI view')
     assert.equal(saved.size, 2, 'completed generation stores attachments once')
     assert.equal(sent.length, 0, 'completion does not inject a conversation message')
+    // The whole point of PR #19: the tool result carries the on-disk paths so
+    // the model can embed the image in its reply. That only works if the
+    // runtime publishes the id of the entry it just wrote — the regression this
+    // assertion exists for is `files: []` on every single generation.
+    assert.equal(appendedEntries.length > 0, true, 'the generation persisted a history entry')
+    const embedId = appendedEntries[appendedEntries.length - 1].id
+    assert.equal(generated.embed_id, embedId, 'the tool result echoes the persisted entry id')
+    assert.equal(generated.files.length, 2, 'files carries one path per generated image')
+    for (const file of generated.files) {
+      assert.equal(isAbsolute(file), true, 'files paths are absolute so the model can embed them')
+      assert.equal(file.endsWith('.png'), true, 'files paths keep the stored file name')
+      assert.equal(file.includes(embedId), true, 'files paths belong to this generation, not an older one')
+    }
     const complete = await tools.get('get_image_generation_task').execute({ task_id: generated.task_id }, {})
     assert.equal(complete.status, 'completed')
     assert.equal(complete.images.length, 2)
