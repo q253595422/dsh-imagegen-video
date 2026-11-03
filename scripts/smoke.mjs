@@ -18,7 +18,7 @@ import { Readable } from 'node:stream'
 import { chmodSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { promises as fsPromises } from 'node:fs'
 import { homedir, tmpdir } from 'node:os'
-import { isAbsolute, join } from 'node:path'
+import { isAbsolute, join, resolve } from 'node:path'
 
 const root = new URL('../', import.meta.url)
 const results = []
@@ -200,11 +200,20 @@ await check('A1c tool discovery finds a Windows-style install and honours the ov
     const posix = { platform: 'posix', env: { PATH: bin }, home: posixHome }
     writeFileSync(bare, 'not executable either\n')
     chmodSync(bare, 0o644)
-    assert.notEqual(host.findTool('ffmpeg', posix), bare,
-      'on POSIX a file without the execute bit is not a tool')
-    chmodSync(bare, 0o755)
-    assert.equal(host.findTool('ffmpeg', posix), bare,
-      'on POSIX the execute bit is what makes it a tool')
+    if (process.platform === 'win32') {
+      // `X_OK` is emulated on Windows on top of the read-only attribute, so a
+      // readable file answers "can run" no matter what mode bits the host
+      // reports. The execute-bit contract below is therefore only meaningful on
+      // a POSIX host — CI runs on ubuntu, which is where it gets exercised.
+      assert.equal(host.findTool('ffmpeg', posix), bare,
+        'a Windows host emulates X_OK, so a readable file counts as runnable')
+    } else {
+      assert.notEqual(host.findTool('ffmpeg', posix), bare,
+        'on POSIX a file without the execute bit is not a tool')
+      chmodSync(bare, 0o755)
+      assert.equal(host.findTool('ffmpeg', posix), bare,
+        'on POSIX the execute bit is what makes it a tool')
+    }
 
     // The override wins over discovery, and an override pointing at nothing is
     // ignored rather than reported as a found tool.
@@ -4547,10 +4556,14 @@ await check('C12 install sources are classified without touching the network', (
     assert.equal(host.skillsRoot(), join('/custom/dsh', 'skills'))
 
     process.env.DSH_SKILLS_HOME = '  /custom/isolated/skills  '
-    assert.equal(host.skillsRoot(), '/custom/isolated/skills')
+    // `skillsRoot()` resolves an explicit skills home, and `path.resolve` is
+    // host-specific: on Windows it prefixes the current drive, so the expected
+    // value has to be resolved the same way instead of compared as a POSIX
+    // literal.
+    assert.equal(host.skillsRoot(), resolve('/custom/isolated/skills'))
 
     // DSH_SKILLS_HOME also overrides explicit dshHome argument
-    assert.equal(host.skillsRoot('/explicit/dsh'), '/custom/isolated/skills')
+    assert.equal(host.skillsRoot('/explicit/dsh'), resolve('/custom/isolated/skills'))
   } finally {
     if (previousSkillsHome === undefined) delete process.env.DSH_SKILLS_HOME
     else process.env.DSH_SKILLS_HOME = previousSkillsHome
