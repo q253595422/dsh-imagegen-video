@@ -2225,6 +2225,38 @@ export function ImageGenPanel(props: {
     return () => window.cancelAnimationFrame(frame)
   }, [preview, previewScale])
 
+  // Wheel over the preview. A plain notch scrolls the stage and nothing else; a
+  // Ctrl/⌘ notch zooms.
+  //
+  // It has to be a NATIVE listener: React 18 attaches `wheel` at the root as a
+  // PASSIVE listener, so the old `onWheel={e => { e.preventDefault(); … }}`
+  // prevented nothing — the deck scrolled AND the handler changed the scale,
+  // which is the "scrolling zooms too" half of issue #22. `{ passive: false }`
+  // is therefore the whole point of this effect, not an optimisation.
+  //
+  // `preview` is the dependency because the stage only exists while the overlay
+  // is open: the ref is assigned during that commit and this effect runs after
+  // it, and closing the preview unmounts the node this listener is bound to.
+  // Both modifiers are checked — the reporter is on Windows (Ctrl), the plugin
+  // ships to macOS (⌘) — so neither platform keeps the double behaviour.
+  useEffect(() => {
+    if (preview === null) return
+    const stage = previewStage.current
+    if (stage === null) return
+    const onWheel = (event: WheelEvent): void => {
+      // Plain wheel: let the browser scroll. Touching the scale here would also
+      // fire the recentering effect above and snap the user back to the middle
+      // of a tall image on every notch.
+      if (!event.ctrlKey && !event.metaKey) return
+      event.preventDefault()
+      setPreviewScale(current => clampPreviewScale(current + (event.deltaY < 0 ? PREVIEW_SCALE_STEP : -PREVIEW_SCALE_STEP)))
+    }
+    stage.addEventListener('wheel', onWheel, { passive: false })
+    return () => {
+      stage.removeEventListener('wheel', onWheel)
+    }
+  }, [preview])
+
   const loadHistoryGroup = async (group: HistoryGroup): Promise<GeneratedImage[]> => {
     const loaded = await Promise.all(group.entries.map(entry => historyImagesToGenerated(entry.images)))
     return loaded.flat()
@@ -4494,10 +4526,7 @@ export function ImageGenPanel(props: {
               <div
                 ref={previewStage}
                 className={css.lightboxStage}
-                onWheel={(event) => {
-                  event.preventDefault()
-                  setPreviewScale(current => clampPreviewScale(current + (event.deltaY < 0 ? PREVIEW_SCALE_STEP : -PREVIEW_SCALE_STEP)))
-                }}
+                data-preview-stage=""
               >
                 <div
                   className={css.lightboxScaleFrame}
@@ -4521,6 +4550,7 @@ export function ImageGenPanel(props: {
                 <button type="button" className={css.lightboxTool} aria-label={tt('preview.zoomIn')} title={tt('preview.zoomIn')} onClick={() => { setPreviewScale(current => clampPreviewScale(current + PREVIEW_SCALE_STEP)) }}>
                   <svg viewBox="0 0 16 16" width="17" height="17" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" aria-hidden="true"><circle cx="7" cy="7" r="4.2"/><path d="M7 4.8v4.4M4.8 7h4.4M13 13l-2.8-2.8"/></svg>
                 </button>
+                <span className={css.lightboxZoomHint} data-preview-zoom-hint="">{tt('preview.wheelHint')}</span>
               </div>
               {previewImage.revisedPrompt !== undefined ? (
                 <div className={css.lightboxCaptionRow}>
