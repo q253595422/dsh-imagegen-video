@@ -30,6 +30,7 @@ import { tmpdir } from 'node:os'
 import { spawnSync } from 'node:child_process'
 import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
+import ts from 'typescript'
 import { findChrome, launchChrome, openPage, skipWithoutChrome } from './lib/headless-chrome.mjs'
 import { WCAG_CONTRAST_SOURCE } from './lib/wcag-contrast.mjs'
 
@@ -1820,6 +1821,236 @@ if (lightboxBad.length > 0) {
   process.exit(1)
 }
 console.log('lightbox chrome: readable in both themes, nothing waits for :hover')
+
+// --- the close control has to be a CONTROL, not just readable ink -----------
+// Issue #22: the photo preview had a close button the reporter "could not find",
+// and the check above was green throughout. It measures each element's GLYPH
+// against the surface it sits on, so a white icon on a 16%-white disc on an
+// 82%-black mask scored perfectly: the icon is legible, the disc is not there.
+//
+// WCAG 1.4.11 asks the other question — is the component's own boundary
+// distinguishable from what is behind it — and the answer here is the pill (or
+// its ring) against the mask, composited because the pill is translucent.
+// Either one may carry it: a filled disc and a strong ring are both legitimate,
+// and demanding a specific one would dictate the design rather than the result.
+const closeSurface = await lightboxSession.evaluate(`(() => {
+  ${WCAG_CONTRAST_SOURCE}
+  const white = { r:255,g:255,b:255,a:1 }
+  const lb = document.querySelector('.lightbox')
+  const mask = composite(parseColour(getComputedStyle(lb).backgroundColor), white)
+  const close = document.getElementById('lbClose')
+  const cs = getComputedStyle(close)
+  const own = parseColour(cs.backgroundColor)
+  const pill = own === null || own.a === 0 ? mask : composite(own, mask)
+  const edge = parseColour(cs.borderTopColor)
+  const ring = edge === null || edge.a === 0 ? mask : composite(edge, mask)
+  const rect = close.getBoundingClientRect()
+  // Rendered is not the same as reachable: a control painted under a sibling
+  // looks exactly like one that is drawn, in source and in a screenshot.
+  const hit = document.elementFromPoint(rect.left + rect.width / 2, rect.top + rect.height / 2)
+  return {
+    fill: Math.round(contrastRatio(pill, mask) * 100) / 100,
+    edge: Math.round(contrastRatio(ring, mask) * 100) / 100,
+    reachable: hit !== null && (hit === close || close.contains(hit)),
+    hit: hit === null ? null : String(hit.id || hit.tagName || '').slice(0, 40),
+    width: Math.round(rect.width),
+    height: Math.round(rect.height),
+  }
+})()`)
+const closeBoundary = Math.max(closeSurface.fill, closeSurface.edge)
+console.log(`preview close: fill ${closeSurface.fill}:1, ring ${closeSurface.edge}:1, ${closeSurface.width}x${closeSurface.height}, reachable ${closeSurface.reachable}`)
+if (closeBoundary < 3 || !closeSurface.reachable || closeSurface.width < 32 || closeSurface.height < 32) {
+  console.error('\nFAIL: the photo preview\'s close button is not a findable control (issue #22).')
+  console.error(`  boundary ${closeBoundary}:1 against the mask (needs 3:1 from the pill OR its ring)`)
+  console.error(`  ${closeSurface.width}x${closeSurface.height}px, centre hit-test resolves to ${String(closeSurface.hit)}`)
+  console.error('A white glyph on a barely-lighter disc is legible and still invisible: the')
+  console.error('user sees no button, only an icon floating on the photo. Raise the pill or')
+  console.error('its ring against --dsw-alias-bg-mask-photo. `--lightbox-surface` (16%) and')
+  console.error('`--lightbox-edge` (22%) are both far below the bar.')
+  process.exit(1)
+}
+
+// --- one wheel gesture must do one thing -----------------------------------
+// The second half of issue #22: the preview scrolled AND zoomed on a single
+// notch. `onWheel={e => { e.preventDefault(); … }}` cannot prevent anything —
+// React 18 attaches wheel at the root as a PASSIVE listener, so preventDefault
+// is a no-op with no warning, and the deck scrolls while the handler also
+// changes the scale. A source invariant is the honest check here: headless
+// Chromium cannot tell a passive listener from an active one without driving a
+// real wheel against a mounted component, and the mounted component needs a
+// React tree, a host and an image — three things that would make the check test
+// the harness instead of the file.
+/**
+ * Comments stripped, string literals kept.
+ *
+ * Both directions of this check are fooled by prose. A comment that EXPLAINS the
+ * defect — "the old `onWheel={e => { e.preventDefault(); … }}` prevented
+ * nothing" — matches the search for the defect, and a comment that explains the
+ * fix matches the search for the fix. Checks that read code have to read code.
+ *
+ * `transpileModule` rather than a hand-rolled scanner: `//` inside a regex
+ * literal (`/https?:\/\//`) is not a comment, and telling those apart needs the
+ * real lexer. typescript is already a devDependency (the typecheck runs on it),
+ * and `jsx: Preserve` keeps the JSX markup intact so the attributes under test
+ * are still there to match.
+ * @param {string} source - the file's text.
+ * @returns {string} the text with its comments removed.
+ */
+function stripComments (source) {
+  return ts.transpileModule(source, {
+    compilerOptions: {
+      target: ts.ScriptTarget.Latest,
+      module: ts.ModuleKind.ESNext,
+      jsx: ts.JsxEmit.Preserve,
+      removeComments: true,
+    },
+    fileName: 'ImageGenPanel.tsx',
+  }).outputText
+}
+
+const previewSource = stripComments(read('ImageGenPanel.tsx'))
+const wheelProblems = []
+if (!/data-preview-stage=""/.test(previewSource)) {
+  wheelProblems.push('the preview stage no longer carries `data-preview-stage`, so the wheel contract is invisible to any test')
+}
+// The rule the fix has to state out loud: a user who does not know the modifier
+// cannot discover it, and the reporter explicitly asked for one.
+if (!/data-preview-zoom-hint=""/.test(previewSource)) {
+  wheelProblems.push('nothing on screen says how to zoom (`data-preview-zoom-hint`)')
+}
+if (!/addEventListener\(\s*'wheel'[\s\S]{0,600}?passive:\s*false/.test(previewSource)) {
+  wheelProblems.push('no `addEventListener(\'wheel\', handler, { passive: false })` — without it preventDefault is dead code')
+}
+if (/onWheel=\{(?:(?!\}\}).){0,600}?preventDefault\(\)/s.test(previewSource)) {
+  wheelProblems.push('a React `onWheel` still calls preventDefault(), which React 18 ignores')
+}
+// Both modifiers, because the reporter is on Windows (Ctrl) and the fix ships
+// to macOS too (⌘). Gating on one key means half the users still get scroll+zoom.
+for (const key of ['ctrlKey', 'metaKey']) {
+  if (!new RegExp(`event\\.${key}`).test(previewSource)) wheelProblems.push(`the wheel gate ignores event.${key}`)
+}
+if (wheelProblems.length > 0) {
+  console.error('\nFAIL: a wheel notch over the preview still does two things (issue #22).')
+  for (const entry of wheelProblems) console.error(`  - ${entry}`)
+  console.error('Scroll is the default; zoom belongs behind Ctrl/⌘ and needs a non-passive')
+  console.error('listener to suppress the scroll it replaces.')
+  process.exit(1)
+}
+console.log('preview wheel: scroll is scroll, Ctrl/⌘ zooms through a non-passive listener')
+
+// --- the canvas node has to sit ON the canvas, not IN it -------------------
+// Issue #23: with a dark theme, a text node and a config node read as the same
+// grey as the grid behind them. `.root` and `.node` both painted
+// `--dsw-alias-bg-layer-1`, so the two surfaces were not merely similar — they
+// were the same value, and `.gridScrim` laid another 60% of that same colour on
+// top for good measure.
+//
+// Two checks, deliberately different in kind:
+//
+//  1. The palette-independent one: the two rules may not name the same fill.
+//     This is the actual defect, and it stays true whatever DSH resolves the
+//     tokens to.
+//  2. A measurement, using a dark palette whose layer-1/2/3 are monotonic. It
+//     asks whether the step is VISIBLE, which the string comparison cannot.
+//     The values are approximations of DSH's dark theme, not its real tokens —
+//     so this one is evidence, and check 1 is the requirement.
+function ruleBlock (css, selector) {
+  const start = css.indexOf(`\n${selector} {`)
+  if (start < 0) return null
+  const end = css.indexOf('\n}', start)
+  return end < 0 ? null : css.slice(start, end)
+}
+const canvasRootBlock = ruleBlock(canvasCss, '.root')
+const nodeBlock = ruleBlock(canvasCss, '.node')
+const selectedBlock = ruleBlock(canvasCss, '.nodeSelected')
+const backgroundOf = block => (block === null ? null : (/background:\s*([^;]+);/.exec(block)?.[1].trim() ?? null))
+const borderOf = block => (block === null ? null : (/border:\s*[^;]*?\bsolid\s+([^;]+);/.exec(block)?.[1].trim() ?? null))
+const canvasFill = backgroundOf(canvasRootBlock)
+const nodeFill = backgroundOf(nodeBlock)
+const nodeBorder = borderOf(nodeBlock)
+const selectedBorder = selectedBlock === null ? null : (/border-color:\s*([^;]+);/.exec(selectedBlock)?.[1].trim() ?? null)
+const nodeProblems = []
+if (canvasFill === null || nodeFill === null) {
+  nodeProblems.push('could not read `background` from `.root` or `.node` — the check below needs both')
+} else if (nodeFill === canvasFill) {
+  nodeProblems.push(`\`.node\` and \`.root\` both paint ${canvasFill}, so a node has no fill of its own`)
+}
+if (nodeBorder !== null && nodeBorder === canvasFill) {
+  nodeProblems.push(`\`.node\`'s border is the canvas fill (${nodeBorder})`)
+}
+if (selectedBorder === null) {
+  nodeProblems.push('`.nodeSelected` no longer sets its own border-color, so selection cannot read above the default')
+} else if (nodeBorder !== null && selectedBorder === nodeBorder) {
+  nodeProblems.push('`.nodeSelected` paints the same border as the resting node, so selecting one changes nothing')
+}
+if (nodeProblems.length > 0) {
+  console.error('\nFAIL: a canvas node cannot be told apart from the canvas (issue #23).')
+  for (const entry of nodeProblems) console.error(`  - ${entry}`)
+  console.error('A card and the surface it floats on must be two different surfaces; reusing')
+  console.error('one token for both makes the border the only edge, and in a dark theme a')
+  console.error('1.5px --dsw-alias-border-l1 line is not enough to trace a node\'s extent.')
+  process.exit(1)
+}
+
+// The measurement. Layer-1/2/3 are a monotonic scale in DSH, so these three
+// values are the SHAPE of the dark theme even though the numbers are ours.
+const canvasDarkTokens = [...new Set(canvasCss.match(/var\(--dsw-[a-z0-9-]+\)/g) ?? [])]
+  .map(token => `${token.slice(4, -1)}: #8a8a8a`).join('; ')
+const canvasDarkPage = `<!doctype html><html><head><style>
+:root {
+  ${canvasDarkTokens};
+  --dsw-alias-bg-layer-1: #17171c;
+  --dsw-alias-bg-layer-2: #22232a;
+  --dsw-alias-bg-layer-3: #2c2d34;
+  --dsw-alias-border-l1: #2a2b31;
+  --dsw-alias-border-l2: #3a3b42;
+  --dsw-alias-label-primary: #f9fafb;
+  --dsw-shadow-lv2: 0 2px 8px #0006;
+}
+* { box-sizing: border-box; }
+html, body { margin: 0; height: 100%; background: #17171c; }
+${canvasCss}
+</style></head><body>
+<div class="root" id="darkRoot" style="height:320px">
+  <div class="viewport" id="darkViewport">
+    <div class="node" id="darkNode" style="left:40px;top:40px;width:200px;height:120px"></div>
+  </div>
+</div>
+</body></html>`
+// Reusing the session keeps one browser per run; the close-button measurements
+// above are already collected, so replacing the document now costs nothing.
+await lightboxSession.send('Page.setDocumentContent', {
+  frameId: (await lightboxSession.send('Page.getFrameTree')).result.frameTree.frame.id,
+  html: canvasDarkPage,
+})
+await new Promise(r => setTimeout(r, 300))
+const canvasDark = JSON.parse(await lightboxSession.evaluate(`(() => {
+  ${WCAG_CONTRAST_SOURCE}
+  const white = { r:255,g:255,b:255,a:1 }
+  const root = document.getElementById('darkRoot')
+  const node = document.getElementById('darkNode')
+  const canvasSurface = composite(parseColour(getComputedStyle(root).backgroundColor), white)
+  const cs = getComputedStyle(node)
+  const fill = composite(parseColour(cs.backgroundColor), canvasSurface)
+  const edge = composite(parseColour(cs.borderTopColor), canvasSurface)
+  return JSON.stringify({
+    fill: Math.round(contrastRatio(fill, canvasSurface) * 100) / 100,
+    edge: Math.round(contrastRatio(edge, canvasSurface) * 100) / 100,
+  })
+})()`))
+// A large flat area reads at a much lower ratio than a line of text does, so the
+// fill bar is 1.25 while the thin border keeps the 3:1 that 1.4.11 asks of a
+// component boundary. Either alone is enough — the issue's own wording is
+// "清楚的明暗层次" OR "提高卡片边框的可辨识度", not both.
+const canvasStep = canvasDark.fill >= 1.25 || canvasDark.edge >= 3
+console.log(`canvas node in a dark theme: fill ${canvasDark.fill}:1, border ${canvasDark.edge}:1`)
+if (!canvasStep) {
+  console.error('\nFAIL: a resting canvas node is still invisible in a dark theme (issue #23).')
+  console.error(`  its fill differs from the canvas by ${canvasDark.fill}:1 (needs 1.25) and its`)
+  console.error(`  border by ${canvasDark.edge}:1 (needs 3). Measured with an APPROXIMATE dark`)
+  console.error('  palette; the token comparison above is the palette-independent requirement.')
+  process.exit(1)
+}
 lightboxSession.close()
 
 ws7.close()

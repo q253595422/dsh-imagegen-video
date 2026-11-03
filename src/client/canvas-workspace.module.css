@@ -35,6 +35,35 @@
   --canvas-annotation: var(--dsw-static-red-500, #ef4444);
   /** Ink drawn on top of the marker (the badge number, the inner stroke). */
   --canvas-annotation-ink: var(--dsw-static-neutral-00, #ffffff);
+  /**
+   * The node card's own surface, and the ring around it (issue #23).
+   *
+   * WHY a mix rather than `--dsw-alias-bg-layer-3`: the DSH layers are ONE step
+   * apart in dark (#232324 / #2c2c2e / #353638) and identical to each other in
+   * light (all #ffffff). Measured against the canvas that is 1.13:1 for layer-2,
+   * 1.30:1 for layer-3, and exactly 1.00:1 in a light theme for both — the card
+   * would still be the same white as the canvas it floats on.
+   *
+   * `label-primary` is the theme's ink, so it is always the canvas's OPPOSITE:
+   * near-white on dark, near-black on light. Mixing a little of it into layer-3
+   * pushes the card away from the canvas in whichever direction the theme needs,
+   * from one declaration, in both themes:
+   *
+   *   dark   #353638 + 12% white -> 1.87:1 against the canvas
+   *   light  #ffffff + 12% black -> 1.29:1 against the canvas
+   *
+   * 12% is the smallest step that clears 1.25:1 in BOTH themes (4% reaches only
+   * 1.09:1 on white). Those numbers are computed from the token values the
+   * installed DSH ships, not estimated.
+   */
+  --canvas-node-surface: color-mix(in srgb, var(--dsw-alias-bg-layer-3) 88%, var(--dsw-alias-label-primary));
+  /*
+   * The ring carries the boundary where a large flat area cannot: WCAG asks 3:1
+   * of a component boundary. DSH's own borders never get there (border-l3 is
+   * 16% white in dark, which composites to 1.68:1), so this is mixed from the
+   * same ink as the surface, one step stronger.
+   */
+  --canvas-node-border: color-mix(in srgb, var(--dsw-alias-label-primary) 22%, var(--dsw-alias-border-l2));
 }
 
 .selectCursor { cursor: default; }
@@ -279,13 +308,22 @@
 
 /* ------------------------------------------------------------ nodes */
 
+/*
+ * `.node` is a card floating ON the canvas, not a piece of it. It used to paint
+ * `--dsw-alias-bg-layer-1` — the very token `.root` paints — so in a dark theme
+ * the two surfaces were not similar but byte-identical, and a resting node was
+ * traceable only by a 1.5px `border-l1` at 1.19:1. That is issue #23.
+ *
+ * The surface and ring come from `--canvas-node-surface` / `--canvas-node-border`
+ * on `.root`; the reasoning for those two values lives beside their declarations.
+ */
 .node {
   position: absolute;
   display: flex;
   flex-direction: column;
   border-radius: var(--dsw-radius-lg);
-  border: 1.5px solid var(--dsw-alias-border-l1);
-  background: var(--dsw-alias-bg-layer-1);
+  border: 1.5px solid var(--canvas-node-border);
+  background: var(--canvas-node-surface);
   box-shadow: var(--dsw-shadow-lv2);
   overflow: visible;
   cursor: grab;
@@ -293,6 +331,20 @@
 }
 
 .node:active { cursor: grabbing; }
+
+/*
+ * Hover strengthens the resting ring, and only the resting ring.
+ *
+ * The `:not()` chain is about specificity, not precision: `.node:hover` is
+ * (0,2,0) and would silently paint over `.nodeSelected` / `.nodeRelated` /
+ * `.nodeConnectTarget` (all (0,1,0)) — hovering a SELECTED node would then
+ * weaken it back to hover strength, which is the opposite of what the states
+ * mean. `.nodeOverlap` carries the warning colour and `[data-annotating]` is
+ * (0,2,0) tied with hover, so both have to be excluded explicitly too.
+ */
+.node:hover:not(.nodeSelected):not(.nodeRelated):not(.nodeConnectTarget):not(.nodeOverlap):not([data-annotating]) {
+  border-color: color-mix(in srgb, var(--dsw-alias-label-primary) 34%, var(--dsw-alias-border-l2));
+}
 
 .nodeGlow {
   position: absolute;

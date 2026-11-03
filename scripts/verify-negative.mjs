@@ -654,6 +654,55 @@ const CASES = [
     expect: /canvas node root is not focusable|does not reveal its toolbar/,
   },
 
+  // ------------------------------------------------------ issues #22 and #23
+  // Four defects, each one a state this repository actually shipped.
+  //
+  // The first two are the halves of issue #22. The close button was reported as
+  // MISSING and was in fact painted; the fix moved the boundary onto the ring,
+  // so the mutation puts the boundary back below the bar while leaving the fill
+  // and the glyph exactly as they are. That is the failure mode worth guarding:
+  // every text-contrast measurement stays green.
+  {
+    name: 'the preview close button loses its boundary against the mask',
+    runner: 'contracts',
+    file: 'src/client/panel.module.css',
+    from: '  --lightbox-control-surface: color-mix(in srgb, var(--dsw-alias-label-primary-foreground) 40%, transparent);\n  --lightbox-control-surface-hover: color-mix(in srgb, var(--dsw-alias-label-primary-foreground) 52%, transparent);\n  --lightbox-control-edge: color-mix(in srgb, var(--dsw-alias-label-primary-foreground) 55%, transparent);',
+    to: '  --lightbox-control-surface: color-mix(in srgb, var(--dsw-alias-label-primary-foreground) 16%, transparent);\n  --lightbox-control-surface-hover: color-mix(in srgb, var(--dsw-alias-label-primary-foreground) 28%, transparent);\n  --lightbox-control-edge: color-mix(in srgb, var(--dsw-alias-label-primary-foreground) 22%, transparent);',
+    expect: /close button is not a findable control/,
+  },
+  {
+    // The instance of the bug that a scroll-and-zoom race is made of: the
+    // non-passive listener is gone, so `preventDefault()` is dead code again
+    // and the deck scrolls under the zoom.
+    name: 'the preview goes back to a passive wheel handler',
+    runner: 'contracts',
+    file: 'src/client/ImageGenPanel.tsx',
+    from: "    stage.addEventListener('wheel', onWheel, { passive: false })",
+    to: "    stage.addEventListener('wheel', onWheel)",
+    expect: /no `addEventListener\('wheel'/,
+  },
+  {
+    // Issue #23, exactly as it shipped: the node and the canvas name the same
+    // token, so in a dark theme the two surfaces are not similar but identical.
+    name: 'the canvas node paints the same surface as the canvas',
+    runner: 'contracts',
+    file: 'src/client/canvas-workspace.module.css',
+    from: '  background: var(--canvas-node-surface);',
+    to: '  background: var(--dsw-alias-bg-layer-1);',
+    expect: /has no fill of its own/,
+  },
+  {
+    // The other half of #23: a selection that paints the resting border is a
+    // selection the user cannot see, and the resting state is now the baseline
+    // the selected state has to beat.
+    name: 'selecting a node stops changing its border',
+    runner: 'contracts',
+    file: 'src/client/canvas-workspace.module.css',
+    from: '.nodeSelected {\n  border-color: var(--dsw-alias-brand-primary);',
+    to: '.nodeSelected {\n  border-color: var(--canvas-node-border);',
+    expect: /same border as the resting node/,
+  },
+
   // -------------------------------------------- this round's interaction fixes
   {
     // The overlay guarantee is STRUCTURAL: every overlay is a sibling of the

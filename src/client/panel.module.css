@@ -3116,7 +3116,26 @@ html[data-dsh-imagegen-chat-collapsed] [data-dsh-imagegen-chat-resizer] {
   --lightbox-ink: var(--dsw-alias-label-primary-foreground);
   --lightbox-surface: color-mix(in srgb, var(--dsw-alias-label-primary-foreground) 16%, transparent);
   --lightbox-surface-hover: color-mix(in srgb, var(--dsw-alias-label-primary-foreground) 28%, transparent);
-  --lightbox-edge: color-mix(in srgb, var(--dsw-alias-label-primary-foreground) 22%, transparent);
+  /* The ring is what makes a pill READ as a control. A translucent FILL cannot
+     do it: to reach the 3:1 non-text boundary of WCAG 1.4.11 against an 82%
+     black mask the fill has to be ~40% white, and white label text on that fill
+     drops to 3.9:1 — the boundary would be bought by losing the text. So the
+     fill stays dim (16%, 8.2:1 for its text) and the boundary moves to the
+     border, which carries no text: 52% white lands ~4.9:1 on the mask.
+     Issue #22 reported the close button as "missing"; it was a white glyph on a
+     16%-white disc on a dark mask, i.e. 1.67:1 for the disc and 2.03:1 for the
+     ring — legible ink, invisible control. */
+  --lightbox-edge: color-mix(in srgb, var(--dsw-alias-label-primary-foreground) 52%, transparent);
+  /* Icon-only circles that float straight on the photograph, with no pill row or
+     panel around them to give the shape away, get both: a disc at 3.5:1 and the
+     stronger ring. They carry no text, so a strong fill costs nothing.
+     Kept as a separate pair instead of raising --lightbox-surface, because that
+     one is also the fill of every text-bearing pill (download / edit / copy /
+     zoom level) and of VideoPanel's clip player, which would all lose contrast
+     for no gain. Nothing here renames the existing three variables. */
+  --lightbox-control-surface: color-mix(in srgb, var(--dsw-alias-label-primary-foreground) 40%, transparent);
+  --lightbox-control-surface-hover: color-mix(in srgb, var(--dsw-alias-label-primary-foreground) 52%, transparent);
+  --lightbox-control-edge: color-mix(in srgb, var(--dsw-alias-label-primary-foreground) 55%, transparent);
   position: fixed;
   inset: 0;
   z-index: var(--z-lightbox);
@@ -3138,14 +3157,19 @@ html[data-dsh-imagegen-chat-collapsed] [data-dsh-imagegen-chat-resizer] {
   width: 38px;
   height: 38px;
   color: var(--lightbox-ink);
-  background: var(--lightbox-surface);
-  border: 1px solid var(--lightbox-edge);
+  background: var(--lightbox-control-surface);
+  border: 1px solid var(--lightbox-control-edge);
   border-radius: 50%;
   cursor: pointer;
 }
 
 .lightboxClose:hover {
-  background: var(--lightbox-surface-hover);
+  background: var(--lightbox-control-surface-hover);
+}
+
+.lightboxClose:focus-visible {
+  outline: 2px solid var(--dsw-alias-label-primary-foreground);
+  outline-offset: 2px;
 }
 
 .lightboxNav {
@@ -3158,14 +3182,17 @@ html[data-dsh-imagegen-chat-collapsed] [data-dsh-imagegen-chat-resizer] {
   width: 42px;
   height: 42px;
   color: var(--lightbox-ink);
-  background: var(--lightbox-surface);
-  border: 1px solid var(--lightbox-edge);
+  /* Same repair as .lightboxClose: the arrows float on the photo too and were
+     the same 1.67:1 disc, so they share the control pair rather than being left
+     inconsistent with the close button. */
+  background: var(--lightbox-control-surface);
+  border: 1px solid var(--lightbox-control-edge);
   border-radius: 50%;
   cursor: pointer;
 }
 
 .lightboxNav:hover {
-  background: var(--lightbox-surface-hover);
+  background: var(--lightbox-control-surface-hover);
 }
 
 .lightboxNav[data-dir='prev'] {
@@ -3197,6 +3224,10 @@ html[data-dsh-imagegen-chat-collapsed] [data-dsh-imagegen-chat-resizer] {
      than the translucent chrome surface: a light wash here would halo every
      transparent PNG. */
   background: var(--dsw-alias-bg-mask-2);
+  /* The other half of issue #22: when the strip reaches its end a plain wheel
+     would scroll-chain through to the workbench underneath the overlay. Contained
+     here, the wheel notch stays inside the preview. */
+  overscroll-behavior: contain;
 }
 
 .lightboxScaleFrame {
@@ -3221,6 +3252,16 @@ html[data-dsh-imagegen-chat-collapsed] [data-dsh-imagegen-chat-resizer] {
   align-items: center;
   justify-content: center;
   gap: 6px;
+}
+
+/* Says out loud what the wheel does. A modifier nobody is told about is a
+   feature nobody has: the reporter asked for exactly this hint. */
+.lightboxZoomHint {
+  margin-left: 4px;
+  font-size: 11px;
+  line-height: 1.4;
+  color: color-mix(in srgb, var(--dsw-alias-label-primary-foreground) 72%, transparent);
+  white-space: nowrap;
 }
 
 .lightboxTool,
@@ -3365,6 +3406,12 @@ html[data-dsh-imagegen-chat-collapsed] [data-dsh-imagegen-chat-resizer] {
   .lightboxCopy,
   .lightboxActions {
     align-self: flex-end;
+  }
+
+  /* No modifier key on a touch screen, and no room for the hint beside the zoom
+     buttons: the gesture there is a pinch, which needs no explaining. */
+  .lightboxZoomHint {
+    display: none;
   }
 }
 
