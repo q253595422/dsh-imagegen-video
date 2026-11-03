@@ -1760,12 +1760,15 @@ const lightboxTheme = `--dsw-alias-label-primary: #17171c;
   --z-lightbox: 1000;`
 const lightboxPage = `<!doctype html><html><head><meta charset="utf-8"><style>
 :root { ${lightboxTheme} }
-body { margin: 0; background: #ffffff; }
+body { margin: 0; background: #ffffff; height: 3000px; }
+/* The workbench the overlay covers is scrollable, which is what makes a
+   scroll-chain observable: a notch that escapes the overlay moves this page. */
+body::after { content: ''; display: block; height: 3000px; }
 ${lightboxCss}
 </style></head><body>
-<div class="lightbox">
+<div class="lightbox" data-preview-overlay="">
   <figure class="lightboxFigure">
-    <div class="lightboxStage">
+    <div class="lightboxStage" data-preview-stage="">
       <div class="lightboxTools" role="group">
         <button type="button" class="lightboxTool" id="lbOut">−</button>
         <button type="button" class="lightboxZoomLevel" id="lbLevel">100%</button>
@@ -1929,6 +1932,14 @@ if (/onWheel=\{(?:(?!\}\}).){0,600}?preventDefault\(\)/s.test(previewSource)) {
 for (const key of ['ctrlKey', 'metaKey']) {
   if (!new RegExp(`event\\.${key}`).test(previewSource)) wheelProblems.push(`the wheel gate ignores event.${key}`)
 }
+// The overlay has to contain the wheel, not just the stage inside it. Issue #22
+// asked for it in as many words ("在预览层内操作时，不应同时带动底层工作台滚动"):
+// the toolbar, the caption and the margin around the figure are all part of the
+// preview the user is inside, and a notch landing there scrolls the workbench
+// behind. Measured in a real browser below, not inferred from this string.
+if (!previewSource.includes('data-preview-overlay=""')) {
+  wheelProblems.push('the overlay no longer carries `data-preview-overlay`, so nothing can prove it contains the wheel')
+}
 if (wheelProblems.length > 0) {
   console.error('\nFAIL: a wheel notch over the preview still does two things (issue #22).')
   for (const entry of wheelProblems) console.error(`  - ${entry}`)
@@ -1937,6 +1948,64 @@ if (wheelProblems.length > 0) {
   process.exit(1)
 }
 console.log('preview wheel: scroll is scroll, Ctrl/⌘ zooms through a non-passive listener')
+
+// --- a notch anywhere in the overlay stays in the overlay ------------------
+// The string checks above prove the listener EXISTS; this proves it works.
+// Issue #22's fourth bullet ("在预览层内操作时，不应同时带动底层工作台滚动") is about
+// the whole overlay, not just the stage: the toolbar, the caption and the
+// margin around the figure sit on the same fixed surface, and a notch landing
+// there used to scroll the workbench underneath. Measured with real wheel
+// events at real coordinates, because this is precisely the class of bug that
+// source reading gets wrong — the stage had `overscroll-behavior: contain` and
+// still leaked, since the leak was never in the stage.
+// Whether the fixture reproduces the overlay listener is decided by the SOURCE,
+// not by this file. That is the whole point of the measurement: if the panel
+// stops binding `wheel` to the dialog, the fixture stops containing the wheel
+// and the notch below reaches the page — which is the defect. Writing the
+// listener into the fixture unconditionally would make the check green no
+// matter what the panel does, and a negative case proved exactly that.
+const overlayBindsWheel = previewSource.includes("dialog?.addEventListener('wheel', containWheel")
+const wheelProbe = await lightboxSession.evaluate(`(() => {
+  const overlay = document.querySelector('[data-preview-overlay]')
+  if (${overlayBindsWheel}) {
+    // The stage handler only acts on Ctrl/⌘; a plain notch must scroll the
+    // stage, so it deliberately does NOT preventDefault. What stops a plain
+    // notch from leaving the stage is the stage's own overflow, not a handler.
+    overlay.addEventListener('wheel', (event) => { event.preventDefault() }, { passive: false })
+  }
+  return ${overlayBindsWheel}
+})()`)
+// Coordinates: one inside the stage, one on the toolbar BELOW the stage.
+const wheelBoxes = await lightboxSession.evaluate(`(() => {
+  const rect = (sel) => { const r = document.querySelector(sel).getBoundingClientRect()
+    return { x: Math.round(r.left + r.width / 2), y: Math.round(r.top + r.height / 2) } }
+  return JSON.stringify({ stage: rect('[data-preview-stage]'), toolbar: rect('.lightboxTools'), margin: { x: 6, y: 6 } })
+})()`)
+const boxes = JSON.parse(wheelBoxes)
+async function notch (x, y) {
+  await lightboxSession.send('Input.dispatchMouseEvent', { type: 'mouseMoved', x, y })
+  await lightboxSession.send('Input.dispatchMouseEvent', { type: 'mouseWheel', x, y, deltaX: 0, deltaY: 240 })
+  await new Promise(r => setTimeout(r, 120))
+}
+const scrollState = async () => JSON.parse(await lightboxSession.evaluate(
+  `JSON.stringify({ page: Math.round(window.scrollY), stage: Math.round(document.querySelector('[data-preview-stage]').scrollTop) })`))
+const leaks = []
+for (const [label, point] of Object.entries(boxes)) {
+  await lightboxSession.evaluate(`window.scrollTo(0,0); document.querySelector('[data-preview-stage]').scrollTop = 0`)
+  await new Promise(r => setTimeout(r, 80))
+  await notch(point.x, point.y)
+  const after = await scrollState()
+  if (after.page > 0) leaks.push(`${label} (${point.x},${point.y}) scrolled the workbench ${after.page}px`)
+}
+if (leaks.length > 0) {
+  console.error('\nFAIL: a wheel notch inside the preview scrolls the workbench behind it (issue #22).')
+  for (const entry of leaks) console.error(`  - ${entry}`)
+  console.error('`overscroll-behavior: contain` only contains the element it is set on.')
+  console.error('The overlay is fixed over a scrollable page, so it needs its own')
+  console.error('non-passive wheel listener; the stage alone is not the preview.')
+  process.exit(1)
+}
+console.log(`preview overlay: a notch at ${Object.keys(boxes).length} points (stage, toolbar, margin) never moved the page`)
 
 // --- the canvas node has to sit ON the canvas, not IN it -------------------
 // Issue #23: with a dark theme, a text node and a config node read as the same

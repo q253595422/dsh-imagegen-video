@@ -682,6 +682,18 @@ const CASES = [
     expect: /no `addEventListener\('wheel'/,
   },
   {
+    // The half of #22 that `overscroll-behavior: contain` did NOT fix: the
+    // listener is still on the stage, so the stage is fine, but the overlay
+    // around it (toolbar, caption, margin) lets the notch through to the
+    // workbench. Removing only the overlay binding reproduces exactly that.
+    name: 'the preview overlay lets the wheel escape to the workbench',
+    runner: 'contracts',
+    file: 'src/client/ImageGenPanel.tsx',
+    from: "    dialog?.addEventListener('wheel', containWheel, { passive: false })",
+    to: '    void containWheel',
+    expect: /scrolled the workbench/,
+  },
+  {
     // Issue #23, exactly as it shipped: the node and the canvas name the same
     // token, so in a dark theme the two surfaces are not similar but identical.
     name: 'the canvas node paints the same surface as the canvas',

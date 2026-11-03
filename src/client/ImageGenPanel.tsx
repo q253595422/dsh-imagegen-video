@@ -2252,8 +2252,20 @@ export function ImageGenPanel(props: {
       setPreviewScale(current => clampPreviewScale(current + (event.deltaY < 0 ? PREVIEW_SCALE_STEP : -PREVIEW_SCALE_STEP)))
     }
     stage.addEventListener('wheel', onWheel, { passive: false })
+    // The stage contains its own scroll chain, but the overlay around it —
+    // toolbar, caption, the margin between the figure and the edge — is a fixed
+    // surface over a scrollable workbench, so a notch landing there would scroll
+    // the page underneath. Issue #22 asked for exactly this ("在预览层内操作时，
+    // 不应同时带动底层工作台滚动"). Bound to the dialog rather than the document:
+    // the overlay is what the user is inside, and a document-level listener
+    // would also swallow wheel events everywhere else while the preview is open
+    // if the host ever renders something above it.
+    const dialog = previewDialogRef.current
+    const containWheel = (event: WheelEvent): void => { event.preventDefault() }
+    dialog?.addEventListener('wheel', containWheel, { passive: false })
     return () => {
       stage.removeEventListener('wheel', onWheel)
+      dialog?.removeEventListener('wheel', containWheel)
     }
   }, [preview])
 
@@ -4504,6 +4516,7 @@ export function ImageGenPanel(props: {
             ref={previewDialogRef}
             tabIndex={-1}
             className={css.lightbox}
+            data-preview-overlay=""
             role="dialog"
             aria-modal="true"
             aria-label={tt('preview.title')}
