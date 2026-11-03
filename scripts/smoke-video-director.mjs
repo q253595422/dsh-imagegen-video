@@ -325,11 +325,19 @@ await check('D6 a plan never widens the user-facing parameters', async () => {
   }
 
   // A narrower ask IS honoured: a draft render may drop to 480P.
+  //
+  // Pinned to the NON-flash Agnes id on purpose. `agnes-video-2.5-flash` is
+  // documented as 720P-only and the catalog now narrows its tier list to match,
+  // so "the user picked 1080P and the plan accepted 480P" can no longer be
+  // expressed on that model — the user value itself is clamped to 720P before
+  // the plan is consulted. The rule under test (a narrower ask survives; a
+  // wider one does not) is about the planner, not about one provider's
+  // vocabulary, so it is exercised on the id that still offers the full range.
   const upstream2 = await startUpstream()
   const draft = chatStub(JSON.stringify({ ...JSON.parse(greedy), resolution: '480P', seconds: 2 }))
   try {
     const runtime = new host.ImageGenerationRuntime(viewFor(upstream2.base), undefined, undefined, draft.seam)
-    const result = await runtime.runVideo({ ...baseRequest, seconds: 5, resolution: '1080P', plan: true })
+    const result = await runtime.runVideo({ ...baseRequest, model: 'agnes-video-2.5', seconds: 5, resolution: '1080P', plan: true })
     assert.equal(result.plan?.params.resolution, '480P', 'a narrower resolution is accepted')
     assert.equal(result.plan?.params.seconds, 2, 'a shorter duration is accepted')
     assert.equal(upstream2.state.submits[0].size, '480P')
