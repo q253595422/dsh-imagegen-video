@@ -5,6 +5,20 @@ Attribution for third-party code is in [NOTICE](./NOTICE).
 
 ## Releases
 
+### 未发布 — Agnes 视频对齐官方文档
+
+- **Flash 的 `size` 收窄为 `720P`。** `agnes-video-2.5-flash` 文档写明只接受字符串 `"720P"`，
+  其他值在**创建任务前**就返回 `400 size must be 720P`（实测 1080P 确实 400）。现在按 id 收窄档位，
+  面板不再提供必然失败的 480P/1080P；非 flash 的 `agnes-video-2.5` 保留 480P/720P/1080P。
+- **参考图在提交前截断到 5 张。** Flash 的 `images` 上限是 5（`400 images length must not exceed 5`），
+  画布接 6 张原本会把必然失败的请求发出去。
+- **画幅补上 `21:9`。** 网关实测接受 `aspect_ratio: "21:9"`（200），此前比例表里没有它。
+- **轮询放宽到 2s / 40 分钟。** 文档建议 1–2s 轮询；实测一个 4 秒片子建完后 35 分钟仍在
+  `queued`，原来的 8s 间隔 + 20 分钟上限会把还在排队（且已占用队列）的任务报成「上游任务轮询超时」。
+- **验证**：真接口确认 `POST /v1/videos` 文生视频/首尾帧都能建（keyframe 传 data URI 首尾帧返回 200），
+  `GET /v1/videos/{id}` 与文档推荐的 `/agnesapi?video_id&model_name` 两条状态路径都通；
+  新增 `smoke-video.mjs` 的 `V1a` 覆盖档位收窄、21:9 与参考图截断。
+
 ### 未发布 — 接入 Agnes 图像协议族
 
 - **新增 `agnes` 图片协议族**（`agnes-image-2.5-flash` / `2.1-flash` / `2.0-flash`）。此前这类 id 落到

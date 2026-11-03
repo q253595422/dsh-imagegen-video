@@ -183,7 +183,11 @@ const RETRYABLE_STATUS = new Set([408, 425, 429, 500, 502, 503, 504])
  * with the image path.
  */
 const POLL_POLICY: Record<string, { intervalMs: number; deadlineMs: number }> = {
-  agnes: { intervalMs: 8_000, deadlineMs: 20 * 60_000 },
+  // Agnes documents a 1-2s poll cadence, and its render queue can sit in
+  // `queued` for a long time (measured: a 4s clip still queued after 35
+  // minutes), so the 20-minute ceiling used to time out on renders that were
+  // still coming. Match the documented cadence and give the queue room.
+  agnes: { intervalMs: 2_000, deadlineMs: 40 * 60_000 },
   // comemoe measured at ~522s for a 5s clip: allow a much longer deadline and
   // a slower poll so a long render does not hammer the status endpoint.
   comemoe: { intervalMs: 6_000, deadlineMs: 40 * 60_000 },
@@ -973,6 +977,9 @@ function videoMimeOf(contentType: string | undefined, url: string): string {
   }
 }
 
+/** Agnes reference cap (Flash: `images length must not exceed 5`). */
+const MAX_AGNES_REFERENCES = 5
+
 /** Build the family-specific submit body. */
 function submitBody(
   entry: VideoCatalogEntry,
@@ -1019,7 +1026,10 @@ function submitBody(
       if (references.all[0] !== undefined) body.first_frame = dataUrlOf(references.all[0])
       if (references.all[1] !== undefined) body.last_frame = dataUrlOf(references.all[1])
     } else if (request.mode === 'image' || request.mode === 'reference') {
-      if (references.all.length > 0) body.images = references.all.map(dataUrlOf)
+      // `agnes-video-2.5-flash` rejects more than five references
+      // (`400 images length must not exceed 5`), so the cap is applied here
+      // instead of letting the canvas send a body the provider refuses.
+      if (references.all.length > 0) body.images = references.all.slice(0, MAX_AGNES_REFERENCES).map(dataUrlOf)
     }
     if (entry.supportsSeed && request.seed !== undefined && Number.isFinite(request.seed)) body.seed = request.seed
     return body

@@ -184,7 +184,7 @@ dsh plugin --profile web add ./q253595422-dsh-imagegen-video-X.Y.Z.tgz
 
 | 协议族 | 模型示例 | 说明 |
 | --- | --- | --- |
-| Agnes 视频 | `agnes-video-2.5-flash`、`agnes-video-2.5` | 提交 `POST /v1/videos`，轮询 `GET /v1/videos/{id}`，取 `metadata.url`；支持文生视频、首尾帧、多参考图、`seed`。 |
+| Agnes 视频 | `agnes-video-2.5-flash`、`agnes-video-2.5` | 提交 `POST /v1/videos`，轮询 `GET /v1/videos/{id}`（文档同时给出 `/agnesapi?video_id=…&model_name=…`，实测两条路径都通），结果取顶层 `url` 或 `metadata.url`；支持文生视频、首尾帧、多参考图、`seed`。**Flash 专属限制**（创建任务前就校验）：`size` 只接受 `720P`，参考图最多 5 张，不支持音频/视频参考；画幅另支持 `21:9`。插件按 id 把 Flash 的档位收窄成 `720P`（非 flash 保留 480P/720P/1080P），参考图超出 5 张在提交前截断，不会把必然 400 的请求发出去。 |
 | 火山 Seedance（方舟） | `doubao-seedance-2-0-260128`、`doubao-seedance-2-0-fast-260128`、`doubao-seedance-1-0-pro-250528` | 方舟原生任务协议：提交 `POST /contents/generations/tasks`，轮询 `GET /contents/generations/tasks/{id}`，成片在 `content.video_url`。提示词与参考图放在 `content` 数组里（参考图带 `role`：`first_frame` / `last_frame` / `reference_image`），比例字段是 `ratio`，分辨率小写。时长：2.x 为 4–15 秒、1.0 为 2–12 秒。分辨率：2.0 支持 480p/720p/1080p/4k，`fast` / `mini` 只到 720p；1.0 为 480p/720p/1080p。1.0 不支持 `reference_image` 角色，`1.0 pro fast` 也不支持尾帧，面板会把这两种模式从该型号上收起来。 |
 | 算力萌 comemoe | `wan2.2-t2v`、`zhimeng-h3-local` | `wan2.2-t2v` 仅文生视频；`zhimeng-h3-local` 支持图生视频。比例只接受 16:9 / 9:16 / 1:1；5 秒片子实测约 9 分钟。 |
 | xAI Grok | `grok-imagine-video-1.5`、`grok-imagine-video-1.5-lite` | 提交 `POST /videos/generations`（注意不是 `/videos`），轮询 `GET /videos/{id}`，取 `video.url` 与 `video.duration`。 |

@@ -171,6 +171,54 @@ await check('V1 the engine submits, polls and downloads one Agnes clip', async (
   }
 })
 
+await check('V1a Agnes flash narrows the documented vocabulary instead of forwarding 400s', async () => {
+  // Measured on the live endpoint: `size` other than 720P is rejected before a
+  // task exists (`400 size must be 720P`), more than five references are
+  // rejected (`400 images length must not exceed 5`), and 21:9 IS accepted.
+  const upstream = await startUpstream()
+  upstream.state.script = {
+    submit: { video_id: 'vid_agnes_limits', status: 'queued' },
+    polls: [{ status: 'completed', metadata: { url: `http://127.0.0.1:${upstream.port}/out/clip.mp4`, duration: 5 } }],
+  }
+  const reference = 'data:image/png;base64,iVBORw0KGgo='
+  try {
+    await generateVideo(
+      { apiUrl: upstream.base, apiKey: 'sk-video' },
+      { mode: 'text', model: 'agnes-video-2.5-flash', prompt: 'a cat', aspectRatio: '21:9', resolution: '1080P', seconds: 5 },
+      { family: 'agnes' },
+    )
+    const flash = upstream.state.submits.at(-1).body
+    assert.equal(flash.size, '720P', 'flash is 720P-only: a 1080P pick is snapped down')
+    assert.equal(flash.aspect_ratio, '21:9', 'the documented ultra-wide ratio is forwarded')
+
+    await generateVideo(
+      { apiUrl: upstream.base, apiKey: 'sk-video' },
+      { mode: 'text', model: 'agnes-video-2.5', prompt: 'a cat', aspectRatio: '16:9', resolution: '1080P', seconds: 5 },
+      { family: 'agnes' },
+    )
+    assert.equal(upstream.state.submits.at(-1).body.size, '1080P', 'non-flash ids keep the full tier list')
+
+    upstream.state.polls.length = 0
+    await generateVideo(
+      { apiUrl: upstream.base, apiKey: 'sk-video' },
+      {
+        mode: 'reference',
+        model: 'agnes-video-2.5-flash',
+        prompt: 'a cat',
+        aspectRatio: '16:9',
+        resolution: '720P',
+        seconds: 5,
+        image: reference,
+        images: [reference, reference, reference, reference, reference],
+      },
+      { family: 'agnes' },
+    )
+    assert.equal(upstream.state.submits.at(-1).body.images.length, 5, 'references beyond five are dropped, not forwarded')
+  } finally {
+    await upstream.close()
+  }
+})
+
 await check('V1b the engine handles the flat comemoe shape and its processing state', async () => {
   const upstream = await startUpstream()
   upstream.state.script = {
