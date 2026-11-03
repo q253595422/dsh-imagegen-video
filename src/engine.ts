@@ -89,6 +89,27 @@ function isSeedream(model: string): boolean {
   return modelFamily(model) === 'seedream'
 }
 
+/** Whether the model belongs to the Agnes AI image family (agnes-image-2.5-flash,
+ *  agnes-image-2.1-flash, agnes-image-2.0-flash). Agnes has no /images/edits
+ *  endpoint: generation AND editing both go to /images/generations, references
+ *  travel as a JSON `extra_body.image` URL/data-URI array, the size is a tier
+ *  (`1K` / `2K` / `3K` / `4K`) paired with `ratio`, and the OpenAI `quality`
+ *  field is rejected outright ("quality is not supported by text image queue"). */
+function isAgnes(model: string): boolean {
+  return modelFamily(model) === 'agnes'
+}
+
+/** Agnes size tiers, keyed by the panel's clarity vocabulary. */
+const AGNES_TIERS: Readonly<Record<string, string>> = {
+  '1k': '1K',
+  '2k': '2K',
+  '3k': '3K',
+  '4k': '4K',
+}
+
+/** Aspect ratios the Agnes image API documents. */
+const AGNES_RATIOS = new Set(['1:1', '3:4', '4:3', '16:9', '9:16', '2:3', '3:2', '21:9'])
+
 /** Whether the model uses the official Zhipu image-generation contract. */
 function isZhipuImage(model: string): boolean {
   return modelFamily(model) === 'zhipu'
@@ -455,6 +476,7 @@ function effectiveParams(request: GenerateRequest, upstream: UpstreamConfig): {
   aspect_ratio?: string
   image_size?: string
   resolution?: string
+  ratio?: string
   response_format?: string
   watermark?: boolean
 } {
@@ -512,6 +534,17 @@ function effectiveParams(request: GenerateRequest, upstream: UpstreamConfig): {
       size: ark ? arkSeedreamSize(model, request.quality, request.size) : seedreamSize(request.quality),
       response_format: ark ? 'url' : 'b64_json',
       ...upstream.watermark === false && supportsSeedreamWatermark(model, upstream) ? { watermark: false } : {},
+    }
+  }
+  // Agnes AI: the panel's clarity tier becomes the documented size tier (1K …
+  // 4K) and the canvas ratio rides as `ratio`. `quality` is rejected upstream,
+  // and `response_format` is only valid INSIDE extra_body — the endpoint's own
+  // docs call a top-level response_format out as an error, so neither is sent.
+  if (isAgnes(model)) {
+    return {
+      model,
+      size: AGNES_TIERS[request.quality] ?? '1K',
+      ...AGNES_RATIOS.has(request.size) ? { ratio: request.size } : {},
     }
   }
   // Zhipu's official image API accepts OpenAI-style JSON but uses its own
@@ -1019,6 +1052,24 @@ async function requestOneImage(
         response_format: isVolcSeedream(params.model) ? 'url' : 'b64_json',
         ...params.watermark !== undefined ? { watermark: params.watermark } : {},
       })
+    } else if (isAgnes(params.model)) {
+      // Agnes editing is a generations call: the references go into
+      // `extra_body.image` as URLs or data URIs (several for multi-image
+      // composition), the output format belongs inside `extra_body` too, and
+      // `/images/edits` does not exist on the gateway (503 no available
+      // server). The tier `size` plus `ratio` pair is the documented way to
+      // ask for a predictable canvas.
+      headers['content-type'] = 'application/json'
+      body = JSON.stringify({
+        model: params.model,
+        prompt: request.prompt,
+        size: params.size ?? '1K',
+        ...params.ratio !== undefined ? { ratio: params.ratio } : {},
+        extra_body: {
+          image: [request.image, ...(request.images ?? []).filter(img => typeof img === 'string' && img !== '').slice(0, 4)],
+          response_format: 'b64_json',
+        },
+      })
     } else {
       const form = new FormData()
       if (extras.length > 0) {
@@ -1045,8 +1096,9 @@ async function requestOneImage(
   const budget = requestSignal(signal, UPSTREAM_TIMEOUT_MS)
   try {
     let response: Response
-    // Seedream has no /images/edits endpoint: both modes hit generations.
-    const endpoint = request.mode === 'edit' && !isSeedream(params.model)
+    // Seedream and Agnes have no /images/edits endpoint: both modes hit
+    // generations (Agnes with the reference in extra_body.image).
+    const endpoint = request.mode === 'edit' && !isSeedream(params.model) && !isAgnes(params.model)
       ? '/images/edits'
       : '/images/generations'
     const requestUrl = endpointUrl(upstream, baseUrl, endpoint)

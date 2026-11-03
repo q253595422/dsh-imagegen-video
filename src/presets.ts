@@ -51,6 +51,20 @@ export const IMAGE_PRESETS: PresetProvider[] = [
     ],
   },
   {
+    id: 'agnes-official',
+    name: 'Agnes AI 官方',
+    apiUrl: 'https://apihub.agnes-ai.com/v1',
+    hint: 'Agnes 官方图像接口：agnes-image-2.5-flash / 2.1-flash / 2.0-flash；文生图与图生图共用 /images/generations（参考图走 extra_body.image，尺寸用 1K/2K/3K/4K 档位 + ratio）',
+    models: [
+      { alias: 'agnes-image-2.5-flash', id: 'agnes-image-2.5-flash' },
+      { alias: 'agnes-image-2.1-flash', id: 'agnes-image-2.1-flash' },
+      { alias: 'agnes-image-2.0-flash', id: 'agnes-image-2.0-flash' },
+    ],
+    videoModels: [
+      { alias: 'agnes-video-2.5-flash', id: 'agnes-video-2.5-flash' },
+    ],
+  },
+  {
     id: 'openai-official',
     name: 'OpenAI 官方',
     apiUrl: 'https://api.openai.com/v1',

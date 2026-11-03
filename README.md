@@ -292,7 +292,12 @@ dsh plugin --profile web add ./q253595422-dsh-imagegen-video-X.Y.Z.tgz
 
 在「设置 → 生图配置」添加渠道，填写 API 地址与密钥，检测并选择生图模型。可配置多个提供方，并设置默认生图模型和可选的提示词增强聊天模型。
 
-支持 OpenAI 兼容的 Images API / Chat Completions，以及 xAI Grok、Google Nano Banana、Seedream、Qwen-Image、GLM-Image、MiniMax 等预置渠道；也可手动添加兼容模型。
+支持 OpenAI 兼容的 Images API / Chat Completions，以及 xAI Grok、Google Nano Banana、Seedream、Agnes、Qwen-Image、GLM-Image、MiniMax 等预置渠道；也可手动添加兼容模型。
+
+**Agnes 图像（`agnes-image-*`）** 与别的渠道有两处不同：
+
+- **端点是统一的**：文生图和图生图都走 `POST {apiUrl}/images/generations`。Agnes 没有 `/images/edits`，按 OpenAI 编辑协议发过去会被网关回 `503 no available server`；编辑请求把参考图放进 `extra_body.image`（公共 URL 或 `data:` URI，可多张），输出格式也写在 `extra_body.response_format` 里（顶层的 `response_format` 会被判为错误）。
+- **尺寸是档位 + 比例**：`size` 用 `1K` / `2K` / `3K` / `4K`，比例用 `ratio`（`1:1`、`3:4`、`4:3`、`16:9`、`9:16`、`2:3`、`3:2`、`21:9`）。插件把面板的清晰度档映射成 `size`、把画幅映射成 `ratio`，并且**不发** OpenAI 的 `quality`——Agnes 会直接 400（`quality is not supported by text image queue`）。
 
 <details>
 <summary><b>接口与渠道补充说明</b></summary>

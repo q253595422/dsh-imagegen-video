@@ -5,6 +5,24 @@ Attribution for third-party code is in [NOTICE](./NOTICE).
 
 ## Releases
 
+### 未发布 — 接入 Agnes 图像协议族
+
+- **新增 `agnes` 图片协议族**（`agnes-image-2.5-flash` / `2.1-flash` / `2.0-flash`）。此前这类 id 落到
+  「未知协议」，图生图按 OpenAI 编辑协议发 `POST /images/edits` multipart，而 Agnes 根本没有这个端点，
+  网关回 `503 no available server`（实测 14s 后失败）。现在编辑走 `POST /images/generations`，参考图
+  以 URL / `data:` URI 数组放进 `extra_body.image`（多图合成天然支持），输出格式也写在
+  `extra_body.response_format`——Agnes 明确禁止顶层 `response_format`。
+- **尺寸改成档位 + 比例。** 面板的清晰度档映射为 `size: 1K/2K/3K/4K`，画幅映射为 `ratio`
+  （1:1、3:4、4:3、16:9、9:16、2:3、3:2、21:9）；`auto` 回落到 `1K` 且不发 `ratio`。
+- **不再发送 OpenAI 的 `quality` / `detail`。** Agnes 对 `quality` 直接 400
+  （`quality is not supported by text image queue`），所以文生图只要用户选了清晰度档就会失败；
+  现在这两个字段只按协议族发送。
+- **新增「Agnes AI 官方」渠道预设。** 预填 `https://apihub.agnes-ai.com/v1`、三个图片模型与
+  `agnes-video-2.5-flash`，图片与视频可以共用同一个渠道。
+- **验证**：真接口实测图生图 `2K / 1:1` 77s 出图、文生图 `1K / 16:9`（此前带 quality 必 400）20s 出图；
+  新增 `smoke.mjs` 的 `B7d` 用例覆盖编辑端点、参考图数组、多图、档位与比例，并守住「非 Agnes 模型仍走
+  `/images/edits`」的回归。
+
 ### 1.21.0 — 画布底部工具条自适应，Agent 生成结果可直接内嵌
 
 - **画布底部浮层不再互相压盖，窄了就换行。** 任务工具条、缩放条、缩略图原来是三个各自绝对定位的图层，
