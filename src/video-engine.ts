@@ -45,6 +45,7 @@ import {
   recordDiagnostic,
   type DiagnosticPhase,
 } from './diagnostics-store.ts'
+import { recordSignal } from './signal-store.ts'
 import type { VideoGenerateRequest, VideoMode, VideoResolution } from './protocol.ts'
 
 /** A video generation failure with a user-presentable message. */
@@ -506,6 +507,17 @@ function recordVideoFailure(attempt: VideoAttempt, error: VideoGenError, options
     hadAuth: attempt.hadAuth,
     apiUrlFull: attempt.apiUrlFull,
   })
+  // Same rule as the image chain: diagnostics for this attempt, a signal for
+  // the aggregate, and neither allowed to break the other.
+  void recordSignal({
+    kind: 'failure',
+    pipeline: 'video',
+    model: attempt.model,
+    channel: attempt.channel,
+    mode: attempt.mode,
+    failureCode: error.code,
+    source: 'auto',
+  }).catch(() => { /* the diagnostics row above is the durable record of truth */ })
 }
 
 /**

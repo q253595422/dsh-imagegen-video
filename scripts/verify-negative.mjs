@@ -1216,6 +1216,56 @@ const CASES = [
     to: "  return readFileSync(path, 'utf8').replace(/\\n/g, '\\r\\n')",
     expect: /no readable label|has no host-side fetch definition/,
   },
+  // ------------------------------------------------- behaviour signals (L0)
+  // Each of these three restores a defect that would leave the report looking
+  // healthy while being wrong — the exact failure mode a signal log must not
+  // have, because its whole purpose is to be trusted over a release cycle.
+  {
+    // Storing the prompt instead of its length bucket. This is the privacy
+    // promise the feature rests on: the line is written to a file the user may
+    // later copy into a public issue, so the check has to fail if the text ever
+    // reaches it.
+    name: 'the signal log stores the prompt text instead of its length bucket',
+    runner: 'signals',
+    file: 'src/signal-store.ts',
+    from: "    promptBucket: promptBucketOf(typeof input.prompt === 'string' ? input.prompt : undefined),",
+    to: "    promptBucket: (typeof input.prompt === 'string' ? input.prompt : undefined),",
+    expect: /落盘内容不含提示词原文|分档不保留任何原文片段/,
+  },
+  {
+    // Bucketing by model alone. Two modes then share one rate, and the model's
+    // hard-task failures get blamed on its easy-task volume — a report that
+    // reads fine and points at the wrong fix.
+    name: 'signals from different modes are pooled into one bucket',
+    runner: 'signals',
+    file: 'src/signal-report.ts',
+    from: "    entry.pipeline,\n    entry.model,\n    entry.mode,\n    entry.promptBucket ?? '',",
+    to: "    entry.pipeline,\n    entry.model,\n    '',\n    entry.promptBucket ?? '',",
+    expect: /同一个模型的不同 mode 分成两个桶|小样本一律 unknown/,
+  },
+  {
+    // Calling a small sample healthy. `ok` on three signals is the sentence
+    // that teaches a reader to ignore every later verdict.
+    name: 'a small sample is reported as healthy instead of unknown',
+    runner: 'signals',
+    file: 'src/signal-report.ts',
+    from: "  if (bucket.total < MIN_SAMPLE) return { verdict: 'unknown', verdictMetric: '' }",
+    to: "  if (bucket.total < MIN_SAMPLE) return { verdict: 'ok', verdictMetric: '' }",
+    // The mutation flips the verdict, so the assertion that fails is the
+    // strictEqual on the verdict value, not the case title. Match the raw fact.
+    expect: /expected: 'unknown'|小样本一律 unknown/,
+  },
+  {
+    // The report exists on the host but nothing opens it. This is the defect
+    // that survives every unit test: a perfectly correct aggregator behind a
+    // button that is rendered nowhere, reachable from neither studio.
+    name: 'the video studio stops offering the behaviour report',
+    runner: 'smoke',
+    file: 'src/client/VideoPanel.tsx',
+    from: '        <SignalsButton open={signalsOpen} onToggle={() => { setSignalsOpen(open => !open) }} />\n',
+    to: '',
+    expect: /exactly one behaviour-report entry|opens the behaviour report/,
+  },
 ]
 
 const RUNNERS = {
@@ -1238,6 +1288,8 @@ const RUNNERS = {
   workflow: { script: 'scripts/smoke-workflow.mjs', build: false },
   // 时间线规则是纯函数，直接从源码 import，不需要构建。
   timeline: { script: 'scripts/smoke-timeline.mjs', build: false },
+  // 信号账本与聚合器都是纯函数 + 临时目录，直接从源码 import，不需要构建。
+  signals: { script: 'scripts/smoke-signals.mjs', build: false },
   // 身份锚定的规则也是纯函数，直接从源码 import。
   cast: { script: 'scripts/smoke-cast.mjs', build: false },
   // The archive rule, run against a real `pnpm pack`. No rebuild: the archive

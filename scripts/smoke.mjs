@@ -746,7 +746,7 @@ const upstream = createServer(async (req, res) => {
     const body = JSON.parse(Buffer.concat(chunks).toString('utf8'))
     assert.equal(req.headers.authorization, 'Bearer sk-test')
     assert.ok(body.model === 'gpt-image-2' || body.model === 'grok-imagine-image')
-    assert.ok(body.prompt === 'a cat' || body.prompt === 'a mismatch cat' || body.prompt === 'a background cat' || body.prompt === 'cancel this' || body.prompt === 'signed urls' || body.prompt === 'foreign url' || body.prompt === 'parallel one' || body.prompt === 'parallel two')
+    assert.ok(body.prompt === 'a cat' || body.prompt === 'a mismatch cat' || body.prompt === 'a background cat' || body.prompt === 'cancel this' || body.prompt === 'signed urls' || body.prompt === 'foreign url' || body.prompt === 'parallel one' || body.prompt === 'parallel two' || body.prompt === 'SMOKE-RETRY-PROMPT a lighthouse at dusk')
     if (body.model === 'gpt-image-2') {
       assert.equal(body.size, '1024x1024')
       assert.equal(body.quality, 'high')
@@ -2387,6 +2387,208 @@ await check('C3b diagnostics routes read back and clear the retained attempts (#
   assert.equal(cleared.body.ok, true)
   const afterClear = await post('/api/dsh-imagegen/diagnostics/list', {})
   assert.equal(afterClear.body.entries.length, 0, 'the Clear action empties the record')
+})
+
+await check('C3c signal routes record, report, draft an issue and clear (L0)', async () => {
+  // The report panel talks to the host over HTTP, so the contract that matters
+  // is the one the browser sees: what it may send, what comes back, and that a
+  // prompt's text never appears in either direction.
+  await post('/api/dsh-imagegen/signals/clear', {})
+  const empty = await post('/api/dsh-imagegen/signals/report', {})
+  assert.equal(empty.body.ok, true)
+  assert.equal(empty.body.report.total, 0, 'a fresh ledger reports nothing rather than guessing')
+  assert.equal(empty.body.report.buckets.length, 0)
+
+  // An unknown kind is answered, not thrown: an older bundle talking to a newer
+  // host has to learn that, and it learns it from this code.
+  const bad = await post('/api/dsh-imagegen/signals/record', { kind: 'not-a-kind' })
+  assert.equal(bad.body.ok, false)
+  assert.equal(bad.body.code, 'bad-signal')
+
+  const secretPrompt = 'SMOKE-SIGNAL-SECRET 一只猫在打字'
+  const recorded = await post('/api/dsh-imagegen/signals/record', {
+    kind: 'retry',
+    pipeline: 'image',
+    model: 'gpt-image-2',
+    channel: 'SmokeChannel',
+    mode: 'text',
+    prompt: secretPrompt,
+    source: 'auto',
+  })
+  assert.equal(recorded.body.ok, true)
+  assert.match(recorded.body.entry.id, /^sig-/)
+  assert.equal(recorded.body.entry.prompt, undefined, 'the browser is not handed back a prompt field to persist')
+
+  // Fill one bucket past MIN_SAMPLE so the report has something to judge, and
+  // keep one deliberate failure row so the failure rate is non-zero.
+  for (let index = 0; index < 25; index += 1) {
+    await post('/api/dsh-imagegen/signals/record', {
+      kind: 'retry',
+      pipeline: 'image',
+      model: 'gpt-image-2',
+      channel: 'SmokeChannel',
+      mode: 'text',
+      prompt: secretPrompt,
+      source: 'auto',
+    })
+  }
+  const report = await post('/api/dsh-imagegen/signals/report', { windowDays: 90 })
+  assert.equal(report.body.ok, true)
+  assert.ok(report.body.report.total >= 26)
+  const bucket = report.body.report.buckets[0]
+  assert.equal(bucket.mode, 'text')
+  assert.equal(bucket.verdict, 'warn', 'a bucket of nothing but retries is a warning, not a pass')
+  assert.ok(bucket.retryRate > 0.5)
+  assert.equal(Object.hasOwn(bucket, 'score'), false, 'the report never publishes a single combined number')
+
+  // The privacy red line, checked on the wire rather than in the store: this is
+  // the exact shape that would end up pasted into a public issue.
+  const listed = await post('/api/dsh-imagegen/signals/list', {})
+  assert.equal(listed.body.ok, true)
+  assert.equal(JSON.stringify(listed.body).includes('SMOKE-SIGNAL-SECRET'), false, 'no prompt text reaches the client')
+
+  const draft = await post('/api/dsh-imagegen/signals/export', {})
+  assert.equal(draft.body.ok, true)
+  assert.match(draft.body.url, /^https:\/\/github\.com\/.*\/issues\/new\?/)
+  assert.equal(draft.body.markdown.includes('SMOKE-SIGNAL-SECRET'), false, 'the issue draft carries aggregates only')
+  // Nothing is submitted by the host: the draft is a link the user reviews and
+  // opens themselves, which is why there is no POST anywhere in this path.
+  assert.ok(draft.body.title.length > 0)
+
+  // The window is clamped to a range the report can defend (1..365 days), and
+  // the clamp is echoed back so the panel's label always matches the numbers.
+  const clampedLow = await post('/api/dsh-imagegen/signals/report', { windowDays: 0 })
+  assert.equal(clampedLow.body.report.windowDays, 1)
+  const clampedHigh = await post('/api/dsh-imagegen/signals/report', { windowDays: 9999 })
+  assert.equal(clampedHigh.body.report.windowDays, 365)
+
+  const cleared = await post('/api/dsh-imagegen/signals/clear', {})
+  assert.equal(cleared.body.ok, true)
+  const afterClear = await post('/api/dsh-imagegen/signals/report', {})
+  assert.equal(afterClear.body.report.total, 0, 'Clear empties the ledger')
+})
+
+await check('C3d retry and delete reach the ledger without any client help (L0)', async () => {
+  // The point of collecting these host-side: the browser never sends a signal
+  // for a retry or a delete, so this check drives ONLY the routes the studio
+  // already called and then reads the ledger. If the wiring is ever moved to
+  // the client, this test stops seeing the entries and fails.
+  await post('/api/dsh-imagegen/signals/clear', {})
+
+  const retryPrompt = 'SMOKE-RETRY-PROMPT a lighthouse at dusk'
+  const submitted = await post('/api/dsh-imagegen/tasks/submit', {
+    mode: 'text', model: 'gpt-image-2', prompt: retryPrompt, size: '1:1', quality: '4k', n: 1, detail: 'standard',
+  })
+  assert.equal(submitted.body.ok, true, JSON.stringify(submitted.body))
+  // A retry is the user saying "not this one" without typing anything. It is
+  // recorded from the task the queue still holds, so it needs no round trip to
+  // the browser at all.
+  const retried = await post('/api/dsh-imagegen/tasks/retry', { id: submitted.body.task.id })
+  assert.equal(retried.body.ok, true, 'the retry itself still works')
+
+  // Signal writes are fire-and-forget so a slow disk can never delay the
+  // user's action; poll instead of assuming the write already landed.
+  const signalOf = async (kind) => {
+    for (let attempt = 0; attempt < 40; attempt += 1) {
+      const listed = await post('/api/dsh-imagegen/signals/list', {})
+      const found = listed.body.entries.find(entry => entry.kind === kind)
+      if (found !== undefined) return { entry: found, listed }
+      await new Promise(resolve => setTimeout(resolve, 10))
+    }
+    return { entry: undefined, listed: await post('/api/dsh-imagegen/signals/list', {}) }
+  }
+
+  const afterRetry = await signalOf('retry')
+  const retryEntry = afterRetry.entry
+  assert.ok(retryEntry !== undefined, 'pressing retry leaves a signal with no client involvement')
+  assert.equal(retryEntry.pipeline, 'image')
+  assert.equal(retryEntry.model, 'gpt-image-2')
+  assert.equal(retryEntry.mode, 'text')
+  assert.equal(retryEntry.source, 'auto', 'the user did not type this: it is inferred from their action')
+  assert.equal(retryEntry.promptBucket, 'short', 'the prompt is reduced to its length class')
+  assert.equal(JSON.stringify(afterRetry.listed.body).includes('lighthouse'), false, 'the prompt text never leaves the host')
+
+  // Deleting a generation is a stronger statement than retrying: the user does
+  // not want the result kept. The entry is looked up BEFORE the removal, which
+  // is the only moment its model is still known.
+  const historyId = 'smoke-signal-history-1'
+  const appended = await post('/api/dsh-imagegen/history/append', {
+    entry: {
+      id: historyId, createdAt: Date.now(), mode: 'text', model: 'gpt-image-2',
+      prompt: 'SMOKE-DELETE-PROMPT a red bicycle', size: '1:1', quality: '4k', detail: 'standard', n: 1,
+      images: [{ b64: pngBytes.toString('base64'), mime: 'image/png' }],
+    },
+  })
+  assert.equal(appended.body.ok, true, JSON.stringify(appended.body))
+  const removed = await post('/api/dsh-imagegen/history/remove', { id: historyId })
+  assert.equal(removed.body.ok, true, 'the delete itself still works')
+
+  const afterDelete = await signalOf('delete')
+  const deleteEntry = afterDelete.entry
+  assert.ok(deleteEntry !== undefined, 'deleting a generation leaves a signal')
+  assert.equal(deleteEntry.pipeline, 'image')
+  assert.equal(deleteEntry.model, 'gpt-image-2')
+  assert.equal(deleteEntry.mode, 'text')
+  assert.equal(deleteEntry.hasReference, false, 'this entry had no reference image')
+  assert.equal(JSON.stringify(afterDelete.listed.body).includes('bicycle'), false, 'the deleted prompt is not retained either')
+
+  // And the two rates feed the report the panel renders.
+  const summary = await post('/api/dsh-imagegen/signals/report', { windowDays: 90 })
+  assert.equal(summary.body.ok, true)
+  assert.equal(summary.body.report.byKind.retry, 1)
+  assert.equal(summary.body.report.byKind.delete, 1)
+
+  await post('/api/dsh-imagegen/signals/clear', {})
+})
+
+await check('C3e a failed generation leaves a failure signal with its code (L0)', async () => {
+  // The third signal the plugin infers on its own. A failure is the most
+  // specific evidence a user can produce — they neither retried nor deleted;
+  // the provider refused. The report needs the failure CODE, because "it broke"
+  // is not actionable and "upstream-rejected at 413" is.
+  await post('/api/dsh-imagegen/signals/clear', {})
+  const refusing = createServer((_req, res) => {
+    res.writeHead(503, { 'content-type': 'application/json' })
+    res.end(JSON.stringify({ error: { message: 'upstream maintenance' } }))
+  })
+  await new Promise(resolve => refusing.listen(0, '127.0.0.1', resolve))
+  const refusingPort = refusing.address().port
+  try {
+    await assert.rejects(
+      host.generateImage(
+        { apiUrl: `http://127.0.0.1:${refusingPort}/v1`, apiKey: 'k', channelName: 'SignalChannel' },
+        { mode: 'text', model: 'gpt-image-2', prompt: 'SMOKE-FAILURE-PROMPT a broken road', size: 'auto', quality: 'auto', n: 1, detail: '' },
+      ),
+    )
+  } finally {
+    await new Promise(resolve => refusing.close(resolve))
+  }
+
+  let failure
+  for (let attempt = 0; attempt < 40; attempt += 1) {
+    const listed = await post('/api/dsh-imagegen/signals/list', {})
+    failure = listed.body.entries.find(entry => entry.kind === 'failure')
+    if (failure !== undefined) break
+    await new Promise(resolve => setTimeout(resolve, 10))
+  }
+  assert.ok(failure !== undefined, 'a refused generation leaves a failure signal without client help')
+  assert.equal(failure.pipeline, 'image')
+  assert.equal(failure.model, 'gpt-image-2')
+  assert.equal(failure.channel, 'SignalChannel')
+  assert.equal(failure.failureCode, 'upstream-rejected', 'the code, not the prose, is what a later fix can group by')
+  assert.equal(failure.source, 'auto')
+
+  const report = await post('/api/dsh-imagegen/signals/report', { windowDays: 90 })
+  assert.equal(report.body.ok, true)
+  assert.equal(report.body.report.byKind.failure, 1)
+  // A single failure is below MIN_SAMPLE, so it must produce no verdict: one
+  // bad afternoon is not a pattern, and saying otherwise is how a report loses
+  // its readers.
+  const bucket = report.body.report.buckets[0]
+  assert.equal(bucket.verdict, 'unknown')
+  assert.equal(report.body.report.findings.filter(finding => finding.severity !== 'info').length, 0)
+
+  await post('/api/dsh-imagegen/signals/clear', {})
 })
 
 await check('C4 comparison tasks run in parallel and share comparison history metadata', async () => {
@@ -5344,6 +5546,46 @@ await check('E1 client apply mounts the sidebar entry and studio (jsdom)', async
     hadAuth: true,
   }]
   let diagnosticsListCalls = 0
+  // L0: the behaviour report the signals panel reads. One bucket with a real
+  // sample, one that is deliberately under MIN_SAMPLE -- the second is the
+  // state that must render as "no verdict" rather than as a healthy row.
+  const signalsReport = {
+    generatedAt: Date.now(),
+    total: 40,
+    windowDays: 90,
+    byKind: { retry: 30, delete: 6, failure: 4, rating: 0 },
+    byPipeline: { image: 30, video: 10, canvas: 0, skill: 0 },
+    buckets: [
+      {
+        pipeline: 'image', model: 'gpt-image-2', mode: 'text', promptBucket: 'medium', hasReference: false,
+        total: 30, retry: 18, delete: 3, failure: 2, rating: 0,
+        retryRate: 0.6, deleteRate: 0.1, failureRate: 0.067, ratingRate: 0,
+        verdict: 'warn', verdictMetric: 'retry',
+        reasons: { unlike: 0, text: 0, slow: 0, misread: 0 },
+      },
+      {
+        pipeline: 'video', model: 'agnes-video-2.5-flash', mode: 'text', promptBucket: 'short', hasReference: false,
+        total: 10, retry: 3, delete: 1, failure: 0, rating: 0,
+        retryRate: 0.3, deleteRate: 0.1, failureRate: 0, ratingRate: 0,
+        verdict: 'unknown', verdictMetric: '',
+        reasons: { unlike: 0, text: 0, slow: 0, misread: 0 },
+      },
+    ],
+    findings: [{
+      id: 'retry:image:gpt-image-2:text:medium',
+      severity: 'warn',
+      metric: 'retry',
+      scope: 'image · gpt-image-2 · text · prompt:medium · no-ref',
+      value: 0.6,
+      sample: 30,
+      zh: '重试率 60%（18/30）——提示词长度档 medium 下，这个组合的结果经常要再来一次',
+      en: 'Retry rate 60% (18/30) — results for this combination are often asked for twice',
+    }],
+    gaps: { monthsRead: 1, truncated: [] },
+    issue: { title: 'signal', body: '# signal', url: 'https://github.com/x/y/issues/new?title=signal&body=%23%20signal' },
+  }
+  let signalsReportCalls = 0
+  let signalsExportCalls = 0
   /** Clip history the sidebar must merge with the image history. */
   const videoHistoryEntries = [
     {
@@ -5496,6 +5738,26 @@ await check('E1 client apply mounts the sidebar entry and studio (jsdom)', async
     }
     if (path.endsWith('/diagnostics/clear')) {
       diagnosticsEntries.length = 0
+      return { ok: true, json: async () => ({ ok: true }) }
+    }
+    // L0: the behaviour report. `windowDays` is echoed back from the request so
+    // the panel's active-window button and the numbers it shows cannot drift.
+    if (path.endsWith('/signals/report')) {
+      signalsReportCalls += 1
+      const days = Number(init?.body === undefined ? 90 : JSON.parse(String(init.body)).windowDays ?? 90)
+      return { ok: true, json: async () => ({ ok: true, report: { ...signalsReport, windowDays: days } }) }
+    }
+    if (path.endsWith('/signals/export')) {
+      signalsExportCalls += 1
+      return { ok: true, json: async () => ({ ok: true, markdown: signalsReport.issue.body, title: signalsReport.issue.title, url: signalsReport.issue.url }) }
+    }
+    if (path.endsWith('/signals/record')) {
+      return { ok: true, json: async () => ({ ok: true, entry: undefined }) }
+    }
+    if (path.endsWith('/signals/list')) {
+      return { ok: true, json: async () => ({ ok: true, months: [], entries: [] }) }
+    }
+    if (path.endsWith('/signals/clear')) {
       return { ok: true, json: async () => ({ ok: true }) }
     }
     if (path.endsWith('/video/history/list')) {
@@ -6816,6 +7078,73 @@ await check('E1 client apply mounts the sidebar entry and studio (jsdom)', async
       'the record closes and leaves the studio behind it',
     )
     assert.equal(videoSubmissions.length, videoTasksAtOpen, 'opening the record never submits a render')
+
+    // --- L0: the behaviour report is reachable from the video studio too ---
+    // The report spans both pipelines (the fixture carries one image bucket and
+    // one video bucket), so a user whose images work and whose videos do not
+    // must reach it from where they already are.
+    const signalsButtons = [...view.querySelectorAll('[data-signals-button]')]
+    assert.equal(signalsButtons.length, 1, 'the video studio renders exactly one behaviour-report entry')
+    const reportCallsBeforeOpen = signalsReportCalls
+    signalsButtons[0].click()
+    assert.equal(
+      await waitFor(() => view.querySelector('[data-signals-panel]') !== null),
+      true,
+      'the entry opens the behaviour report with no task row present',
+    )
+    assert.ok(signalsReportCalls > reportCallsBeforeOpen, 'opening the report asks the host for the aggregate')
+    const signalsPanel = view.querySelector('[data-signals-panel]')
+    // The two verdict states the panel exists to keep apart: a real sample that
+    // earns `warn`, and a small one that earns NO verdict. A single "healthy"
+    // colour here would erase exactly this distinction.
+    const verdicts = [...signalsPanel.querySelectorAll('[data-verdict]')]
+    assert.equal(verdicts.length, 2, 'both buckets render as their own row')
+    assert.deepEqual(verdicts.map(row => row.dataset.verdict), ['warn', 'unknown'])
+    // Per-metric numbers, never one combined score.
+    const warnRow = verdicts[0]
+    assert.ok(warnRow.querySelector('[data-metric="retry"]') !== null, 'the retry rate is shown on its own')
+    assert.ok(warnRow.querySelector('[data-metric="delete"]') !== null, 'the delete rate is shown on its own')
+    assert.ok(warnRow.querySelector('[data-metric="failure"]') !== null, 'the failure rate is shown on its own')
+    assert.equal(
+      warnRow.textContent.includes('60%'),
+      true,
+      'the retry rate is rendered as the number the host computed, not recomputed here',
+    )
+    assert.equal(
+      signalsPanel.querySelector('[data-sample="10"]') !== null,
+      true,
+      'the small bucket still shows how many signals it has',
+    )
+    // Nothing on this surface may write: it is a report.
+    const signalsMutations = [
+      ...signalsPanel.querySelectorAll('button'),
+    ].filter(button => /删除|清空|delete|clear/i.test(button.textContent ?? ''))
+    assert.equal(signalsMutations.length, 0, 'the report offers no destructive action')
+
+    // "打开 issue" hands the draft to a new window; the host never posts it.
+    const issueButton = signalsPanel.querySelector('[data-signals-issue]')
+    assert.ok(issueButton !== null, 'the report offers the upstream draft')
+    const openedWith = []
+    const originalOpen = jsdomWindow.open
+    jsdomWindow.open = (url, ...rest) => { openedWith.push({ url: String(url), rest }); return {} }
+    const exportCallsBefore = signalsExportCalls
+    issueButton.click()
+    assert.ok(await waitFor(() => openedWith.length > 0, 1500), 'the draft opens a window on click')
+    jsdomWindow.open = originalOpen
+    assert.ok(signalsExportCalls > exportCallsBefore, 'the URL comes from the host, not from the panel')
+    assert.match(openedWith[0].url, /issues\/new/, 'the opened page is an issue form the user reviews before submitting')
+    assert.equal(openedWith[0].rest.includes('noopener,noreferrer'), true, 'the opened tab cannot reach back into the studio')
+
+    const signalsClose = [...signalsPanel.querySelectorAll('button')]
+      .find(button => button.textContent === '×')
+    assert.ok(signalsClose !== undefined, 'the report has a close button')
+    signalsClose.click()
+    assert.equal(
+      await waitFor(() => view.querySelector('[data-signals-panel]') === null),
+      true,
+      'the report closes and leaves the studio behind it',
+    )
+    assert.equal(videoSubmissions.length, videoTasksAtOpen, 'reading the report never submits a render')
 
     // The theme toggle must clear a frame error surfaced by the tab, so go back
     // to the image mode and confirm the composer returns unchanged.

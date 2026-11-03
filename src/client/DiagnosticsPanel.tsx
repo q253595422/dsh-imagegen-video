@@ -47,7 +47,7 @@ const FOCUSABLE = 'a[href], button:not(:disabled), input:not(:disabled), select:
  * @param ref - the element carrying the dialog role.
  * @param onClose - dismiss the overlay; called for Esc too.
  */
-function useModalFocus (open: boolean, ref: RefObject<HTMLElement | null>, onClose: () => void): void {
+export function useModalFocus (open: boolean, ref: RefObject<HTMLElement | null>, onClose: () => void): void {
   // Held in a ref: a fresh inline `onClose` on every render would otherwise tear
   // the listeners down and rebuild them, re-focusing the container mid-use.
   const closeRef = useRef(onClose)

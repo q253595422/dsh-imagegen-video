@@ -35,8 +35,10 @@ import { testStorage, type StorageSyncConfig } from './storage-sync.ts'
 import { checkForUpdate, CURRENT_VERSION, installUpdate, ManualUpdateRequiredError, updateInstallTarget, type UpdateHostContext } from './updater.ts'
 import { IMAGE_PRESETS } from './presets.ts'
 import { clearDiagnostics, listDiagnostics } from './diagnostics-store.ts'
+import { allSignals, clearSignals, listSignals, promptBucketOf, recordSignal } from './signal-store.ts'
+import { buildReport, DEFAULT_WINDOW_DAYS } from './signal-report.ts'
 import { extractProductLink } from './link-extract.ts'
-import { MODEL_API, AGENT_IMAGE_API, CANVAS_API, CANVAS_SKILL_API, CODE_RENDER_API, CONVERSATION_IMAGE_API, DATA_FOLDER_API, DEFAULT_TEMPLATE_SOURCE_ID, DIAGNOSTICS_API, GALLERY_API, GENERATE_API, HISTORY_API, IMAGEGEN_SETTINGS_NAMESPACE, IMAGE_MODEL_API, LISTING_COPY_API, PRESETS_API, PROMPT_ENHANCE_API, SETTINGS_API, STORAGE_API, SUBSCRIPTION_API, SUBSCRIPTION_PROVIDERS, TASK_API, TEMPLATE_FAVORITES_API, TEMPLATES_API, UPDATE_API, USAGE_API, VIDEO_API, isChannelProtocolPreference, isTemplateSourceId, type CanvasAssetRef, type CanvasDocument, type VideoDirectorPlan, type CanvasSkillCatalog, type CanvasSkillConfigApplyRequest, type CanvasSkillConfigApplyResult, type CanvasSkillConfigSaveRequest, type CanvasSkillConfigSaveResult, type CanvasSkillInstallRequest, type CanvasSkillInstallResult, type CanvasSkillLibrary, type CanvasSkillRemoveResult, type CanvasSkillRunRequest, type CanvasSkillTask, type ListingCopyRequest, type PptRunRequest, type PptRuntimeStatus, type GeneratedImage, type GenerateRequest, type HistoryEntry, type HistoryEntryInput, type ModelMapping, type PresetProviderView, type TemplateFavorite, type TemplateListResult, type TemplateRefreshResult, type TemplateSample, type CanvasVideoTaskMeta, type VideoGenerateRequest, type VideoHistoryEntry } from './protocol.ts'
+import { MODEL_API, AGENT_IMAGE_API, CANVAS_API, CANVAS_SKILL_API, CODE_RENDER_API, CONVERSATION_IMAGE_API, DATA_FOLDER_API, DEFAULT_TEMPLATE_SOURCE_ID, DIAGNOSTICS_API, GALLERY_API, GENERATE_API, HISTORY_API, IMAGEGEN_SETTINGS_NAMESPACE, IMAGE_MODEL_API, LISTING_COPY_API, PRESETS_API, PROMPT_ENHANCE_API, SETTINGS_API, SIGNALS_API, STORAGE_API, SUBSCRIPTION_API, SUBSCRIPTION_PROVIDERS, TASK_API, TEMPLATE_FAVORITES_API, TEMPLATES_API, UPDATE_API, USAGE_API, VIDEO_API, isChannelProtocolPreference, isTemplateSourceId, type CanvasAssetRef, type CanvasDocument, type VideoDirectorPlan, type CanvasSkillCatalog, type CanvasSkillConfigApplyRequest, type CanvasSkillConfigApplyResult, type CanvasSkillConfigSaveRequest, type CanvasSkillConfigSaveResult, type CanvasSkillInstallRequest, type CanvasSkillInstallResult, type CanvasSkillLibrary, type CanvasSkillRemoveResult, type CanvasSkillRunRequest, type CanvasSkillTask, type ListingCopyRequest, type PptRunRequest, type PptRuntimeStatus, type GeneratedImage, type GenerateRequest, type HistoryEntry, type HistoryEntryInput, type ModelMapping, type PresetProviderView, type TemplateFavorite, type TemplateListResult, type TemplateRefreshResult, type TemplateSample, type CanvasVideoTaskMeta, type VideoGenerateRequest, type VideoHistoryEntry } from './protocol.ts'
 import { probeCodeRender } from './code-render-runtime.ts'
 
 /** Cap on JSON request bodies (settings ops and generate payloads are small). */
@@ -813,6 +815,39 @@ export function makeRoutes(deps: ImageGenRoutesDeps): WebRoute[] {
     readFile: readVideoFile,
   }
   const resolvePrompt = deps.resolvePrompt ?? (() => ({ apiUrl: '', apiKey: '', model: '' }))
+  /**
+   * Record a `delete` signal for one removed generation.
+   *
+   * WHY the host and not the client: the client knows only an id, and the
+   * client can be reloaded, blocked, or simply older than this feature. The
+   * host already holds the entry it is about to delete, so the model, mode and
+   * presence of a reference image are all available here — and the lookup runs
+   * BEFORE the removal, because afterwards there is nothing left to attribute
+   * the signal to.
+   *
+   * Best-effort by design: a signal that cannot be attributed is skipped, and a
+   * failed write never fails the delete the user asked for.
+   */
+  const recordDelete = async (pipeline: 'image' | 'video', id: string): Promise<void> => {
+    try {
+      const entries = pipeline === 'image' ? await history.list() : await video.list()
+      const entry = entries.find(candidate => candidate.id === id)
+      if (entry === undefined) return
+      await recordSignal({
+        kind: 'delete',
+        pipeline,
+        model: entry.model,
+        channel: 'channel' in entry && typeof entry.channel === 'string' ? entry.channel : '',
+        mode: entry.mode,
+        prompt: entry.prompt,
+        hasReference: typeof entry.refName === 'string' && entry.refName !== '',
+        source: 'auto',
+      })
+    } catch {
+      // A signal is telemetry for the next release, never a precondition for
+      // the deletion the user just asked for.
+    }
+  }
   // Every gallery mutation answers with the same pair: what the user may see on
   // the shelf, and what sits in the trash. The stores return one combined list
   // (a soft delete only flips a flag), so the split lives here, once.
@@ -1247,6 +1282,101 @@ export function makeRoutes(deps: ImageGenRoutesDeps): WebRoute[] {
         writeJson(res, 200, { ok: true })
       },
     },
+    // ------------------------------------------------ behaviour signals
+    // Self-evolution L0. The diagnostics buffer above explains one attempt and
+    // forgets it at restart; these routes are the memory that outlives it. The
+    // entries carry metadata only (model, mode, prompt LENGTH bucket, failure
+    // code) — never a prompt, an image or a credential — and nothing here sends
+    // them anywhere. `report` builds the aggregate; `export` is the same
+    // aggregate as markdown, for a user who wants to hand it over by hand.
+    {
+      kind: 'exact', path: SIGNALS_API.record,
+      handler: async (req, res) => {
+        if (!guard(req, res, 'POST')) return
+        const body = await readJsonBody(req)
+        try {
+          const entry = await recordSignal(body ?? {})
+          // An unrecognized kind is a caller bug, not a server error: answer
+          // with what happened so the panel can say "this build is older".
+          writeJson(res, 200, entry === undefined ? { ok: false, code: 'bad-signal' } : { ok: true, entry })
+        } catch (error) {
+          writeJson(res, 200, { ok: false, code: 'signal-failed', message: messageOf(error) })
+        }
+      },
+    },
+    {
+      kind: 'exact', path: SIGNALS_API.list,
+      handler: async (req, res) => {
+        if (!guard(req, res, 'POST')) return
+        try {
+          const months = await listSignals()
+          writeJson(res, 200, {
+            ok: true,
+            months: months.map(month => ({ month: month.month, count: month.entries.length, ...month.truncated === undefined ? {} : { truncated: month.truncated } })),
+            entries: months.flatMap(month => month.entries),
+          })
+        } catch (error) {
+          writeJson(res, 200, { ok: false, code: 'signal-failed', message: messageOf(error) })
+        }
+      },
+    },
+    {
+      kind: 'exact', path: SIGNALS_API.report,
+      handler: async (req, res) => {
+        if (!guard(req, res, 'POST')) return
+        try {
+          const body = await readJsonBody(req)
+          const windowDays = typeof body?.windowDays === 'number' && Number.isFinite(body.windowDays)
+            ? Math.min(Math.max(Math.round(body.windowDays), 1), 365)
+            : DEFAULT_WINDOW_DAYS
+          const months = await listSignals()
+          const entries = months.flatMap(month => month.entries)
+          const timed = entries.map(entry => entry.at)
+          writeJson(res, 200, {
+            ok: true,
+            report: buildReport(entries, {
+              windowDays,
+              language: body?.language === 'en' ? 'en' : 'zh',
+              gaps: {
+                monthsRead: months.filter(month => month.entries.length > 0).length,
+                truncated: months.filter(month => month.truncated !== undefined).map(month => month.month),
+                ...timed.length === 0 ? {} : { oldestAt: Math.min(...timed), newestAt: Math.max(...timed) },
+              },
+            }),
+          })
+        } catch (error) {
+          writeJson(res, 200, { ok: false, code: 'signal-failed', message: messageOf(error) })
+        }
+      },
+    },
+    {
+      kind: 'exact', path: SIGNALS_API.export,
+      handler: async (req, res) => {
+        if (!guard(req, res, 'POST')) return
+        try {
+          const body = await readJsonBody(req)
+          const entries = await allSignals()
+          const report = buildReport(entries, { language: body?.language === 'en' ? 'en' : 'zh' })
+          // Markdown, not a file: the browser decides whether to copy or save,
+          // and the host never writes outside its own data directory.
+          writeJson(res, 200, { ok: true, markdown: report.issue.body, title: report.issue.title, url: report.issue.url })
+        } catch (error) {
+          writeJson(res, 200, { ok: false, code: 'signal-failed', message: messageOf(error) })
+        }
+      },
+    },
+    {
+      kind: 'exact', path: SIGNALS_API.clear,
+      handler: async (req, res) => {
+        if (!guard(req, res, 'POST')) return
+        try {
+          await clearSignals()
+          writeJson(res, 200, { ok: true })
+        } catch (error) {
+          writeJson(res, 200, { ok: false, code: 'signal-failed', message: messageOf(error) })
+        }
+      },
+    },
     {
       kind: 'exact', path: TASK_API.get,
       handler: async (req, res) => {
@@ -1274,6 +1404,19 @@ export function makeRoutes(deps: ImageGenRoutesDeps): WebRoute[] {
         const body = await readJsonBody(req)
         const task = typeof body?.id === 'string' ? runtime.queue.retry(body.id) : undefined
         if (task === undefined) { writeJson(res, 200, { ok: false, code: 'not-found', message: 'task not found' }); return }
+        // A retry is the strongest quality statement the user makes without
+        // typing anything: the result was not usable. Recorded from the task,
+        // because a retried queue entry still carries the request it repeats.
+        void recordSignal({
+          kind: 'retry',
+          pipeline: 'image',
+          model: task.request.model,
+          channel: task.request.channel ?? '',
+          mode: task.request.mode,
+          prompt: task.request.prompt,
+          hasReference: typeof task.request.image === 'string' && task.request.image !== '',
+          source: 'auto',
+        }).catch(() => { /* the retry already started; a lost signal must not undo it */ })
         writeJson(res, 200, { ok: true, task })
       },
     },
@@ -1426,6 +1569,7 @@ export function makeRoutes(deps: ImageGenRoutesDeps): WebRoute[] {
           return
         }
         try {
+          await recordDelete('image', id)
           writeJson(res, 200, { ok: true, entries: await history.remove(id) })
         } catch (error) {
           writeJson(res, 200, { ok: false, code: 'history-failed', message: messageOf(error) })
@@ -2575,6 +2719,16 @@ export function makeRoutes(deps: ImageGenRoutesDeps): WebRoute[] {
         const body = await readJsonBody(req)
         const task = typeof body?.id === 'string' ? deps.runtime?.videoQueue.retry(body.id) : undefined
         if (task === undefined) { writeJson(res, 200, { ok: false, code: 'not-found', message: 'task not found' }); return }
+        void recordSignal({
+          kind: 'retry',
+          pipeline: 'video',
+          model: task.request.model,
+          channel: task.request.channel ?? '',
+          mode: task.request.mode,
+          prompt: task.request.prompt,
+          hasReference: typeof task.request.image === 'string' && task.request.image !== '',
+          source: 'auto',
+        }).catch(() => { /* same rule as the image retry: never fail the retry */ })
         writeJson(res, 200, { ok: true, task })
       },
     },
@@ -2616,6 +2770,7 @@ export function makeRoutes(deps: ImageGenRoutesDeps): WebRoute[] {
           return
         }
         try {
+          await recordDelete('video', body.id)
           writeJson(res, 200, { ok: true, entries: await video.remove(body.id) })
         } catch (error) {
           writeJson(res, 200, { ok: false, code: 'video-history-failed', message: messageOf(error) })

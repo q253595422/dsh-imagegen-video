@@ -129,6 +129,145 @@ export const DIAGNOSTICS_API = {
   clear: '/api/dsh-imagegen/diagnostics/clear',
 } as const
 
+/**
+ * Behaviour signals (self-evolution L0).
+ *
+ * Diagnostics explain ONE failed request. They cannot answer "is this model
+ * getting worse", because they are in-memory, capped at 200, and lost on
+ * restart — and because the most informative moments (the user hit retry, the
+ * user deleted the result) never reached the host at all.
+ *
+ * This store is the missing memory: an append-only, on-disk record of what the
+ * user did AFTER seeing a result. Deliberately narrow — see signal-store.ts for
+ * what is and is not written.
+ */
+export const SIGNALS_API = {
+  list: '/api/dsh-imagegen/signals/list',
+  record: '/api/dsh-imagegen/signals/record',
+  report: '/api/dsh-imagegen/signals/report',
+  export: '/api/dsh-imagegen/signals/export',
+  clear: '/api/dsh-imagegen/signals/clear',
+} as const
+
+/**
+ * One behaviour signal. Every field is metadata: a model id, a mode, an error
+ * code, a coarse reason. Never a prompt, an image, or a credential.
+ *
+ * `kind` names what happened:
+ *  - `retry`     the user asked for the same thing again (result unsatisfying)
+ *  - `delete`    the user threw the result away (wasted spend)
+ *  - `failure`   the pipeline failed on its own (upstream or local)
+ *  - `rating`    the user answered the explicit "not good" prompt
+ */
+export type SignalKind = 'retry' | 'delete' | 'failure' | 'rating'
+
+/** Why the user said a result was not good. Coarse on purpose: a taxonomy
+ *  that needs explaining collects no answers. */
+export type SignalReason = 'unlike' | 'text' | 'slow' | 'misread'
+
+/** Which pipeline produced the result the signal is about. */
+export type SignalPipeline = 'image' | 'video' | 'canvas' | 'skill'
+
+/** Where the signal originated, so a report can separate automatic from asked. */
+export type SignalSource = 'auto' | 'user'
+
+/** Prompt-length buckets. Coarse by design: the report needs "long vs short",
+ *  not a histogram, and a bucket cannot be inverted back into a prompt. */
+export type PromptBucket = 'none' | 'short' | 'medium' | 'long' | 'huge'
+
+export interface SignalEntry {
+  /** Monotonic per host; stable enough to dedupe a double-clicked rating. */
+  id: string
+  at: number
+  kind: SignalKind
+  pipeline: SignalPipeline
+  /** Model id that produced the result ('' when the signal predates a model). */
+  model: string
+  /** Channel display name snapshot (survives channel deletion). */
+  channel: string
+  /** Mode string as the pipeline uses it (t2i / i2i / t2v / ...). */
+  mode: string
+  /** Coarse bucket for the prompt length, never the prompt itself. */
+  promptBucket?: PromptBucket
+  /** Whether a reference image was involved. */
+  hasReference?: boolean
+  /** Failure code the pipeline reported (e.g. timeout, http-500). */
+  failureCode?: string
+  /** Only on `rating`. */
+  reason?: SignalReason
+  /** Automatic or explicit. */
+  source: SignalSource
+  /** Plugin version at record time, so a report can credit a fix. */
+  version: string
+}
+
+/**
+ * Wire shapes for the report surface.
+ *
+ * These mirror `signal-report.ts`, which owns the computation. They live in
+ * protocol.ts because the browser renders them directly, and a hand-written
+ * client interface would drift from the host's shape silently.
+ */
+export type SignalVerdict = 'unknown' | 'ok' | 'watch' | 'warn'
+
+export interface SignalBucketSummary {
+  pipeline: SignalPipeline
+  model: string
+  mode: string
+  promptBucket: PromptBucket | ''
+  hasReference?: boolean
+  total: number
+  retry: number
+  delete: number
+  failure: number
+  rating: number
+  reasons: Record<SignalReason, number>
+  retryRate: number
+  deleteRate: number
+  failureRate: number
+  ratingRate: number
+  verdict: SignalVerdict
+  verdictMetric: 'retry' | 'delete' | 'failure' | 'rating' | ''
+}
+
+export interface SignalFindingSummary {
+  id: string
+  severity: 'info' | 'watch' | 'warn'
+  metric: 'retry' | 'delete' | 'failure' | 'rating'
+  scope: string
+  value: number
+  sample: number
+  zh: string
+  en: string
+}
+
+/** Where the reading came from, and what it could not see. */
+export interface SignalReportGaps {
+  monthsRead: number
+  truncated: string[]
+  oldestAt?: number
+  newestAt?: number
+}
+
+export interface SignalReportSummary {
+  generatedAt: number
+  windowDays: number
+  total: number
+  byKind: Record<SignalKind, number>
+  byPipeline: Record<SignalPipeline, number>
+  buckets: SignalBucketSummary[]
+  findings: SignalFindingSummary[]
+  gaps: SignalReportGaps
+  issue: { title: string; body: string; url: string }
+}
+
+/** One month as the list route reports it (counts only, not the entries). */
+export interface SignalMonthSummary {
+  month: string
+  count: number
+  truncated?: 'size' | 'unreadable'
+}
+
 /** Probe the configured S3-compatible object storage. */
 export const STORAGE_API = {
   test: '/api/dsh-imagegen/storage/test',

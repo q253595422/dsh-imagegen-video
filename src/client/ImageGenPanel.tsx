@@ -32,6 +32,7 @@ import PromoWorkspace from './PromoWorkspace.tsx'
 import { AplusWorkspace } from './AplusWorkspace.tsx'
 import { ModelPicker, resolveModelChoice, type ModelPickerValue } from './ModelPicker.tsx'
 import { DiagnosticsButton, DiagnosticsPanel } from './DiagnosticsPanel.tsx'
+import { SignalsButton, SignalsPanel } from './SignalsPanel.tsx'
 import { GenerationLoading } from './GenerationLoading.tsx'
 import { useImageGenLanguageTick } from './use-language.ts'
 import type { EcommerceRefRole, GenerateMode, GenerateRequest, GeneratedImage, GenerationTask, GenerationTaskStatus, GenerationTaskSummary, HistoryEntry, HistoryImageRef, ProductSetDraft, ProductSetSlot, UpdateInfo, VideoHistoryEntry, VideoTaskSummary } from '../protocol.ts'
@@ -1157,6 +1158,9 @@ export function ImageGenPanel(props: {
   const [taskTrayOpen, setTaskTrayOpen] = useState(false)
   /** #38: the retained record of upstream attempts, opened from the task tray. */
   const [diagnosticsOpen, setDiagnosticsOpen] = useState(false)
+  // The behaviour report is a separate overlay from the attempt record: one
+  // explains a single failure, the other a pattern across many generations.
+  const [signalsOpen, setSignalsOpen] = useState(false)
   const [comparison, setComparison] = useState<ComparisonSession | null>(null)
   const [comparisonFullscreen, setComparisonFullscreen] = useState(false)
   const [ecommerce, setEcommerce] = useState<ProductSetDraft>(() => {
@@ -4167,6 +4171,7 @@ export function ImageGenPanel(props: {
                 {/* #38: "the request never arrived and there is nowhere to look".
                     This is that place: every attempt, with its address and status. */}
                 <DiagnosticsButton open={diagnosticsOpen} onToggle={() => { setDiagnosticsOpen(open => !open) }} />
+                <SignalsButton open={signalsOpen} onToggle={() => { setSignalsOpen(open => !open) }} />
               </header>
               <div className={css.taskRows}>
                 {tasks.slice(0, 5).map(task => (
@@ -4592,6 +4597,7 @@ export function ImageGenPanel(props: {
         )
         : null}
       <DiagnosticsPanel api={api} open={diagnosticsOpen} onClose={() => { setDiagnosticsOpen(false) }} />
+      <SignalsPanel api={api} open={signalsOpen} onClose={() => { setSignalsOpen(false) }} />
     </div>
   )
 }

@@ -12,6 +12,7 @@ import { isChatCompletionsUrl, resolveChannelProtocol, type ChannelProtocolPrefe
 import { detectImageMime } from './image-format.ts'
 import { modelFamily, promptCharLimit } from './model-catalog.ts'
 import { bodyByteLength, excerptOf, networkErrorFields, readResponseExcerpt, readResponseText, recordDiagnostic, type DiagnosticPhase } from './diagnostics-store.ts'
+import { recordSignal } from './signal-store.ts'
 
 /** The upstream credentials the panel's settings card configures. */
 export interface UpstreamConfig {
@@ -1599,6 +1600,19 @@ function recordFailure(context: AttemptContext, error: ImageGenError, options: {
     hadAuth: context.hadAuth,
     apiUrlFull: context.apiUrlFull,
   })
+  // The same moment, a second destination. Diagnostics answer "what happened";
+  // this answers "how often does this combination fail", and the answer has to
+  // outlive the process. Fire-and-forget: a signal write must never turn one
+  // upstream failure into two.
+  void recordSignal({
+    kind: 'failure',
+    pipeline: 'image',
+    model: context.model,
+    channel: context.channel,
+    mode: context.mode,
+    failureCode: error.code,
+    source: 'auto',
+  }).catch(() => { /* the diagnostics row above is the durable record of truth */ })
 }
 
 /** Build the attempt context for one upstream call. */

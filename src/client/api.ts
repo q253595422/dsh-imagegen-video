@@ -3,7 +3,7 @@
  * data access path the panel uses — plain fetch, same origin.
  */
 
-import { MODEL_API, CANVAS_API, CANVAS_SKILL_API, CODE_RENDER_API, CONVERSATION_IMAGE_API, DATA_FOLDER_API, DIAGNOSTICS_API, GALLERY_API, GENERATE_API, HISTORY_API, LISTING_COPY_API, ECOMMERCE_LINK_API, PROMPT_ENHANCE_API, STORAGE_API, TASK_API, TEMPLATE_FAVORITES_API, TEMPLATES_API, UPDATE_API, VIDEO_API, type CanvasAssetRef, type CanvasDocument, type CanvasFilePreview, type CanvasLayerPlan, type CanvasSkillCatalog, type CanvasSkillConfigApplyRequest, type CanvasSkillConfigApplyResult, type CanvasSkillConfigSaveRequest, type CanvasSkillConfigSaveResult, type CanvasSkillInstallRequest, type CanvasSkillInstallResult, type CanvasSkillLibrary, type CanvasSkillRemoveResult, type CanvasSkillRunRequest, type CanvasSkillTask, type CanvasSummary, type CodeRenderResponse, type CodeTarget, type DiagnosticEntry, type GenerateRequest, type GenerateResult, type ListingCopyRequest, type ListingCopyResult, type EcommerceLinkResult, type GenerationTask, type GenerationTaskSummary, type HistoryEntry, type HistoryEntryInput, type PptRunRequest, type PptRuntimeStatus, type TemplateCase, type TemplateFavorite, type TemplateListResult, type TemplateRefreshResult, type TemplateSample, type UpdateInfo, type VideoDirectorPlan, type VideoGenerateRequest, type VideoGenerateResult, type VideoHistoryEntry, type VideoTask, type VideoTaskSummary } from '../protocol.ts'
+import { MODEL_API, CANVAS_API, CANVAS_SKILL_API, CODE_RENDER_API, CONVERSATION_IMAGE_API, DATA_FOLDER_API, DIAGNOSTICS_API, GALLERY_API, GENERATE_API, HISTORY_API, LISTING_COPY_API, ECOMMERCE_LINK_API, PROMPT_ENHANCE_API, SIGNALS_API, STORAGE_API, TASK_API, TEMPLATE_FAVORITES_API, TEMPLATES_API, UPDATE_API, VIDEO_API, type CanvasAssetRef, type CanvasDocument, type CanvasFilePreview, type CanvasLayerPlan, type CanvasSkillCatalog, type CanvasSkillConfigApplyRequest, type CanvasSkillConfigApplyResult, type CanvasSkillConfigSaveRequest, type CanvasSkillConfigSaveResult, type CanvasSkillInstallRequest, type CanvasSkillInstallResult, type CanvasSkillLibrary, type CanvasSkillRemoveResult, type CanvasSkillRunRequest, type CanvasSkillTask, type CanvasSummary, type CodeRenderResponse, type CodeTarget, type DiagnosticEntry, type GenerateRequest, type GenerateResult, type ListingCopyRequest, type ListingCopyResult, type EcommerceLinkResult, type GenerationTask, type GenerationTaskSummary, type HistoryEntry, type HistoryEntryInput, type PptRunRequest, type PptRuntimeStatus, type SignalReportSummary, type TemplateCase, type TemplateFavorite, type TemplateListResult, type TemplateRefreshResult, type TemplateSample, type UpdateInfo, type VideoDirectorPlan, type VideoGenerateRequest, type VideoGenerateResult, type VideoHistoryEntry, type VideoTask, type VideoTaskSummary } from '../protocol.ts'
 import { activeImageGenLanguage } from './helpers.ts'
 
 /** Error carrying the route's JSON error message. */
@@ -327,6 +327,62 @@ export class ImageGenApi {
   /** Drop the retained attempts. */
   async diagnosticsClear(): Promise<void> {
     const response = await fetch(DIAGNOSTICS_API.clear, { method: 'POST' })
+    await readEnvelope<{ ok: true }>(response)
+  }
+
+  /**
+   * Record one behaviour signal (self-evolution L0).
+   *
+   * Sent for a rating the user clicked. The automatic kinds — retry, delete,
+   * failure — are recorded host-side, because the host already holds the model
+   * and mode at the moment they happen and the browser can only send what it
+   * happens to remember.
+   */
+  async signalRecord(input: {
+    kind: 'retry' | 'delete' | 'failure' | 'rating'
+    pipeline: 'image' | 'video' | 'canvas' | 'skill'
+    model?: string
+    channel?: string
+    mode?: string
+    prompt?: string
+    hasReference?: boolean
+    failureCode?: string
+    reason?: 'unlike' | 'text' | 'slow' | 'misread'
+    nonce?: string
+    source?: 'auto' | 'user'
+  }): Promise<boolean> {
+    const response = await fetch(SIGNALS_API.record, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify(input),
+    })
+    const body = await readEnvelope<{ ok: boolean }>(response)
+    return body.ok
+  }
+
+  /** The aggregate report. Read-only; nothing here mutates what it summarises. */
+  async signalReport(windowDays?: number): Promise<SignalReportSummary> {
+    const response = await fetch(SIGNALS_API.report, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ ...windowDays === undefined ? {} : { windowDays }, language: activeImageGenLanguage() }),
+    })
+    return (await readEnvelope<{ ok: true; report: SignalReportSummary }>(response)).report
+  }
+
+  /** The same aggregate as an issue draft (markdown + prefilled GitHub URL). */
+  async signalExport(): Promise<{ markdown: string; title: string; url: string }> {
+    const response = await fetch(SIGNALS_API.export, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ language: activeImageGenLanguage() }),
+    })
+    return await readEnvelope<{ ok: true; markdown: string; title: string; url: string }>(response)
+  }
+
+  /** Delete every retained signal. The user's data: explicit request only. */
+  async signalClear(): Promise<void> {
+    const response = await fetch(SIGNALS_API.clear, { method: 'POST' })
     await readEnvelope<{ ok: true }>(response)
   }
 

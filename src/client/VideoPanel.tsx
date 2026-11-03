@@ -24,6 +24,7 @@ import { Select } from './Select.tsx'
 import { resolveModelChoice } from './ModelPicker.tsx'
 import { ErrorDetail } from './ErrorDetail.tsx'
 import { DiagnosticsButton, DiagnosticsPanel } from './DiagnosticsPanel.tsx'
+import { SignalsButton, SignalsPanel } from './SignalsPanel.tsx'
 import type { ImageGenKey } from './locales.ts'
 import { onTablistKeyDown, tabIndexFor } from './tablist.ts'
 import css from './panel.module.css'
@@ -189,6 +190,8 @@ export function VideoPanel(props: VideoPanelProps) {
   const [planning, setPlanning] = useState(false)
   /** #38 video parity: the retained record of upstream attempts. */
   const [diagnosticsOpen, setDiagnosticsOpen] = useState(false)
+  // Same split as the image studio: one attempt vs. a pattern across many.
+  const [signalsOpen, setSignalsOpen] = useState(false)
   const [now, setNow] = useState(() => Date.now())
   /** The clip (and the run that made it) shown in the full-screen player. */
   const [previewClip, setPreviewClip] = useState<{ url: string; mime: string; duration?: number; title: string } | null>(null)
@@ -504,6 +507,7 @@ export function VideoPanel(props: VideoPanelProps) {
           this panel exists to answer. */}
       <div className={css.videoDiagnosticsRow}>
         <DiagnosticsButton open={diagnosticsOpen} onToggle={() => { setDiagnosticsOpen(open => !open) }} />
+        <SignalsButton open={signalsOpen} onToggle={() => { setSignalsOpen(open => !open) }} />
       </div>
 
       <div className={css.videoBody}>
@@ -870,6 +874,7 @@ export function VideoPanel(props: VideoPanelProps) {
         </div>
       ) : null}
       <DiagnosticsPanel api={api} open={diagnosticsOpen} onClose={() => { setDiagnosticsOpen(false) }} />
+      <SignalsPanel api={api} open={signalsOpen} onClose={() => { setSignalsOpen(false) }} />
     </div>
   )
 }

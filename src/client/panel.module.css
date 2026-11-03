@@ -1163,6 +1163,45 @@ html[data-dsh-imagegen-active] .sidebarHistoryHost {
 }
 .taskRow button:hover { color: var(--dsw-alias-brand-primary); }
 
+/* --- behaviour signals (self-evolution L0) -------------------------------- */
+/* The three rates are shown as three labelled numbers, never merged into one
+   score: they lead to different fixes, and a combined bar would let a broken
+   channel hide behind a healthy model. Colour is therefore per-metric state,
+   and `unknown` (a sample too small to judge) is deliberately neutral rather
+   than green. */
+.signalsFindings { display: flex; flex-direction: column; gap: 6px; padding: 4px 6px 10px; }
+.signalsFinding {
+  margin: 0;
+  padding: 6px 9px;
+  border-left: 2px solid var(--dsw-alias-border-l2);
+  border-radius: 0 var(--dsw-radius-sm) var(--dsw-radius-sm) 0;
+  color: var(--dsw-alias-label-secondary);
+  background: var(--dsw-alias-bg-layer-2);
+  font-size: 11px;
+  line-height: 1.6;
+  overflow-wrap: anywhere;
+}
+.signalsFinding[data-severity='warn'] { border-left-color: var(--dsw-alias-state-error-primary, #ec1313); }
+.signalsFinding[data-severity='watch'] { border-left-color: var(--dsw-alias-state-warn-primary, #e08b00); }
+
+.signalsRates {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 14px;
+  color: var(--dsw-alias-label-secondary);
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+}
+.signalsRates b { color: var(--dsw-alias-label-tertiary); font-weight: 400; }
+.signalsRates [data-metric='failure'] { color: var(--dsw-alias-state-error-primary, #ec1313); }
+.signalsRates [data-metric='rating'] { color: var(--dsw-alias-state-warn-primary, #e08b00); }
+
+/* A verdict on the row's outer edge, so the eye can scan the left margin. */
+.diagnosticsRow[data-verdict='warn'] { box-shadow: inset 2px 0 0 var(--dsw-alias-state-error-primary, #ec1313); }
+.diagnosticsRow[data-verdict='watch'] { box-shadow: inset 2px 0 0 var(--dsw-alias-state-warn-primary, #e08b00); }
+.diagnosticsRow[data-verdict='unknown'] { opacity: .85; }
+
+
 .configGuide { position: fixed; inset: 0; z-index: var(--z-guide); display: grid; place-items: center; padding: 20px; background: var(--dsw-alias-bg-mask-1); }
 .configGuideBody { display: flex; width: min(360px, 100%); flex-direction: column; gap: 12px; padding: 18px; border: 1px solid var(--dsw-alias-border-l2); border-radius: var(--dsw-radius-md); color: var(--dsw-alias-label-primary); background: var(--dsw-alias-bg-layer-1); box-shadow: var(--dsw-elevation-panel); }
 .configGuideBody span { color: var(--dsw-alias-label-secondary); font-size: 13px; line-height: 1.55; }

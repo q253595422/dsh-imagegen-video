@@ -140,7 +140,7 @@
     "upstream:check": "node scripts/upstream-sync.mjs --check",
     "upstream:plan": "node scripts/upstream-sync.mjs",
     "upstream:adopt": "node scripts/upstream-sync.mjs --adopt",
-    "test": "node scripts/verify-tracked.mjs && pnpm build && node scripts/verify-reproducible.mjs && node scripts/verify-native-ui.mjs && node scripts/smoke.mjs && node scripts/smoke-storyboard.mjs && node scripts/smoke-video.mjs && node scripts/smoke-video-director.mjs && node scripts/smoke-code-render.mjs && node scripts/smoke-workflow.mjs && node scripts/smoke-timeline.mjs && node scripts/smoke-cast.mjs && node scripts/smoke-canvas-video.mjs && node scripts/smoke-video-picker.mjs && node scripts/smoke-compose.mjs && node scripts/verify-timeline-compose.mjs && node scripts/verify-b-defect.mjs && node scripts/verify-video-layout.mjs && node scripts/verify-frame-grab.mjs && node scripts/verify-canvas-layout.mjs && node scripts/verify-ui-contracts.mjs",
+    "test": "node scripts/verify-tracked.mjs && pnpm build && node scripts/verify-reproducible.mjs && node scripts/verify-native-ui.mjs && node scripts/smoke.mjs && node scripts/smoke-signals.mjs && node scripts/smoke-storyboard.mjs && node scripts/smoke-video.mjs && node scripts/smoke-video-director.mjs && node scripts/smoke-code-render.mjs && node scripts/smoke-workflow.mjs && node scripts/smoke-timeline.mjs && node scripts/smoke-cast.mjs && node scripts/smoke-canvas-video.mjs && node scripts/smoke-video-picker.mjs && node scripts/smoke-compose.mjs && node scripts/verify-timeline-compose.mjs && node scripts/verify-b-defect.mjs && node scripts/verify-video-layout.mjs && node scripts/verify-frame-grab.mjs && node scripts/verify-canvas-layout.mjs && node scripts/verify-ui-contracts.mjs",
     "test:tracked": "node scripts/verify-tracked.mjs",
     "test:video": "node scripts/smoke-video.mjs",
     "test:director": "node scripts/smoke-video-director.mjs",
@@ -154,7 +154,8 @@
     "test:timeline-compose": "node scripts/verify-timeline-compose.mjs",
     "test:picker": "node scripts/smoke-video-picker.mjs",
     "test:defect-b": "node scripts/verify-b-defect.mjs",
-    "test:negative": "node scripts/verify-negative.mjs canvas-layout && node scripts/verify-negative.mjs contracts && node scripts/verify-negative.mjs smoke && node scripts/verify-negative.mjs video && node scripts/verify-negative.mjs canvas-video && node scripts/verify-negative.mjs storyboard && node scripts/verify-negative.mjs workflow && node scripts/verify-negative.mjs timeline && node scripts/verify-negative.mjs cast && node scripts/verify-negative.mjs pack && node scripts/verify-negative.mjs tracked && node scripts/verify-negative.mjs reproducible",
-    "studio:preview": "tsdown --config scripts/studio-preview.config.ts"
+    "test:negative": "node scripts/verify-negative.mjs canvas-layout && node scripts/verify-negative.mjs contracts && node scripts/verify-negative.mjs smoke && node scripts/verify-negative.mjs video && node scripts/verify-negative.mjs canvas-video && node scripts/verify-negative.mjs storyboard && node scripts/verify-negative.mjs workflow && node scripts/verify-negative.mjs timeline && node scripts/verify-negative.mjs cast && node scripts/verify-negative.mjs signals && node scripts/verify-negative.mjs pack && node scripts/verify-negative.mjs tracked && node scripts/verify-negative.mjs reproducible",
+    "studio:preview": "tsdown --config scripts/studio-preview.config.ts",
+    "test:signals": "node scripts/smoke-signals.mjs"
   }
 }
