@@ -52,7 +52,7 @@ const ENTRIES: Record<Exclude<VideoModelFamily, 'unknown'>, Omit<VideoCatalogEnt
     known: true,
     modes: ['text', 'image', 'keyframe', 'reference'],
     resolutions: ['480P', '720P', '1080P'],
-    aspectRatios: ['16:9', '9:16', '1:1', '4:3', '3:4'],
+    aspectRatios: ['16:9', '9:16', '1:1', '4:3', '3:4', '21:9'],
     supportsSeed: true,
     requiresReference: false,
   },
@@ -173,7 +173,16 @@ export function isArkSeedanceVideoModel(model: string): boolean {
 export function describeVideoModel(model: string): VideoCatalogEntry {
   const id = model.trim()
   if (id === '') return unknownEntry()
-  if (/^agnes-video/i.test(id)) return { family: 'agnes', ...ENTRIES.agnes }
+  if (/^agnes-video/i.test(id)) {
+    const base = ENTRIES.agnes
+    // `agnes-video-2.5-flash` is documented as 720P-only: any other `size` is
+    // rejected with `400 size must be 720P` BEFORE the task is created. Narrow
+    // the tier list so the panel cannot offer a 1080P pick that is guaranteed
+    // to fail; non-flash ids keep the full range.
+    return /flash/i.test(id)
+      ? { family: 'agnes', ...base, resolutions: ['720P'] }
+      : { family: 'agnes', ...base }
+  }
   // Before the generic `isLikelyVideoModelId` branch: `grok-imagine-video-*`
   // matches that regex too, and the generic family posts to `/videos`, which
   // xAI answers with 404 (it serves `/videos/generations`).

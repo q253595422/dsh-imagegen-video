@@ -18,7 +18,7 @@ import { Readable } from 'node:stream'
 import { chmodSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { promises as fsPromises } from 'node:fs'
 import { homedir, tmpdir } from 'node:os'
-import { isAbsolute, join } from 'node:path'
+import { isAbsolute, join, resolve } from 'node:path'
 
 const root = new URL('../', import.meta.url)
 const results = []
@@ -200,11 +200,20 @@ await check('A1c tool discovery finds a Windows-style install and honours the ov
     const posix = { platform: 'posix', env: { PATH: bin }, home: posixHome }
     writeFileSync(bare, 'not executable either\n')
     chmodSync(bare, 0o644)
-    assert.notEqual(host.findTool('ffmpeg', posix), bare,
-      'on POSIX a file without the execute bit is not a tool')
-    chmodSync(bare, 0o755)
-    assert.equal(host.findTool('ffmpeg', posix), bare,
-      'on POSIX the execute bit is what makes it a tool')
+    if (process.platform === 'win32') {
+      // `X_OK` is emulated on Windows on top of the read-only attribute, so a
+      // readable file answers "can run" no matter what mode bits the host
+      // reports. The execute-bit contract below is therefore only meaningful on
+      // a POSIX host — CI runs on ubuntu, which is where it gets exercised.
+      assert.equal(host.findTool('ffmpeg', posix), bare,
+        'a Windows host emulates X_OK, so a readable file counts as runnable')
+    } else {
+      assert.notEqual(host.findTool('ffmpeg', posix), bare,
+        'on POSIX a file without the execute bit is not a tool')
+      chmodSync(bare, 0o755)
+      assert.equal(host.findTool('ffmpeg', posix), bare,
+        'on POSIX the execute bit is what makes it a tool')
+    }
 
     // The override wins over discovery, and an override pointing at nothing is
     // ignored rather than reported as a found tool.
@@ -1338,6 +1347,101 @@ await check('B7c Seedream watermark opt-out only reaches official hosts (#56)', 
     assert.equal(seen.at(-1).watermark, undefined, 'relays without the documented field never see watermark')
   } finally {
     await new Promise(resolve => seedream.close(resolve))
+  }
+})
+
+await check('B7d Agnes image edit speaks the documented generations contract', async () => {
+  // Agnes has no /images/edits endpoint: an OpenAI edit upload is answered with
+  // `503 no available server` by the gateway. Editing is a generations call
+  // whose references ride in extra_body.image, and the OpenAI `quality` field
+  // is rejected outright, so the tier/ratio vocabulary replaces it.
+  const seen = []
+  const agnes = createServer(async (req, res) => {
+    const url = new URL(req.url ?? '/', 'http://127.0.0.1')
+    if (url.pathname === '/v1/images/generations') {
+      const chunks = []
+      for await (const chunk of req) chunks.push(chunk)
+      seen.push({
+        path: url.pathname,
+        contentType: req.headers['content-type'] ?? '',
+        body: JSON.parse(Buffer.concat(chunks).toString('utf8')),
+      })
+      res.writeHead(200, { 'content-type': 'application/json' })
+      res.end(JSON.stringify({ data: [{ b64_json: pngBytes.toString('base64') }] }))
+      return
+    }
+    // Any /images/edits call is a regression: fail loudly instead of silently.
+    res.writeHead(404)
+    res.end()
+  })
+  await new Promise(resolve => agnes.listen(0, '127.0.0.1', resolve))
+  const base = { apiUrl: `http://127.0.0.1:${agnes.address().port}/v1`, apiKey: 'k' }
+  const reference = `data:image/png;base64,${pngBytes.toString('base64')}`
+  try {
+    await host.generateImage(base, {
+      mode: 'edit',
+      model: 'agnes-image-2.5-flash',
+      prompt: 'make it night',
+      size: '1:1',
+      quality: '2k',
+      n: 1,
+      detail: '',
+      image: reference,
+    })
+    assert.equal(seen.at(-1).path, '/v1/images/generations', 'the edit must not call /images/edits')
+    assert.match(seen.at(-1).contentType, /application\/json/, 'the edit body is JSON, not multipart')
+    const edit = seen.at(-1).body
+    assert.equal(edit.model, 'agnes-image-2.5-flash')
+    assert.equal(edit.size, '2K', 'the clarity tier becomes the documented size tier')
+    assert.equal(edit.ratio, '1:1')
+    assert.equal(edit.quality, undefined, 'OpenAI quality is rejected upstream and never forwarded')
+    assert.equal(edit.response_format, undefined, 'a top-level response_format is an Agnes error')
+    assert.equal(edit.extra_body.response_format, 'b64_json')
+    assert.deepEqual(edit.extra_body.image, [reference], 'the reference travels as a data URI array')
+
+    // Multi-image composition: the primary plus the extras, in order.
+    seen.length = 0
+    await host.generateImage(base, {
+      mode: 'edit',
+      model: 'agnes-image-2.5-flash',
+      prompt: 'combine',
+      size: '16:9',
+      quality: '4k',
+      n: 1,
+      detail: '',
+      image: reference,
+      images: [reference, reference],
+    })
+    assert.equal(seen.at(-1).body.extra_body.image.length, 3, 'primary + two extras')
+    assert.equal(seen.at(-1).body.size, '4K')
+    assert.equal(seen.at(-1).body.ratio, '16:9')
+
+    // Text-to-image shares the endpoint but carries neither quality nor extra_body.
+    seen.length = 0
+    await host.generateImage(base, {
+      mode: 'text',
+      model: 'agnes-image-2.1-flash',
+      prompt: 'a gold disc',
+      size: '3:2',
+      quality: '4k',
+      n: 1,
+      detail: '',
+    })
+    const text = seen.at(-1).body
+    assert.equal(seen.at(-1).path, '/v1/images/generations')
+    assert.equal(text.size, '4K')
+    assert.equal(text.ratio, '3:2')
+    assert.equal(text.quality, undefined)
+    assert.equal(text.detail, undefined)
+    assert.equal(text.extra_body, undefined)
+
+    // auto/auto still has to send the required tier, and must not invent a ratio.
+    seen.length = 0
+    await host.generateImage(base, { mode: 'text', model: 'agnes-image-2.0-flash', prompt: 'p', size: 'auto', quality: 'auto', n: 1, detail: '' })
+    assert.equal(seen.at(-1).body.size, '1K')
+    assert.equal(seen.at(-1).body.ratio, undefined)
+  } finally {
+    await new Promise(resolve => agnes.close(resolve))
   }
 })
 
@@ -4452,10 +4556,14 @@ await check('C12 install sources are classified without touching the network', (
     assert.equal(host.skillsRoot(), join('/custom/dsh', 'skills'))
 
     process.env.DSH_SKILLS_HOME = '  /custom/isolated/skills  '
-    assert.equal(host.skillsRoot(), '/custom/isolated/skills')
+    // `skillsRoot()` resolves an explicit skills home, and `path.resolve` is
+    // host-specific: on Windows it prefixes the current drive, so the expected
+    // value has to be resolved the same way instead of compared as a POSIX
+    // literal.
+    assert.equal(host.skillsRoot(), resolve('/custom/isolated/skills'))
 
     // DSH_SKILLS_HOME also overrides explicit dshHome argument
-    assert.equal(host.skillsRoot('/explicit/dsh'), '/custom/isolated/skills')
+    assert.equal(host.skillsRoot('/explicit/dsh'), resolve('/custom/isolated/skills'))
   } finally {
     if (previousSkillsHome === undefined) delete process.env.DSH_SKILLS_HOME
     else process.env.DSH_SKILLS_HOME = previousSkillsHome

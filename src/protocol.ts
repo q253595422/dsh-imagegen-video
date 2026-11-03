@@ -636,7 +636,7 @@ export type VideoModelFamily =
 export type VideoResolution = '480P' | '720P' | '1080P'
 
 /** Aspect ratios the video panel offers; families narrow this themselves. */
-export const VIDEO_ASPECT_RATIOS = ['16:9', '9:16', '1:1', '4:3', '3:4'] as const
+export const VIDEO_ASPECT_RATIOS = ['16:9', '9:16', '1:1', '4:3', '3:4', '21:9'] as const
 export type VideoAspectRatio = typeof VIDEO_ASPECT_RATIOS[number]
 
 /** Durations (seconds) the video panel offers; families narrow this themselves. */

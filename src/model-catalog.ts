@@ -8,7 +8,7 @@
  * Framework-free (pure data + regex), safe for the client bundle to inline.
  */
 
-export type ModelFamily = 'gpt-image' | 'dall-e' | 'grok' | 'nanobanana' | 'seedream' | 'zhipu' | 'qwen' | 'minimax' | 'unknown'
+export type ModelFamily = 'gpt-image' | 'dall-e' | 'grok' | 'nanobanana' | 'seedream' | 'agnes' | 'zhipu' | 'qwen' | 'minimax' | 'unknown'
 
 /** Capability/identity annotation for one model id. */
 export interface ModelCatalogEntry {
@@ -68,6 +68,14 @@ const ENTRIES: Record<Exclude<ModelFamily, 'unknown'>, Omit<ModelCatalogEntry, '
     supportsEdit: true,
     supportsAspectRatio: true,
     qualityTiers: ['1K', '2K'],
+  },
+  agnes: {
+    label: 'Agnes',
+    labelZh: 'Agnes 图像',
+    known: true,
+    supportsEdit: true,
+    supportsAspectRatio: true,
+    qualityTiers: ['1K', '2K', '4K'],
   },
   zhipu: {
     label: 'GLM-Image',
@@ -129,6 +137,7 @@ export function describeModel(model: string): ModelCatalogEntry {
   if (/^grok-imagine(?:-|$)/.test(id)) return { family: 'grok', ...ENTRIES.grok }
   if (/^nanobanana/i.test(id) || NANOBANANA_GEMINI_IDS.has(id)) return { family: 'nanobanana', ...ENTRIES.nanobanana }
   if (/^(?:doubao-)?seedream/i.test(id)) return { family: 'seedream', ...ENTRIES.seedream }
+  if (/^agnes-image(?:[.\-_]|$)/i.test(id)) return { family: 'agnes', ...ENTRIES.agnes }
   if (/^(?:glm-image|cogview(?:-|$))/i.test(id)) return { family: 'zhipu', ...ENTRIES.zhipu }
   if (/^qwen-image(?:[-_.]|$)/i.test(id)) return { family: 'qwen', ...ENTRIES.qwen }
   if (/^(?:minimax[-_/])?image-\d+/i.test(id)) return { family: 'minimax', ...ENTRIES.minimax }

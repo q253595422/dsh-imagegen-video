@@ -184,7 +184,7 @@ dsh plugin --profile web add ./q253595422-dsh-imagegen-video-X.Y.Z.tgz
 
 | 协议族 | 模型示例 | 说明 |
 | --- | --- | --- |
-| Agnes 视频 | `agnes-video-2.5-flash`、`agnes-video-2.5` | 提交 `POST /v1/videos`，轮询 `GET /v1/videos/{id}`，取 `metadata.url`；支持文生视频、首尾帧、多参考图、`seed`。 |
+| Agnes 视频 | `agnes-video-2.5-flash`、`agnes-video-2.5` | 提交 `POST /v1/videos`，轮询 `GET /v1/videos/{id}`（文档同时给出 `/agnesapi?video_id=…&model_name=…`，实测两条路径都通），结果取顶层 `url` 或 `metadata.url`；支持文生视频、首尾帧、多参考图、`seed`。**Flash 专属限制**（创建任务前就校验）：`size` 只接受 `720P`，参考图最多 5 张，不支持音频/视频参考；画幅另支持 `21:9`。插件按 id 把 Flash 的档位收窄成 `720P`（非 flash 保留 480P/720P/1080P），参考图超出 5 张在提交前截断，不会把必然 400 的请求发出去。 |
 | 火山 Seedance（方舟） | `doubao-seedance-2-0-260128`、`doubao-seedance-2-0-fast-260128`、`doubao-seedance-1-0-pro-250528` | 方舟原生任务协议：提交 `POST /contents/generations/tasks`，轮询 `GET /contents/generations/tasks/{id}`，成片在 `content.video_url`。提示词与参考图放在 `content` 数组里（参考图带 `role`：`first_frame` / `last_frame` / `reference_image`），比例字段是 `ratio`，分辨率小写。时长：2.x 为 4–15 秒、1.0 为 2–12 秒。分辨率：2.0 支持 480p/720p/1080p/4k，`fast` / `mini` 只到 720p；1.0 为 480p/720p/1080p。1.0 不支持 `reference_image` 角色，`1.0 pro fast` 也不支持尾帧，面板会把这两种模式从该型号上收起来。 |
 | 算力萌 comemoe | `wan2.2-t2v`、`zhimeng-h3-local` | `wan2.2-t2v` 仅文生视频；`zhimeng-h3-local` 支持图生视频。比例只接受 16:9 / 9:16 / 1:1；5 秒片子实测约 9 分钟。 |
 | xAI Grok | `grok-imagine-video-1.5`、`grok-imagine-video-1.5-lite` | 提交 `POST /videos/generations`（注意不是 `/videos`），轮询 `GET /videos/{id}`，取 `video.url` 与 `video.duration`。 |
@@ -292,7 +292,12 @@ dsh plugin --profile web add ./q253595422-dsh-imagegen-video-X.Y.Z.tgz
 
 在「设置 → 生图配置」添加渠道，填写 API 地址与密钥，检测并选择生图模型。可配置多个提供方，并设置默认生图模型和可选的提示词增强聊天模型。
 
-支持 OpenAI 兼容的 Images API / Chat Completions，以及 xAI Grok、Google Nano Banana、Seedream、Qwen-Image、GLM-Image、MiniMax 等预置渠道；也可手动添加兼容模型。
+支持 OpenAI 兼容的 Images API / Chat Completions，以及 xAI Grok、Google Nano Banana、Seedream、Agnes、Qwen-Image、GLM-Image、MiniMax 等预置渠道；也可手动添加兼容模型。
+
+**Agnes 图像（`agnes-image-*`）** 与别的渠道有两处不同：
+
+- **端点是统一的**：文生图和图生图都走 `POST {apiUrl}/images/generations`。Agnes 没有 `/images/edits`，按 OpenAI 编辑协议发过去会被网关回 `503 no available server`；编辑请求把参考图放进 `extra_body.image`（公共 URL 或 `data:` URI，可多张），输出格式也写在 `extra_body.response_format` 里（顶层的 `response_format` 会被判为错误）。
+- **尺寸是档位 + 比例**：`size` 用 `1K` / `2K` / `3K` / `4K`，比例用 `ratio`（`1:1`、`3:4`、`4:3`、`16:9`、`9:16`、`2:3`、`3:2`、`21:9`）。插件把面板的清晰度档映射成 `size`、把画幅映射成 `ratio`，并且**不发** OpenAI 的 `quality`——Agnes 会直接 400（`quality is not supported by text image queue`）。
 
 <details>
 <summary><b>接口与渠道补充说明</b></summary>
