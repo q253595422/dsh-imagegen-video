@@ -243,7 +243,7 @@ export function apply(ctx: ClientContext): void {
           if (labelSpan !== null) labelSpan.textContent = label
         }
         const tablist = root.querySelector<HTMLDivElement>('[role="tablist"][data-dsh-imagegen-session-tabs]')
-        tablist?.setAttribute('aria-label', tt('entry.tooltip'))
+        tablist?.setAttribute('aria-label', `${tt('entry.session')} / ${tt('entry.image')}`)
       }))
     } catch (error) {
       // DOM failures degrade the studio, never the GUI.

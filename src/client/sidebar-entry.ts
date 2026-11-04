@@ -287,6 +287,8 @@ function makeTab(
   const tab = document.createElement('button')
   tab.type = 'button'
   tab.className = css.sessionTab
+  tab.setAttribute('role', 'tab')
+  tab.setAttribute('aria-selected', 'false')
   tab.setAttribute('aria-label', label)
   tab.setAttribute('title', tooltip)
   tab.innerHTML = `<span class="${css.sessionTabIcon}">${icon}</span><span class="${css.sessionTabLabel}">${label}</span>`
@@ -309,7 +311,8 @@ function createTabs(
   tabs.dataset.dshImagegenSessionTabs = ''
   tabs.className = css.sessionTabs
   tabs.setAttribute('role', 'tablist')
-  tabs.setAttribute('aria-label', imageTooltip)
+  // Name the switcher itself, not the image tab: its tooltip is a model list.
+  tabs.setAttribute('aria-label', `${sessionLabel} / ${imageLabel}`)
 
   const sessionTab = makeTab(sessionLabel, sessionTooltip, SESSION_ICON, () => {
     controller.close()
@@ -441,12 +444,12 @@ export function mountSidebarEntry(
     if (tabs === undefined) return
     const sessionTab = tabs.querySelector<HTMLElement>('[data-dsh-imagegen-tab="session"]')
     const imageTab = tabs.querySelector<HTMLElement>('[data-dsh-imagegen-tab="image"]')
-    if (controller.getSnapshot().panelOpen) {
-      if (sessionTab !== null) delete sessionTab.dataset.active
-      if (imageTab !== null) imageTab.dataset.active = ''
-    } else {
-      if (sessionTab !== null) sessionTab.dataset.active = ''
-      if (imageTab !== null) delete imageTab.dataset.active
+    const panelOpen = controller.getSnapshot().panelOpen
+    for (const [tab, active] of [[sessionTab, !panelOpen], [imageTab, panelOpen]] as const) {
+      if (tab === null) continue
+      if (active) tab.dataset.active = ''
+      else delete tab.dataset.active
+      tab.setAttribute('aria-selected', active ? 'true' : 'false')
     }
   }
 

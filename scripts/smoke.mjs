@@ -5318,6 +5318,11 @@ await check('D3 sidebar entry mounts inside desktop and unknown sidebar shells, 
   assert.ok(tabs !== null, 'the two tabs mount in the desktop shell')
   assert.equal(tabs.parentElement.className, 'xUkysG_root', 'the tabs land where the shell button sits')
   assert.equal(tabs.getAttribute('role'), 'tablist')
+  assert.equal(tabs.getAttribute('aria-label'), 'Session / Image', 'the tablist names the switcher, not the image tooltip (#25)')
+  for (const tab of tabs.querySelectorAll('[data-dsh-imagegen-tab]')) {
+    assert.equal(tab.getAttribute('role'), 'tab', 'each switcher entry is a tab (#25)')
+  }
+  assert.equal(tabs.hasAttribute('data-dsh-imagegen-tabs-seat'), false, 'the seated switcher carries no fallback marker')
   assert.deepEqual(
     [...tabs.querySelectorAll('[data-dsh-imagegen-tab]')].map(tab => tab.getAttribute('data-dsh-imagegen-tab')),
     ['session', 'image'],
@@ -5344,6 +5349,8 @@ await check('D3 sidebar entry mounts inside desktop and unknown sidebar shells, 
   for (const listener of [...listeners]) listener()
   assert.equal(tabs.querySelector('[data-dsh-imagegen-tab="image"]').hasAttribute('data-active'), true, 'the open panel marks the image tab')
   assert.equal(tabs.querySelector('[data-dsh-imagegen-tab="session"]').hasAttribute('data-active'), false)
+  assert.equal(tabs.querySelector('[data-dsh-imagegen-tab="image"]').getAttribute('aria-selected'), 'true', 'aria-selected follows the open panel (#25)')
+  assert.equal(tabs.querySelector('[data-dsh-imagegen-tab="session"]').getAttribute('aria-selected'), 'false')
   jsdomDocument.documentElement.setAttribute('data-dsh-imagegen-active', '')
   assert.notEqual(jsdomWindow.getComputedStyle(shellButton).display, 'none', 'the native New Session action stays visible under the shipped studio CSS')
   assert.equal(jsdomWindow.getComputedStyle(desktopRoot.querySelector('[data-other-sidebar-plugin]')).display, 'none', 'unrelated sidebar plugin entries remain hidden')
