@@ -233,7 +233,7 @@ CSS 执行不了 JS，所以「禁止猜类名」在样式表这一侧必须有�
 |---|---|---|
 | 中心列（会话所在的 grid item） | `mount.tsx` 的 `conversationColumn()` | `data-dsh-imagegen-center-col` |
 | 侧栏 shell root | `sidebar-entry.ts` | `data-dsh-imagegen-sidebar-root` |
-| 侧栏自有 chrome 区块（品牌行 / 底栏 / 设置区 / 历史区 / 含 New Session 的那一行） | `sidebar-entry.ts` 的 `markBlocks()` | `data-dsh-imagegen-sidebar-block`、`data-dsh-imagegen-sidebar-region` |
+| 侧栏自有 chrome 区块（品牌行 / 底栏 / 设置区 / 历史区 / 含 New Session 的那一行 / 含折叠控件的窗口条） | `sidebar-entry.ts` 的 `markBlocks()` | `data-dsh-imagegen-sidebar-block`、`data-dsh-imagegen-sidebar-region` |
 | 「本 shell 的 chrome 已全部解析」的门控 | 同上，解析到品牌块才设 | `data-dsh-imagegen-shell-blocks` |
 
 三条约束：

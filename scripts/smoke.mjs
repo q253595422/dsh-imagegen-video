@@ -5225,6 +5225,14 @@ await check('D3 sidebar entry mounts inside desktop and unknown sidebar shells, 
     + '<aside class="dshDesktopSidebarSurface">'
     + '<div class="dshDesktopUpstreamSidebar">'
     + '<div class="xUkysG_root">'
+    // The macOS shell renders its own collapse control in a window-chrome strip
+    // ABOVE the brand row (`topStrip`, so it clears the traffic lights). That
+    // strip owns no slot anchor, which is exactly why the studio's "hide
+    // everything that is not shell chrome" rule swallowed it and left the 生图
+    // pane with no way back to a wide sidebar.
+    + '<div class="xUkysG_topStrip">'
+    + '<button class="xUkysG_iconButton xUkysG_toggle" aria-label="收起侧边栏"></button>'
+    + '</div>'
     + '<div class="xUkysG_logoRow"><span class="xUkysG_brandIdentity">'
     + '<span class="xUkysG_brandMark"><span data-slot="sidebar.brand.mark" style="display: contents"></span></span>'
     + '<span class="xUkysG_brandName"><span data-slot="sidebar.brand.name" style="display: contents"></span></span>'
@@ -5397,10 +5405,14 @@ await check('D3 sidebar entry mounts inside desktop and unknown sidebar shells, 
   // The other half of the same rule, and the reason it is gated: a shell whose
   // chrome we resolved must keep that chrome. Hiding a foreign entry is a
   // cosmetic win; hiding the brand row or the foot is a broken sidebar.
-  for (const block of ['.xUkysG_logoRow', '.xUkysG_regionArea', '.xUkysG_footArea']) {
+  for (const block of ['.xUkysG_topStrip', '.xUkysG_logoRow', '.xUkysG_regionArea', '.xUkysG_footArea']) {
     assert.notEqual(jsdomWindow.getComputedStyle(desktopRoot.querySelector(block)).display, 'none', `the shell's own ${block} block stays visible in the studio`)
     assert.equal(desktopRoot.querySelector(block).getAttribute('data-dsh-imagegen-sidebar-block'), '', `the shell's own ${block} block is marked as chrome, not guessed by class`)
   }
+  // The macOS shell's collapse control lives in a strip that owns no slot
+  // anchor, so it is not reachable from any of the anchors above. Hiding it
+  // leaves the 生图 pane with no visible way back to a wide sidebar.
+  assert.notEqual(jsdomWindow.getComputedStyle(desktopRoot.querySelector('.xUkysG_toggle')).display, 'none', 'the shell collapse control stays reachable in the studio')
   jsdomDocument.documentElement.removeAttribute('data-dsh-imagegen-active')
   await new Promise(resolve => setTimeout(resolve, 60))
   assert.equal(warnings.length, 0, `a mounted sidebar entry logs nothing: ${warnings.join(' | ')}`)

@@ -96,12 +96,28 @@ const OWN_NODES = `${ENTRY_SELECTOR}, ${HISTORY_HOST_SELECTOR}, [data-dsh-imageg
 /** Accessible names the shell gives its New Session affordance. */
 const NEW_SESSION_LABELS = ['new session', 'new chat', '新会话', '新建会话', '新对话', '新话题']
 
+/** Accessible names the shell gives its own sidebar-collapse control. */
+const SIDEBAR_TOGGLE_LABELS = [
+  'collapse sidebar',
+  'open sidebar',
+  '收起侧边栏',
+  '打开侧边栏',
+]
+
 /** Loose New Session match for shells without a stable class or data hook. */
 function looksLikeNewSession(button: HTMLButtonElement): boolean {
   const name = `${button.getAttribute('aria-label') ?? ''} ${button.getAttribute('title') ?? ''} ${button.textContent ?? ''}`
     .toLowerCase()
     .replace(/\s+/g, ' ')
   return NEW_SESSION_LABELS.some((label) => name.includes(label))
+}
+
+/** Same loose match, for the shell's own collapse control. */
+function looksLikeSidebarToggle(button: HTMLButtonElement): boolean {
+  const name = `${button.getAttribute('aria-label') ?? ''} ${button.getAttribute('title') ?? ''}`
+    .toLowerCase()
+    .replace(/\s+/g, ' ')
+  return SIDEBAR_TOGGLE_LABELS.some((label) => name.includes(label))
 }
 
 /**
@@ -219,6 +235,27 @@ function newSessionBlock(root: HTMLElement, action: HTMLElement): HTMLElement | 
 }
 
 /**
+ * The shell's own sidebar-collapse control.
+ *
+ * On macOS the shell puts it in a window-chrome strip above the brand row (so it
+ * clears the traffic lights); on Windows it rides inside the brand row. Both
+ * are shell chrome the studio must not hide — losing it leaves the user with no
+ * way back to a wide sidebar except the keyboard shortcut.
+ *
+ * Deliberately NOT filtered on visibility, only on a painted seat preferred:
+ * the studio's own rule is what hides this control when its block is unmarked,
+ * so requiring a painted box would lock the find out after the first pass — the
+ * block could never be marked again, and the control would stay gone for good.
+ * `root` is already the painted column, so the first match is the real one; the
+ * visible-first ordering only covers a shell that emits a hidden duplicate.
+ */
+function sidebarToggleButton(root: ParentNode = document): HTMLButtonElement | undefined {
+  const candidates = Array.from(root.querySelectorAll<HTMLButtonElement>('button'))
+    .filter((button) => looksLikeSidebarToggle(button))
+  return candidates.find((button) => isVisible(button)) ?? candidates[0]
+}
+
+/**
  * Mark the shell's own chrome blocks so the stylesheet can spare them.
  *
  * Replaces three `[class*="logoRow"]`-style guesses with attributes this plugin
@@ -233,6 +270,7 @@ function markBlocks(
   newSession: HTMLElement | undefined,
 ): HTMLElement[] {
   const brand = blockOf(root, BRAND_MARK_ANCHOR) ?? blockOf(root, BRAND_NAME_ANCHOR)
+  const toggle = sidebarToggleButton(root)
   const blocks = [
     brand,
     blockOf(root, FOOT_ACTION_ANCHOR),
@@ -244,6 +282,9 @@ function markBlocks(
     // action is a direct child of the root the block IS the action, which the
     // sheet already spares by its own mark, so there is nothing to add.
     newSession === undefined ? undefined : newSessionBlock(root, newSession),
+    // Same for the collapse control: on macOS it lives in a chrome strip of its
+    // own above the brand row, which is not any of the anchor blocks above.
+    toggle === undefined ? undefined : blockHolding(root, toggle),
   ].filter((block): block is HTMLElement => block !== undefined)
   for (const block of blocks) block.setAttribute(BLOCK_ATTR, '')
   if (region !== undefined) region.setAttribute(REGION_ATTR, '')

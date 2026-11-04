@@ -684,6 +684,18 @@ const CASES = [
     expect: /does not line up with the shell button/,
   },
   {
+    // The macOS shell renders its own collapse control in a window-chrome strip
+    // above the brand row. That strip owns no slot anchor, so a chrome set built
+    // only from the anchors hid it — and the 生图 pane lost the only visible way
+    // back to a wide sidebar. Dropping the mark puts that state back.
+    name: 'the studio hides the shell collapse control with the foreign entries',
+    runner: 'smoke',
+    file: 'src/client/sidebar-entry.ts',
+    from: '    toggle === undefined ? undefined : blockHolding(root, toggle),\n',
+    to: '',
+    expect: /the shell's own \.xUkysG_topStrip block stays visible in the studio/,
+  },
+  {
     name: 'nothing reveals the node toolbar on focus',
     runner: 'contracts',
     file: 'src/client/canvas-workspace.module.css',
