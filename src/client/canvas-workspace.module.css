@@ -38,32 +38,57 @@
   /**
    * The node card's own surface, and the ring around it (issue #23).
    *
-   * WHY a mix rather than `--dsw-alias-bg-layer-3`: the DSH layers are ONE step
-   * apart in dark (#232324 / #2c2c2e / #353638) and identical to each other in
-   * light (all #ffffff). Measured against the canvas that is 1.13:1 for layer-2,
-   * 1.30:1 for layer-3, and exactly 1.00:1 in a light theme for both — the card
-   * would still be the same white as the canvas it floats on.
+   * The light theme is untouched on purpose. `.root` and `.node` both painted
+   * `--dsw-alias-bg-layer-1`, and in a LIGHT theme that is correct: every DSH
+   * layer resolves to #ffffff, so a white card on a white canvas is what the
+   * user had and what they want back. The defect was dark-only — there the two
+   * bytes were identical (#232324) and a resting node was traceable only by a
+   * 1.5px `border-l1` at 1.19:1.
    *
-   * `label-primary` is the theme's ink, so it is always the canvas's OPPOSITE:
-   * near-white on dark, near-black on light. Mixing a little of it into layer-3
-   * pushes the card away from the canvas in whichever direction the theme needs,
-   * from one declaration, in both themes:
+   * The first attempt "fixed" both themes at once by mixing 12% of
+   * `--dsw-alias-label-primary` into layer-3. That token is near-black in a
+   * light theme, so it dimmed a light canvas that had no problem to begin with.
+   * A guard that only ever looks at the dark palette cannot catch that, which is
+   * why the light branch is now pinned to the exact token it shipped with and
+   * the contract measures BOTH palettes.
    *
-   *   dark   #353638 + 12% white -> 1.87:1 against the canvas
-   *   light  #ffffff + 12% black -> 1.29:1 against the canvas
+   * So: `layer-1` is the light value (unchanged, exactly as before), and the
+   * dark override is a theme selector below `.root`. The numbers, from the
+   * token values the installed DSH ships:
    *
-   * 12% is the smallest step that clears 1.25:1 in BOTH themes (4% reaches only
-   * 1.09:1 on white). Those numbers are computed from the token values the
-   * installed DSH ships, not estimated.
+   *   dark canvas #232324, dark label-primary #f9fafb
+   *     fill  = canvas + 12% label -> #3d3d3e, 1.44:1 against the canvas
+   *     ring  = canvas + 36% label -> #707071, 3.19:1 against the canvas
+   *
+   * 12% clears the 1.25:1 bar a large flat area needs; 36% is where the thin
+   * ring reaches the 3:1 WCAG 1.4.11 asks of a component boundary (34% is
+   * 2.99:1, just short).
    */
-  --canvas-node-surface: color-mix(in srgb, var(--dsw-alias-bg-layer-3) 88%, var(--dsw-alias-label-primary));
-  /*
-   * The ring carries the boundary where a large flat area cannot: WCAG asks 3:1
-   * of a component boundary. DSH's own borders never get there (border-l3 is
-   * 16% white in dark, which composites to 1.68:1), so this is mixed from the
-   * same ink as the surface, one step stronger.
-   */
-  --canvas-node-border: color-mix(in srgb, var(--dsw-alias-label-primary) 22%, var(--dsw-alias-border-l2));
+  --canvas-node-surface: var(--dsw-alias-bg-layer-1);
+  --canvas-node-border: var(--dsw-alias-border-l1);
+  /* Light: `border-l2` and nothing else — the exact hover this shipped with. */
+  --canvas-node-hover-edge: var(--dsw-alias-border-l2);
+}
+
+/*
+ * Dark theme only. This is the one place in this file where the theme has to be
+ * read off the host's own attribute — the contract (docs/native-ui-contract.md
+ * §2.6) allows `body[data-ds-dark-theme]` exactly for the case a token cannot
+ * express, and this is that case: DSH hands out ONE set of layer/border tokens
+ * that resolves to #ffffff across all three layers in light and to three
+ * near-identical greys in dark. "The card must differ from the canvas" simply
+ * cannot be said once for both themes, because in light they are the same colour
+ * by design and in dark they are the same colour by accident.
+ *
+ * The base is `bg-layer-1` because in dark that IS the canvas colour, so the
+ * mixes below are literally "the canvas, nudged toward the theme's ink" — the
+ * measured ratios in the comment above are about nothing else.
+ */
+:global(body[data-ds-dark-theme]) .root {
+  --canvas-node-surface: color-mix(in srgb, var(--dsw-alias-label-primary) 12%, var(--dsw-alias-bg-layer-1));
+  --canvas-node-border: color-mix(in srgb, var(--dsw-alias-label-primary) 36%, var(--dsw-alias-bg-layer-1));
+  /* One step above the resting ring (2.99:1) so hovering is visible at all. */
+  --canvas-node-hover-edge: color-mix(in srgb, var(--dsw-alias-label-primary) 46%, var(--dsw-alias-bg-layer-1));
 }
 
 .selectCursor { cursor: default; }
@@ -309,13 +334,15 @@
 /* ------------------------------------------------------------ nodes */
 
 /*
- * `.node` is a card floating ON the canvas, not a piece of it. It used to paint
+ * `.node` is a card floating ON the canvas, not a piece of it. It painted
  * `--dsw-alias-bg-layer-1` — the very token `.root` paints — so in a dark theme
  * the two surfaces were not similar but byte-identical, and a resting node was
  * traceable only by a 1.5px `border-l1` at 1.19:1. That is issue #23.
  *
- * The surface and ring come from `--canvas-node-surface` / `--canvas-node-border`
- * on `.root`; the reasoning for those two values lives beside their declarations.
+ * In a LIGHT theme those two tokens are the same #ffffff and that is correct:
+ * nothing was wrong there and nothing may change. The values are therefore split
+ * per theme at `.root`, not fixed once for both — see `--canvas-node-hover-edge`
+ * for why the hover step has to be a variable rather than an inline mix.
  */
 .node {
   position: absolute;
@@ -341,9 +368,15 @@
  * weaken it back to hover strength, which is the opposite of what the states
  * mean. `.nodeOverlap` carries the warning colour and `[data-annotating]` is
  * (0,2,0) tied with hover, so both have to be excluded explicitly too.
+ *
+ * The colour lives in `--canvas-node-hover-edge` and not inline, because the
+ * light theme's hover must stay exactly what it was (`border-l2` alone) while
+ * the dark theme needs a step above its own 36% resting ring. Mixing
+ * `label-primary` inline here would have repainted the light theme again — the
+ * same mistake this file is being corrected for.
  */
 .node:hover:not(.nodeSelected):not(.nodeRelated):not(.nodeConnectTarget):not(.nodeOverlap):not([data-annotating]) {
-  border-color: color-mix(in srgb, var(--dsw-alias-label-primary) 34%, var(--dsw-alias-border-l2));
+  border-color: var(--canvas-node-hover-edge);
 }
 
 .nodeGlow {

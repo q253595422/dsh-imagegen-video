@@ -666,9 +666,34 @@ const CASES = [
     name: 'the preview close button loses its boundary against the mask',
     runner: 'contracts',
     file: 'src/client/panel.module.css',
-    from: '  --lightbox-control-surface: color-mix(in srgb, var(--dsw-alias-label-primary-foreground) 40%, transparent);\n  --lightbox-control-surface-hover: color-mix(in srgb, var(--dsw-alias-label-primary-foreground) 52%, transparent);\n  --lightbox-control-edge: color-mix(in srgb, var(--dsw-alias-label-primary-foreground) 55%, transparent);',
-    to: '  --lightbox-control-surface: color-mix(in srgb, var(--dsw-alias-label-primary-foreground) 16%, transparent);\n  --lightbox-control-surface-hover: color-mix(in srgb, var(--dsw-alias-label-primary-foreground) 28%, transparent);\n  --lightbox-control-edge: color-mix(in srgb, var(--dsw-alias-label-primary-foreground) 22%, transparent);',
-    expect: /close button is not a findable control/,
+    from: '  --lightbox-control-surface: color-mix(in srgb, var(--dsw-static-neutral-00) 34%, transparent);\n  --lightbox-control-surface-hover: color-mix(in srgb, var(--dsw-static-neutral-00) 44%, transparent);\n  --lightbox-control-edge: color-mix(in srgb, var(--dsw-static-neutral-00) 55%, transparent);',
+    to: '  --lightbox-control-surface: color-mix(in srgb, var(--dsw-static-neutral-00) 16%, transparent);\n  --lightbox-control-surface-hover: color-mix(in srgb, var(--dsw-static-neutral-00) 28%, transparent);\n  --lightbox-control-edge: color-mix(in srgb, var(--dsw-static-neutral-00) 22%, transparent);',
+    expect: /close button is not a findable control|not findable in a/,
+  },
+  {
+    // The regression the user reported: the chrome was derived from a token that
+    // flips with the theme, so in a DARK theme every control became the same
+    // colour as the mask. This mutation puts that token back — which leaves the
+    // LIGHT theme byte-identical (the flipped value there was already #fff) and
+    // is therefore invisible to every check that only renders one palette.
+    name: 'the lightbox chrome goes back to a theme-coupled ink',
+    runner: 'contracts',
+    file: 'src/client/panel.module.css',
+    from: '  --lightbox-ink: var(--dsw-static-neutral-00);\n  --lightbox-surface: color-mix(in srgb, var(--dsw-static-neutral-00) 16%, transparent);\n  --lightbox-surface-hover: color-mix(in srgb, var(--dsw-static-neutral-00) 28%, transparent);',
+    to: '  --lightbox-ink: var(--dsw-alias-label-primary-foreground);\n  --lightbox-surface: color-mix(in srgb, var(--dsw-alias-label-primary-foreground) 16%, transparent);\n  --lightbox-surface-hover: color-mix(in srgb, var(--dsw-alias-label-primary-foreground) 28%, transparent);',
+    expect: /unreadable in a dark theme/,
+  },
+  {
+    // The other half of the same user report, and the reason the light theme got
+    // damaged: one value mixed from theme ink "fixed" dark and dimmed a light
+    // canvas that was never broken. Reproducing it makes the LIGHT measurement
+    // read 1.29:1 on a palette whose correct answer is 1.00:1.
+    name: 'the canvas node is dimmed in the light theme too',
+    runner: 'contracts',
+    file: 'src/client/canvas-workspace.module.css',
+    from: '  --canvas-node-surface: var(--dsw-alias-bg-layer-1);',
+    to: '  --canvas-node-surface: color-mix(in srgb, var(--dsw-alias-bg-layer-3) 88%, var(--dsw-alias-label-primary));',
+    expect: /the LIGHT theme's canvas was changed|original white card/,
   },
   {
     // The instance of the bug that a scroll-and-zoom race is made of: the

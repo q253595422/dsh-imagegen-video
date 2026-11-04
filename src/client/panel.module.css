@@ -3108,14 +3108,34 @@ html[data-dsh-imagegen-chat-collapsed] [data-dsh-imagegen-chat-resizer] {
  * themes. Hover still goes one step brighter than rest.
  */
 .lightbox {
-  /* Chrome for a fixed dark surface, derived from tokens rather than written as
-     literals (the native-UI contract forbids those). `label-primary-foreground`
-     is the "text laid on a solid colour" token, so it stays readable whatever
-     the theme; the translucent surfaces are mixed from it, which keeps the
-     buttons visible at rest instead of only on :hover. */
-  --lightbox-ink: var(--dsw-alias-label-primary-foreground);
-  --lightbox-surface: color-mix(in srgb, var(--dsw-alias-label-primary-foreground) 16%, transparent);
-  --lightbox-surface-hover: color-mix(in srgb, var(--dsw-alias-label-primary-foreground) 28%, transparent);
+  /*
+   * The base colour is `--dsw-static-neutral-00` (white in BOTH themes), NOT
+   * `--dsw-alias-label-primary-foreground`.
+   *
+   * `label-primary-foreground` reads like the right token — "text laid on a
+   * solid colour" — and it is the right token for text on a THEME surface. It
+   * is the wrong one here, because it is still theme-coupled: DSH resolves it
+   * to `--dsw-static-neutral-bluish-00` (#fff) on `body` and to
+   * `--dsw-static-neutral-bluish-1000` (#0f1115) on
+   * `body[data-ds-dark-theme]`. It does not mean "white"; it means "the
+   * opposite of whatever surface you are standing on", and this overlay is not
+   * standing on the theme's surface — it paints its own fixed 88%-black mask.
+   *
+   * In a dark theme that flipped the ink AND every `color-mix` base to near
+   * black, which on the dark mask measured 1.03:1 for the pill fills, 1.08:1
+   * for the rings, 1.11:1 for the hint text and 1.15:1 for the caption. Every
+   * control in the full-screen preview disappeared at once — not "too dim",
+   * but the same colour as what it sits on.
+   *
+   * A static palette step is the correct token family for artwork-relative
+   * chrome: it is defined once and does not participate in the theme
+   * inversion. White on this mask measures 16.48:1, so both themes read the
+   * same, and the light theme — which was always correct and is unchanged
+   * here, since the flipped value was already #fff — keeps its exact colours.
+   */
+  --lightbox-ink: var(--dsw-static-neutral-00);
+  --lightbox-surface: color-mix(in srgb, var(--dsw-static-neutral-00) 16%, transparent);
+  --lightbox-surface-hover: color-mix(in srgb, var(--dsw-static-neutral-00) 28%, transparent);
   /* The ring is what makes a pill READ as a control. A translucent FILL cannot
      do it: to reach the 3:1 non-text boundary of WCAG 1.4.11 against an 82%
      black mask the fill has to be ~40% white, and white label text on that fill
@@ -3125,17 +3145,30 @@ html[data-dsh-imagegen-chat-collapsed] [data-dsh-imagegen-chat-resizer] {
      Issue #22 reported the close button as "missing"; it was a white glyph on a
      16%-white disc on a dark mask, i.e. 1.67:1 for the disc and 2.03:1 for the
      ring — legible ink, invisible control. */
-  --lightbox-edge: color-mix(in srgb, var(--dsw-alias-label-primary-foreground) 52%, transparent);
+  --lightbox-edge: color-mix(in srgb, var(--dsw-static-neutral-00) 52%, transparent);
   /* Icon-only circles that float straight on the photograph, with no pill row or
-     panel around them to give the shape away, get both: a disc at 3.5:1 and the
-     stronger ring. They carry no text, so a strong fill costs nothing.
+     panel around them to give the shape away, get both a disc and the stronger
+     ring — they carry no text, so a strong fill costs nothing.
+
+     34% is not a taste decision; it is the only value that satisfies BOTH
+     bounds at once, measured against the worst mask (an 88%-black photo mask
+     over a white page, i.e. #1f1f1f):
+
+       fill 28%  -> glyph 6.51:1, disc 2.53:1  (disc invisible)
+       fill 34%  -> glyph 5.32:1, disc 3.10:1  (both hold)
+       fill 40%  -> glyph 4.38:1, disc 3.77:1  (glyph drops below 4.5)
+
+     The previous 40% traded the icon for the boundary: that is exactly the
+     "legible ink, invisible control" trap this pair exists to avoid, one step
+     later. The ring (55%, 5.87:1) carries the boundary anyway, so the fill
+     only has to clear the 3:1 floor itself rather than carry the whole job.
      Kept as a separate pair instead of raising --lightbox-surface, because that
      one is also the fill of every text-bearing pill (download / edit / copy /
      zoom level) and of VideoPanel's clip player, which would all lose contrast
      for no gain. Nothing here renames the existing three variables. */
-  --lightbox-control-surface: color-mix(in srgb, var(--dsw-alias-label-primary-foreground) 40%, transparent);
-  --lightbox-control-surface-hover: color-mix(in srgb, var(--dsw-alias-label-primary-foreground) 52%, transparent);
-  --lightbox-control-edge: color-mix(in srgb, var(--dsw-alias-label-primary-foreground) 55%, transparent);
+  --lightbox-control-surface: color-mix(in srgb, var(--dsw-static-neutral-00) 34%, transparent);
+  --lightbox-control-surface-hover: color-mix(in srgb, var(--dsw-static-neutral-00) 44%, transparent);
+  --lightbox-control-edge: color-mix(in srgb, var(--dsw-static-neutral-00) 55%, transparent);
   position: fixed;
   inset: 0;
   z-index: var(--z-lightbox);
@@ -3168,7 +3201,7 @@ html[data-dsh-imagegen-chat-collapsed] [data-dsh-imagegen-chat-resizer] {
 }
 
 .lightboxClose:focus-visible {
-  outline: 2px solid var(--dsw-alias-label-primary-foreground);
+  outline: 2px solid var(--dsw-static-neutral-00);
   outline-offset: 2px;
 }
 
@@ -3260,7 +3293,7 @@ html[data-dsh-imagegen-chat-collapsed] [data-dsh-imagegen-chat-resizer] {
   margin-left: 4px;
   font-size: 11px;
   line-height: 1.4;
-  color: color-mix(in srgb, var(--dsw-alias-label-primary-foreground) 72%, transparent);
+  color: color-mix(in srgb, var(--dsw-static-neutral-00) 72%, transparent);
   white-space: nowrap;
 }
 
@@ -3342,8 +3375,9 @@ html[data-dsh-imagegen-chat-collapsed] [data-dsh-imagegen-chat-resizer] {
   font-size: 12px;
   /* Same rule as the rest of the lightbox chrome: this text sits on the dark
      mask, so a theme-following dim colour drops to ~2.8:1 against it in a light
-     theme. Mixed from the on-solid text token instead. */
-  color: color-mix(in srgb, var(--dsw-alias-label-primary-foreground) 72%, transparent);
+     theme. Mixed from a STATIC white rather than the theme's on-solid token,
+     because that token flips to near-black in a dark theme. */
+  color: color-mix(in srgb, var(--dsw-static-neutral-00) 72%, transparent);
   font-variant-numeric: tabular-nums;
 }
 

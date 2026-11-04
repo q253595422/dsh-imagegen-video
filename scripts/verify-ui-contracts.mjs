@@ -479,6 +479,20 @@ console.log('node toolbars leave the tab order when hidden and reveal on focus')
 // declares the annotation token.
 const gooeyCss = read('GooeyNav.module.css')
 const canvasCss = read('canvas-workspace.module.css')
+/**
+ * The stylesheet as a BROWSER sees it.
+ *
+ * `.module.css` is not CSS: `:global(selector)` is a CSS Modules escape that the
+ * build strips. Dropped into a `<style>` tag verbatim it is an invalid selector,
+ * so the whole rule is discarded — silently, with no console error. A fixture
+ * that embeds the raw file therefore measures a page missing every `:global`
+ * rule, and a `:global(body[data-ds-dark-theme]) .root` override simply does not
+ * exist: the dark theme renders the light values and the check reports a failure
+ * that the real build does not have. Worse in the other direction too — a rule
+ * that only works because of `:global` would look broken here and be "fixed"
+ * into `:local`.
+ */
+const browserCss = css => css.replace(/:global\(([^)]*)\)/g, '$1')
 const imageOpsSource = read('image-ops.ts')
 const gooeySource = read('GooeyNav.tsx')
 
@@ -553,7 +567,7 @@ const page = `<!doctype html><html><head><style>
     --dsw-alias-bg-layer-1: #17171c;
   }
   ${gooeyCss}
-  ${canvasCss}
+  ${browserCss(canvasCss)}
 </style></head><body>
   <div class="container" id="gooey"><nav><ul><li class="active"><button>One</button></li><li><button>Two</button></li></ul></nav></div>
   <div class="root" id="canvasRoot"><div id="probe"></div></div>
@@ -952,7 +966,7 @@ console.log('every tablist wires the shared roving-tabIndex / arrow-key helper')
 // the toolbar is hidden until the node is hovered, selected, or focused.
 const toolbarPage = `<!doctype html><html><head><style>
   body { margin: 0; }
-  ${canvasCss}
+  ${browserCss(canvasCss)}
 </style></head><body>
   <div class="node" id="node" tabindex="0" role="group" aria-label="图片节点" style="position:relative;width:200px;height:120px">
     <div class="hoverToolbar" id="toolbar">
@@ -977,7 +991,7 @@ const scaleCss = read('panel.module.css')
 const stackPage = `<!doctype html><html><head><style>
   body { margin: 0; }
   ${scaleCss}
-  ${canvasCss}
+  ${browserCss(canvasCss)}
   ${videoPickerCss}
 </style></head><body>
   <div class="root" id="canvasRoot" style="position:relative;width:420px;height:320px">
@@ -1747,25 +1761,50 @@ settingsPageSession.close()
 // translucent, so it has to be blended onto the mask before the ratio means
 // anything.
 const lightboxCss = read('panel.module.css')
-const lightboxTheme = `--dsw-alias-label-primary: #17171c;
+// The two palettes DSH actually ships, read from dsh-client-ui-theme rather
+// than invented here. The point of the pair is `label-primary-foreground`: it
+// is #fff on `body` and #0f1115 on `body[data-ds-dark-theme]`. An early version
+// of this fixture hardcoded it to #ffffff and only ever rendered the light
+// theme, so the check stayed green while every control in the dark theme was
+// the same colour as the mask it sat on.
+const LIGHTBOX_PALETTES = [
+  {
+    name: 'light',
+    bodyAttr: '',
+    pageBackground: '#ffffff',
+    tokens: `--dsw-alias-label-primary: #0f1115;
   --dsw-alias-label-primary-inverted: #ffffff;
   --dsw-alias-label-primary-foreground: #ffffff;
+  --dsw-static-neutral-00: #ffffff;
   --dsw-alias-label-dimmed: #6b7280;
-  --dsw-alias-bg-mask-2: rgba(0,0,0,.55);
-  --dsw-alias-bg-mask-photo: rgba(0,0,0,.82);
-  --dsw-alias-border-l2: #d9dade;
-  --dsw-specific-input-major: #ffffff;
-  --dsw-radius-md: 10px;
-  --dsw-elevation-prominent: 0 10px 30px rgba(0,0,0,.3);
-  --z-lightbox: 1000;`
-const lightboxPage = `<!doctype html><html><head><meta charset="utf-8"><style>
-:root { ${lightboxTheme} }
-body { margin: 0; background: #ffffff; height: 3000px; }
+  --dsw-alias-bg-mask-2: #0000001f;
+  --dsw-alias-bg-mask-photo: #000000e0;
+  --dsw-alias-border-l2: #0000001a;
+  --dsw-specific-input-major: #ffffff;`,
+  },
+  {
+    name: 'dark',
+    bodyAttr: ' data-ds-dark-theme=""',
+    pageBackground: '#151517',
+    tokens: `--dsw-alias-label-primary: #f9fafb;
+  --dsw-alias-label-primary-inverted: #353638;
+  --dsw-alias-label-primary-foreground: #0f1115;
+  --dsw-static-neutral-00: #ffffff;
+  --dsw-alias-label-dimmed: #a2a4a6;
+  --dsw-alias-bg-mask-2: #0003;
+  --dsw-alias-bg-mask-photo: #000000e0;
+  --dsw-alias-border-l2: #ffffff1f;
+  --dsw-specific-input-major: #353638;`,
+  },
+]
+const lightboxPage = palette => `<!doctype html><html><head><meta charset="utf-8"><style>
+  body { ${palette.tokens} }
+  body { margin: 0; background: ${palette.pageBackground}; height: 3000px; }
 /* The workbench the overlay covers is scrollable, which is what makes a
    scroll-chain observable: a notch that escapes the overlay moves this page. */
 body::after { content: ''; display: block; height: 3000px; }
 ${lightboxCss}
-</style></head><body>
+</style></head><body${palette.bodyAttr}>
 <div class="lightbox" data-preview-overlay="">
   <figure class="lightboxFigure">
     <div class="lightboxStage" data-preview-stage="">
@@ -1789,10 +1828,15 @@ ${lightboxCss}
 </div>
 </body></html>`
 
+// Each palette is rendered and measured on its own page, reusing one tab.
+// Rendering only the light one is what let a dark-theme regression ship: the
+// fixture's tokens were plausible, the assertion was real, and the theme that
+// breaks was never drawn.
 const lightboxSession = await openPage(launched.port, 'about:blank')
+for (const palette of LIGHTBOX_PALETTES) {
 await lightboxSession.send('Page.setDocumentContent', {
   frameId: (await lightboxSession.send('Page.getFrameTree')).result.frameTree.frame.id,
-  html: lightboxPage,
+  html: lightboxPage(palette),
 })
 await new Promise(r => setTimeout(r, 300))
 const lightboxContrast = await lightboxSession.evaluate(`(() => {
@@ -1807,70 +1851,94 @@ const lightboxContrast = await lightboxSession.evaluate(`(() => {
     const cs = getComputedStyle(el)
     const own = parseColour(cs.backgroundColor)
     const bg = own === null || own.a === 0 ? maskBg : composite(own, maskBg)
-    out.push({ id, ratio: Math.round(contrastRatio(parseColour(cs.color), bg) * 100) / 100, color: cs.color })
+    // Two ratios per element, because they fail in different ways:
+    //  - the ink has to be readable ON its own pill (1.4.3, text: 4.5)
+    //  - the pill/border has to be findable against the mask (1.4.11: 3)
+    out.push({
+      id,
+      ratio: Math.round(contrastRatio(parseColour(cs.color), bg) * 100) / 100,
+      boundary: Math.round(contrastRatio(bg, maskBg) * 100) / 100,
+      color: cs.color,
+    })
   }
   return out
 })()`)
-const lightboxBad = lightboxContrast.filter(entry => entry.ratio < 3)
-console.log(`lightbox chrome in a LIGHT theme: ${lightboxContrast.length} elements, lowest contrast ${Math.min(...lightboxContrast.map(e => e.ratio))}:1`)
+const lightboxBad = lightboxContrast.filter(entry => entry.ratio < 4.5)
+console.log(`lightbox chrome in a ${palette.name.toUpperCase()} theme: ${lightboxContrast.length} elements, lowest ink contrast ${Math.min(...lightboxContrast.map(e => e.ratio))}:1`)
 if (lightboxBad.length > 0) {
-  console.error('\nFAIL: lightbox chrome is unreadable in a light theme.')
-  for (const entry of lightboxBad) console.error(`  ${entry.id}: contrast ${entry.ratio}:1 (color ${entry.color})`)
+  console.error(`\nFAIL: lightbox chrome is unreadable in a ${palette.name} theme.`)
+  for (const entry of lightboxBad) console.error(`  ${entry.id}: ink contrast ${entry.ratio}:1 (color ${entry.color})`)
   console.error('The lightbox is a fixed DARK surface, so its text and pills must not')
-  console.error('follow the theme: `--dsw-alias-label-primary-inverted` is white in a')
-  console.error('light theme and `--dsw-specific-input-major` is the theme input')
-  console.error('background (white), which lands on 1:1 — invisible until :hover.')
+  console.error('follow the theme\'s inversion. `--dsw-alias-label-primary-foreground`')
+  console.error('LOOKS right — it is the "text on a solid colour" token — but it is')
+  console.error('theme-coupled: #fff on `body`, #0f1115 on `body[data-ds-dark-theme]`.')
+  console.error('Mixed into the chrome it made every control the same colour as the')
+  console.error('mask (1.03-1.15:1) in a dark theme. Use a static palette step')
+  console.error('(`--dsw-static-neutral-00`) for chrome that sits on artwork.')
   console.error('Keep the chrome on the --lightbox-ink / --lightbox-surface pair.')
   process.exit(1)
 }
-console.log('lightbox chrome: readable in both themes, nothing waits for :hover')
 
-// --- the close control has to be a CONTROL, not just readable ink -----------
+// --- every control has to be FINDABLE, not just readable --------------------
 // Issue #22: the photo preview had a close button the reporter "could not find",
-// and the check above was green throughout. It measures each element's GLYPH
-// against the surface it sits on, so a white icon on a 16%-white disc on an
-// 82%-black mask scored perfectly: the icon is legible, the disc is not there.
+// and the check above was green throughout: it measured the glyph against its
+// own pill, so a white icon on a 16%-white disc on an 82%-black mask scored
+// perfectly. Issue #22's follow-up ("dark mode, those buttons are all invisible")
+// was the same shape — the ink was fine relative to a pill that had itself
+// dissolved into the mask.
 //
-// WCAG 1.4.11 asks the other question — is the component's own boundary
-// distinguishable from what is behind it — and the answer here is the pill (or
-// its ring) against the mask, composited because the pill is translucent.
-// Either one may carry it: a filled disc and a strong ring are both legitimate,
-// and demanding a specific one would dictate the design rather than the result.
-const closeSurface = await lightboxSession.evaluate(`(() => {
-  ${WCAG_CONTRAST_SOURCE}
-  const white = { r:255,g:255,b:255,a:1 }
-  const lb = document.querySelector('.lightbox')
-  const mask = composite(parseColour(getComputedStyle(lb).backgroundColor), white)
-  const close = document.getElementById('lbClose')
-  const cs = getComputedStyle(close)
-  const own = parseColour(cs.backgroundColor)
-  const pill = own === null || own.a === 0 ? mask : composite(own, mask)
-  const edge = parseColour(cs.borderTopColor)
-  const ring = edge === null || edge.a === 0 ? mask : composite(edge, mask)
-  const rect = close.getBoundingClientRect()
-  // Rendered is not the same as reachable: a control painted under a sibling
-  // looks exactly like one that is drawn, in source and in a screenshot.
-  const hit = document.elementFromPoint(rect.left + rect.width / 2, rect.top + rect.height / 2)
-  return {
-    fill: Math.round(contrastRatio(pill, mask) * 100) / 100,
-    edge: Math.round(contrastRatio(ring, mask) * 100) / 100,
-    reachable: hit !== null && (hit === close || close.contains(hit)),
-    hit: hit === null ? null : String(hit.id || hit.tagName || '').slice(0, 40),
-    width: Math.round(rect.width),
-    height: Math.round(rect.height),
+// WCAG 1.4.11 asks the other question: is the component's own boundary
+// distinguishable from what is behind it. The answer is the pill OR its ring
+// against the mask, composited because both are translucent. Either may carry
+// it — a filled disc and a strong ring are both legitimate, and demanding a
+// specific one would dictate the design rather than the result.
+const chromeBoundary = []
+for (const id of ['lbOut','lbLevel','lbIn','lbCopy','lbDl','lbEd','lbClose']) {
+  const measured = await lightboxSession.evaluate(`(() => {
+    ${WCAG_CONTRAST_SOURCE}
+    const white = { r:255,g:255,b:255,a:1 }
+    const lb = document.querySelector('.lightbox')
+    const mask = composite(parseColour(getComputedStyle(lb).backgroundColor), white)
+    const el = document.getElementById(${JSON.stringify(id)})
+    if (el === null) return JSON.stringify(null)
+    const cs = getComputedStyle(el)
+    const own = parseColour(cs.backgroundColor)
+    const pill = own === null || own.a === 0 ? mask : composite(own, mask)
+    const edge = parseColour(cs.borderTopColor)
+    const ring = edge === null || edge.a === 0 ? mask : composite(edge, mask)
+    const rect = el.getBoundingClientRect()
+    // Rendered is not the same as reachable: a control painted under a sibling
+    // looks exactly like one that is drawn, in source and in a screenshot.
+    const hit = document.elementFromPoint(rect.left + rect.width / 2, rect.top + rect.height / 2)
+    return JSON.stringify({
+      id: ${JSON.stringify(id)},
+      fill: Math.round(contrastRatio(pill, mask) * 100) / 100,
+      edge: Math.round(contrastRatio(ring, mask) * 100) / 100,
+      reachable: hit !== null && (hit === el || el.contains(hit)),
+      hit: hit === null ? null : String(hit.id || hit.tagName || '').slice(0, 40),
+      width: Math.round(rect.width),
+      height: Math.round(rect.height),
+    })
+  })()`)
+  if (measured !== null && measured !== 'null') chromeBoundary.push(JSON.parse(measured))
+}
+const unfindable = chromeBoundary.filter(entry => Math.max(entry.fill, entry.edge) < 3)
+const unreachable = chromeBoundary.filter(entry => !entry.reachable)
+console.log(`lightbox controls in a ${palette.name.toUpperCase()} theme: ${chromeBoundary.length} measured, lowest boundary ${chromeBoundary.length === 0 ? 'n/a' : Math.min(...chromeBoundary.map(e => Math.max(e.fill, e.edge)))}:1`)
+if (unfindable.length > 0 || unreachable.length > 0) {
+  console.error(`\nFAIL: a lightbox control is not findable in a ${palette.name} theme (issue #22).`)
+  for (const entry of unfindable) {
+    console.error(`  ${entry.id}: fill ${entry.fill}:1, ring ${entry.edge}:1 (needs 3:1 from either)`)
   }
-})()`)
-const closeBoundary = Math.max(closeSurface.fill, closeSurface.edge)
-console.log(`preview close: fill ${closeSurface.fill}:1, ring ${closeSurface.edge}:1, ${closeSurface.width}x${closeSurface.height}, reachable ${closeSurface.reachable}`)
-if (closeBoundary < 3 || !closeSurface.reachable || closeSurface.width < 32 || closeSurface.height < 32) {
-  console.error('\nFAIL: the photo preview\'s close button is not a findable control (issue #22).')
-  console.error(`  boundary ${closeBoundary}:1 against the mask (needs 3:1 from the pill OR its ring)`)
-  console.error(`  ${closeSurface.width}x${closeSurface.height}px, centre hit-test resolves to ${String(closeSurface.hit)}`)
+  for (const entry of unreachable) {
+    console.error(`  ${entry.id}: centre hit-test resolves to ${String(entry.hit)}, not the control`)
+  }
   console.error('A white glyph on a barely-lighter disc is legible and still invisible: the')
   console.error('user sees no button, only an icon floating on the photo. Raise the pill or')
   console.error('its ring against --dsw-alias-bg-mask-photo. `--lightbox-surface` (16%) and')
-  console.error('`--lightbox-edge` (22%) are both far below the bar.')
+  console.error('`--lightbox-edge` (52%) are both below the bar.')
   process.exit(1)
+}
 }
 
 // --- one wheel gesture must do one thing -----------------------------------
@@ -2014,15 +2082,14 @@ console.log(`preview overlay: a notch at ${Object.keys(boxes).length} points (st
 // were the same value, and `.gridScrim` laid another 60% of that same colour on
 // top for good measure.
 //
-// Two checks, deliberately different in kind:
-//
-//  1. The palette-independent one: the two rules may not name the same fill.
-//     This is the actual defect, and it stays true whatever DSH resolves the
-//     tokens to.
-//  2. A measurement, using a dark palette whose layer-1/2/3 are monotonic. It
-//     asks whether the step is VISIBLE, which the string comparison cannot.
-//     The values are approximations of DSH's dark theme, not its real tokens —
-//     so this one is evidence, and check 1 is the requirement.
+// The light theme was never broken and must not be "fixed". DSH resolves all
+// three layers to #ffffff on `body`, so a white card on a white canvas is what
+// the light theme looked like before the issue and what it has to look like
+// after it. The first attempt mixed 12% of `--dsw-alias-label-primary` (near
+// black in light) into the fill and dimmed a palette that had no defect —
+// which is exactly what a guard measuring only the dark theme cannot catch.
+// Both palettes are therefore measured here, and the light one is compared
+// against the tokens the canvas shipped with rather than merely "not equal".
 function ruleBlock (css, selector) {
   const start = css.indexOf(`\n${selector} {`)
   if (start < 0) return null
@@ -2047,6 +2114,21 @@ if (canvasFill === null || nodeFill === null) {
 if (nodeBorder !== null && nodeBorder === canvasFill) {
   nodeProblems.push(`\`.node\`'s border is the canvas fill (${nodeBorder})`)
 }
+// The resting values are variables now, so the literal string comparison above
+// can no longer see them. The two assignments are the whole light-theme
+// contract: `--canvas-node-surface` MUST be the canvas token and
+// `--canvas-node-border` MUST be the resting border the cards shipped with.
+const rootVars = canvasRootBlock === null ? new Map() : new Map(
+  [...canvasRootBlock.matchAll(/(--[a-z-]+):\s*([^;\n]+);/g)].map(m => [m[1], m[2].trim()]))
+if (rootVars.get('--canvas-node-surface') !== 'var(--dsw-alias-bg-layer-1)') {
+  nodeProblems.push(`\`--canvas-node-surface\` is ${String(rootVars.get('--canvas-node-surface'))}, not the canvas token \`var(--dsw-alias-bg-layer-1)\` — the LIGHT theme has to keep its original white card`)
+}
+if (rootVars.get('--canvas-node-border') !== 'var(--dsw-alias-border-l1)') {
+  nodeProblems.push(`\`--canvas-node-border\` is ${String(rootVars.get('--canvas-node-border'))}, not \`var(--dsw-alias-border-l1)\` — the LIGHT theme's resting ring has to stay what it shipped with`)
+}
+if (!/:global\(body\[data-ds-dark-theme\]\) \.root\s*\{[\s\S]{0,400}?--canvas-node-surface:/.test(canvasCss)) {
+  nodeProblems.push('no `body[data-ds-dark-theme] .root { --canvas-node-surface }` override — the dark card would be the canvas colour again')
+}
 if (selectedBorder === null) {
   nodeProblems.push('`.nodeSelected` no longer sets its own border-color, so selection cannot read above the default')
 } else if (nodeBorder !== null && selectedBorder === nodeBorder) {
@@ -2055,54 +2137,82 @@ if (selectedBorder === null) {
 if (nodeProblems.length > 0) {
   console.error('\nFAIL: a canvas node cannot be told apart from the canvas (issue #23).')
   for (const entry of nodeProblems) console.error(`  - ${entry}`)
-  console.error('A card and the surface it floats on must be two different surfaces; reusing')
-  console.error('one token for both makes the border the only edge, and in a dark theme a')
-  console.error('1.5px --dsw-alias-border-l1 line is not enough to trace a node\'s extent.')
+  console.error('A dark card and the canvas it floats on must be two surfaces, and the light')
+  console.error('theme must keep the one it had. Split the value at `.root` — the light theme')
+  console.error('keeps `bg-layer-1` exactly, and `body[data-ds-dark-theme] .root` overrides it.')
   process.exit(1)
 }
 
-// The measurement. Layer-1/2/3 are a monotonic scale in DSH, so these three
-// values are the SHAPE of the dark theme even though the numbers are ours.
-const canvasDarkTokens = [...new Set(canvasCss.match(/var\(--dsw-[a-z0-9-]+\)/g) ?? [])]
+// The measurement, in both palettes, using the values DSH actually ships
+// (dsh-client-ui-theme: all three layers are #ffffff on `body`; on
+// `body[data-ds-dark-theme]` they are bluish-875 / -850 / -800).
+const CANVAS_PALETTES = [
+  {
+    name: 'light',
+    bodyAttr: '',
+    tokens: `--dsw-alias-bg-layer-1: #ffffff;
+  --dsw-alias-bg-layer-2: #ffffff;
+  --dsw-alias-bg-layer-3: #ffffff;
+  --dsw-alias-border-l1: #0000000a;
+  --dsw-alias-border-l2: #0000001a;
+  --dsw-alias-label-primary: #0f1115;`,
+    // In light the card and the canvas ARE the same white. Nothing has to differ
+    // here, so the only requirement is that it still is that white.
+    expectStep: false,
+  },
+  {
+    name: 'dark',
+    bodyAttr: ' data-ds-dark-theme=""',
+    tokens: `--dsw-alias-bg-layer-1: #232324;
+  --dsw-alias-bg-layer-2: #2c2c2e;
+  --dsw-alias-bg-layer-3: #353638;
+  --dsw-alias-border-l1: #ffffff0f;
+  --dsw-alias-border-l2: #ffffff1f;
+  --dsw-alias-label-primary: #f9fafb;`,
+    expectStep: true,
+  },
+]
+const canvasPaletteTokens = [...new Set(canvasCss.match(/var\(--dsw-[a-z0-9-]+\)/g) ?? [])]
   .map(token => `${token.slice(4, -1)}: #8a8a8a`).join('; ')
-const canvasDarkPage = `<!doctype html><html><head><style>
-:root {
-  ${canvasDarkTokens};
-  --dsw-alias-bg-layer-1: #17171c;
-  --dsw-alias-bg-layer-2: #22232a;
-  --dsw-alias-bg-layer-3: #2c2d34;
-  --dsw-alias-border-l1: #2a2b31;
-  --dsw-alias-border-l2: #3a3b42;
-  --dsw-alias-label-primary: #f9fafb;
-  --dsw-shadow-lv2: 0 2px 8px #0006;
-}
+const canvasPage = palette => `<!doctype html><html><head><style>
+:root { ${canvasPaletteTokens}; }
+body { ${palette.tokens} }
 * { box-sizing: border-box; }
-html, body { margin: 0; height: 100%; background: #17171c; }
-${canvasCss}
-</style></head><body>
-<div class="root" id="darkRoot" style="height:320px">
-  <div class="viewport" id="darkViewport">
-    <div class="node" id="darkNode" style="left:40px;top:40px;width:200px;height:120px"></div>
+html, body { margin: 0; height: 100%; }
+${browserCss(canvasCss)}
+</style></head><body${palette.bodyAttr}>
+<div class="root" id="probeRoot" style="height:320px">
+  <div class="viewport" id="probeViewport">
+    <div class="node" id="probeNode" style="left:40px;top:40px;width:200px;height:120px"></div>
   </div>
 </div>
 </body></html>`
-// Reusing the session keeps one browser per run; the close-button measurements
+// Reusing the session keeps one browser per run; the lightbox measurements
 // above are already collected, so replacing the document now costs nothing.
+for (const palette of CANVAS_PALETTES) {
 await lightboxSession.send('Page.setDocumentContent', {
   frameId: (await lightboxSession.send('Page.getFrameTree')).result.frameTree.frame.id,
-  html: canvasDarkPage,
+  html: canvasPage(palette),
 })
 await new Promise(r => setTimeout(r, 300))
-const canvasDark = JSON.parse(await lightboxSession.evaluate(`(() => {
+const canvasMeasured = JSON.parse(await lightboxSession.evaluate(`(() => {
   ${WCAG_CONTRAST_SOURCE}
-  const white = { r:255,g:255,b:255,a:1 }
-  const root = document.getElementById('darkRoot')
-  const node = document.getElementById('darkNode')
-  const canvasSurface = composite(parseColour(getComputedStyle(root).backgroundColor), white)
+  const root = document.getElementById('probeRoot')
+  const node = document.getElementById('probeNode')
+  // The page behind the canvas: composite the .root fill onto it before any
+  // ratio means anything (the root fill is opaque here, but the light theme's
+  // white-on-white only reads as 1.00:1 when it is compared against the real
+  // backdrop rather than against itself).
+  const pageBackground = composite(parseColour(getComputedStyle(document.body).backgroundColor),
+    { r:255,g:255,b:255,a:1 })
+  const canvasSurface = composite(parseColour(getComputedStyle(root).backgroundColor), pageBackground)
   const cs = getComputedStyle(node)
   const fill = composite(parseColour(cs.backgroundColor), canvasSurface)
   const edge = composite(parseColour(cs.borderTopColor), canvasSurface)
   return JSON.stringify({
+    page: [Math.round(pageBackground.r), Math.round(pageBackground.g), Math.round(pageBackground.b)],
+    canvas: [Math.round(canvasSurface.r), Math.round(canvasSurface.g), Math.round(canvasSurface.b)],
+    fillColor: [Math.round(fill.r), Math.round(fill.g), Math.round(fill.b)],
     fill: Math.round(contrastRatio(fill, canvasSurface) * 100) / 100,
     edge: Math.round(contrastRatio(edge, canvasSurface) * 100) / 100,
   })
@@ -2111,15 +2221,26 @@ const canvasDark = JSON.parse(await lightboxSession.evaluate(`(() => {
 // fill bar is 1.25 while the thin border keeps the 3:1 that 1.4.11 asks of a
 // component boundary. Either alone is enough — the issue's own wording is
 // "清楚的明暗层次" OR "提高卡片边框的可辨识度", not both.
-const canvasStep = canvasDark.fill >= 1.25 || canvasDark.edge >= 3
-console.log(`canvas node in a dark theme: fill ${canvasDark.fill}:1, border ${canvasDark.edge}:1`)
-if (!canvasStep) {
+const canvasStep = canvasMeasured.fill >= 1.25 || canvasMeasured.edge >= 3
+console.log(`canvas node in a ${palette.name.toUpperCase()} theme: canvas rgb(${canvasMeasured.canvas.join(',')}), node rgb(${canvasMeasured.fillColor.join(',')}), fill ${canvasMeasured.fill}:1, border ${canvasMeasured.edge}:1`)
+if (palette.expectStep && !canvasStep) {
   console.error('\nFAIL: a resting canvas node is still invisible in a dark theme (issue #23).')
-  console.error(`  its fill differs from the canvas by ${canvasDark.fill}:1 (needs 1.25) and its`)
-  console.error(`  border by ${canvasDark.edge}:1 (needs 3). Measured with an APPROXIMATE dark`)
-  console.error('  palette; the token comparison above is the palette-independent requirement.')
+  console.error(`  its fill differs from the canvas by ${canvasMeasured.fill}:1 (needs 1.25) and its`)
+  console.error(`  border by ${canvasMeasured.edge}:1 (needs 3). Measured with the token values the`)
+  console.error('  installed DSH ships; the palette-independent requirement is checked above.')
   process.exit(1)
 }
+if (!palette.expectStep && canvasMeasured.fill !== 1) {
+  console.error('\nFAIL: the LIGHT theme\'s canvas was changed while fixing a dark-theme defect.')
+  console.error('  DSH resolves `--dsw-alias-bg-layer-1` and `--dsw-alias-bg-layer-3` to the SAME')
+  console.error('  #ffffff in light, so the card measured 1.00:1 there before the issue and must')
+  console.error(`  still measure 1.00:1 after it — this run measured ${canvasMeasured.fill}:1.`)
+  console.error('  A card dimmed in a palette that had no complaint is a regression, not a fix:')
+  console.error('  split the value at `.root` instead of mixing one value for both themes.')
+  process.exit(1)
+}
+}
+
 lightboxSession.close()
 
 ws7.close()
