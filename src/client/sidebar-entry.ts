@@ -38,6 +38,7 @@
 
 import type { ImageGenController } from './controller.ts'
 import css from './panel.module.css'
+import { onTablistKeyDown, tabIndexFor } from './tablist.ts'
 
 /** Stable selector for the injected two-tab host. */
 export const ENTRY_SELECTOR = '[data-dsh-imagegen-session-tabs]'
@@ -314,14 +315,37 @@ function createTabs(
   // Name the switcher itself, not the image tab: its tooltip is a model list.
   tabs.setAttribute('aria-label', `${sessionLabel} / ${imageLabel}`)
 
-  const sessionTab = makeTab(sessionLabel, sessionTooltip, SESSION_ICON, () => {
-    controller.close()
-  })
-  const imageTab = makeTab(imageLabel, imageTooltip, IMAGE_ICON, () => {
-    controller.open()
-  })
+  // One `activate` per tab, shared by the click and the arrow key that lands on
+  // it: two lambdas meaning the same thing is how a keyboard path drifts away
+  // from the mouse path it is supposed to mirror.
+  const activateSession = (): void => { controller.close() }
+  const activateImage = (): void => { controller.open() }
+
+  const sessionTab = makeTab(sessionLabel, sessionTooltip, SESSION_ICON, activateSession)
+  const imageTab = makeTab(imageLabel, imageTooltip, IMAGE_ICON, activateImage)
   sessionTab.dataset.dshImagegenTab = 'session'
   imageTab.dataset.dshImagegenTab = 'image'
+
+  // `role="tablist"` plus `role="tab"` is a keyboard promise, not decoration:
+  // only the selected tab stays in the Tab order and the arrow keys move
+  // between them. Declaring the roles without this leaves a keyboard user
+  // pressing arrows that do nothing — the exact defect `tablist.ts` documents.
+  // The switcher is built imperatively (no React), so it wires the shared
+  // helper by hand instead of getting it from `onKeyDown`.
+  const entries: ReadonlyArray<readonly [HTMLButtonElement, () => void]> = [
+    [sessionTab, activateSession],
+    [imageTab, activateImage],
+  ]
+  for (const [index, entry] of entries.entries()) {
+    entry[0].addEventListener('keydown', event => {
+      onTablistKeyDown(event, {
+        count: entries.length,
+        index,
+        select: next => entries[next]?.[1](),
+      })
+    })
+  }
+
   tabs.append(sessionTab, imageTab)
   return tabs
 }
@@ -450,6 +474,10 @@ export function mountSidebarEntry(
       if (active) tab.dataset.active = ''
       else delete tab.dataset.active
       tab.setAttribute('aria-selected', active ? 'true' : 'false')
+      // The roving half of the contract: exactly one tab is in the Tab order,
+      // and it is the selected one. `aria-selected` alone still leaves both
+      // buttons tabbable, which is the state the keyboard contract forbids.
+      tab.tabIndex = tabIndexFor(active)
     }
   }
 
