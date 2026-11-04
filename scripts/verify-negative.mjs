@@ -635,6 +635,35 @@ const CASES = [
     expect: /never calls onTablistKeyDown/,
   },
   {
+    // The sidebar switcher is built imperatively, so it is the one tablist the
+    // old `.tsx`-only scan could not see. Dropping its keydown wiring is
+    // exactly what shipped in #26 and stayed green.
+    //
+    // This single case proves both halves of the follow-up. The check it must
+    // turn red reads `sidebar-entry.ts`, which is a `.ts` file; if the scan were
+    // still `.tsx`-only there would be nothing to report and the case would be a
+    // FALSE GREEN. (A case that only reverts the extension and injects no defect
+    // proves nothing: the file is correct either way, so it can only ever be
+    // green. Do not add one.)
+    name: 'the sidebar switcher loses its arrow keys',
+    runner: 'contracts',
+    file: 'src/client/sidebar-entry.ts',
+    from: "    entry[0].addEventListener('keydown', event => {\n      onTablistKeyDown(event, {\n        count: entries.length,\n        index,\n        select: next => entries[next]?.[1](),\n      })\n    })\n",
+    to: '',
+    expect: /sidebar-entry\.ts: declares 2 tab\(s\) but never calls onTablistKeyDown/,
+  },
+  {
+    // Issue #25 measured this in a real host: content-box sizing plus a
+    // width:100% is 16px of overflow. Source review cannot see it, and the
+    // whole point of the browser check is that it can.
+    name: 'the sidebar switcher goes back to content-box sizing',
+    runner: 'contracts',
+    file: 'src/client/panel.module.css',
+    from: '  box-sizing: border-box;\n  width: auto;\n  min-width: 0;\n  margin: 0 calc(var(--dsh-sidebar-paint-inset, 3px) + 1px) 8px;',
+    to: '  width: 100%;\n  min-width: 0;\n  margin: 0 calc(var(--dsh-sidebar-paint-inset, 3px) + 1px) 0;',
+    expect: /does not line up with the shell button|box-sizing: content-box|not the 8px/,
+  },
+  {
     name: 'nothing reveals the node toolbar on focus',
     runner: 'contracts',
     file: 'src/client/canvas-workspace.module.css',

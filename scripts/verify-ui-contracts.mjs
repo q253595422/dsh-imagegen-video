@@ -721,6 +721,7 @@ const server = (await import('node:http')).createServer((req, res) => {
   else if (req.url?.includes('stack=1') === true) res.end(stackPage)
   else if (req.url?.includes('mainslot=1') === true) res.end(mainSlotPage)
   else if (req.url?.includes('sourcetabs=1') === true) res.end(sourceTabsPage)
+  else if (req.url?.includes('sidebartabs=1') === true) res.end(sidebarTabsPage)
   else if (req.url?.includes('shortcuts=1') === true) res.end(shortcutPage)
   else if (req.url?.includes('navscroll=1') === true) res.end(navScrollPage)
   else if (req.url?.includes('settings850=1') === true) res.end(settingsPage)
@@ -924,13 +925,37 @@ console.log('canvas node root is a tab stop, so the toolbar is reachable by keyb
 //
 // GooeyNav is exempt: it has its own inline implementation (its tabs are <li>
 // wrappers, so the shared helper's closest('[role="tablist"]') walk does not
-// fit) and it is covered by its own check above.
-const TABLIST_FILES = readdirSync(clientDir).filter(name => name.endsWith('.tsx') && name !== 'GooeyNav.tsx')
+// fit) and it is covered by its own check above. `tablist.ts` is the helper
+// itself, not a consumer.
+//
+// `.ts` is scanned too, and that is the point of this comment: the sidebar
+// switcher is built imperatively (`sidebar-entry.ts`, no React), so it declares
+// its roles with `setAttribute('role', …)` rather than a JSX attribute. While
+// this list was `.tsx`-only, adding `role="tab"` there was invisible to the
+// contract — issue #25's fix shipped two tabs with no arrow keys and no roving
+// tabIndex, and every gate stayed green. A role declared imperatively is the
+// same promise as one declared in JSX.
+const TABLIST_FILES = readdirSync(clientDir)
+  .filter(name => (name.endsWith('.tsx') || name.endsWith('.ts')) && name !== 'GooeyNav.tsx' && name !== 'tablist.ts')
+/**
+ * `role="tablist"` / `setAttribute('role', 'tablist')` — a DECLARATION.
+ *
+ * The `(?<!\[)` is load-bearing: `'[role="tablist"]'` inside a querySelector
+ * call is a string that CONTAINS the same characters, so a plain substring test
+ * counts a selector as a declaration. `index.ts` queries
+ * `'[role="tablist"][data-dsh-imagegen-session-tabs]'` to relabel the switcher;
+ * without the lookbehind that file looks like a tablist it never renders.
+ */
+const declaresTablist = source => /(?<!\[)role="tablist"/.test(source)
+  || /setAttribute\(\s*'role'\s*,\s*'tablist'\s*\)/.test(source)
+/** How many `role="tab"` / `setAttribute('role', 'tab')` the file declares. */
+const countTabs = source => [...source.matchAll(/(?<!\[)role="tab"/g)].length
+  + [...source.matchAll(/setAttribute\(\s*'role'\s*,\s*'tab'\s*\)/g)].length
 const missingTablistContract = []
 for (const name of TABLIST_FILES) {
   const source = read(name)
-  if (!source.includes('role="tablist"')) continue
-  const tabButtons = [...source.matchAll(/role="tab"/g)].length
+  if (!declaresTablist(source)) continue
+  const tabButtons = countTabs(source)
   if (tabButtons === 0) continue
   // Every tablist in this file must go through the shared helper.
   if (!/onTablistKeyDown\(/.test(source)) {
@@ -1034,6 +1059,66 @@ const sourceTabsPage = `<!doctype html><html><head><style>
     <div class="sourceTabs" id="tabs" role="tablist">
       ${tabMarkup}
     </div>
+  </div>
+</body></html>`
+
+// --- the injected switcher lines up with the shell's New Session button -----
+// Issue #25. The switcher is a SIBLING of the shell button, inserted with
+// `insertBefore`, so it inherits that button's alignment contract or it does
+// not line up at all. Two bytes decide it and neither is visible in a source
+// review: `box-sizing` (content-box makes `width: 100%` overflow its parent by
+// padding + border) and the margin rule (the 8px gap used to live only on the
+// fallback seat, which the normal seat never sets).
+//
+// The host block is reproduced from the measurements in the issue: a 280px
+// column padded 6px 8px, and a New Session button that is border-box with
+// `margin: 0 calc(var(--dsh-sidebar-paint-inset) + 1px)`.
+//
+// The palette is the light theme on purpose. The defect was never about colour
+// -- it measured 4/12px of horizontal drift and a 0px gap -- so the fixture
+// stays a light surface and the numbers are the whole assertion.
+const sidebarTabsPage = `<!doctype html><html><head><style>
+  body { margin: 0;
+    --dsw-alias-border-l1: #d9dade;
+    --dsw-alias-bg-layer-1: #ffffff;
+    --dsw-alias-label-primary: #17171c;
+    --dsw-alias-label-secondary: #5b5e6b;
+    --dsw-radius-md: 8px;
+    --dsw-radius-sm: 6px;
+    --dsh-sidebar-paint-inset: 3px;
+  }
+  /* A block-level <button> with an auto width is fit-content, not fill: the
+     column has to be a flex column so both children stretch and their shared
+     margin — not a width declaration — decides where each edge lands. That is
+     the arrangement the issue describes, and the only one where the two boxes
+     can be compared at all. */
+  #root { width: 280px; padding: 6px 8px; box-sizing: border-box; display: flex; flex-direction: column; }
+  /* The shell's own button: border-box, inset margin, and the width it ships.
+     Block layout with an auto width is what produces the 256px the issue
+     measured (280 column − 8px padding each side − 4px margin each side). A
+     bare <button> is inline-block and shrinks to its label; an explicit 100%
+     width overflows by the margins. Both are fixtures that disagree with the
+     host, and either one would make this check measure the wrong thing. */
+  .newSession {
+    box-sizing: border-box;
+    display: block;
+    width: auto;
+    height: 38px;
+    margin: 0 calc(var(--dsh-sidebar-paint-inset) + 1px);
+    padding: 0 12px;
+    border: 1px solid #d9dade;
+    border-radius: 8px;
+    background: #ffffff;
+    font: 13px/1.2 system-ui, sans-serif;
+  }
+  ${browserCss(read('panel.module.css'))}
+</style></head><body>
+  <div id="root">
+    <div class="sessionTabs" id="tabs" data-dsh-imagegen-session-tabs role="tablist" aria-label="会话 / 生图">
+      <button class="sessionTab" id="tabSession" role="tab" aria-selected="true" tabindex="0"><span class="sessionTabIcon"></span><span class="sessionTabLabel">会话</span></button>
+      <button class="sessionTab" id="tabImage" role="tab" aria-selected="false" tabindex="-1"><span class="sessionTabIcon"></span><span class="sessionTabLabel">生图</span></button>
+    </div>
+    <button class="newSession" data-dsh-imagegen-new-session aria-label="新建会话">新建会话</button>
   </div>
 </body></html>`
 
@@ -1415,6 +1500,78 @@ if (afterTabs.verticallyClipped) {
   process.exit(1)
 }
 console.log('source row: the last tab scrolls into view and hit-tests to itself')
+
+// --- the injected switcher lines up with the shell button (issue #25) -------
+// `openPage` from the shared launcher instead of a hand-rolled CDP session:
+// this file already carries seven of them, all numbered, and a duplicate `ws7`
+// is a syntax error rather than a bug you get to debug.
+const sidebarPage = await openPage(launched.port, `http://127.0.0.1:${port}/?sidebartabs=1`)
+// `openPage` returns as soon as the target exists, which can be before the
+// navigation commits. Polling for the element is the honest wait: a fixed sleep
+// would pass on this machine and fail on a slower one, and evaluating against a
+// blank document reports `null.getBoundingClientRect` rather than a layout bug.
+let sidebarReady = false
+for (let i = 0; i < 60; i++) {
+  sidebarReady = await sidebarPage.evaluate(`document.readyState === 'complete' && document.getElementById('tabs') !== null && document.querySelector('.newSession') !== null`)
+  if (sidebarReady === true) break
+  await new Promise(r => setTimeout(r, 50))
+}
+if (sidebarReady !== true) {
+  console.error('\nFAIL: the sidebar fixture never rendered its switcher and New Session button.')
+  console.error('That is a broken fixture, not a passing check: nothing was measured.')
+  process.exit(1)
+}
+
+// Sub-pixel: 272 vs 256px is 16px of drift, but the two edges can disagree by
+// a fraction after the browser rounds a calc() margin. A half-pixel is the
+// tolerance; anything a person could see is far past it.
+const sidebarGeometry = await sidebarPage.evaluate(`(() => {
+  const r = e => { const q = e.getBoundingClientRect(); return { left: q.left, right: q.right, width: q.width, top: q.top, bottom: q.bottom } }
+  const tabs = document.getElementById('tabs')
+  const button = document.querySelector('.newSession')
+  const t = r(tabs)
+  const b = r(button)
+  return {
+    tabs: t,
+    button: b,
+    leftDrift: Math.abs(t.left - b.left),
+    rightDrift: Math.abs(t.right - b.right),
+    gap: b.top - t.bottom,
+    boxSizing: getComputedStyle(tabs).boxSizing,
+    marginLeft: getComputedStyle(tabs).marginLeft,
+    marginRight: getComputedStyle(tabs).marginRight,
+    marginBottom: getComputedStyle(tabs).marginBottom,
+    columnWidth: document.getElementById('root').getBoundingClientRect().width,
+  }
+})()`)
+const fmt = n => `${Math.round(n * 100) / 100}px`
+console.log(`sidebar switcher: tabs ${fmt(sidebarGeometry.tabs.left)}..${fmt(sidebarGeometry.tabs.right)}, `
+  + `button ${fmt(sidebarGeometry.button.left)}..${fmt(sidebarGeometry.button.right)}, `
+  + `drift L/R ${fmt(sidebarGeometry.leftDrift)}/${fmt(sidebarGeometry.rightDrift)}, gap ${fmt(sidebarGeometry.gap)}, `
+  + `box ${sidebarGeometry.boxSizing}`)
+
+const sidebarProblems = []
+if (sidebarGeometry.boxSizing !== 'border-box') {
+  sidebarProblems.push(`the switcher computes box-sizing: ${sidebarGeometry.boxSizing}, so width:100% adds its padding and border on top`)
+}
+if (sidebarGeometry.leftDrift > 0.5) {
+  sidebarProblems.push(`its left edge is ${fmt(sidebarGeometry.leftDrift)} off the New Session button's`)
+}
+if (sidebarGeometry.rightDrift > 0.5) {
+  sidebarProblems.push(`its right edge is ${fmt(sidebarGeometry.rightDrift)} off the New Session button's — the left drift alone does not catch the width overflow`)
+}
+if (Math.abs(sidebarGeometry.gap - 8) > 0.5) {
+  sidebarProblems.push(`the gap above New Session is ${fmt(sidebarGeometry.gap)}, not the 8px every seat now carries`)
+}
+if (sidebarProblems.length > 0) {
+  console.error('\nFAIL: the injected session/image switcher does not line up with the shell button (issue #25):')
+  for (const problem of sidebarProblems) console.error(`  - ${problem}`)
+  console.error('It is a sibling of that button, so the two have to share one inset. Left drift,')
+  console.error('right drift and the vertical gap are three separate consequences of the same')
+  console.error('box model, and a source review can see none of them.')
+  process.exit(1)
+}
+console.log('sidebar switcher: same inset and one 8px gap against the shell button')
 
 // --- the shortcut legend fits the canvas it opens over ----------------------
 const shortcutTarget = await (await fetch(`http://127.0.0.1:${launched.port}/json/new?${encodeURIComponent(`http://127.0.0.1:${port}/?shortcuts=1`)}`, { method: 'PUT' })).json()

@@ -5351,6 +5351,46 @@ await check('D3 sidebar entry mounts inside desktop and unknown sidebar shells, 
   assert.equal(tabs.querySelector('[data-dsh-imagegen-tab="session"]').hasAttribute('data-active'), false)
   assert.equal(tabs.querySelector('[data-dsh-imagegen-tab="image"]').getAttribute('aria-selected'), 'true', 'aria-selected follows the open panel (#25)')
   assert.equal(tabs.querySelector('[data-dsh-imagegen-tab="session"]').getAttribute('aria-selected'), 'false')
+
+  // The rest of the role="tablist" promise: exactly one tab in the Tab order,
+  // and the arrow keys move between them (#25 follow-up). `aria-selected`
+  // alone left both buttons tabbable, so a keyboard user had to tab through the
+  // switcher twice and the arrows did nothing.
+  //
+  // `tabIndex` is written by the same subscriber that writes `aria-selected`,
+  // so each key press is followed by the notify a real controller would send —
+  // otherwise this would assert against a state the plugin never reaches.
+  const tabOf = name => tabs.querySelector(`[data-dsh-imagegen-tab="${name}"]`)
+  const notify = () => { for (const listener of [...listeners]) listener() }
+  assert.equal(tabOf('image').getAttribute('tabindex'), '0', 'the selected tab is the one Tab stop')
+  assert.equal(tabOf('session').getAttribute('tabindex'), '-1', 'the unselected tab leaves the Tab order')
+
+  calls.length = 0
+  tabOf('image').dispatchEvent(new jsdomWindow.KeyboardEvent('keydown', { key: 'ArrowLeft', bubbles: true }))
+  assert.equal(calls.join(','), 'close', 'ArrowLeft on the open image tab returns to the conversation')
+  assert.equal(jsdomDocument.activeElement, tabOf('session'), 'the arrow key moves focus with the selection')
+  panelOpen = false
+  notify()
+  assert.equal(tabOf('session').getAttribute('tabindex'), '0', 'the newly selected tab becomes the Tab stop')
+  assert.equal(tabOf('image').getAttribute('tabindex'), '-1')
+
+  tabOf('session').dispatchEvent(new jsdomWindow.KeyboardEvent('keydown', { key: 'End', bubbles: true }))
+  assert.equal(calls.join(','), 'close,open', 'End jumps to the last tab')
+  assert.equal(jsdomDocument.activeElement, tabOf('image'))
+  panelOpen = true
+  notify()
+
+  tabOf('image').dispatchEvent(new jsdomWindow.KeyboardEvent('keydown', { key: 'ArrowRight', bubbles: true }))
+  assert.equal(calls.join(','), 'close,open,close', 'ArrowRight wraps around to the first tab')
+  assert.equal(jsdomDocument.activeElement, tabOf('session'))
+
+  // A key the contract does not claim must not steal the press.
+  const ignored = new jsdomWindow.KeyboardEvent('keydown', { key: 'ArrowUp', bubbles: true, cancelable: true })
+  tabOf('session').dispatchEvent(ignored)
+  assert.equal(ignored.defaultPrevented, false, 'only the keys the helper handles are prevented')
+  assert.equal(calls.join(','), 'close,open,close', 'an unrelated key activates nothing')
+  panelOpen = false
+  notify()
   jsdomDocument.documentElement.setAttribute('data-dsh-imagegen-active', '')
   assert.notEqual(jsdomWindow.getComputedStyle(shellButton).display, 'none', 'the native New Session action stays visible under the shipped studio CSS')
   assert.equal(jsdomWindow.getComputedStyle(desktopRoot.querySelector('[data-other-sidebar-plugin]')).display, 'none', 'unrelated sidebar plugin entries remain hidden')
