@@ -659,9 +659,29 @@ const CASES = [
     name: 'the sidebar switcher goes back to content-box sizing',
     runner: 'contracts',
     file: 'src/client/panel.module.css',
-    from: '  box-sizing: border-box;\n  width: auto;\n  min-width: 0;\n  margin: 0 calc(var(--dsh-sidebar-paint-inset, 3px) + 1px) 8px;',
-    to: '  width: 100%;\n  min-width: 0;\n  margin: 0 calc(var(--dsh-sidebar-paint-inset, 3px) + 1px) 0;',
+    from: '  box-sizing: border-box;\n  width: auto;\n  min-width: 0;\n  margin: 0 0 8px;',
+    to: '  width: 100%;\n  min-width: 0;\n  margin: 0 0 0;',
     expect: /does not line up with the shell button|box-sizing: content-box|not the 8px/,
+  },
+  {
+    // The 2px drift the live shell actually had, and the exact shape it had it
+    // in. The host's New Session button carries a hard-coded `margin: 2px` and
+    // publishes no custom property; the old code assumed
+    // `--dsh-sidebar-paint-inset` and fell back to 3px, so the switcher sat 2px
+    // inside the button on both edges. Re-introduce the assumption and the
+    // browser check has to see the drift.
+    //
+    // This is injected into `alignToSeat` rather than into `placeTabs` on
+    // purpose: the fixture lifts `alignToSeat` out of the source and runs it, so
+    // the function IS the code under test. Removing a call site in `placeTabs`
+    // would prove nothing here -- that call site is covered by the jsdom smoke
+    // test, which mounts the real entry.
+    name: 'the switcher trusts a paint inset the shell never defines',
+    runner: 'contracts',
+    file: 'src/client/sidebar-entry.ts',
+    from: '  const style = getComputedStyle(button)\n  const left = style.marginLeft\n  const right = style.marginRight\n',
+    to: "  const style = getComputedStyle(button)\n  const inset = style.getPropertyValue('--dsh-sidebar-paint-inset').trim() || '3px'\n  const left = inset === '3px' ? '4px' : inset\n  const right = inset === '3px' ? '4px' : inset\n",
+    expect: /does not line up with the shell button/,
   },
   {
     name: 'nothing reveals the node toolbar on focus',

@@ -1062,21 +1062,48 @@ const sourceTabsPage = `<!doctype html><html><head><style>
   </div>
 </body></html>`
 
+/**
+ * The real `alignToSeat` from `sidebar-entry.ts`, with its type annotations
+ * stripped so a plain browser can evaluate it.
+ *
+ * Reading the function out of the source (rather than re-typing it here) is the
+ * whole point: the check must fail when the shipped logic changes, not when a
+ * copy of it drifts. If the function is renamed or removed this throws instead,
+ * so the check cannot silently stop covering it.
+ */
+const sidebarAlignScript = (() => {
+  const source = read('sidebar-entry.ts')
+  const match = source.match(/function alignToSeat\(tabs: HTMLElement, button: HTMLElement\): void \{[\s\S]*?\n\}/)
+  if (match === null) {
+    console.error('\nFAIL: alignToSeat is gone from sidebar-entry.ts.')
+    console.error('The sidebar alignment check lifts that function into the page; without it there is')
+    console.error('nothing to exercise, and the check would pass by measuring a page it never aligned.')
+    process.exit(1)
+  }
+  return match[0]
+    .replace(/\(tabs: HTMLElement, button: HTMLElement\): void/, '(tabs, button)')
+    .replace(/\/\*\*[\s\S]*?\*\//g, '')
+    .replace(/\/\/[^\n]*/g, '')
+})()
+
 // --- the injected switcher lines up with the shell's New Session button -----
 // Issue #25. The switcher is a SIBLING of the shell button, inserted with
 // `insertBefore`, so it inherits that button's alignment contract or it does
-// not line up at all. Two bytes decide it and neither is visible in a source
+// not line up at all. Two things decide it and neither is visible in a source
 // review: `box-sizing` (content-box makes `width: 100%` overflow its parent by
-// padding + border) and the margin rule (the 8px gap used to live only on the
-// fallback seat, which the normal seat never sets).
+// padding + border) and the horizontal inset.
 //
-// The host block is reproduced from the measurements in the issue: a 280px
-// column padded 6px 8px, and a New Session button that is border-box with
-// `margin: 0 calc(var(--dsh-sidebar-paint-inset) + 1px)`.
+// This fixture is reproduced from a LIVE shell (dsh 0.2.1-rc.5), and that is
+// the point of the second half of issue #25. The first version of this page
+// declared `--dsh-sidebar-paint-inset: 3px` on `body`, which matched the
+// fallback in the stylesheet and therefore only agreed with itself. The real
+// shell defines NO such property on any ancestor: its New Session button
+// carries a hard-coded `margin: 2px`. So this page defines no inset variable at
+// all, the button's margin is 2px, and the switcher has to measure it.
 //
 // The palette is the light theme on purpose. The defect was never about colour
-// -- it measured 4/12px of horizontal drift and a 0px gap -- so the fixture
-// stays a light surface and the numbers are the whole assertion.
+// -- it measured pixels of horizontal drift and a wrong vertical gap -- so the
+// fixture stays a light surface and the numbers are the whole assertion.
 const sidebarTabsPage = `<!doctype html><html><head><style>
   body { margin: 0;
     --dsw-alias-border-l1: #d9dade;
@@ -1085,26 +1112,21 @@ const sidebarTabsPage = `<!doctype html><html><head><style>
     --dsw-alias-label-secondary: #5b5e6b;
     --dsw-radius-md: 8px;
     --dsw-radius-sm: 6px;
-    --dsh-sidebar-paint-inset: 3px;
   }
   /* A block-level <button> with an auto width is fit-content, not fill: the
      column has to be a flex column so both children stretch and their shared
      margin — not a width declaration — decides where each edge lands. That is
-     the arrangement the issue describes, and the only one where the two boxes
+     the arrangement the live shell has, and the only one where the two boxes
      can be compared at all. */
   #root { width: 280px; padding: 6px 8px; box-sizing: border-box; display: flex; flex-direction: column; }
-  /* The shell's own button: border-box, inset margin, and the width it ships.
-     Block layout with an auto width is what produces the 256px the issue
-     measured (280 column − 8px padding each side − 4px margin each side). A
-     bare <button> is inline-block and shrinks to its label; an explicit 100%
-     width overflows by the margins. Both are fixtures that disagree with the
-     host, and either one would make this check measure the wrong thing. */
+  /* The shell's own button, as measured live: border-box, block, auto width,
+     and a flat 2px inline margin with no custom property behind it. */
   .newSession {
     box-sizing: border-box;
     display: block;
     width: auto;
     height: 38px;
-    margin: 0 calc(var(--dsh-sidebar-paint-inset) + 1px);
+    margin: 0 2px 12px;
     padding: 0 12px;
     border: 1px solid #d9dade;
     border-radius: 8px;
@@ -1120,6 +1142,14 @@ const sidebarTabsPage = `<!doctype html><html><head><style>
     </div>
     <button class="newSession" data-dsh-imagegen-new-session aria-label="新建会话">新建会话</button>
   </div>
+  <script>
+    // The REAL function, lifted out of sidebar-entry.ts and evaluated here. A
+    // fixture that hard-codes the expected margins cannot notice the expected
+    // answer changing -- and this very check passed the 4px-vs-2px defect it
+    // exists to catch, precisely because it wrote the margins itself.
+    ${sidebarAlignScript}
+    alignToSeat(document.getElementById('tabs'), document.querySelector('.newSession'))
+  </script>
 </body></html>`
 
 // --- the shortcut legend fits the canvas it opens over ----------------------

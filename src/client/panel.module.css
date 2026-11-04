@@ -378,13 +378,22 @@ html[data-dsh-imagegen-active] [data-dsh-imagegen-sidebar-root][data-dsh-imagege
   display: grid;
   grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
   gap: 2px;
-  /* A sibling of the shell's New Session button, so it follows the same
-     alignment contract: border-box sizing and the same paint inset, with the
-     8px gap below it on every seat (issue #25). */
+  /* A sibling of the shell's New Session button, so it follows that button's
+     alignment rather than inventing one: border-box sizing, and the 8px gap
+     below it on every seat (issue #25).
+     
+     The horizontal inset is NOT set here. It used to be
+     `calc(var(--dsh-sidebar-paint-inset, 3px) + 1px)`, which assumed the shell
+     publishes its paint inset as a custom property. Measured in a live shell
+     (0.2.1-rc.5), that property is undefined on every ancestor and the button
+     carries a hard-coded `margin: 2px` — so the fallback branch was the only
+     branch, and the switcher sat 2px inside the button on both sides. The
+     inset is now measured off the button itself and written inline; see
+     `alignToSeat`. A stylesheet cannot see a sibling's used margin. */
   box-sizing: border-box;
   width: auto;
   min-width: 0;
-  margin: 0 calc(var(--dsh-sidebar-paint-inset, 3px) + 1px) 8px;
+  margin: 0 0 8px;
   padding: 3px;
   border: 1px solid var(--dsw-alias-border-l1);
   border-radius: var(--dsw-radius-md);
@@ -393,10 +402,11 @@ html[data-dsh-imagegen-active] [data-dsh-imagegen-sidebar-root][data-dsh-imagege
 
 /* Fallback seat: another plugin took the shell's sidebar over and hid the New
    Session row this switcher normally sits above, so it became the column's first
-   child instead. There is no New Session row to align with, so it spans the
-   column; the 8px gap below is shared with the seated row. */
+   child instead. There is no New Session button to align with, so the inline
+   inset `alignToSeat` writes is cleared here and the switcher spans the column;
+   the 8px gap below is shared with the seated row. */
 .sessionTabs[data-dsh-imagegen-tabs-seat='top'] {
-  margin-inline: 0;
+  margin-inline: 0 !important;
 }
 
 .sessionTab {

@@ -350,6 +350,37 @@ function createTabs(
   return tabs
 }
 
+/**
+ * Copy the shell button's horizontal geometry onto the switcher.
+ *
+ * The switcher is that button's sibling, inserted with `insertBefore`, so the
+ * only correct answer is the button's own used margin — not a token, not a
+ * constant. Measured in a live shell (dsh 0.2.1-rc.5): the button carries
+ * `margin-inline: 2px` and there is no `--dsh-sidebar-paint-inset` anywhere on
+ * its ancestor chain, so the old `calc(var(…, 3px) + 1px)` resolved to 4px and
+ * the switcher sat 2px inside the button on both edges (issue #25 reopened).
+ *
+ * Reading `getComputedStyle` beats reading a custom property here because the
+ * shell is free to change the number without telling anyone, and a stylesheet
+ * cannot see a sibling's used value. Both edges are taken separately: a shell
+ * that insets asymmetrically still lines up.
+ */
+function alignToSeat(tabs: HTMLElement, button: HTMLElement): void {
+  if (typeof globalThis.getComputedStyle !== 'function') return
+  const style = getComputedStyle(button)
+  const left = style.marginLeft
+  const right = style.marginRight
+  // An unparsed value ('auto', '') would break the box; fall back to the
+  // stylesheet's own symmetric margin rather than writing garbage.
+  if (!/^-?[\d.]+px$/.test(left) || !/^-?[\d.]+px$/.test(right)) {
+    tabs.style.removeProperty('margin-left')
+    tabs.style.removeProperty('margin-right')
+    return
+  }
+  tabs.style.marginLeft = left
+  tabs.style.marginRight = right
+}
+
 /** Seat marker for a switcher that had to fall back to the column itself. */
 const FALLBACK_SEAT_ATTR = 'dshImagegenTabsSeat'
 const FALLBACK_SEAT_VALUE = 'top'
@@ -380,11 +411,17 @@ function placeTabs(
   const existing = root.querySelector<HTMLDivElement>(ENTRY_SELECTOR)
 
   if (button !== undefined) {
-    if (existing !== null && existing.parentElement === button.parentElement) return existing
+    if (existing !== null && existing.parentElement === button.parentElement) {
+      // Same seat, but the shell may have re-rendered its button with a new
+      // inset; re-measure rather than keep a value that was true once.
+      alignToSeat(existing, button)
+      return existing
+    }
     existing?.remove()
     const tabs = createTabs(controller, sessionLabel, sessionTooltip, imageLabel, imageTooltip)
     // The shell button keeps its own slot below the switcher, untouched.
     button.parentElement?.insertBefore(tabs, button)
+    alignToSeat(tabs, button)
     return tabs
   }
 
