@@ -81,7 +81,7 @@ interface StoredEntry {
   tags?: string[]
   channelId?: string
   channel?: string
-  workflow?: 'ecommerce'
+  workflow?: 'ecommerce' | 'replica'
   projectId?: string
   projectName?: string
   slotKey?: string
@@ -197,7 +197,7 @@ function isStoredEntry(value: unknown): value is StoredEntry {
     && typeof entry.createdAt === 'number'
     && (entry.mode === 'text' || entry.mode === 'edit' || entry.mode === 'video')
     && (entry.deletedAt === undefined || typeof entry.deletedAt === 'number')
-    && (entry.workflow === undefined || entry.workflow === 'ecommerce')
+    && (entry.workflow === undefined || entry.workflow === 'ecommerce' || entry.workflow === 'replica')
     && (entry.projectId === undefined || typeof entry.projectId === 'string')
     && (entry.projectName === undefined || typeof entry.projectName === 'string')
     && (entry.slotKey === undefined || typeof entry.slotKey === 'string')

@@ -2718,7 +2718,7 @@ await check('C4b task polling stays lightweight and hydrates completed results o
   const image = `data:image/png;base64,${pngBytes.toString('base64')}`
   const submitted = await post('/api/dsh-imagegen/tasks/submit', {
     mode: 'edit', model: 'gpt-image-2', prompt: 'edit this lightweight task payload', size: '3:2', quality: '4k', n: 1, detail: '',
-    image, refName: 'reference.png',
+    image, refName: 'reference.png', workflow: 'replica',
   })
   assert.equal(submitted.body.ok, true, JSON.stringify(submitted.body))
   let summary
@@ -2731,13 +2731,19 @@ await check('C4b task polling stays lightweight and hydrates completed results o
   assert.equal(summary?.status, 'completed')
   assert.equal(summary.result, undefined)
   assert.equal(summary.resultAvailable, true)
+  assert.equal(summary.request.workflow, 'replica', 'the host preserves replica provenance in lightweight polls')
   assert.equal(summary.request.image, undefined)
   assert.equal(summary.request.images, undefined)
 
   const hydrated = await post('/api/dsh-imagegen/tasks/get', { id: submitted.body.task.id })
   assert.equal(hydrated.body.ok, true)
+  assert.equal(hydrated.body.task.request.workflow, 'replica')
   assert.equal(hydrated.body.task.request.image, image)
   assert.ok(hydrated.body.task.result.images.length > 0)
+  assert.ok(
+    persistedHistory.some(entry => entry.prompt === 'edit this lightweight task payload' && entry.workflow === 'replica'),
+    'history accepts replica provenance instead of rejecting its persisted result',
+  )
   const missing = await post('/api/dsh-imagegen/tasks/get', { id: 'missing-task' })
   assert.equal(missing.body.ok, false)
   assert.equal(missing.body.code, 'not-found')
@@ -5684,12 +5690,20 @@ await check('E1 client apply mounts the sidebar entry and studio (jsdom)', async
   const mutateCalls = []
   let rejectNextSettingsMutation = false
   const ecommerceSubmissions = []
+  /** Replica submissions are kept separate so its queue lifecycle can be
+   * asserted without borrowing the ecommerce fixture's completion rules. */
+  const replicaSubmissions = []
+  const replicaTasks = []
+  const replicaTaskListReads = []
+  const replicaTaskGetReads = []
   /** Canvas generation requests submitted from the workspace composer. */
   const canvasTasks = []
   /** Documents the workspace persisted through /canvas/save. */
   const canvasSaves = []
   /** Every gallery mutation the panel issued, in order (see the gallery stubs). */
   const galleryMutations = []
+  const galleryAppends = []
+  const conversationImageStages = []
   /** Video tasks the panel sees when polling, and submissions it makes. */
   const videoTasks = []
   const videoSubmissions = []
@@ -6063,6 +6077,7 @@ await check('E1 client apply mounts the sidebar entry and studio (jsdom)', async
           ok: true,
           entries: [
             { id: 'gallery-one', createdAt: 3, mode: 'text', model: 'gpt-image-2', prompt: 'gallery prompt', size: '1:1', quality: '2k', detail: '', n: 1, images: [{ url: '/api/dsh-imagegen/gallery/image/gallery.png', mime: 'image/png' }] },
+            { id: 'gallery-two', createdAt: 4, mode: 'text', model: 'gpt-image-2', prompt: 'wide gallery prompt', size: '4:3', quality: '2k', detail: '', n: 1, images: [{ url: '/api/dsh-imagegen/gallery/image/wide.png', mime: 'image/png' }] },
             // A favorited clip: the host stores it by reference, with NO images.
             {
               id: 'gallery-clip', createdAt: 8, mode: 'video', model: 'agnes-video-2.5-flash',
@@ -6081,6 +6096,22 @@ await check('E1 client apply mounts the sidebar entry and studio (jsdom)', async
           ],
         }),
       }
+    }
+    if (path.endsWith('/gallery/append')) {
+      const payload = JSON.parse(init.body).entry
+      galleryAppends.push(payload)
+      return {
+        ok: true,
+        json: async () => ({
+          ok: true,
+          added: true,
+          entries: [{ ...payload, id: `gallery-appended-${galleryAppends.length}`, images: [{ url: '/api/dsh-imagegen/gallery/image/appended.png', mime: payload.images[0]?.mime ?? 'image/png' }] }],
+        }),
+      }
+    }
+    if (path.endsWith('/conversation-image')) {
+      conversationImageStages.push(JSON.parse(init.body))
+      return { ok: true, json: async () => ({ ok: true }) }
     }
     // Every gallery mutation answers with the same { entries, trash } pair. The
     // stubs used to be absent, so a client calling one of these threw, the
@@ -6292,6 +6323,17 @@ await check('E1 client apply mounts the sidebar entry and studio (jsdom)', async
     }
     if (path.endsWith('/tasks/submit')) {
       const payload = JSON.parse(init.body)
+      if (payload.refName === 'shot.png') {
+        replicaSubmissions.push(payload)
+        const task = {
+          id: `replica-task-${replicaSubmissions.length}`,
+          request: payload,
+          status: 'queued',
+          createdAt: Date.now(),
+        }
+        replicaTasks.push(task)
+        return { ok: true, json: async () => ({ ok: true, task }) }
+      }
       ecommerceSubmissions.push(payload)
       if (payload.canvas !== undefined) canvasTasks.push(payload)
       // Freeze the id eagerly: the json() closure runs after all concurrent
@@ -6302,6 +6344,29 @@ await check('E1 client apply mounts the sidebar entry and studio (jsdom)', async
     }
     if (path.endsWith('/tasks/get')) {
       const requestedId = JSON.parse(init.body).id
+      const replicaMatch = /^replica-task-(\d+)$/.exec(requestedId)
+      if (replicaMatch !== null) {
+        const payload = replicaSubmissions[Number(replicaMatch[1]) - 1]
+        replicaTaskGetReads.push(requestedId)
+        // A hydration can fail once while the host task keeps running. The
+        // replica pane must retry instead of abandoning a healthy render.
+        if (replicaTaskGetReads.filter(id => id === requestedId).length === 1) {
+          return { ok: true, json: async () => ({ ok: false, code: 'temporary', message: 'temporary poll failure' }) }
+        }
+        return {
+          ok: true,
+          json: async () => ({
+            ok: true,
+            task: {
+              id: requestedId,
+              request: payload,
+              status: 'completed',
+              createdAt: Date.now(),
+              result: { images: [{ b64: pngBytes.toString('base64'), mime: 'image/png' }] },
+            },
+          }),
+        }
+      }
       const match = /^ecommerce-task-(\d+)$/.exec(requestedId)
       const index = match === null ? -1 : Number(match[1]) - 1
       const payload = index < 0 ? undefined : ecommerceSubmissions[index]
@@ -6323,22 +6388,38 @@ await check('E1 client apply mounts the sidebar entry and studio (jsdom)', async
       }
     }
     if (path.endsWith('/tasks/list')) {
+      if (replicaTasks.length > 0) replicaTaskListReads.push(Date.now())
+      const replicaSummaries = replicaTasks.map(task => {
+        const elapsed = Date.now() - task.createdAt
+        task.status = elapsed < 1200 ? 'queued' : elapsed < 2200 ? 'running' : 'completed'
+        const request = { ...task.request }
+        delete request.image
+        delete request.images
+        return {
+          ...task,
+          request,
+          resultAvailable: task.status === 'completed',
+        }
+      })
       return {
         ok: true,
         json: async () => ({
           ok: true,
-          tasks: ecommerceSubmissions.map((payload, index) => {
-            const request = { ...payload }
-            delete request.image
-            delete request.images
-            return {
-              id: `ecommerce-task-${index + 1}`,
-              request,
-              status: index === 0 ? 'completed' : 'queued',
-              createdAt: 1,
-              resultAvailable: index === 0,
-            }
-          }),
+          tasks: [
+            ...ecommerceSubmissions.map((payload, index) => {
+              const request = { ...payload }
+              delete request.image
+              delete request.images
+              return {
+                id: `ecommerce-task-${index + 1}`,
+                request,
+                status: index === 0 ? 'completed' : 'queued',
+                createdAt: 1,
+                resultAvailable: index === 0,
+              }
+            }),
+            ...replicaSummaries,
+          ],
         }),
       }
     }
@@ -6366,6 +6447,11 @@ await check('E1 client apply mounts the sidebar entry and studio (jsdom)', async
     CustomEvent: jsdomWindow.CustomEvent,
     HTMLElement: jsdomWindow.HTMLElement,
     FileReader: jsdomWindow.FileReader,
+    // Generated-image conversation actions decode base64 before handing a
+    // browser File to the host. vm contexts do not inherit Node's web globals,
+    // so expose the same codecs a real browser provides.
+    atob,
+    btoa,
     // image-ops decodes asset URLs through `new Image()`; jsdom never loads
     // resources, so the stub resolves onload on the next tick.
     Image: class SmokeImage {
@@ -6405,6 +6491,7 @@ await check('E1 client apply mounts the sidebar entry and studio (jsdom)', async
   // asserted without a real GUI.
   const conversationDrafts = []
   const conversationInputs = []
+  const conversationPromptDrafts = []
   const conversationStub = {
     createDrafts: (sessionId, files) => files.map((file, index) => {
       conversationDrafts.push({ sessionId: String(sessionId), name: file.name, type: file.type, size: file.size })
@@ -6416,7 +6503,7 @@ await check('E1 client apply mounts the sidebar entry and studio (jsdom)', async
         addAttachments: (ids) => { conversationInputs.push(...ids); return true },
         removeAttachment: () => {},
         state: { getSnapshot: () => ({ draft: '' }) },
-        setDraft: () => {},
+        setDraft: (value) => { conversationPromptDrafts.push(value) },
       }),
     },
   }
@@ -6982,6 +7069,57 @@ await check('E1 client apply mounts the sidebar entry and studio (jsdom)', async
     const imageCard = [...view.querySelectorAll('article')].find(card => card.getAttribute('data-clip') === null && card.querySelector('img') !== null)
     assert.ok(imageCard !== undefined, 'the image card still renders')
     assert.ok(imageCard.querySelector('[data-gallery-add-conversation]') !== null, 'the image card keeps add-to-conversation')
+    // A waterfall is a column layout, not three equal cards with invented
+    // ratios. Every cover image must keep its intrinsic height, while the
+    // deliberate "Grid" view may still crop for a tidy contact sheet.
+    const galleryLayout = view.querySelector('[class*="galleryMasonry"]')
+    assert.ok(galleryLayout !== null, 'the gallery layout is rendered')
+    const galleryColumns = [...galleryLayout.querySelectorAll('[data-gallery-column]')]
+    assert.equal(
+      galleryColumns.length,
+      5,
+      'the waterfall renders five fixed-width lanes at the desktop gallery width',
+    )
+    assert.equal(
+      jsdomWindow.getComputedStyle(galleryColumns[0]).width,
+      '220px',
+      'the waterfall keeps one fixed card width across layouts',
+    )
+    Object.defineProperty(galleryLayout, 'clientWidth', { configurable: true, value: 760 })
+    jsdomWindow.dispatchEvent(new jsdomWindow.Event('resize'))
+    await new Promise(resolve => setTimeout(resolve, 0))
+    assert.equal(
+      galleryLayout.querySelectorAll('[data-gallery-column]').length,
+      3,
+      'the lane count follows the measured gallery width instead of overflowing',
+    )
+    Object.defineProperty(galleryLayout, 'clientWidth', { configurable: true, value: 1290 })
+    jsdomWindow.dispatchEvent(new jsdomWindow.Event('resize'))
+    await new Promise(resolve => setTimeout(resolve, 0))
+    assert.equal(
+      galleryLayout.querySelectorAll('[data-gallery-column]').length,
+      5,
+      'the desktop gallery returns to five lanes without changing the card width',
+    )
+    const workspaceOverflow = jsdomWindow.getComputedStyle(galleryLayout.parentElement)
+    assert.match(
+      workspaceOverflow.getPropertyValue('overflow') || workspaceOverflow.overflow,
+      /(?:^|\s)auto(?:\s|$)/,
+      'the gallery workspace is the single vertical scrollport',
+    )
+    const columnsOverflow = jsdomWindow.getComputedStyle(galleryLayout)
+    assert.match(
+      columnsOverflow.getPropertyValue('overflow') || columnsOverflow.overflowY,
+      /^visible$/,
+      'the column container does not trap overflowing rows behind horizontal clipping',
+    )
+    for (const card of galleryLayout.querySelectorAll('article:not([data-clip])')) {
+      const image = card.querySelector('img')
+      assert.ok(image !== null, 'an image gallery card renders an image')
+      const imageStyle = jsdomWindow.getComputedStyle(image)
+      assert.equal(imageStyle.aspectRatio, 'auto', 'a waterfall image keeps its intrinsic aspect ratio')
+      assert.notEqual(imageStyle.objectFit, 'cover', 'a waterfall image is not cropped to a fabricated ratio')
+    }
 
     // The 视频 filter bucket selects exactly the clips and its badge agrees.
     // Match BUTTONS: the `galleryFilters` CONTAINER also carries a matching class
@@ -7065,6 +7203,17 @@ await check('E1 client apply mounts the sidebar entry and studio (jsdom)', async
     const restoredCall = galleryMutations.filter(entry => entry.path === 'restore').pop()
     assert.ok(restoredCall !== undefined, 'restore reached the host')
     assert.equal(JSON.parse(restoredCall.body).id, 'gallery-trashed', 'restore names the trashed entry')
+    // "Remove" is a move to the recoverable trash, not a silent disappearance.
+    // The action itself and the result message must both say where the asset went.
+    const restoredCard = [...view.querySelectorAll('article')].find(card => card.textContent?.includes('trashed prompt'))
+    assert.ok(restoredCard !== undefined, 'the restored gallery image is available')
+    const removeToTrash = restoredCard.querySelector('button[title*="回收站"]')
+    assert.ok(removeToTrash !== null, 'the remove action explains that the asset goes to the trash')
+    removeToTrash.dispatchEvent(new jsdomWindow.MouseEvent('click', { bubbles: true, cancelable: true }))
+    assert.ok(await waitFor(() => view.textContent?.includes('可在右上角“回收站”恢复')), 'removal tells the user where the asset went')
+    const removeCall = galleryMutations.filter(entry => entry.path === 'remove').pop()
+    assert.ok(removeCall !== undefined, 'the individual remove action reached the host')
+    assert.equal(JSON.parse(removeCall.body).id, 'gallery-trashed', 'the individual remove action names the selected asset')
 
     // Purge is the one action that really unlinks, so it must ask first -- and
     // the confirmation text has to carry the count the user is agreeing to.
@@ -7077,7 +7226,7 @@ await check('E1 client apply mounts the sidebar entry and studio (jsdom)', async
     await new Promise(resolve => setTimeout(resolve, 30))
     confirmationAnswer = false
     assert.equal(confirmationCalls, 3, 'emptying the trash asks for confirmation')
-    assert.equal(confirmationMessages.at(-1)?.includes('1'), true, 'the purge confirmation states how many entries will go')
+    assert.equal(confirmationMessages.at(-1)?.includes('2'), true, 'the purge confirmation states how many entries will go')
     assert.ok(galleryMutations.some(entry => entry.path === 'purge'), 'purge reached the host')
     // The configuration entry registers exactly one Settings navigation section.
     const sectionRegistrations = registered.filter(item => item.name === 'settings.section')
@@ -8824,6 +8973,12 @@ await check('E1 client apply mounts the sidebar entry and studio (jsdom)', async
     // nothing is picked — where a ceiling belongs. The fixture model resolves to
     // the generic branch (5), so the number is pinned here: if the line ever
     // shows anything but the model's real ceiling, this fails.
+    const normalBeforeReplica = [...view.querySelectorAll('[role="tablist"] button')]
+      .find(button => button.textContent === '普通生图')
+    assert.ok(normalBeforeReplica !== undefined, 'the normal workspace tab remains available before replica work')
+    normalBeforeReplica.dispatchEvent(new jsdomWindow.MouseEvent('click', { bubbles: true, cancelable: true }))
+    await new Promise(resolve => setTimeout(resolve, 60))
+    assert.equal(view.querySelectorAll('[data-count]').length, 0, 'the normal result board is empty after the earlier New action')
     const replicaSwitch = [...view.querySelectorAll('[role="tablist"] button')].find(button => button.textContent === '爆款复刻')
     assert.ok(replicaSwitch !== undefined, 'replica top-nav entry is present')
     replicaSwitch.dispatchEvent(new jsdomWindow.MouseEvent('click', { bubbles: true, cancelable: true }))
@@ -8849,6 +9004,91 @@ await check('E1 client apply mounts the sidebar entry and studio (jsdom)', async
     replicaInput.dispatchEvent(new jsdomWindow.Event('change', { bubbles: true }))
     await new Promise(resolve => setTimeout(resolve, 90))
     assert.match(capacityBlock.textContent ?? '', /1 张全部会发送/, `a picked reference states how many are sent: ${capacityBlock.textContent}`)
+    // A long image render must live in the host queue. The old synchronous
+    // /generate call could finish host-side after its client connection died:
+    // history then contained the image, but this result pane stayed empty until
+    // the whole app restarted.
+    const directGeneratesBeforeReplica = requestPaths.filter(path => path.endsWith('/generate')).length
+    const replicaSubmit = replicaWorkspace.querySelector('button[type="submit"]')
+    assert.ok(replicaSubmit !== null && !replicaSubmit.disabled, 'replica submit is enabled after a reference is picked')
+    replicaSubmit.dispatchEvent(new jsdomWindow.MouseEvent('click', { bubbles: true, cancelable: true }))
+    assert.ok(await waitFor(() => replicaSubmissions.length === 1), 'replica submits one host-resident generation task')
+    assert.equal(replicaSubmissions[0].workflow, 'replica', 'replica tasks carry provenance so other workspaces ignore their completions')
+    assert.equal(
+      requestPaths.filter(path => path.endsWith('/generate')).length,
+      directGeneratesBeforeReplica,
+      'replica never holds a synchronous /generate connection open',
+    )
+    assert.ok(
+      await waitFor(() => replicaWorkspace.querySelector('section img') !== null, 5000),
+      'a completed replica task renders its image immediately without an app restart',
+    )
+    assert.ok(replicaTaskListReads.length >= 2, `replica polls lightweight summaries until completion: ${replicaTaskListReads.length} reads`)
+    assert.equal(replicaTaskGetReads.length, 2, 'replica hydrates once, retries one transient failure, and never downloads references on every tick')
+    // Replica results must keep the same useful controls as ordinary image
+    // results. A bare <img> technically shows the render but strands it: it
+    // cannot be previewed, saved, favorited, or handed to the conversation.
+    const replicaOutputCard = replicaWorkspace.querySelector('[data-replica-output-card]')
+    assert.ok(replicaOutputCard !== null, 'a replica image renders inside an actionable result card')
+    const replicaActions = [...replicaOutputCard.querySelectorAll('button, a')]
+    const replicaAction = label => replicaActions.find(action => action.textContent?.trim() === label)
+    const replicaPreview = replicaOutputCard.querySelector('[aria-label="点击预览"]')
+    assert.ok(replicaPreview !== null, 'a replica image offers the ordinary click-to-preview action')
+    assert.ok(replicaAction('加入素材库') !== undefined, 'a replica image can be added to the asset gallery')
+    assert.ok(replicaAction('加入对话') !== undefined, 'a replica image can be added to the current conversation')
+    const replicaDownload = replicaAction('下载')
+    assert.ok(replicaDownload instanceof jsdomWindow.HTMLAnchorElement, 'a replica image has a download link')
+    assert.match(replicaDownload.href, /^data:image\/png;base64,/, 'the replica download points at the rendered bytes')
+    replicaAction('加入素材库').dispatchEvent(new jsdomWindow.MouseEvent('click', { bubbles: true, cancelable: true }))
+    assert.ok(await waitFor(() => galleryAppends.length > 0), 'the replica gallery action reaches the host')
+    assert.equal(galleryAppends.at(-1).prompt, replicaSubmissions[0].prompt, 'the gallery entry keeps the replica prompt instead of the ordinary form prompt')
+    assert.equal(galleryAppends.at(-1).workflow, 'replica', 'the gallery entry keeps replica provenance for later sessions')
+    const currentReplicaOutputCard = replicaWorkspace.querySelector('[data-replica-output-card]')
+    const replicaConversationAction = [...currentReplicaOutputCard.querySelectorAll('button')]
+      .find(action => action.textContent?.trim() === '加入对话')
+    assert.ok(replicaConversationAction !== undefined, 'the live replica card still offers add-to-conversation after the gallery update')
+    assert.equal(replicaConversationAction.disabled, false, 'the replica conversation action is enabled when no attachment is running')
+    const conversationInputsBeforeReplica = conversationInputs.length
+    replicaConversationAction.dispatchEvent(new jsdomWindow.MouseEvent('click', { bubbles: true, cancelable: true }))
+    assert.ok(
+      await waitFor(() => conversationImageStages.length > 0 && conversationInputs.length > conversationInputsBeforeReplica),
+      `the replica conversation action stages and attaches the image; staged=${conversationImageStages.length} drafts=${conversationDrafts.length} inputs=${conversationInputs.length} errors=${[...jsdomDocument.querySelectorAll('[class*="error"]')].map(node => node.textContent).filter(Boolean).join(' | ')}`,
+    )
+    assert.equal(conversationPromptDrafts.at(-1), replicaSubmissions[0].prompt, 'the conversation draft keeps the replica prompt')
+    replicaPreview.dispatchEvent(new jsdomWindow.MouseEvent('click', { bubbles: true, cancelable: true }))
+    assert.ok(await waitFor(() => document.querySelector('[data-preview-overlay]') !== null), 'clicking a replica image opens the standard preview')
+    document.querySelector('[data-preview-overlay]').dispatchEvent(new jsdomWindow.MouseEvent('click', { bubbles: true, cancelable: true }))
+    assert.ok(await waitFor(() => document.querySelector('[data-preview-overlay]') === null), 'the replica preview closes normally')
+    // The state attributes have always changed, but the shipped stylesheet had
+    // no selected-state rule, so clicking looked like a no-op. Exercise the
+    // rendered CSS for every option group, not merely aria-checked.
+    for (const label of ['复刻类型', '复刻程度', '分辨率', '生成张数']) {
+      const group = replicaWorkspace.querySelector(`[role="radiogroup"][aria-label="${label}"]`)
+      assert.ok(group !== null, `${label} renders as a radio group`)
+      const buttons = [...group.querySelectorAll('button')]
+      assert.ok(buttons.length > 1, `${label} offers more than one choice`)
+      const target = buttons.at(-1)
+      target.dispatchEvent(new jsdomWindow.MouseEvent('click', { bubbles: true, cancelable: true }))
+      await new Promise(resolve => setTimeout(resolve, 0))
+      assert.equal(target.getAttribute('aria-checked'), 'true', `${label} updates the selected value`)
+      const unselected = buttons.find(button => button !== target && button.getAttribute('aria-checked') === 'false')
+      assert.ok(unselected !== undefined, `${label} keeps the other choices unselected`)
+      const visualSignature = button => {
+        const style = jsdomWindow.getComputedStyle(button)
+        return [style.backgroundColor, style.borderColor, style.color, style.boxShadow].join('|')
+      }
+      assert.notEqual(
+        visualSignature(target),
+        visualSignature(unselected),
+        `${label} gives the selected choice a visible style`,
+      )
+    }
+    const normalAfterReplica = [...view.querySelectorAll('[role="tablist"] button')]
+      .find(button => button.textContent === '普通生图')
+    assert.ok(normalAfterReplica !== undefined, 'the normal workspace tab remains available after replica work')
+    normalAfterReplica.dispatchEvent(new jsdomWindow.MouseEvent('click', { bubbles: true, cancelable: true }))
+    await new Promise(resolve => setTimeout(resolve, 60))
+    assert.equal(view.querySelectorAll('[data-count]').length, 0, 'a replica completion never populates the normal image result board')
   } finally {
     // Drain pending React work BEFORE restoring the globals. React DOM reads
     // `window` during commit (getActiveElementDeep), so a flush that lands after

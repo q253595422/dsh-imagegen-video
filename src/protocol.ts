@@ -1780,9 +1780,9 @@ export interface CanvasSummary {
   favorite?: boolean
 }
 
-/** Metadata shared by the ecommerce product-set workflow. */
+/** Workflow metadata carried by generated results across task, history and gallery. */
 export interface EcommerceTaskMeta {
-  workflow?: 'ecommerce'
+  workflow?: 'ecommerce' | 'replica'
   projectId?: string
   projectName?: string
   slotKey?: string

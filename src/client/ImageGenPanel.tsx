@@ -8,7 +8,7 @@
  * a platform module) so the studio matches the dsh shell look by construction.
  */
 
-import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties, type PointerEvent as ReactPointerEvent, type RefObject } from 'react'
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties, type PointerEvent as ReactPointerEvent, type RefObject } from 'react'
 import { createPortal } from 'react-dom'
 import { Button, Pill } from '@deepseek-ai/dsh-client-ui-primitives'
 import type { SessionId } from '@deepseek-ai/dsh-api-remotes/client'
@@ -26,7 +26,7 @@ import { GooeyNav } from './GooeyNav.tsx'
 import { InspirationGallery } from './InspirationGallery.tsx'
 import { CanvasWorkspace } from './CanvasWorkspace.tsx'
 import { PptWorkspace } from './PptWorkspace.tsx'
-import { ReplicaWorkspace } from './ReplicaWorkspace.tsx'
+import { ReplicaWorkspace, type ReplicaOutputSource } from './ReplicaWorkspace.tsx'
 import OutfitWorkspace from './OutfitWorkspace.tsx'
 import PromoWorkspace from './PromoWorkspace.tsx'
 import { AplusWorkspace } from './AplusWorkspace.tsx'
@@ -69,6 +69,13 @@ const UPDATE_CHECK_INTERVAL_MS = 30 * 60_000
  *  single look taken after that pass should have finished. Two timers, then it
  *  stops for good — a permanent poller for a decoration is not worth the reads. */
 const POSTER_REFRESH_DELAYS_MS = [2000, 5000] as const
+/** Waterfall cards keep one readable width while the lane count follows the
+ *  measured gallery width. Keep these values in sync with `.galleryColumn`. */
+const GALLERY_CARD_WIDTH = 220
+const GALLERY_COLUMN_GAP = 16
+const GALLERY_HORIZONTAL_PADDING = 10
+
+type GalleryImageSource = Pick<HistoryEntry, 'workflow' | 'mode' | 'model' | 'prompt' | 'size' | 'quality' | 'detail' | 'refName'>
 
 /** A clip the host may yet decorate is one whose row is showing a glyph right
  *  now: `poster` is either absent, or an empty string, and `videoRowOf` treats
@@ -1105,6 +1112,7 @@ export function ImageGenPanel(props: {
   const [galleryRatio, setGalleryRatio] = useState('all')
   const [galleryTagFilter, setGalleryTagFilter] = useState<string | null>(null)
   const [galleryView, setGalleryView] = useState<'masonry' | 'grid'>('masonry')
+  const [galleryColumnCount, setGalleryColumnCount] = useState(5)
   const [gallerySort, setGallerySort] = useState<'newest' | 'oldest'>('newest')
   const [galleryQuery, setGalleryQuery] = useState('')
   const [galleryTagInput, setGalleryTagInput] = useState('')
@@ -1121,7 +1129,7 @@ export function ImageGenPanel(props: {
   /** 'all' | 'image' | 'video' — clips and images share one list, so the only
    *  way to see just one kind used to be scrolling past the other. */
   const [historyKindFilter, setHistoryKindFilter] = useState<'all' | 'image' | 'video'>('all')
-  const [preview, setPreview] = useState<{ images: GeneratedImage[]; index: number } | null>(null)
+  const [preview, setPreview] = useState<{ images: GeneratedImage[]; index: number; source?: GalleryImageSource } | null>(null)
   /** The gallery clip open in the full-screen player (images use `preview`). */
   const [galleryClip, setGalleryClip] = useState<HistoryEntry | null>(null)
   const [previewScale, setPreviewScale] = useState(1)
@@ -1264,7 +1272,12 @@ export function ImageGenPanel(props: {
   const previewDialogRef = useRef<HTMLDivElement>(null)
   const comparisonFullscreenRef = useRef<HTMLDivElement>(null)
   const galleryClipRef = useRef<HTMLDivElement>(null)
-  const activeTasks = tasks.filter(task => task.status === 'queued' || task.status === 'running')
+  const galleryLayoutRef = useRef<HTMLDivElement>(null)
+  // Replica renders own their progress and result board. Their host tasks still
+  // enter the shared queue/history, but must not make the ordinary workspace
+  // look busy or replace the image currently on its canvas.
+  const panelTasks = tasks.filter(task => task.request.workflow !== 'replica')
+  const activeTasks = panelTasks.filter(task => task.status === 'queued' || task.status === 'running')
   const activeTask = activeTasks.find(task => task.status === 'running') ?? activeTasks[0]
   const generating = submitting || activeTasks.length > 0
   const generationStartedAt = activeTask?.startedAt ?? activeTask?.createdAt ?? null
@@ -1369,6 +1382,35 @@ export function ImageGenPanel(props: {
   const galleryModels = [...new Set([...imageModels, ...gallery.map(entry => entry.model)])]
 
   /**
+   * Keep the waterfall card width constant and derive the lane count from the
+   * actual gallery box, not the window viewport. The editor sidebars can be
+   * resized independently, so viewport media queries otherwise choose the wrong
+   * column count and leave unused space or clip the last lane.
+   */
+  useLayoutEffect(() => {
+    if (workspace !== 'normal' || tab !== 'gallery' || galleryView !== 'masonry') return
+    const layout = galleryLayoutRef.current
+    if (layout === null) return
+    const measure = (): void => {
+      const usableWidth = layout.clientWidth - GALLERY_HORIZONTAL_PADDING
+      if (usableWidth <= 0) return
+      const columns = Math.max(
+        1,
+        Math.floor((usableWidth + GALLERY_COLUMN_GAP) / (GALLERY_CARD_WIDTH + GALLERY_COLUMN_GAP)),
+      )
+      setGalleryColumnCount(previous => previous === columns ? previous : columns)
+    }
+    measure()
+    const observer = new ResizeObserver(measure)
+    observer.observe(layout)
+    window.addEventListener('resize', measure)
+    return () => {
+      observer.disconnect()
+      window.removeEventListener('resize', measure)
+    }
+  }, [galleryView, tab, workspace])
+
+  /**
    * The sidebar's single, time-ordered list of every generation.
    *
    * Clips and images share one row shape here, so the filters, the empty state
@@ -1466,6 +1508,18 @@ export function ImageGenPanel(props: {
     loadInitialData()
   }, [active, loadInitialData])
 
+  /**
+   * The replica workspace renders its own result board and the shared poll
+   * skips its tasks, so nothing else reloads the history list when a replica
+   * render finishes. Re-read it here, the same way a completed main-panel task
+   * does, so the sidebar entry exists before the panel remounts.
+   */
+  const refreshHistoryAfterReplica = useCallback((): void => {
+    void api.historyList()
+      .then(entries => { setHistory(entries) })
+      .catch(caught => { setHistoryLoadError(errorMessage(caught)) })
+  }, [api])
+
   // The host writes poster frames *after* it has answered the first listing, so
   // a list read once at mount keeps showing the film glyph for clips whose still
   // simply had not been extracted yet. Follow up while the panel is open; the
@@ -1548,7 +1602,8 @@ export function ImageGenPanel(props: {
           const previousTasks = tasksRef.current
           const previousById = new Map(previousTasks.map(task => [task.id, task] as const))
           for (const summary of summaries) {
-            if (summary.status === 'queued' || summary.status === 'running') {
+            if ((summary.status === 'queued' || summary.status === 'running')
+              && summary.request.workflow !== 'replica') {
               observedTaskIdsRef.current.add(summary.id)
             }
           }
@@ -1557,7 +1612,8 @@ export function ImageGenPanel(props: {
           // lightweight; their images are available from history.
           const needsHydration = summaries.filter(summary => {
             const previous = previousById.get(summary.id)
-            return summary.status === 'completed'
+            return summary.request.workflow !== 'replica'
+              && summary.status === 'completed'
               && summary.resultAvailable
               && previous?.status !== 'completed'
               && (submittedTaskIdsRef.current.has(summary.id)
@@ -1603,10 +1659,12 @@ export function ImageGenPanel(props: {
           // retry) is on screen.
           const failedNow = next.find(task => task.status === 'failed'
             && task.error !== undefined && task.error !== ''
+            && task.request.workflow !== 'replica'
             && !previousTasks.some(old => old.id === task.id && old.status === 'failed'))
           setTasks(current => {
             const completed = next.find(task => task.status === 'completed'
               && task.result !== undefined
+              && task.request.workflow !== 'replica'
               && !current.some(old => old.id === task.id && old.status === 'completed')
               && !comparison?.taskIds.includes(task.id))
             if (completed?.result !== undefined) {
@@ -2135,8 +2193,8 @@ export function ImageGenPanel(props: {
     URL.revokeObjectURL(url)
   }
 
-  const openPreview = (previewImages: GeneratedImage[], index: number): void => {
-    setPreview({ images: previewImages, index })
+  const openPreview = (previewImages: GeneratedImage[], index: number, source?: GalleryImageSource): void => {
+    setPreview({ images: previewImages, index, ...(source === undefined ? {} : { source }) })
     setPreviewScale(1)
     setPromptCopied(false)
   }
@@ -2165,7 +2223,7 @@ export function ImageGenPanel(props: {
     setPreview(current => {
       if (current === null) return null
       const total = current.images.length
-      return { images: current.images, index: (current.index + delta + total) % total }
+      return { ...current, index: (current.index + delta + total) % total }
     })
   }
 
@@ -2414,7 +2472,7 @@ export function ImageGenPanel(props: {
    *  `entry` makes the action available from a history/gallery list item (its
    *  metadata + first image are saved); otherwise the current form state is
    *  used. */
-  const addToGallery = async (image: GeneratedImage, entry?: HistoryEntry): Promise<void> => {
+  const addToGallery = async (image: GeneratedImage, entry?: GalleryImageSource): Promise<void> => {
     if (galleryAdding || (workspace === 'normal' && tab === 'gallery')) return
     const source = entry ?? viewingEntry ?? {
       mode: tab === 'edit' ? 'edit' as GenerateMode : 'text' as GenerateMode,
@@ -2438,6 +2496,7 @@ export function ImageGenPanel(props: {
         detail: source.detail,
         n: 1,
         images: [image],
+        ...source.workflow === undefined ? {} : { workflow: source.workflow },
         ...source.refName === undefined ? {} : { refName: source.refName },
       })
       setGallery(result.entries)
@@ -2607,6 +2666,8 @@ export function ImageGenPanel(props: {
       const result = await api.galleryRemove(id)
       setGallery(result.entries)
       setGalleryTrash(result.trash)
+      setGalleryMessage(tt('gallery.movedToTrash'))
+      window.setTimeout(() => { setGalleryMessage(null) }, 2600)
     } catch {
       // Keep the optimistic local removal.
     }
@@ -2842,6 +2903,9 @@ export function ImageGenPanel(props: {
    */
   const resultSurface = resultSurfaceOf(boardView, viewingVideoEntry)
   const previewImage = preview === null ? null : preview.images[preview.index] ?? null
+  const previewConversationKey: number | string = preview === null || preview.source === undefined
+    ? preview?.index ?? 0
+    : `replica-preview:${preview.index}`
   const comparisonTasks = comparison === null ? [] : comparison.taskIds.map(id => tasks.find(task => task.id === id)).filter((task): task is GenerationTask => task !== undefined)
   const comparisonResults = comparisonTasks.filter(task => task.status === 'completed' && task.result !== undefined)
   const previewFrameScale = Math.max(1, previewScale)
@@ -2916,6 +2980,114 @@ export function ImageGenPanel(props: {
     if (prompt.trim() === '' && previewImage.revisedPrompt !== undefined) setPrompt(previewImage.revisedPrompt)
     setError(null)
     closePreview()
+  }
+
+  /** Render one persisted gallery entry in either waterfall lane or grid cell. */
+  const renderGalleryCard = (entry: HistoryEntry) => {
+    const image = entry.images[0]
+    const clip = entry.video
+    // A clip entry carries no image and no asset: it names a file in the
+    // gallery's video store. Rendering it is therefore a video element, not an
+    // <img>.
+    if (image === undefined && clip === undefined) return null
+    const isClip = clip !== undefined
+    return (
+      <article key={entry.id} className={css.galleryCard} data-clip={isClip ? '' : undefined} data-selected={selectedGalleryIds.has(entry.id) ? '' : undefined}>
+        <label className={css.gallerySelect} title={tt('gallery.select')}>
+          <input type="checkbox" checked={selectedGalleryIds.has(entry.id)} onChange={() => { setGallerySelecting(true); toggleGallerySelection(entry.id) }} />
+        </label>
+        <button type="button" className={css.galleryImageButton} data-selecting={gallerySelecting ? '' : undefined} onClick={() => { if (gallerySelecting) toggleGallerySelection(entry.id); else if (isClip) openGalleryClip(entry); else void viewGalleryEntry(entry) }} title={gallerySelecting ? tt('gallery.select') : tt('preview.open')}>
+          {isClip
+            ? <video className={css.galleryImage} src={clip.url} muted playsInline preload="metadata" />
+            : <img className={css.galleryImage} src={image!.url} alt={entry.prompt} loading="lazy" decoding="async" />}
+          <span className={css.galleryBadge}>{isClip ? tt('history.video') : entry.mode === 'edit' ? tt('mode.edit') : tt('mode.text')}</span>
+          {isClip ? <span className={css.galleryClipPlay} aria-hidden="true">
+            <svg viewBox="0 0 24 24" width="30" height="30" fill="currentColor" aria-hidden="true"><path d="M8 5.5v13l11-6.5z" /></svg>
+          </span> : null}
+        </button>
+        <div className={css.galleryCardActions}>
+          {isClip ? (<>
+            <button
+              type="button"
+              className={css.galleryCardAction}
+              data-gallery-video-conversation=""
+              disabled={addingToConversation !== null}
+              title={tt('conversation.addVideoHint')}
+              onClick={(event) => { event.stopPropagation(); void addClipToConversation(clip.url, `gallery-clip:${entry.id}`) }}
+            >
+              {addingToConversation === `gallery-clip:${entry.id}` ? tt('conversation.adding') : tt('conversation.add')}
+            </button>
+            <button
+              type="button"
+              className={css.galleryCardAction}
+              data-gallery-video-canvas=""
+              title={tt('canvas.addToCanvas')}
+              onClick={(event) => { event.stopPropagation(); addClipToCanvas(clip.url, clip.mime, clip.duration, entry.prompt) }}
+            >
+              {tt('canvas.addToCanvas')}
+            </button>
+            <a
+              className={css.galleryCardAction}
+              data-gallery-video-download=""
+              href={clip.url}
+              download
+              onClick={event => event.stopPropagation()}
+            >
+              {tt('video.download')}
+            </a>
+          </>) : null}
+          {!isClip ? (<>
+          <button
+            type="button"
+            className={css.galleryCardAction}
+            data-gallery-add-conversation=""
+            disabled={conversationBusy}
+            title={tt('conversation.addHint')}
+            onClick={(event) => { event.stopPropagation(); void addGalleryEntryToConversation(entry) }}
+          >
+            <svg viewBox="0 0 16 16" width="13" height="13" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M3 4.5h10v7H3z"/><path d="M5.5 2.5h5M8 6v4M6 8h4"/></svg>
+            {galleryConversationAddingId === entry.id || conversationAttachment.busyKey === `gallery:${entry.id}` ? tt('conversation.adding') : tt('conversation.add')}
+          </button>
+          <button
+            type="button"
+            className={css.galleryCardAction}
+            data-gallery-add-canvas=""
+            title={tt('canvas.addToCanvas')}
+            onClick={(event) => { event.stopPropagation(); addEntryToCanvas('gallery', entry.id, 0) }}
+          >
+            <svg viewBox="0 0 16 16" width="13" height="13" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><rect x="2.5" y="2.5" width="11" height="11" rx="1.5" /><path d="M5 8h6M8 5v6" /></svg>
+            {tt('canvas.addToCanvas')}
+          </button>
+          </>) : null}
+        </div>
+        <div className={css.galleryCardFooter}>
+          <span className={css.galleryAvatar}>{entry.model.toLowerCase().startsWith('nanobanana') ? 'N' : entry.model.toLowerCase().startsWith('seedream') ? 'S' : entry.model.startsWith('grok') ? 'G' : 'D'}</span>
+          <span className={css.galleryCardInfo}>
+            <strong>{entry.prompt || tt('gallery.untitled')}</strong>
+            <small>{entry.model} · {normalizeSize(entry.size)} · {formatTime(entry.createdAt)}</small>
+            <span className={css.galleryTags}>
+              {(entry.tags ?? []).map(tag => <button key={tag} type="button" onClick={() => { setGalleryTagFilter(tag) }}>{tag}</button>)}
+              <button type="button" className={css.galleryTagEdit} onClick={() => { startEditingGalleryTags(entry) }} title={tt('gallery.editTags')}>{tt('gallery.tagsEditShort')}</button>
+            </span>
+          </span>
+          <button
+            type="button"
+            className={css.galleryRemove}
+            data-gallery-remove={entry.id}
+            aria-label={tt('gallery.deleteHint')}
+            title={tt('gallery.deleteHint')}
+            onClick={() => { void deleteGalleryEntry(entry.id) }}
+          >{tt('gallery.delete')}</button>
+        </div>
+        {editingGalleryTagsId === entry.id ? (
+          <form className={css.galleryTagEditor} onSubmit={event => { event.preventDefault(); void saveGalleryTags(entry.id) }}>
+            <input value={galleryTagEditInput} onChange={event => { setGalleryTagEditInput(event.target.value) }} placeholder={tt('gallery.tagsPlaceholder')} aria-label={tt('gallery.tagsPlaceholder')} autoFocus />
+            <button type="submit">{tt('gallery.tagsSave')}</button>
+            <button type="button" onClick={() => { setEditingGalleryTagsId(null); setGalleryTagEditInput('') }}>{tt('gallery.tagsCancel')}</button>
+          </form>
+        ) : null}
+      </article>
+    )
   }
 
   // Render history into the shell sidebar so it remains a separate navigation
@@ -3860,7 +4032,21 @@ export function ImageGenPanel(props: {
           ) : null}
 
           {workspace === 'replica' ? (
-            <ReplicaWorkspace api={api} active={active && workspace === 'replica'} modelGroups={modelGroups} defaultChannelId={defaultChannelId} channels={config?.channels ?? []} connected={connected} />
+            <ReplicaWorkspace
+              api={api}
+              active={active && workspace === 'replica'}
+              modelGroups={modelGroups}
+              defaultChannelId={defaultChannelId}
+              channels={config?.channels ?? []}
+              connected={connected}
+              galleryBusy={galleryAdding}
+              conversationBusy={conversationBusy}
+              conversationBusyKey={conversationAttachment.busyKey}
+              onPreview={(previewImages, index, source: ReplicaOutputSource) => { openPreview(previewImages, index, source) }}
+              onAddToGallery={(image, source) => { void addToGallery(image, source) }}
+              onAddToConversation={(image, index, actionKey, sourcePrompt) => { addImageToConversation(image, index, actionKey, sourcePrompt) }}
+              onCompleted={refreshHistoryAfterReplica}
+            />
           ) : null}
 
           {/* --------------------------------------- promo image + copy */}
@@ -4010,106 +4196,16 @@ export function ImageGenPanel(props: {
                   </div>
                 )
               ) : (
-                <div className={css.galleryMasonry} data-view={galleryView}>
-                  {filteredGallery.map(entry => {
-                    const image = entry.images[0]
-                    const clip = entry.video
-                    // A clip entry carries no image and no asset: it names a file
-                    // in the gallery's video store. Rendering it is therefore a
-                    // video element, not an <img>.
-                    if (image === undefined && clip === undefined) return null
-                    const isClip = clip !== undefined
-                    return (
-                      <article key={entry.id} className={css.galleryCard} data-clip={isClip ? '' : undefined} data-selected={selectedGalleryIds.has(entry.id) ? '' : undefined}>
-                        <label className={css.gallerySelect} title={tt('gallery.select')}>
-                          <input type="checkbox" checked={selectedGalleryIds.has(entry.id)} onChange={() => { setGallerySelecting(true); toggleGallerySelection(entry.id) }} />
-                        </label>
-                        <button type="button" className={css.galleryImageButton} data-selecting={gallerySelecting ? '' : undefined} onClick={() => { if (gallerySelecting) toggleGallerySelection(entry.id); else if (isClip) openGalleryClip(entry); else void viewGalleryEntry(entry) }} title={gallerySelecting ? tt('gallery.select') : tt('preview.open')}>
-                          {isClip
-                            ? <video className={css.galleryImage} src={clip.url} muted playsInline preload="metadata" />
-                            : <img className={css.galleryImage} src={image!.url} alt={entry.prompt} loading="lazy" decoding="async" />}
-                          <span className={css.galleryBadge}>{isClip ? tt('history.video') : entry.mode === 'edit' ? tt('mode.edit') : tt('mode.text')}</span>
-                          {isClip ? <span className={css.galleryClipPlay} aria-hidden="true">
-                            <svg viewBox="0 0 24 24" width="30" height="30" fill="currentColor" aria-hidden="true"><path d="M8 5.5v13l11-6.5z" /></svg>
-                          </span> : null}
-                        </button>
-                        <div className={css.galleryCardActions}>
-                          {isClip ? (<>
-                            <button
-                              type="button"
-                              className={css.galleryCardAction}
-                              data-gallery-video-conversation=""
-                              disabled={addingToConversation !== null}
-                              title={tt('conversation.addVideoHint')}
-                              onClick={(event) => { event.stopPropagation(); void addClipToConversation(clip.url, `gallery-clip:${entry.id}`) }}
-                            >
-                              {addingToConversation === `gallery-clip:${entry.id}` ? tt('conversation.adding') : tt('conversation.add')}
-                            </button>
-                            <button
-                              type="button"
-                              className={css.galleryCardAction}
-                              data-gallery-video-canvas=""
-                              title={tt('canvas.addToCanvas')}
-                              onClick={(event) => { event.stopPropagation(); addClipToCanvas(clip.url, clip.mime, clip.duration, entry.prompt) }}
-                            >
-                              {tt('canvas.addToCanvas')}
-                            </button>
-                            <a
-                              className={css.galleryCardAction}
-                              data-gallery-video-download=""
-                              href={clip.url}
-                              download
-                              onClick={event => event.stopPropagation()}
-                            >
-                              {tt('video.download')}
-                            </a>
-                          </>) : null}
-                          {!isClip ? (<>
-                          <button
-                            type="button"
-                            className={css.galleryCardAction}
-                            data-gallery-add-conversation=""
-                            disabled={conversationBusy}
-                            title={tt('conversation.addHint')}
-                            onClick={(event) => { event.stopPropagation(); void addGalleryEntryToConversation(entry) }}
-                          >
-                            <svg viewBox="0 0 16 16" width="13" height="13" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M3 4.5h10v7H3z"/><path d="M5.5 2.5h5M8 6v4M6 8h4"/></svg>
-                            {galleryConversationAddingId === entry.id || conversationAttachment.busyKey === `gallery:${entry.id}` ? tt('conversation.adding') : tt('conversation.add')}
-                          </button>
-                          <button
-                            type="button"
-                            className={css.galleryCardAction}
-                            data-gallery-add-canvas=""
-                            title={tt('canvas.addToCanvas')}
-                            onClick={(event) => { event.stopPropagation(); addEntryToCanvas('gallery', entry.id, 0) }}
-                          >
-                            <svg viewBox="0 0 16 16" width="13" height="13" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><rect x="2.5" y="2.5" width="11" height="11" rx="1.5" /><path d="M5 8h6M8 5v6" /></svg>
-                            {tt('canvas.addToCanvas')}
-                          </button>
-                          </>) : null}
-                        </div>
-                        <div className={css.galleryCardFooter}>
-                          <span className={css.galleryAvatar}>{entry.model.toLowerCase().startsWith('nanobanana') ? 'N' : entry.model.toLowerCase().startsWith('seedream') ? 'S' : entry.model.startsWith('grok') ? 'G' : 'D'}</span>
-                          <span className={css.galleryCardInfo}>
-                            <strong>{entry.prompt || tt('gallery.untitled')}</strong>
-                            <small>{entry.model} · {normalizeSize(entry.size)} · {formatTime(entry.createdAt)}</small>
-                            <span className={css.galleryTags}>
-                              {(entry.tags ?? []).map(tag => <button key={tag} type="button" onClick={() => { setGalleryTagFilter(tag) }}>{tag}</button>)}
-                              <button type="button" className={css.galleryTagEdit} onClick={() => { startEditingGalleryTags(entry) }} title={tt('gallery.editTags')}>{tt('gallery.tagsEditShort')}</button>
-                            </span>
-                          </span>
-                          <button type="button" className={css.galleryRemove} onClick={() => { void deleteGalleryEntry(entry.id) }} title={tt('gallery.delete')}>×</button>
-                        </div>
-                        {editingGalleryTagsId === entry.id ? (
-                          <form className={css.galleryTagEditor} onSubmit={event => { event.preventDefault(); void saveGalleryTags(entry.id) }}>
-                            <input value={galleryTagEditInput} onChange={event => { setGalleryTagEditInput(event.target.value) }} placeholder={tt('gallery.tagsPlaceholder')} aria-label={tt('gallery.tagsPlaceholder')} autoFocus />
-                            <button type="submit">{tt('gallery.tagsSave')}</button>
-                            <button type="button" onClick={() => { setEditingGalleryTagsId(null); setGalleryTagEditInput('') }}>{tt('gallery.tagsCancel')}</button>
-                          </form>
-                        ) : null}
-                      </article>
-                    )
-                  })}
+                <div ref={galleryLayoutRef} className={css.galleryMasonry} data-view={galleryView}>
+                  {galleryView === 'masonry'
+                    ? Array.from({ length: galleryColumnCount }, (_, column) => (
+                      <div key={column} className={css.galleryColumn} data-gallery-column={column}>
+                        {filteredGallery
+                          .filter((_, index) => index % galleryColumnCount === column)
+                          .map(renderGalleryCard)}
+                      </div>
+                    ))
+                    : filteredGallery.map(renderGalleryCard)}
                 </div>
               )}
             </div>
@@ -4203,7 +4299,7 @@ export function ImageGenPanel(props: {
               )}
             </div>
           ) : null}
-          {!isGallery && tasks.length > 0 ? (
+          {!isGallery && panelTasks.length > 0 ? (
             <section className={css.taskTray} data-open={taskTrayOpen ? 'true' : 'false'} aria-label={tt('tasks.title')}>
               <header className={css.taskTrayHeader}>
                 <button type="button" className={css.taskTrayToggle} aria-expanded={taskTrayOpen} onClick={() => { setTaskTrayOpen(open => !open) }}>
@@ -4218,7 +4314,7 @@ export function ImageGenPanel(props: {
                 <SignalsButton open={signalsOpen} onToggle={() => { setSignalsOpen(open => !open) }} />
               </header>
               <div className={css.taskRows}>
-                {tasks.slice(0, 5).map(task => (
+                {panelTasks.slice(0, 5).map(task => (
                   <div key={task.id} className={css.taskRow} data-status={task.status}>
                     <span className={css.taskStatus}>{tt(`tasks.${task.status}` as never)}</span>
                     <span className={css.taskPrompt}>{task.request.prompt}</span>
@@ -4583,10 +4679,10 @@ export function ImageGenPanel(props: {
               <div className={css.lightboxMeta}>
                 <span className={css.lightboxIndex}>{tt('preview.index', { index: preview.index + 1, total: preview.images.length })}</span>
                 <span className={css.lightboxActions}>
-                  <button type="button" className={css.lightboxEdit} disabled={conversationBusy} title={tt('conversation.addHint')} onClick={() => { void addImageToConversation(previewImage, preview.index) }}>
-                    {conversationAttachment.busyKey === preview.index ? tt('conversation.adding') : tt('conversation.add')}
+                  <button type="button" className={css.lightboxEdit} disabled={conversationBusy} title={tt('conversation.addHint')} onClick={() => { addImageToConversation(previewImage, preview.index, previewConversationKey, preview.source?.prompt) }}>
+                    {conversationAttachment.busyKey === previewConversationKey ? tt('conversation.adding') : tt('conversation.add')}
                   </button>
-                  <button type="button" className={css.lightboxEdit} disabled={galleryAdding} onClick={() => { void addToGallery(previewImage) }}>
+                  <button type="button" className={css.lightboxEdit} disabled={galleryAdding} onClick={() => { void addToGallery(previewImage, preview.source) }}>
                     {tt('gallery.add')}
                   </button>
                   <button type="button" className={css.lightboxEdit} onClick={addPreviewToEdit}>

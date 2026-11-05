@@ -24,7 +24,7 @@
  *    the report states the limit rather than implying more.
  */
 import { useEffect, useMemo, useRef, useState } from 'react'
-import type { ChannelConfig, GeneratedImage } from '../protocol.ts'
+import type { ChannelConfig, GeneratedImage, GenerationTask, GenerationTaskSummary } from '../protocol.ts'
 import type { ImageGenApi } from './api.ts'
 import { errorMessage, tt } from './helpers.ts'
 import { useImageGenLanguageTick } from './use-language.ts'
@@ -60,6 +60,17 @@ const IMAGE_TYPES = new Set(['image/png', 'image/jpeg', 'image/webp', 'image/gif
  *  edit form uses so a set that works there works here. */
 const MAX_BYTES = 10 * 1024 * 1024
 const TOTAL_BYTES = 16 * 1024 * 1024
+const TASK_POLL_MS = 1000
+const TASK_POLL_MAX_MS = 5000
+const TASK_POLL_MAX_FAILURES = 5
+
+function taskPollDelay(failures: number): number {
+  return Math.min(TASK_POLL_MS * 2 ** Math.max(0, failures - 1), TASK_POLL_MAX_MS)
+}
+
+function waitForNextTaskPoll(delay = TASK_POLL_MS): Promise<void> {
+  return new Promise(resolve => { window.setTimeout(resolve, delay) })
+}
 
 function readAsDataUrl(file: File): Promise<string> {
   return new Promise((resolve, reject) => {
@@ -80,10 +91,54 @@ export interface ReplicaWorkspaceProps {
   channels: ChannelConfig[]
   /** False when no channel is configured; the form still renders, submit is blocked. */
   connected: boolean
+  galleryBusy: boolean
+  conversationBusy: boolean
+  conversationBusyKey: number | string | null
+  onPreview: (images: GeneratedImage[], index: number, source: ReplicaOutputSource) => void
+  onAddToGallery: (image: GeneratedImage, source: ReplicaOutputSource) => void
+  onAddToConversation: (image: GeneratedImage, index: number, actionKey: number | string, prompt: string) => void
+  /**
+   * Called once a replica render has produced its images.
+   *
+   * The panel's own poll deliberately skips replica tasks, so it never sees
+   * this completion and never reloads the shared history list. Without this
+   * callback the render that just finished is missing from the sidebar until
+   * the panel remounts.
+   */
+  onCompleted?: () => void
+}
+
+/** Metadata that must follow an output when it leaves the replica workspace. */
+export interface ReplicaOutputSource {
+  workflow: 'replica'
+  mode: 'text' | 'edit'
+  model: string
+  prompt: string
+  size: string
+  quality: string
+  detail: string
+  refName?: string
+}
+
+function imageSource(image: GeneratedImage): string {
+  return `data:${image.mime};base64,${image.b64}`
+}
+
+function imageExtension(mime: string): string {
+  switch (mime.split(';')[0]!.trim()) {
+    case 'image/jpeg': return 'jpg'
+    case 'image/webp': return 'webp'
+    case 'image/gif': return 'gif'
+    default: return 'png'
+  }
 }
 
 export function ReplicaWorkspace(props: ReplicaWorkspaceProps): React.JSX.Element {
-  const { api, active, modelGroups, defaultChannelId, channels, connected } = props
+  const {
+    api, active, modelGroups, defaultChannelId, channels, connected,
+    galleryBusy, conversationBusy, conversationBusyKey,
+    onPreview, onAddToGallery, onAddToConversation, onCompleted,
+  } = props
   // Live language switching, same as every other workspace surface.
   useImageGenLanguageTick()
 
@@ -101,6 +156,7 @@ export function ReplicaWorkspace(props: ReplicaWorkspaceProps): React.JSX.Elemen
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [outputs, setOutputs] = useState<GeneratedImage[]>([])
+  const [outputSource, setOutputSource] = useState<ReplicaOutputSource | null>(null)
   const [dragging, setDragging] = useState(false)
 
   const fileInput = useRef<HTMLInputElement>(null)
@@ -224,13 +280,26 @@ export function ReplicaWorkspace(props: ReplicaWorkspaceProps): React.JSX.Elemen
       const all = product === null ? dataUrls : [...dataUrls, product.dataUrl]
       // Same number the capacity line promised, applied to the payload.
       const { primary, extras } = splitReferences(all, capacity.usable)
-      const result = await api.generate({
-        mode: primary === undefined ? 'text' : 'edit',
+      const requestMode = primary === undefined ? 'text' : 'edit'
+      const requestSize = fidelity === 'replica' && facts !== null ? facts.aspect : 'auto'
+      const source: ReplicaOutputSource = {
+        workflow: 'replica',
+        mode: requestMode,
+        model: resolved.model,
+        prompt,
+        size: requestSize,
+        quality,
+        detail: '',
+        ...(references[0] === undefined ? {} : { refName: references[0].name }),
+      }
+      const task = await api.taskSubmit({
+        workflow: 'replica',
+        mode: requestMode,
         model: resolved.model,
         prompt,
         // The replica tier pins the frame to the measured ratio whenever the
         // adapter can express it; the style tier leaves the frame free.
-        size: fidelity === 'replica' && facts !== null ? facts.aspect : 'auto',
+        size: requestSize,
         quality,
         n: count,
         detail: '',
@@ -239,9 +308,61 @@ export function ReplicaWorkspace(props: ReplicaWorkspaceProps): React.JSX.Elemen
         ...(extras.length === 0 ? {} : { images: extras }),
         ...(references[0] === undefined ? {} : { refName: references[0].name }),
       })
+      // Poll the bounded summary payload while the host renders. Fetching the
+      // full task every second would resend up to 16 MiB of reference images.
+      let summary: GenerationTaskSummary | undefined
+      let pollFailures = 0
+      while (mounted.current) {
+        await waitForNextTaskPoll(taskPollDelay(pollFailures))
+        if (!mounted.current) return
+        try {
+          summary = (await api.taskList()).find(item => item.id === task.id)
+        } catch (caught) {
+          pollFailures += 1
+          if (pollFailures >= TASK_POLL_MAX_FAILURES) throw caught
+          continue
+        }
+        if (summary === undefined) {
+          // A task missing from the bounded summary payload is not proof the
+          // render died — it may simply have aged out. The failure count has
+          // to survive the successful read above, or it resets to zero on the
+          // next tick and this loop polls forever with Submit disabled.
+          pollFailures += 1
+          if (pollFailures >= TASK_POLL_MAX_FAILURES) throw new Error(tt('tasks.failed'))
+          continue
+        }
+        pollFailures = 0
+        if (summary.status === 'queued' || summary.status === 'running') continue
+        break
+      }
       if (!mounted.current) return
-      setOutputs(result.images)
-      if (result.historyError !== undefined) setError(result.historyError)
+      if (summary === undefined) throw new Error(tt('tasks.failed'))
+      if (summary.status === 'failed') throw new Error(summary.error ?? tt('tasks.failed'))
+      if (summary.status === 'cancelled') throw new Error(tt('tasks.cancelled'))
+      if (!summary.resultAvailable) throw new Error(tt('tasks.failed'))
+
+      // Hydrate exactly the completed result. If that one request fails, retry
+      // with bounded backoff; the host task remains healthy and retryable.
+      let current: GenerationTask | undefined
+      let hydrationFailures = 0
+      while (mounted.current && current === undefined) {
+        try {
+          current = await api.taskGet(task.id)
+        } catch (caught) {
+          hydrationFailures += 1
+          if (hydrationFailures >= TASK_POLL_MAX_FAILURES) throw caught
+          await waitForNextTaskPoll(taskPollDelay(hydrationFailures))
+        }
+      }
+      if (!mounted.current) return
+      if (current === undefined) throw new Error(tt('tasks.failed'))
+      if (current.status === 'failed') throw new Error(current.error ?? tt('tasks.failed'))
+      if (current.status === 'cancelled') throw new Error(tt('tasks.cancelled'))
+      if (current.result === undefined) throw new Error(tt('tasks.failed'))
+      setOutputSource(source)
+      setOutputs(current.result.images)
+      onCompleted?.()
+      if (current.result.historyError !== undefined) setError(current.result.historyError)
     } catch (caught) {
       if (mounted.current) setError(errorMessage(caught))
     } finally {
@@ -535,15 +656,43 @@ export function ReplicaWorkspace(props: ReplicaWorkspaceProps): React.JSX.Elemen
           </div>
 
           {/* ------------------------------------------------------------ outputs */}
-          {outputs.length > 0 ? (
+          {outputs.length > 0 && outputSource !== null ? (
             <div className={css.outputs}>
               {outputs.map((image, index) => (
-                <img
-                  key={`${index}-${image.b64.slice(0, 12)}`}
-                  className={css.output}
-                  src={`data:${image.mime};base64,${image.b64}`}
-                  alt={tt('replica.outputAlt', { index: index + 1 })}
-                />
+                <figure key={`${index}-${image.b64.slice(0, 12)}`} className={css.outputCard} data-replica-output-card="">
+                  <button
+                    type="button"
+                    className={css.outputPreview}
+                    aria-label={tt('preview.open')}
+                    onClick={() => { onPreview(outputs, index, outputSource) }}
+                  >
+                    <img
+                      className={css.output}
+                      src={imageSource(image)}
+                      alt={tt('replica.outputAlt', { index: index + 1 })}
+                    />
+                    <span className={css.previewHint}>{tt('preview.open')}</span>
+                  </button>
+                  <figcaption className={css.outputActions}>
+                    <button
+                      type="button"
+                      className={css.outputAction}
+                      disabled={galleryBusy}
+                      onClick={() => { onAddToGallery(image, outputSource) }}
+                    >{tt('gallery.add')}</button>
+                    <button
+                      type="button"
+                      className={css.outputAction}
+                      disabled={conversationBusy}
+                      onClick={() => { onAddToConversation(image, index, `replica:${index}`, outputSource.prompt) }}
+                    >{conversationBusyKey === `replica:${index}` ? tt('conversation.adding') : tt('conversation.add')}</button>
+                    <a
+                      className={css.outputAction}
+                      href={imageSource(image)}
+                      download={`dsh-replica-${index + 1}.${imageExtension(image.mime)}`}
+                    >{tt('download')}</a>
+                  </figcaption>
+                </figure>
               ))}
             </div>
           ) : (
