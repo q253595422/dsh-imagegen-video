@@ -8979,6 +8979,7 @@ await check('E1 client apply mounts the sidebar entry and studio (jsdom)', async
     replicaAction('加入素材库').dispatchEvent(new jsdomWindow.MouseEvent('click', { bubbles: true, cancelable: true }))
     assert.ok(await waitFor(() => galleryAppends.length > 0), 'the replica gallery action reaches the host')
     assert.equal(galleryAppends.at(-1).prompt, replicaSubmissions[0].prompt, 'the gallery entry keeps the replica prompt instead of the ordinary form prompt')
+    assert.equal(galleryAppends.at(-1).workflow, 'replica', 'the gallery entry keeps replica provenance for later sessions')
     const currentReplicaOutputCard = replicaWorkspace.querySelector('[data-replica-output-card]')
     const replicaConversationAction = [...currentReplicaOutputCard.querySelectorAll('button')]
       .find(action => action.textContent?.trim() === '加入对话')

@@ -70,7 +70,7 @@ const UPDATE_CHECK_INTERVAL_MS = 30 * 60_000
  *  stops for good — a permanent poller for a decoration is not worth the reads. */
 const POSTER_REFRESH_DELAYS_MS = [2000, 5000] as const
 
-type GalleryImageSource = Pick<HistoryEntry, 'mode' | 'model' | 'prompt' | 'size' | 'quality' | 'detail' | 'refName'>
+type GalleryImageSource = Pick<HistoryEntry, 'workflow' | 'mode' | 'model' | 'prompt' | 'size' | 'quality' | 'detail' | 'refName'>
 
 /** A clip the host may yet decorate is one whose row is showing a glyph right
  *  now: `poster` is either absent, or an empty string, and `videoRowOf` treats
@@ -2448,6 +2448,7 @@ export function ImageGenPanel(props: {
         detail: source.detail,
         n: 1,
         images: [image],
+        ...source.workflow === undefined ? {} : { workflow: source.workflow },
         ...source.refName === undefined ? {} : { refName: source.refName },
       })
       setGallery(result.entries)

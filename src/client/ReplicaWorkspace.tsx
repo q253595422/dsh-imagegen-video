@@ -101,6 +101,7 @@ export interface ReplicaWorkspaceProps {
 
 /** Metadata that must follow an output when it leaves the replica workspace. */
 export interface ReplicaOutputSource {
+  workflow: 'replica'
   mode: 'text' | 'edit'
   model: string
   prompt: string
@@ -273,6 +274,7 @@ export function ReplicaWorkspace(props: ReplicaWorkspaceProps): React.JSX.Elemen
       const requestMode = primary === undefined ? 'text' : 'edit'
       const requestSize = fidelity === 'replica' && facts !== null ? facts.aspect : 'auto'
       const source: ReplicaOutputSource = {
+        workflow: 'replica',
         mode: requestMode,
         model: resolved.model,
         prompt,
