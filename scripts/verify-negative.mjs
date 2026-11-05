@@ -423,6 +423,14 @@ const CASES = [
   // second time inside the section (so the heading reads as duplicated copy),
   // and the purge confirmation loses the number the user is agreeing to.
   {
+    name: 'the shell window seat falls back under the studio takeover',
+    runner: 'contracts',
+    file: 'src/client/panel.module.css',
+    from: "[data-platform='darwin'] [data-shell-leading] {\n  z-index: var(--z-shell-seat);\n}\n",
+    to: '',
+    expect: /shell window seat is not lifted above the studio takeover|--z-shell-seat is not declared/,
+  },
+  {
     name: 'the trash restore button stops carrying its entry id',
     runner: 'smoke',
     file: 'src/client/ImageGenPanel.tsx',

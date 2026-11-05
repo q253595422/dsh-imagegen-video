@@ -53,6 +53,10 @@
  *                          the winner depended on insertion order)
  *   62  picker-backdrop   the video picker's own backdrop (was 60; it must
  *                          cover the notice, which it only did by tree order)
+ *   63  shell-seat        the shell's macOS window-chrome seat, which holds
+ *                          打开侧边栏 while the sidebar is collapsed. The shell
+ *                          draws it at 15, so without this rung the takeover
+ *                          covers it and 生图 has no way back to a wide sidebar
  *   70  scrim             the canvas modal scrim
  *   71  popover-raised    the skills menu / dialog above that scrim
  *   72  chat-resizer      the column resize handle, above the takeover
@@ -102,6 +106,15 @@
   --z-anchored-menu: 45;
   --z-takeover: 60;
   --z-notice: 61;
+
+  /* The shell's own macOS window-chrome seat (`[data-shell-leading]`): the
+     shell draws it at 15 so it clears ordinary main panels, which is not enough
+     under this plugin's takeover. It holds 打开侧边栏 / New Session and exists
+     only while the sidebar is collapsed, so it must clear the takeover (60) and
+     nothing else in this scale competes with it. Its own rung because the value
+     it has to clear is a host-facing number. 63, not 61, because every rung in
+     this scale is unique — sharing one is the bug the scale prevents. */
+  --z-shell-seat: 63;
   --z-picker-backdrop: 62;
 
   /* popovers and their scrims */
@@ -544,6 +557,33 @@ html[data-dsh-imagegen-active] .sidebarHistoryHost {
 .panel *::before,
 .panel *::after {
   box-sizing: border-box;
+}
+
+/* On macOS desktop a collapsed sidebar hides its column entirely, and the shell
+   mounts its window-chrome seat `[data-shell-leading]` at the frame's top-left —
+   beside the traffic lights, over every main panel — holding the 打开侧边栏 and
+   New Session controls. The shell draws that seat at z-index 15, which is high
+   enough only while every main panel stays below it. The studio takeover is 60,
+   so in 生图 the seat paints underneath the studio and the only visible way back
+   to a wide sidebar disappears; 会话 escapes this only because its view is
+   `display: none` there.
+   The takeover number is deliberately left alone: it is pinned to 60 because the
+   sibling panels were written against it. The seat is lifted instead — it exists
+   only in this state, holds two window controls, and is published by the shell
+   as a stable data attribute, not a hashed class. `--z-shell-seat` (63) clears
+   the takeover and still sits under this plugin's own modals, which live inside
+   the takeover's stacking context and never compete with the frame. */
+[data-platform='darwin'] [data-shell-leading] {
+  z-index: var(--z-shell-seat);
+}
+
+/* Lifting the seat alone would leave the studio's first row painted underneath
+   it, so the panel spends the clearance the shell publishes for exactly this
+   ("a main panel whose content reaches the top-left corner pads by it so
+   nothing lands under the lights or the controls"). 48px is the seat's own
+   bottom edge plus a hair, and the value is the shell's, not a guess. */
+[data-platform='darwin'] [data-sidebar-collapsed] [data-dsh-imagegen-view] .panel {
+  padding-top: calc(14px + var(--dsh-frame-top-clearance, 48px));
 }
 
 .panel {

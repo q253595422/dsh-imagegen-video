@@ -444,6 +444,34 @@ if (moved.length > 0) {
 }
 console.log(`host-facing rungs pinned: ${pinned.map(([name, value]) => `${name}=${value}`).join(', ')}`)
 
+// ------------------------------------------------- 3b. the host's window seat
+// On macOS the shell mounts `[data-shell-leading]` at the frame's top-left when
+// the sidebar is collapsed — it holds 打开侧边栏 and New Session. The shell draws
+// it at z-index 15 and publishes no variable to change that, so the only way the
+// studio (takeover 60) can avoid swallowing it is a rule of our own.
+// This is the failure that happened: 会话 kept its reopen control because its
+// view is `display: none`, and 生图 covered the same control, leaving no visible
+// way back to a wide sidebar. Neither the ordering table nor the pins can see
+// it — the seat is not in this scale at all — so it is asserted separately: the
+// rule that lifts the seat, and the rung it points at.
+const seatRule = /\[data-platform=['"]darwin['"]\]\s*\[data-shell-leading\]\s*\{\s*z-index:\s*var\(--z-shell-seat\)/
+const seatRung = rungValue.get('shell-seat')
+if (seatRung === undefined) {
+  console.error('\nFAIL: --z-shell-seat is not declared: the shell window seat has no layer of its own.')
+  process.exit(1)
+}
+if (!seatRule.test(read('panel.module.css'))) {
+  console.error('\nFAIL: the shell window seat is not lifted above the studio takeover.')
+  console.error('Without it, collapsing the sidebar in 生图 hides 打开侧边栏 behind the panel (z-index 15 vs 60).')
+  process.exit(1)
+}
+const takeoverRung = rungValue.get('takeover')
+if (!(seatRung > takeoverRung)) {
+  console.error(`\nFAIL: --z-shell-seat is ${seatRung}, not above the studio takeover (${takeoverRung}).`)
+  process.exit(1)
+}
+console.log(`shell window seat sits above the takeover: --z-shell-seat ${seatRung} > --z-takeover ${takeoverRung}`)
+
 // ------------------------------------------------------- 4. focusable hiding
 // `opacity: 0` and `pointer-events: none` both leave an element in the tab
 // order. The node toolbars are hidden with those two, so without a rule that
