@@ -6077,6 +6077,7 @@ await check('E1 client apply mounts the sidebar entry and studio (jsdom)', async
           ok: true,
           entries: [
             { id: 'gallery-one', createdAt: 3, mode: 'text', model: 'gpt-image-2', prompt: 'gallery prompt', size: '1:1', quality: '2k', detail: '', n: 1, images: [{ url: '/api/dsh-imagegen/gallery/image/gallery.png', mime: 'image/png' }] },
+            { id: 'gallery-two', createdAt: 4, mode: 'text', model: 'gpt-image-2', prompt: 'wide gallery prompt', size: '4:3', quality: '2k', detail: '', n: 1, images: [{ url: '/api/dsh-imagegen/gallery/image/wide.png', mime: 'image/png' }] },
             // A favorited clip: the host stores it by reference, with NO images.
             {
               id: 'gallery-clip', createdAt: 8, mode: 'video', model: 'agnes-video-2.5-flash',
@@ -7068,6 +7069,57 @@ await check('E1 client apply mounts the sidebar entry and studio (jsdom)', async
     const imageCard = [...view.querySelectorAll('article')].find(card => card.getAttribute('data-clip') === null && card.querySelector('img') !== null)
     assert.ok(imageCard !== undefined, 'the image card still renders')
     assert.ok(imageCard.querySelector('[data-gallery-add-conversation]') !== null, 'the image card keeps add-to-conversation')
+    // A waterfall is a column layout, not three equal cards with invented
+    // ratios. Every cover image must keep its intrinsic height, while the
+    // deliberate "Grid" view may still crop for a tidy contact sheet.
+    const galleryLayout = view.querySelector('[class*="galleryMasonry"]')
+    assert.ok(galleryLayout !== null, 'the gallery layout is rendered')
+    const galleryColumns = [...galleryLayout.querySelectorAll('[data-gallery-column]')]
+    assert.equal(
+      galleryColumns.length,
+      5,
+      'the waterfall renders five fixed-width lanes at the desktop gallery width',
+    )
+    assert.equal(
+      jsdomWindow.getComputedStyle(galleryColumns[0]).width,
+      '220px',
+      'the waterfall keeps one fixed card width across layouts',
+    )
+    Object.defineProperty(galleryLayout, 'clientWidth', { configurable: true, value: 760 })
+    jsdomWindow.dispatchEvent(new jsdomWindow.Event('resize'))
+    await new Promise(resolve => setTimeout(resolve, 0))
+    assert.equal(
+      galleryLayout.querySelectorAll('[data-gallery-column]').length,
+      3,
+      'the lane count follows the measured gallery width instead of overflowing',
+    )
+    Object.defineProperty(galleryLayout, 'clientWidth', { configurable: true, value: 1290 })
+    jsdomWindow.dispatchEvent(new jsdomWindow.Event('resize'))
+    await new Promise(resolve => setTimeout(resolve, 0))
+    assert.equal(
+      galleryLayout.querySelectorAll('[data-gallery-column]').length,
+      5,
+      'the desktop gallery returns to five lanes without changing the card width',
+    )
+    const workspaceOverflow = jsdomWindow.getComputedStyle(galleryLayout.parentElement)
+    assert.match(
+      workspaceOverflow.getPropertyValue('overflow') || workspaceOverflow.overflow,
+      /(?:^|\s)auto(?:\s|$)/,
+      'the gallery workspace is the single vertical scrollport',
+    )
+    const columnsOverflow = jsdomWindow.getComputedStyle(galleryLayout)
+    assert.match(
+      columnsOverflow.getPropertyValue('overflow') || columnsOverflow.overflowY,
+      /^visible$/,
+      'the column container does not trap overflowing rows behind horizontal clipping',
+    )
+    for (const card of galleryLayout.querySelectorAll('article:not([data-clip])')) {
+      const image = card.querySelector('img')
+      assert.ok(image !== null, 'an image gallery card renders an image')
+      const imageStyle = jsdomWindow.getComputedStyle(image)
+      assert.equal(imageStyle.aspectRatio, 'auto', 'a waterfall image keeps its intrinsic aspect ratio')
+      assert.notEqual(imageStyle.objectFit, 'cover', 'a waterfall image is not cropped to a fabricated ratio')
+    }
 
     // The 视频 filter bucket selects exactly the clips and its badge agrees.
     // Match BUTTONS: the `galleryFilters` CONTAINER also carries a matching class
@@ -7151,6 +7203,17 @@ await check('E1 client apply mounts the sidebar entry and studio (jsdom)', async
     const restoredCall = galleryMutations.filter(entry => entry.path === 'restore').pop()
     assert.ok(restoredCall !== undefined, 'restore reached the host')
     assert.equal(JSON.parse(restoredCall.body).id, 'gallery-trashed', 'restore names the trashed entry')
+    // "Remove" is a move to the recoverable trash, not a silent disappearance.
+    // The action itself and the result message must both say where the asset went.
+    const restoredCard = [...view.querySelectorAll('article')].find(card => card.textContent?.includes('trashed prompt'))
+    assert.ok(restoredCard !== undefined, 'the restored gallery image is available')
+    const removeToTrash = restoredCard.querySelector('button[title*="回收站"]')
+    assert.ok(removeToTrash !== null, 'the remove action explains that the asset goes to the trash')
+    removeToTrash.dispatchEvent(new jsdomWindow.MouseEvent('click', { bubbles: true, cancelable: true }))
+    assert.ok(await waitFor(() => view.textContent?.includes('可在右上角“回收站”恢复')), 'removal tells the user where the asset went')
+    const removeCall = galleryMutations.filter(entry => entry.path === 'remove').pop()
+    assert.ok(removeCall !== undefined, 'the individual remove action reached the host')
+    assert.equal(JSON.parse(removeCall.body).id, 'gallery-trashed', 'the individual remove action names the selected asset')
 
     // Purge is the one action that really unlinks, so it must ask first -- and
     // the confirmation text has to carry the count the user is agreeing to.
@@ -7163,7 +7226,7 @@ await check('E1 client apply mounts the sidebar entry and studio (jsdom)', async
     await new Promise(resolve => setTimeout(resolve, 30))
     confirmationAnswer = false
     assert.equal(confirmationCalls, 3, 'emptying the trash asks for confirmation')
-    assert.equal(confirmationMessages.at(-1)?.includes('1'), true, 'the purge confirmation states how many entries will go')
+    assert.equal(confirmationMessages.at(-1)?.includes('2'), true, 'the purge confirmation states how many entries will go')
     assert.ok(galleryMutations.some(entry => entry.path === 'purge'), 'purge reached the host')
     // The configuration entry registers exactly one Settings navigation section.
     const sectionRegistrations = registered.filter(item => item.name === 'settings.section')
