@@ -26,7 +26,7 @@ import { GooeyNav } from './GooeyNav.tsx'
 import { InspirationGallery } from './InspirationGallery.tsx'
 import { CanvasWorkspace } from './CanvasWorkspace.tsx'
 import { PptWorkspace } from './PptWorkspace.tsx'
-import { ReplicaWorkspace } from './ReplicaWorkspace.tsx'
+import { ReplicaWorkspace, type ReplicaOutputSource } from './ReplicaWorkspace.tsx'
 import OutfitWorkspace from './OutfitWorkspace.tsx'
 import PromoWorkspace from './PromoWorkspace.tsx'
 import { AplusWorkspace } from './AplusWorkspace.tsx'
@@ -69,6 +69,8 @@ const UPDATE_CHECK_INTERVAL_MS = 30 * 60_000
  *  single look taken after that pass should have finished. Two timers, then it
  *  stops for good — a permanent poller for a decoration is not worth the reads. */
 const POSTER_REFRESH_DELAYS_MS = [2000, 5000] as const
+
+type GalleryImageSource = Pick<HistoryEntry, 'mode' | 'model' | 'prompt' | 'size' | 'quality' | 'detail' | 'refName'>
 
 /** A clip the host may yet decorate is one whose row is showing a glyph right
  *  now: `poster` is either absent, or an empty string, and `videoRowOf` treats
@@ -1121,7 +1123,7 @@ export function ImageGenPanel(props: {
   /** 'all' | 'image' | 'video' — clips and images share one list, so the only
    *  way to see just one kind used to be scrolling past the other. */
   const [historyKindFilter, setHistoryKindFilter] = useState<'all' | 'image' | 'video'>('all')
-  const [preview, setPreview] = useState<{ images: GeneratedImage[]; index: number } | null>(null)
+  const [preview, setPreview] = useState<{ images: GeneratedImage[]; index: number; source?: GalleryImageSource } | null>(null)
   /** The gallery clip open in the full-screen player (images use `preview`). */
   const [galleryClip, setGalleryClip] = useState<HistoryEntry | null>(null)
   const [previewScale, setPreviewScale] = useState(1)
@@ -2135,8 +2137,8 @@ export function ImageGenPanel(props: {
     URL.revokeObjectURL(url)
   }
 
-  const openPreview = (previewImages: GeneratedImage[], index: number): void => {
-    setPreview({ images: previewImages, index })
+  const openPreview = (previewImages: GeneratedImage[], index: number, source?: GalleryImageSource): void => {
+    setPreview({ images: previewImages, index, ...(source === undefined ? {} : { source }) })
     setPreviewScale(1)
     setPromptCopied(false)
   }
@@ -2165,7 +2167,7 @@ export function ImageGenPanel(props: {
     setPreview(current => {
       if (current === null) return null
       const total = current.images.length
-      return { images: current.images, index: (current.index + delta + total) % total }
+      return { ...current, index: (current.index + delta + total) % total }
     })
   }
 
@@ -2414,7 +2416,7 @@ export function ImageGenPanel(props: {
    *  `entry` makes the action available from a history/gallery list item (its
    *  metadata + first image are saved); otherwise the current form state is
    *  used. */
-  const addToGallery = async (image: GeneratedImage, entry?: HistoryEntry): Promise<void> => {
+  const addToGallery = async (image: GeneratedImage, entry?: GalleryImageSource): Promise<void> => {
     if (galleryAdding || (workspace === 'normal' && tab === 'gallery')) return
     const source = entry ?? viewingEntry ?? {
       mode: tab === 'edit' ? 'edit' as GenerateMode : 'text' as GenerateMode,
@@ -2842,6 +2844,9 @@ export function ImageGenPanel(props: {
    */
   const resultSurface = resultSurfaceOf(boardView, viewingVideoEntry)
   const previewImage = preview === null ? null : preview.images[preview.index] ?? null
+  const previewConversationKey: number | string = preview === null || preview.source === undefined
+    ? preview?.index ?? 0
+    : `replica-preview:${preview.index}`
   const comparisonTasks = comparison === null ? [] : comparison.taskIds.map(id => tasks.find(task => task.id === id)).filter((task): task is GenerationTask => task !== undefined)
   const comparisonResults = comparisonTasks.filter(task => task.status === 'completed' && task.result !== undefined)
   const previewFrameScale = Math.max(1, previewScale)
@@ -3860,7 +3865,20 @@ export function ImageGenPanel(props: {
           ) : null}
 
           {workspace === 'replica' ? (
-            <ReplicaWorkspace api={api} active={active && workspace === 'replica'} modelGroups={modelGroups} defaultChannelId={defaultChannelId} channels={config?.channels ?? []} connected={connected} />
+            <ReplicaWorkspace
+              api={api}
+              active={active && workspace === 'replica'}
+              modelGroups={modelGroups}
+              defaultChannelId={defaultChannelId}
+              channels={config?.channels ?? []}
+              connected={connected}
+              galleryBusy={galleryAdding}
+              conversationBusy={conversationBusy}
+              conversationBusyKey={conversationAttachment.busyKey}
+              onPreview={(previewImages, index, source: ReplicaOutputSource) => { openPreview(previewImages, index, source) }}
+              onAddToGallery={(image, source) => { void addToGallery(image, source) }}
+              onAddToConversation={(image, index, actionKey, sourcePrompt) => { addImageToConversation(image, index, actionKey, sourcePrompt) }}
+            />
           ) : null}
 
           {/* --------------------------------------- promo image + copy */}
@@ -4583,10 +4601,10 @@ export function ImageGenPanel(props: {
               <div className={css.lightboxMeta}>
                 <span className={css.lightboxIndex}>{tt('preview.index', { index: preview.index + 1, total: preview.images.length })}</span>
                 <span className={css.lightboxActions}>
-                  <button type="button" className={css.lightboxEdit} disabled={conversationBusy} title={tt('conversation.addHint')} onClick={() => { void addImageToConversation(previewImage, preview.index) }}>
-                    {conversationAttachment.busyKey === preview.index ? tt('conversation.adding') : tt('conversation.add')}
+                  <button type="button" className={css.lightboxEdit} disabled={conversationBusy} title={tt('conversation.addHint')} onClick={() => { addImageToConversation(previewImage, preview.index, previewConversationKey, preview.source?.prompt) }}>
+                    {conversationAttachment.busyKey === previewConversationKey ? tt('conversation.adding') : tt('conversation.add')}
                   </button>
-                  <button type="button" className={css.lightboxEdit} disabled={galleryAdding} onClick={() => { void addToGallery(previewImage) }}>
+                  <button type="button" className={css.lightboxEdit} disabled={galleryAdding} onClick={() => { void addToGallery(previewImage, preview.source) }}>
                     {tt('gallery.add')}
                   </button>
                   <button type="button" className={css.lightboxEdit} onClick={addPreviewToEdit}>

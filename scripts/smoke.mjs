@@ -5684,12 +5684,17 @@ await check('E1 client apply mounts the sidebar entry and studio (jsdom)', async
   const mutateCalls = []
   let rejectNextSettingsMutation = false
   const ecommerceSubmissions = []
+  /** Replica submissions are kept separate so its queue lifecycle can be
+   * asserted without borrowing the ecommerce fixture's completion rules. */
+  const replicaSubmissions = []
   /** Canvas generation requests submitted from the workspace composer. */
   const canvasTasks = []
   /** Documents the workspace persisted through /canvas/save. */
   const canvasSaves = []
   /** Every gallery mutation the panel issued, in order (see the gallery stubs). */
   const galleryMutations = []
+  const galleryAppends = []
+  const conversationImageStages = []
   /** Video tasks the panel sees when polling, and submissions it makes. */
   const videoTasks = []
   const videoSubmissions = []
@@ -6082,6 +6087,22 @@ await check('E1 client apply mounts the sidebar entry and studio (jsdom)', async
         }),
       }
     }
+    if (path.endsWith('/gallery/append')) {
+      const payload = JSON.parse(init.body).entry
+      galleryAppends.push(payload)
+      return {
+        ok: true,
+        json: async () => ({
+          ok: true,
+          added: true,
+          entries: [{ ...payload, id: `gallery-appended-${galleryAppends.length}`, images: [{ url: '/api/dsh-imagegen/gallery/image/appended.png', mime: payload.images[0]?.mime ?? 'image/png' }] }],
+        }),
+      }
+    }
+    if (path.endsWith('/conversation-image')) {
+      conversationImageStages.push(JSON.parse(init.body))
+      return { ok: true, json: async () => ({ ok: true }) }
+    }
     // Every gallery mutation answers with the same { entries, trash } pair. The
     // stubs used to be absent, so a client calling one of these threw, the
     // caller's catch swallowed it, and the test stayed green while the UI showed
@@ -6292,6 +6313,11 @@ await check('E1 client apply mounts the sidebar entry and studio (jsdom)', async
     }
     if (path.endsWith('/tasks/submit')) {
       const payload = JSON.parse(init.body)
+      if (payload.refName === 'shot.png') {
+        replicaSubmissions.push(payload)
+        const task = { id: `replica-task-${replicaSubmissions.length}`, request: payload, status: 'queued', createdAt: Date.now() }
+        return { ok: true, json: async () => ({ ok: true, task }) }
+      }
       ecommerceSubmissions.push(payload)
       if (payload.canvas !== undefined) canvasTasks.push(payload)
       // Freeze the id eagerly: the json() closure runs after all concurrent
@@ -6302,6 +6328,23 @@ await check('E1 client apply mounts the sidebar entry and studio (jsdom)', async
     }
     if (path.endsWith('/tasks/get')) {
       const requestedId = JSON.parse(init.body).id
+      const replicaMatch = /^replica-task-(\d+)$/.exec(requestedId)
+      if (replicaMatch !== null) {
+        const payload = replicaSubmissions[Number(replicaMatch[1]) - 1]
+        return {
+          ok: true,
+          json: async () => ({
+            ok: true,
+            task: {
+              id: requestedId,
+              request: payload,
+              status: 'completed',
+              createdAt: Date.now(),
+              result: { images: [{ b64: pngBytes.toString('base64'), mime: 'image/png' }] },
+            },
+          }),
+        }
+      }
       const match = /^ecommerce-task-(\d+)$/.exec(requestedId)
       const index = match === null ? -1 : Number(match[1]) - 1
       const payload = index < 0 ? undefined : ecommerceSubmissions[index]
@@ -6366,6 +6409,11 @@ await check('E1 client apply mounts the sidebar entry and studio (jsdom)', async
     CustomEvent: jsdomWindow.CustomEvent,
     HTMLElement: jsdomWindow.HTMLElement,
     FileReader: jsdomWindow.FileReader,
+    // Generated-image conversation actions decode base64 before handing a
+    // browser File to the host. vm contexts do not inherit Node's web globals,
+    // so expose the same codecs a real browser provides.
+    atob,
+    btoa,
     // image-ops decodes asset URLs through `new Image()`; jsdom never loads
     // resources, so the stub resolves onload on the next tick.
     Image: class SmokeImage {
@@ -6405,6 +6453,7 @@ await check('E1 client apply mounts the sidebar entry and studio (jsdom)', async
   // asserted without a real GUI.
   const conversationDrafts = []
   const conversationInputs = []
+  const conversationPromptDrafts = []
   const conversationStub = {
     createDrafts: (sessionId, files) => files.map((file, index) => {
       conversationDrafts.push({ sessionId: String(sessionId), name: file.name, type: file.type, size: file.size })
@@ -6416,7 +6465,7 @@ await check('E1 client apply mounts the sidebar entry and studio (jsdom)', async
         addAttachments: (ids) => { conversationInputs.push(...ids); return true },
         removeAttachment: () => {},
         state: { getSnapshot: () => ({ draft: '' }) },
-        setDraft: () => {},
+        setDraft: (value) => { conversationPromptDrafts.push(value) },
       }),
     },
   }
@@ -8849,6 +8898,81 @@ await check('E1 client apply mounts the sidebar entry and studio (jsdom)', async
     replicaInput.dispatchEvent(new jsdomWindow.Event('change', { bubbles: true }))
     await new Promise(resolve => setTimeout(resolve, 90))
     assert.match(capacityBlock.textContent ?? '', /1 张全部会发送/, `a picked reference states how many are sent: ${capacityBlock.textContent}`)
+    // A long image render must live in the host queue. The old synchronous
+    // /generate call could finish host-side after its client connection died:
+    // history then contained the image, but this result pane stayed empty until
+    // the whole app restarted.
+    const directGeneratesBeforeReplica = requestPaths.filter(path => path.endsWith('/generate')).length
+    const replicaSubmit = replicaWorkspace.querySelector('button[type="submit"]')
+    assert.ok(replicaSubmit !== null && !replicaSubmit.disabled, 'replica submit is enabled after a reference is picked')
+    replicaSubmit.dispatchEvent(new jsdomWindow.MouseEvent('click', { bubbles: true, cancelable: true }))
+    assert.ok(await waitFor(() => replicaSubmissions.length === 1), 'replica submits one host-resident generation task')
+    assert.equal(
+      requestPaths.filter(path => path.endsWith('/generate')).length,
+      directGeneratesBeforeReplica,
+      'replica never holds a synchronous /generate connection open',
+    )
+    assert.ok(
+      await waitFor(() => replicaWorkspace.querySelector('section img') !== null),
+      'a completed replica task renders its image immediately without an app restart',
+    )
+    // Replica results must keep the same useful controls as ordinary image
+    // results. A bare <img> technically shows the render but strands it: it
+    // cannot be previewed, saved, favorited, or handed to the conversation.
+    const replicaOutputCard = replicaWorkspace.querySelector('[data-replica-output-card]')
+    assert.ok(replicaOutputCard !== null, 'a replica image renders inside an actionable result card')
+    const replicaActions = [...replicaOutputCard.querySelectorAll('button, a')]
+    const replicaAction = label => replicaActions.find(action => action.textContent?.trim() === label)
+    const replicaPreview = replicaOutputCard.querySelector('[aria-label="点击预览"]')
+    assert.ok(replicaPreview !== null, 'a replica image offers the ordinary click-to-preview action')
+    assert.ok(replicaAction('加入素材库') !== undefined, 'a replica image can be added to the asset gallery')
+    assert.ok(replicaAction('加入对话') !== undefined, 'a replica image can be added to the current conversation')
+    const replicaDownload = replicaAction('下载')
+    assert.ok(replicaDownload instanceof jsdomWindow.HTMLAnchorElement, 'a replica image has a download link')
+    assert.match(replicaDownload.href, /^data:image\/png;base64,/, 'the replica download points at the rendered bytes')
+    replicaAction('加入素材库').dispatchEvent(new jsdomWindow.MouseEvent('click', { bubbles: true, cancelable: true }))
+    assert.ok(await waitFor(() => galleryAppends.length > 0), 'the replica gallery action reaches the host')
+    assert.equal(galleryAppends.at(-1).prompt, replicaSubmissions[0].prompt, 'the gallery entry keeps the replica prompt instead of the ordinary form prompt')
+    const currentReplicaOutputCard = replicaWorkspace.querySelector('[data-replica-output-card]')
+    const replicaConversationAction = [...currentReplicaOutputCard.querySelectorAll('button')]
+      .find(action => action.textContent?.trim() === '加入对话')
+    assert.ok(replicaConversationAction !== undefined, 'the live replica card still offers add-to-conversation after the gallery update')
+    assert.equal(replicaConversationAction.disabled, false, 'the replica conversation action is enabled when no attachment is running')
+    const conversationInputsBeforeReplica = conversationInputs.length
+    replicaConversationAction.dispatchEvent(new jsdomWindow.MouseEvent('click', { bubbles: true, cancelable: true }))
+    assert.ok(
+      await waitFor(() => conversationImageStages.length > 0 && conversationInputs.length > conversationInputsBeforeReplica),
+      `the replica conversation action stages and attaches the image; staged=${conversationImageStages.length} drafts=${conversationDrafts.length} inputs=${conversationInputs.length} errors=${[...jsdomDocument.querySelectorAll('[class*="error"]')].map(node => node.textContent).filter(Boolean).join(' | ')}`,
+    )
+    assert.equal(conversationPromptDrafts.at(-1), replicaSubmissions[0].prompt, 'the conversation draft keeps the replica prompt')
+    replicaPreview.dispatchEvent(new jsdomWindow.MouseEvent('click', { bubbles: true, cancelable: true }))
+    assert.ok(await waitFor(() => document.querySelector('[data-preview-overlay]') !== null), 'clicking a replica image opens the standard preview')
+    document.querySelector('[data-preview-overlay]').dispatchEvent(new jsdomWindow.MouseEvent('click', { bubbles: true, cancelable: true }))
+    assert.ok(await waitFor(() => document.querySelector('[data-preview-overlay]') === null), 'the replica preview closes normally')
+    // The state attributes have always changed, but the shipped stylesheet had
+    // no selected-state rule, so clicking looked like a no-op. Exercise the
+    // rendered CSS for every option group, not merely aria-checked.
+    for (const label of ['复刻类型', '复刻程度', '分辨率', '生成张数']) {
+      const group = replicaWorkspace.querySelector(`[role="radiogroup"][aria-label="${label}"]`)
+      assert.ok(group !== null, `${label} renders as a radio group`)
+      const buttons = [...group.querySelectorAll('button')]
+      assert.ok(buttons.length > 1, `${label} offers more than one choice`)
+      const target = buttons.at(-1)
+      target.dispatchEvent(new jsdomWindow.MouseEvent('click', { bubbles: true, cancelable: true }))
+      await new Promise(resolve => setTimeout(resolve, 0))
+      assert.equal(target.getAttribute('aria-checked'), 'true', `${label} updates the selected value`)
+      const unselected = buttons.find(button => button !== target && button.getAttribute('aria-checked') === 'false')
+      assert.ok(unselected !== undefined, `${label} keeps the other choices unselected`)
+      const visualSignature = button => {
+        const style = jsdomWindow.getComputedStyle(button)
+        return [style.backgroundColor, style.borderColor, style.color, style.boxShadow].join('|')
+      }
+      assert.notEqual(
+        visualSignature(target),
+        visualSignature(unselected),
+        `${label} gives the selected choice a visible style`,
+      )
+    }
   } finally {
     // Drain pending React work BEFORE restoring the globals. React DOM reads
     // `window` during commit (getActiveElementDeep), so a flush that lands after

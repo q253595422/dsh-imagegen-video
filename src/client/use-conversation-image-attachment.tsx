@@ -21,6 +21,7 @@ interface PendingConversationImage {
   image: GeneratedImage
   index: number
   actionKey: number | string
+  prompt: string
 }
 
 /**
@@ -67,6 +68,7 @@ export function useConversationImageAttachment(options: {
     index: number,
     actionKey: number | string,
     sessionId: SessionId,
+    prompt: string,
   ): Promise<void> => {
     if (sessions === undefined || conversation === undefined) {
       options.onError(new Error(options.messages.unavailable))
@@ -88,7 +90,7 @@ export function useConversationImageAttachment(options: {
         file: prepared.file,
         dataUrl: prepared.dataUrl,
         name: prepared.file.name,
-        prompt: options.prompt,
+        prompt,
         attachImage: options.attachImage,
         unavailableMessage: options.messages.unavailable,
         busyMessage: options.messages.busy,
@@ -101,7 +103,7 @@ export function useConversationImageAttachment(options: {
     }
   }, [conversation, options, sessions])
 
-  const add = useCallback((image: GeneratedImage, index: number, actionKey: number | string = index): void => {
+  const add = useCallback((image: GeneratedImage, index: number, actionKey: number | string = index, prompt = options.prompt): void => {
     if (busyKey !== null || pending !== null) return
     if (sessions === undefined || conversation === undefined) {
       options.onError(new Error(options.messages.unavailable))
@@ -110,7 +112,7 @@ export function useConversationImageAttachment(options: {
 
     const current = currentConversationSessionId(sessions)
     if (current !== undefined && sessions.scope(current) !== undefined) {
-      void perform(image, index, actionKey, current)
+      void perform(image, index, actionKey, current, prompt)
       return
     }
 
@@ -120,7 +122,7 @@ export function useConversationImageAttachment(options: {
       options.onError(new Error(options.messages.noSession))
       return
     }
-    setPending({ image, index, actionKey })
+    setPending({ image, index, actionKey, prompt })
   }, [busyKey, conversation, options, pending, perform, sessions])
 
   const selectTarget = useCallback((sessionId: SessionId): void => {
@@ -135,7 +137,7 @@ export function useConversationImageAttachment(options: {
     }
     const selected = pending
     setPending(null)
-    void perform(selected.image, selected.index, selected.actionKey, sessionId)
+    void perform(selected.image, selected.index, selected.actionKey, sessionId, selected.prompt)
   }, [options, pending, perform, sessions])
 
   const cancelPicker = useCallback((): void => { setPending(null) }, [])

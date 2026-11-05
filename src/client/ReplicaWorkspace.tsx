@@ -60,6 +60,11 @@ const IMAGE_TYPES = new Set(['image/png', 'image/jpeg', 'image/webp', 'image/gif
  *  edit form uses so a set that works there works here. */
 const MAX_BYTES = 10 * 1024 * 1024
 const TOTAL_BYTES = 16 * 1024 * 1024
+const TASK_POLL_MS = 1000
+
+function waitForNextTaskPoll(): Promise<void> {
+  return new Promise(resolve => { window.setTimeout(resolve, TASK_POLL_MS) })
+}
 
 function readAsDataUrl(file: File): Promise<string> {
   return new Promise((resolve, reject) => {
@@ -80,10 +85,44 @@ export interface ReplicaWorkspaceProps {
   channels: ChannelConfig[]
   /** False when no channel is configured; the form still renders, submit is blocked. */
   connected: boolean
+  galleryBusy: boolean
+  conversationBusy: boolean
+  conversationBusyKey: number | string | null
+  onPreview: (images: GeneratedImage[], index: number, source: ReplicaOutputSource) => void
+  onAddToGallery: (image: GeneratedImage, source: ReplicaOutputSource) => void
+  onAddToConversation: (image: GeneratedImage, index: number, actionKey: number | string, prompt: string) => void
+}
+
+/** Metadata that must follow an output when it leaves the replica workspace. */
+export interface ReplicaOutputSource {
+  mode: 'text' | 'edit'
+  model: string
+  prompt: string
+  size: string
+  quality: string
+  detail: string
+  refName?: string
+}
+
+function imageSource(image: GeneratedImage): string {
+  return `data:${image.mime};base64,${image.b64}`
+}
+
+function imageExtension(mime: string): string {
+  switch (mime.split(';')[0]!.trim()) {
+    case 'image/jpeg': return 'jpg'
+    case 'image/webp': return 'webp'
+    case 'image/gif': return 'gif'
+    default: return 'png'
+  }
 }
 
 export function ReplicaWorkspace(props: ReplicaWorkspaceProps): React.JSX.Element {
-  const { api, active, modelGroups, defaultChannelId, channels, connected } = props
+  const {
+    api, active, modelGroups, defaultChannelId, channels, connected,
+    galleryBusy, conversationBusy, conversationBusyKey,
+    onPreview, onAddToGallery, onAddToConversation,
+  } = props
   // Live language switching, same as every other workspace surface.
   useImageGenLanguageTick()
 
@@ -101,6 +140,7 @@ export function ReplicaWorkspace(props: ReplicaWorkspaceProps): React.JSX.Elemen
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [outputs, setOutputs] = useState<GeneratedImage[]>([])
+  const [outputSource, setOutputSource] = useState<ReplicaOutputSource | null>(null)
   const [dragging, setDragging] = useState(false)
 
   const fileInput = useRef<HTMLInputElement>(null)
@@ -224,13 +264,24 @@ export function ReplicaWorkspace(props: ReplicaWorkspaceProps): React.JSX.Elemen
       const all = product === null ? dataUrls : [...dataUrls, product.dataUrl]
       // Same number the capacity line promised, applied to the payload.
       const { primary, extras } = splitReferences(all, capacity.usable)
-      const result = await api.generate({
-        mode: primary === undefined ? 'text' : 'edit',
+      const requestMode = primary === undefined ? 'text' : 'edit'
+      const requestSize = fidelity === 'replica' && facts !== null ? facts.aspect : 'auto'
+      const source: ReplicaOutputSource = {
+        mode: requestMode,
+        model: resolved.model,
+        prompt,
+        size: requestSize,
+        quality,
+        detail: '',
+        ...(references[0] === undefined ? {} : { refName: references[0].name }),
+      }
+      const task = await api.taskSubmit({
+        mode: requestMode,
         model: resolved.model,
         prompt,
         // The replica tier pins the frame to the measured ratio whenever the
         // adapter can express it; the style tier leaves the frame free.
-        size: fidelity === 'replica' && facts !== null ? facts.aspect : 'auto',
+        size: requestSize,
         quality,
         n: count,
         detail: '',
@@ -239,9 +290,19 @@ export function ReplicaWorkspace(props: ReplicaWorkspaceProps): React.JSX.Elemen
         ...(extras.length === 0 ? {} : { images: extras }),
         ...(references[0] === undefined ? {} : { refName: references[0].name }),
       })
+      let current = task
+      while (mounted.current && (current.status === 'queued' || current.status === 'running')) {
+        await waitForNextTaskPoll()
+        if (!mounted.current) return
+        current = await api.taskGet(task.id)
+      }
       if (!mounted.current) return
-      setOutputs(result.images)
-      if (result.historyError !== undefined) setError(result.historyError)
+      if (current.status === 'failed') throw new Error(current.error ?? tt('tasks.failed'))
+      if (current.status === 'cancelled') throw new Error(tt('tasks.cancelled'))
+      if (current.result === undefined) throw new Error(tt('tasks.failed'))
+      setOutputSource(source)
+      setOutputs(current.result.images)
+      if (current.result.historyError !== undefined) setError(current.result.historyError)
     } catch (caught) {
       if (mounted.current) setError(errorMessage(caught))
     } finally {
@@ -535,15 +596,43 @@ export function ReplicaWorkspace(props: ReplicaWorkspaceProps): React.JSX.Elemen
           </div>
 
           {/* ------------------------------------------------------------ outputs */}
-          {outputs.length > 0 ? (
+          {outputs.length > 0 && outputSource !== null ? (
             <div className={css.outputs}>
               {outputs.map((image, index) => (
-                <img
-                  key={`${index}-${image.b64.slice(0, 12)}`}
-                  className={css.output}
-                  src={`data:${image.mime};base64,${image.b64}`}
-                  alt={tt('replica.outputAlt', { index: index + 1 })}
-                />
+                <figure key={`${index}-${image.b64.slice(0, 12)}`} className={css.outputCard} data-replica-output-card="">
+                  <button
+                    type="button"
+                    className={css.outputPreview}
+                    aria-label={tt('preview.open')}
+                    onClick={() => { onPreview(outputs, index, outputSource) }}
+                  >
+                    <img
+                      className={css.output}
+                      src={imageSource(image)}
+                      alt={tt('replica.outputAlt', { index: index + 1 })}
+                    />
+                    <span className={css.previewHint}>{tt('preview.open')}</span>
+                  </button>
+                  <figcaption className={css.outputActions}>
+                    <button
+                      type="button"
+                      className={css.outputAction}
+                      disabled={galleryBusy}
+                      onClick={() => { onAddToGallery(image, outputSource) }}
+                    >{tt('gallery.add')}</button>
+                    <button
+                      type="button"
+                      className={css.outputAction}
+                      disabled={conversationBusy}
+                      onClick={() => { onAddToConversation(image, index, `replica:${index}`, outputSource.prompt) }}
+                    >{conversationBusyKey === `replica:${index}` ? tt('conversation.adding') : tt('conversation.add')}</button>
+                    <a
+                      className={css.outputAction}
+                      href={imageSource(image)}
+                      download={`dsh-replica-${index + 1}.${imageExtension(image.mime)}`}
+                    >{tt('download')}</a>
+                  </figcaption>
+                </figure>
               ))}
             </div>
           ) : (
