@@ -24,7 +24,7 @@
  *    the report states the limit rather than implying more.
  */
 import { useEffect, useMemo, useRef, useState } from 'react'
-import type { ChannelConfig, GeneratedImage } from '../protocol.ts'
+import type { ChannelConfig, GeneratedImage, GenerationTask, GenerationTaskSummary } from '../protocol.ts'
 import type { ImageGenApi } from './api.ts'
 import { errorMessage, tt } from './helpers.ts'
 import { useImageGenLanguageTick } from './use-language.ts'
@@ -61,9 +61,15 @@ const IMAGE_TYPES = new Set(['image/png', 'image/jpeg', 'image/webp', 'image/gif
 const MAX_BYTES = 10 * 1024 * 1024
 const TOTAL_BYTES = 16 * 1024 * 1024
 const TASK_POLL_MS = 1000
+const TASK_POLL_MAX_MS = 5000
+const TASK_POLL_MAX_FAILURES = 5
 
-function waitForNextTaskPoll(): Promise<void> {
-  return new Promise(resolve => { window.setTimeout(resolve, TASK_POLL_MS) })
+function taskPollDelay(failures: number): number {
+  return Math.min(TASK_POLL_MS * 2 ** Math.max(0, failures - 1), TASK_POLL_MAX_MS)
+}
+
+function waitForNextTaskPoll(delay = TASK_POLL_MS): Promise<void> {
+  return new Promise(resolve => { window.setTimeout(resolve, delay) })
 }
 
 function readAsDataUrl(file: File): Promise<string> {
@@ -276,6 +282,7 @@ export function ReplicaWorkspace(props: ReplicaWorkspaceProps): React.JSX.Elemen
         ...(references[0] === undefined ? {} : { refName: references[0].name }),
       }
       const task = await api.taskSubmit({
+        workflow: 'replica',
         mode: requestMode,
         model: resolved.model,
         prompt,
@@ -290,13 +297,50 @@ export function ReplicaWorkspace(props: ReplicaWorkspaceProps): React.JSX.Elemen
         ...(extras.length === 0 ? {} : { images: extras }),
         ...(references[0] === undefined ? {} : { refName: references[0].name }),
       })
-      let current = task
-      while (mounted.current && (current.status === 'queued' || current.status === 'running')) {
-        await waitForNextTaskPoll()
+      // Poll the bounded summary payload while the host renders. Fetching the
+      // full task every second would resend up to 16 MiB of reference images.
+      let summary: GenerationTaskSummary | undefined
+      let pollFailures = 0
+      while (mounted.current) {
+        await waitForNextTaskPoll(taskPollDelay(pollFailures))
         if (!mounted.current) return
-        current = await api.taskGet(task.id)
+        try {
+          summary = (await api.taskList()).find(item => item.id === task.id)
+          pollFailures = 0
+        } catch (caught) {
+          pollFailures += 1
+          if (pollFailures >= TASK_POLL_MAX_FAILURES) throw caught
+          continue
+        }
+        if (summary === undefined) {
+          pollFailures += 1
+          if (pollFailures >= TASK_POLL_MAX_FAILURES) throw new Error(tt('tasks.failed'))
+          continue
+        }
+        if (summary.status === 'queued' || summary.status === 'running') continue
+        break
       }
       if (!mounted.current) return
+      if (summary === undefined) throw new Error(tt('tasks.failed'))
+      if (summary.status === 'failed') throw new Error(summary.error ?? tt('tasks.failed'))
+      if (summary.status === 'cancelled') throw new Error(tt('tasks.cancelled'))
+      if (!summary.resultAvailable) throw new Error(tt('tasks.failed'))
+
+      // Hydrate exactly the completed result. If that one request fails, retry
+      // with bounded backoff; the host task remains healthy and retryable.
+      let current: GenerationTask | undefined
+      let hydrationFailures = 0
+      while (mounted.current && current === undefined) {
+        try {
+          current = await api.taskGet(task.id)
+        } catch (caught) {
+          hydrationFailures += 1
+          if (hydrationFailures >= TASK_POLL_MAX_FAILURES) throw caught
+          await waitForNextTaskPoll(taskPollDelay(hydrationFailures))
+        }
+      }
+      if (!mounted.current) return
+      if (current === undefined) throw new Error(tt('tasks.failed'))
       if (current.status === 'failed') throw new Error(current.error ?? tt('tasks.failed'))
       if (current.status === 'cancelled') throw new Error(tt('tasks.cancelled'))
       if (current.result === undefined) throw new Error(tt('tasks.failed'))

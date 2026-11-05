@@ -2718,7 +2718,7 @@ await check('C4b task polling stays lightweight and hydrates completed results o
   const image = `data:image/png;base64,${pngBytes.toString('base64')}`
   const submitted = await post('/api/dsh-imagegen/tasks/submit', {
     mode: 'edit', model: 'gpt-image-2', prompt: 'edit this lightweight task payload', size: '3:2', quality: '4k', n: 1, detail: '',
-    image, refName: 'reference.png',
+    image, refName: 'reference.png', workflow: 'replica',
   })
   assert.equal(submitted.body.ok, true, JSON.stringify(submitted.body))
   let summary
@@ -2731,13 +2731,19 @@ await check('C4b task polling stays lightweight and hydrates completed results o
   assert.equal(summary?.status, 'completed')
   assert.equal(summary.result, undefined)
   assert.equal(summary.resultAvailable, true)
+  assert.equal(summary.request.workflow, 'replica', 'the host preserves replica provenance in lightweight polls')
   assert.equal(summary.request.image, undefined)
   assert.equal(summary.request.images, undefined)
 
   const hydrated = await post('/api/dsh-imagegen/tasks/get', { id: submitted.body.task.id })
   assert.equal(hydrated.body.ok, true)
+  assert.equal(hydrated.body.task.request.workflow, 'replica')
   assert.equal(hydrated.body.task.request.image, image)
   assert.ok(hydrated.body.task.result.images.length > 0)
+  assert.ok(
+    persistedHistory.some(entry => entry.prompt === 'edit this lightweight task payload' && entry.workflow === 'replica'),
+    'history accepts replica provenance instead of rejecting its persisted result',
+  )
   const missing = await post('/api/dsh-imagegen/tasks/get', { id: 'missing-task' })
   assert.equal(missing.body.ok, false)
   assert.equal(missing.body.code, 'not-found')
@@ -5687,6 +5693,9 @@ await check('E1 client apply mounts the sidebar entry and studio (jsdom)', async
   /** Replica submissions are kept separate so its queue lifecycle can be
    * asserted without borrowing the ecommerce fixture's completion rules. */
   const replicaSubmissions = []
+  const replicaTasks = []
+  const replicaTaskListReads = []
+  const replicaTaskGetReads = []
   /** Canvas generation requests submitted from the workspace composer. */
   const canvasTasks = []
   /** Documents the workspace persisted through /canvas/save. */
@@ -6315,7 +6324,13 @@ await check('E1 client apply mounts the sidebar entry and studio (jsdom)', async
       const payload = JSON.parse(init.body)
       if (payload.refName === 'shot.png') {
         replicaSubmissions.push(payload)
-        const task = { id: `replica-task-${replicaSubmissions.length}`, request: payload, status: 'queued', createdAt: Date.now() }
+        const task = {
+          id: `replica-task-${replicaSubmissions.length}`,
+          request: payload,
+          status: 'queued',
+          createdAt: Date.now(),
+        }
+        replicaTasks.push(task)
         return { ok: true, json: async () => ({ ok: true, task }) }
       }
       ecommerceSubmissions.push(payload)
@@ -6331,6 +6346,12 @@ await check('E1 client apply mounts the sidebar entry and studio (jsdom)', async
       const replicaMatch = /^replica-task-(\d+)$/.exec(requestedId)
       if (replicaMatch !== null) {
         const payload = replicaSubmissions[Number(replicaMatch[1]) - 1]
+        replicaTaskGetReads.push(requestedId)
+        // A hydration can fail once while the host task keeps running. The
+        // replica pane must retry instead of abandoning a healthy render.
+        if (replicaTaskGetReads.filter(id => id === requestedId).length === 1) {
+          return { ok: true, json: async () => ({ ok: false, code: 'temporary', message: 'temporary poll failure' }) }
+        }
         return {
           ok: true,
           json: async () => ({
@@ -6366,22 +6387,38 @@ await check('E1 client apply mounts the sidebar entry and studio (jsdom)', async
       }
     }
     if (path.endsWith('/tasks/list')) {
+      if (replicaTasks.length > 0) replicaTaskListReads.push(Date.now())
+      const replicaSummaries = replicaTasks.map(task => {
+        const elapsed = Date.now() - task.createdAt
+        task.status = elapsed < 1200 ? 'queued' : elapsed < 2200 ? 'running' : 'completed'
+        const request = { ...task.request }
+        delete request.image
+        delete request.images
+        return {
+          ...task,
+          request,
+          resultAvailable: task.status === 'completed',
+        }
+      })
       return {
         ok: true,
         json: async () => ({
           ok: true,
-          tasks: ecommerceSubmissions.map((payload, index) => {
-            const request = { ...payload }
-            delete request.image
-            delete request.images
-            return {
-              id: `ecommerce-task-${index + 1}`,
-              request,
-              status: index === 0 ? 'completed' : 'queued',
-              createdAt: 1,
-              resultAvailable: index === 0,
-            }
-          }),
+          tasks: [
+            ...ecommerceSubmissions.map((payload, index) => {
+              const request = { ...payload }
+              delete request.image
+              delete request.images
+              return {
+                id: `ecommerce-task-${index + 1}`,
+                request,
+                status: index === 0 ? 'completed' : 'queued',
+                createdAt: 1,
+                resultAvailable: index === 0,
+              }
+            }),
+            ...replicaSummaries,
+          ],
         }),
       }
     }
@@ -8873,6 +8910,12 @@ await check('E1 client apply mounts the sidebar entry and studio (jsdom)', async
     // nothing is picked — where a ceiling belongs. The fixture model resolves to
     // the generic branch (5), so the number is pinned here: if the line ever
     // shows anything but the model's real ceiling, this fails.
+    const normalBeforeReplica = [...view.querySelectorAll('[role="tablist"] button')]
+      .find(button => button.textContent === '普通生图')
+    assert.ok(normalBeforeReplica !== undefined, 'the normal workspace tab remains available before replica work')
+    normalBeforeReplica.dispatchEvent(new jsdomWindow.MouseEvent('click', { bubbles: true, cancelable: true }))
+    await new Promise(resolve => setTimeout(resolve, 60))
+    assert.equal(view.querySelectorAll('[data-count]').length, 0, 'the normal result board is empty after the earlier New action')
     const replicaSwitch = [...view.querySelectorAll('[role="tablist"] button')].find(button => button.textContent === '爆款复刻')
     assert.ok(replicaSwitch !== undefined, 'replica top-nav entry is present')
     replicaSwitch.dispatchEvent(new jsdomWindow.MouseEvent('click', { bubbles: true, cancelable: true }))
@@ -8907,15 +8950,18 @@ await check('E1 client apply mounts the sidebar entry and studio (jsdom)', async
     assert.ok(replicaSubmit !== null && !replicaSubmit.disabled, 'replica submit is enabled after a reference is picked')
     replicaSubmit.dispatchEvent(new jsdomWindow.MouseEvent('click', { bubbles: true, cancelable: true }))
     assert.ok(await waitFor(() => replicaSubmissions.length === 1), 'replica submits one host-resident generation task')
+    assert.equal(replicaSubmissions[0].workflow, 'replica', 'replica tasks carry provenance so other workspaces ignore their completions')
     assert.equal(
       requestPaths.filter(path => path.endsWith('/generate')).length,
       directGeneratesBeforeReplica,
       'replica never holds a synchronous /generate connection open',
     )
     assert.ok(
-      await waitFor(() => replicaWorkspace.querySelector('section img') !== null),
+      await waitFor(() => replicaWorkspace.querySelector('section img') !== null, 5000),
       'a completed replica task renders its image immediately without an app restart',
     )
+    assert.ok(replicaTaskListReads.length >= 2, `replica polls lightweight summaries until completion: ${replicaTaskListReads.length} reads`)
+    assert.equal(replicaTaskGetReads.length, 2, 'replica hydrates once, retries one transient failure, and never downloads references on every tick')
     // Replica results must keep the same useful controls as ordinary image
     // results. A bare <img> technically shows the render but strands it: it
     // cannot be previewed, saved, favorited, or handed to the conversation.
@@ -8973,6 +9019,12 @@ await check('E1 client apply mounts the sidebar entry and studio (jsdom)', async
         `${label} gives the selected choice a visible style`,
       )
     }
+    const normalAfterReplica = [...view.querySelectorAll('[role="tablist"] button')]
+      .find(button => button.textContent === '普通生图')
+    assert.ok(normalAfterReplica !== undefined, 'the normal workspace tab remains available after replica work')
+    normalAfterReplica.dispatchEvent(new jsdomWindow.MouseEvent('click', { bubbles: true, cancelable: true }))
+    await new Promise(resolve => setTimeout(resolve, 60))
+    assert.equal(view.querySelectorAll('[data-count]').length, 0, 'a replica completion never populates the normal image result board')
   } finally {
     // Drain pending React work BEFORE restoring the globals. React DOM reads
     // `window` during commit (getActiveElementDeep), so a flush that lands after

@@ -1266,7 +1266,11 @@ export function ImageGenPanel(props: {
   const previewDialogRef = useRef<HTMLDivElement>(null)
   const comparisonFullscreenRef = useRef<HTMLDivElement>(null)
   const galleryClipRef = useRef<HTMLDivElement>(null)
-  const activeTasks = tasks.filter(task => task.status === 'queued' || task.status === 'running')
+  // Replica renders own their progress and result board. Their host tasks still
+  // enter the shared queue/history, but must not make the ordinary workspace
+  // look busy or replace the image currently on its canvas.
+  const panelTasks = tasks.filter(task => task.request.workflow !== 'replica')
+  const activeTasks = panelTasks.filter(task => task.status === 'queued' || task.status === 'running')
   const activeTask = activeTasks.find(task => task.status === 'running') ?? activeTasks[0]
   const generating = submitting || activeTasks.length > 0
   const generationStartedAt = activeTask?.startedAt ?? activeTask?.createdAt ?? null
@@ -1550,7 +1554,8 @@ export function ImageGenPanel(props: {
           const previousTasks = tasksRef.current
           const previousById = new Map(previousTasks.map(task => [task.id, task] as const))
           for (const summary of summaries) {
-            if (summary.status === 'queued' || summary.status === 'running') {
+            if ((summary.status === 'queued' || summary.status === 'running')
+              && summary.request.workflow !== 'replica') {
               observedTaskIdsRef.current.add(summary.id)
             }
           }
@@ -1559,7 +1564,8 @@ export function ImageGenPanel(props: {
           // lightweight; their images are available from history.
           const needsHydration = summaries.filter(summary => {
             const previous = previousById.get(summary.id)
-            return summary.status === 'completed'
+            return summary.request.workflow !== 'replica'
+              && summary.status === 'completed'
               && summary.resultAvailable
               && previous?.status !== 'completed'
               && (submittedTaskIdsRef.current.has(summary.id)
@@ -1605,10 +1611,12 @@ export function ImageGenPanel(props: {
           // retry) is on screen.
           const failedNow = next.find(task => task.status === 'failed'
             && task.error !== undefined && task.error !== ''
+            && task.request.workflow !== 'replica'
             && !previousTasks.some(old => old.id === task.id && old.status === 'failed'))
           setTasks(current => {
             const completed = next.find(task => task.status === 'completed'
               && task.result !== undefined
+              && task.request.workflow !== 'replica'
               && !current.some(old => old.id === task.id && old.status === 'completed')
               && !comparison?.taskIds.includes(task.id))
             if (completed?.result !== undefined) {
@@ -4221,7 +4229,7 @@ export function ImageGenPanel(props: {
               )}
             </div>
           ) : null}
-          {!isGallery && tasks.length > 0 ? (
+          {!isGallery && panelTasks.length > 0 ? (
             <section className={css.taskTray} data-open={taskTrayOpen ? 'true' : 'false'} aria-label={tt('tasks.title')}>
               <header className={css.taskTrayHeader}>
                 <button type="button" className={css.taskTrayToggle} aria-expanded={taskTrayOpen} onClick={() => { setTaskTrayOpen(open => !open) }}>
@@ -4236,7 +4244,7 @@ export function ImageGenPanel(props: {
                 <SignalsButton open={signalsOpen} onToggle={() => { setSignalsOpen(open => !open) }} />
               </header>
               <div className={css.taskRows}>
-                {tasks.slice(0, 5).map(task => (
+                {panelTasks.slice(0, 5).map(task => (
                   <div key={task.id} className={css.taskRow} data-status={task.status}>
                     <span className={css.taskStatus}>{tt(`tasks.${task.status}` as never)}</span>
                     <span className={css.taskPrompt}>{task.request.prompt}</span>
