@@ -11,7 +11,7 @@
   color: var(--dsw-alias-label-primary);
   font-family: var(--dsw-font-family);
 }
-.dialog::backdrop { background: var(--dsw-alias-bg-mask-1, rgba(0, 0, 0, .65)); }
+.dialog::backdrop { background: var(--dsw-alias-bg-mask-1); }
 .dialog button, .dialog input, .dialog select { font-family: inherit; }
 .dialog button:focus-visible, .dialog input:focus-visible, .dialog select:focus-visible, .dialog a:focus-visible {
   outline: 2px solid var(--dsw-alias-label-primary);
