@@ -1,0 +1,102 @@
+.dialog {
+  box-sizing: border-box;
+  width: min(1040px, calc(100vw - 28px));
+  max-width: none;
+  max-height: min(850px, calc(100dvh - 28px));
+  margin: auto;
+  padding: 0;
+  border: 1px solid var(--dsw-alias-border-l2);
+  border-radius: var(--dsw-radius-lg);
+  background: var(--dsw-alias-bg-layer-1);
+  color: var(--dsw-alias-label-primary);
+  font-family: var(--dsw-font-family);
+}
+.dialog::backdrop { background: var(--dsw-alias-bg-mask-1, rgba(0, 0, 0, .65)); }
+.dialog button, .dialog input, .dialog select { font-family: inherit; }
+.dialog button:focus-visible, .dialog input:focus-visible, .dialog select:focus-visible, .dialog a:focus-visible {
+  outline: 2px solid var(--dsw-alias-label-primary);
+  outline-offset: 2px;
+}
+.panel { display: flex; flex-direction: column; box-sizing: border-box; height: min(800px, calc(100dvh - 30px)); min-height: 0; }
+.header { display: flex; justify-content: space-between; align-items: start; gap: 20px; padding: 20px 22px 12px; }
+.header h2 { margin: 0 0 4px; font-size: 18px; line-height: 1.4; }
+.header p { margin: 0; color: var(--dsw-alias-label-secondary); font-size: 12px; }
+.close { flex: none; width: 30px; height: 30px; padding: 0; border: 1px solid var(--dsw-alias-border-l2); border-radius: var(--dsw-radius-sm); background: var(--dsw-alias-bg-layer-2); color: var(--dsw-alias-label-primary); font-size: 20px; cursor: pointer; }
+.toolbar { display: flex; gap: 10px; align-items: end; flex-wrap: wrap; padding: 0 22px 14px; }
+.toolbar label, .viewSelect { display: flex; flex-direction: column; gap: 5px; min-width: 105px; color: var(--dsw-alias-label-secondary); font-size: 11px; }
+.toolbar .search { flex: 2 1 210px; }
+.toolbar select { min-width: 118px; max-width: 200px; }
+.toolbar input[type='search'], .toolbar select, .viewSelect select, .importRow input {
+  box-sizing: border-box;
+  min-height: 35px;
+  width: 100%;
+  padding: 7px 9px;
+  border: 1px solid var(--dsw-alias-border-l2);
+  border-radius: var(--dsw-radius-sm);
+  background: var(--dsw-alias-bg-layer-1);
+  color: var(--dsw-alias-label-primary);
+  font-size: 12px;
+}
+.toolbar .check, .detail .check { display: inline-flex; flex-direction: row; align-items: center; gap: 6px; min-height: 35px; color: var(--dsw-alias-label-secondary); font-size: 11px; }
+.check input { margin: 0; accent-color: var(--dsw-alias-label-primary); }
+.statusBar { display: flex; align-items: center; flex-wrap: wrap; gap: 10px; padding: 8px 22px; border-block: 1px solid var(--dsw-alias-border-l2); background: var(--dsw-alias-bg-layer-2); color: var(--dsw-alias-label-secondary); font-size: 11px; }
+.statusBar button, .notice button, .previewFailed button, .error button, .pagination button, .importRow button { padding: 5px 9px; border: 1px solid var(--dsw-alias-border-l2); border-radius: var(--dsw-radius-xs); background: var(--dsw-alias-bg-layer-1); color: var(--dsw-alias-label-primary); font-size: 11px; cursor: pointer; }
+.statusBar button:disabled, .pagination button:disabled, .importRow button:disabled { opacity: .5; cursor: default; }
+.revision { margin-inline-start: auto; }
+.warning { margin: 0; padding: 4px 22px; color: var(--dsw-alias-state-warn-label); font-size: 11px; }
+.content { display: grid; grid-template-columns: minmax(0, 1fr) minmax(290px, 38%); flex: 1; min-height: 0; }
+.browser { display: flex; flex-direction: column; min-width: 0; min-height: 0; padding: 12px 14px; overflow: auto; }
+.grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(112px, 1fr)); align-content: start; gap: 9px; margin: 0; padding: 0; list-style: none; }
+.grid li { min-width: 0; }
+.card { display: flex; flex-direction: column; position: relative; width: 100%; min-width: 0; height: 100%; gap: 4px; padding: 6px; border: 1px solid var(--dsw-alias-border-l2); border-radius: var(--dsw-radius-sm); background: var(--dsw-alias-bg-layer-1); color: var(--dsw-alias-label-primary); text-align: left; cursor: pointer; }
+.card:hover, .card[aria-pressed='true'] { border-color: var(--dsw-alias-label-primary); }
+.card[aria-pressed='true'] { background: var(--dsw-alias-bg-layer-2); }
+.thumbnail { display: grid; place-items: center; aspect-ratio: 3 / 4; width: 100%; overflow: hidden; border-radius: var(--dsw-radius-xs); background: var(--dsw-alias-bg-layer-2); }
+.thumbnail img { display: block; width: 100%; height: 100%; object-fit: contain; }
+.missingThumbnail { padding: 8px; color: var(--dsw-alias-label-tertiary); font-size: 11px; text-align: center; }
+.cardName { display: -webkit-box; min-height: 28px; overflow: hidden; -webkit-box-orient: vertical; -webkit-line-clamp: 2; font-size: 11px; line-height: 1.35; overflow-wrap: anywhere; }
+.cardMeta { overflow: hidden; color: var(--dsw-alias-label-tertiary); font-size: 10px; text-overflow: ellipsis; white-space: nowrap; }
+.sensitive { position: absolute; inset: 8px auto auto 8px; padding: 2px 5px; border-radius: var(--dsw-radius-xs); background: var(--dsw-alias-bg-layer-1); color: var(--dsw-alias-state-warn-label); font-size: 10px; }
+.pagination { display: flex; align-items: center; justify-content: center; gap: 12px; padding: 14px 0 3px; color: var(--dsw-alias-label-secondary); font-size: 11px; }
+.notice { display: flex; align-items: center; flex-wrap: wrap; gap: 10px; padding: 18px; color: var(--dsw-alias-label-secondary); font-size: 12px; line-height: 1.7; }
+.detail { display: flex; flex-direction: column; gap: 8px; min-width: 0; min-height: 0; padding: 16px; overflow: auto; border-inline-start: 1px solid var(--dsw-alias-border-l2); background: var(--dsw-alias-bg-layer-2); font-size: 12px; }
+.detail h3 { margin: 0; font-size: 14px; line-height: 1.45; overflow-wrap: anywhere; }
+.detail p { margin: 0; line-height: 1.6; }
+.detail .meta, .tags { color: var(--dsw-alias-label-secondary); }
+.tags { overflow-wrap: anywhere; }
+.preview { display: flex; flex-direction: column; flex: 1; justify-content: center; min-height: 0; gap: 8px; margin: 0; overflow: hidden; }
+/* The image must never be taller than the box that holds it. With only
+   `max-height: 43vh` a tall portrait (measured 335px in a 287px figure) spilled
+   24px over each edge of the centred flex column and covered the depth
+   checkbox above it, so a real click landed on the image instead of the
+   control. `min-height: 0` stops the flex item's automatic minimum from
+   bringing the overflow back. */
+.preview img { display: block; width: 100%; min-height: 0; max-height: 100%; object-fit: contain; }
+.preview figcaption { color: var(--dsw-alias-label-tertiary); font-size: 11px; text-align: center; }
+.previewFailed { display: flex; flex-direction: column; align-items: start; gap: 8px; color: var(--dsw-alias-state-error-primary); }
+.error { display: flex; flex-direction: column; align-items: start; gap: 7px; color: var(--dsw-alias-state-error-primary); }
+.footer { display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 12px; border-top: 1px solid var(--dsw-alias-border-l2); padding: 10px 22px; }
+.sourceNote { flex: 1; min-width: 200px; color: var(--dsw-alias-label-secondary); font-size: 11px; line-height: 1.5; }
+.sourceNote p { margin: 0 0 4px; }
+.sourceNote a { color: var(--dsw-alias-label-primary); text-decoration: underline; text-underline-offset: 2px; }
+.primary { padding: 8px 14px; border: 1px solid var(--dsw-alias-label-primary); border-radius: var(--dsw-radius-sm); background: var(--dsw-alias-label-primary); color: var(--dsw-alias-bg-layer-1); font-size: 12px; font-weight: 600; cursor: pointer; }
+.primary:disabled { opacity: .5; cursor: default; }
+.importRow { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; padding: 10px 22px; border-top: 1px solid var(--dsw-alias-border-l2); color: var(--dsw-alias-label-secondary); font-size: 11px; }
+.importRow input { flex: 1 1 210px; width: auto; }
+.importMessage { flex: 1 0 100%; }
+@media (max-width: 680px) {
+  .panel { height: min(850px, calc(100dvh - 24px)); }
+  .header { padding: 14px 14px 10px; }
+  .toolbar { padding: 0 14px 10px; }
+  .statusBar, .warning { padding-inline: 14px; }
+  .content { grid-template-columns: minmax(0, 1fr); grid-template-rows: minmax(160px, 1fr) minmax(160px, .9fr); }
+  .detail { border-inline-start: 0; border-top: 1px solid var(--dsw-alias-border-l2); }
+  .preview { min-height: 110px; }
+  .preview img { max-height: 22vh; }
+  .footer, .importRow { padding-inline: 14px; }
+}
+@media (max-height: 690px) {
+  .dialog { overflow: auto; }
+  .panel { height: auto; min-height: 0; }
+  .content { flex: none; height: min(290px, 46dvh); min-height: 240px; }
+}

@@ -125,6 +125,18 @@
   background: var(--dsw-alias-bg-layer-2);
 }
 
+.formFields {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  min-width: 0;
+  padding: 0;
+  margin: 0;
+  border: 0;
+}
+
+.formFields:disabled { opacity: 0.72; }
+
 /* ------------------------------------------------------------------- fields */
 
 .field {
@@ -435,6 +447,90 @@
   border-color: var(--dsw-alias-brand-primary);
   background: color-mix(in srgb, var(--dsw-alias-brand-primary) 12%, transparent);
   color: var(--dsw-alias-label-primary);
+}
+
+.selection {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  min-width: 0;
+  padding: 7px;
+  border: 1px solid var(--dsw-alias-border-l2);
+  border-radius: var(--dsw-radius-sm);
+  background: var(--dsw-alias-bg-layer-1);
+  font-size: 12px;
+}
+
+.selection img {
+  width: 52px;
+  height: 68px;
+  flex: none;
+  object-fit: cover;
+  border-radius: var(--dsw-radius-xs);
+}
+
+.selection span {
+  min-width: 0;
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.preview {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  flex: none;
+}
+
+.preview h3 {
+  margin: 0;
+  font-size: 13px;
+}
+
+.preview p { margin: 0; }
+
+.previewImages {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(160px, 1fr));
+  gap: 10px;
+}
+
+.previewImages figure {
+  min-width: 0;
+  margin: 0;
+  border: 1px solid var(--dsw-alias-border-l2);
+  border-radius: var(--dsw-radius-sm);
+  overflow: hidden;
+  background: var(--dsw-alias-bg-layer-2);
+}
+
+.previewImages img {
+  display: block;
+  width: 100%;
+  max-height: 320px;
+  object-fit: contain;
+}
+
+.previewImages figcaption {
+  padding: 5px 8px;
+  color: var(--dsw-alias-label-secondary);
+  font-size: 11px;
+}
+
+.promptPreview {
+  margin: 8px 0 0;
+  padding: 10px;
+  border: 1px solid var(--dsw-alias-border-l2);
+  border-radius: var(--dsw-radius-xs);
+  background: var(--dsw-alias-bg-layer-2);
+  color: var(--dsw-alias-label-primary);
+  font: inherit;
+  font-size: 11px;
+  line-height: 1.6;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
 }
 
 /* ------------------------------------------------------------------ results */
