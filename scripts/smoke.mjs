@@ -37,21 +37,67 @@ const packageJson = JSON.parse(readFileSync(new URL('package.json', root), 'utf8
  * The deadline only decides when a check is DECLARED failed — it never changes
  * what any check asserts.
  */
+/** How long a check that already blew its deadline is still watched for a verdict. */
+const LATE_SETTLE_MS = 600_000
+
+/**
+ * Await `promise` for at most `ms` and report how it ended rather than throwing:
+ * `{ settled: false }` when the wait ran out, else `{ settled: true, error }`
+ * where `error` is `undefined` on success and the rejection reason on failure.
+ * A handler is attached before the wait, so a rejection landing after it is
+ * already handled instead of becoming an unhandled rejection that kills the run.
+ */
+function settleWithin(promise, ms) {
+  return Promise.race([
+    promise.then(() => ({ settled: true, error: undefined }), error => ({ settled: true, error })),
+    new Promise(resolve => {
+      const guard = setTimeout(() => resolve({ settled: false, error: undefined }), ms)
+      // Merely watching a slow check must not keep the process alive.
+      guard.unref?.()
+    }),
+  ])
+}
+
 async function check(name, fn, timeoutMs = 60_000) {
   // Progress goes to stderr so a hung check is identifiable from the log alone.
   process.stderr.write(`... ${name}\n`)
+  const startedAt = Date.now()
   let timer
+  // Started exactly once: the timeout path watches this same promise, because
+  // calling `fn()` again there would run the whole check a second time.
+  //
+  // WHY the timeout path keeps watching at all: `Promise.race` used to let
+  // `check()` return while `fn()` ran on, so every assertion past a deadline
+  // that FAILED was recorded as nothing at all -- the log said "timed out" and
+  // the real first failure was invisible. A check that overruns and then fails
+  // at 8749 of 8907 lines looks exactly like a check that hangs.
+  const ran = Promise.resolve().then(fn)
   try {
     await Promise.race([
-      fn(),
+      ran,
       new Promise((_resolve, reject) => {
         timer = setTimeout(() => reject(new Error(`timed out after ${timeoutMs}ms`)), timeoutMs)
       }),
     ])
     results.push(`PASS  ${name}`)
   } catch (error) {
-    results.push(`FAIL  ${name}: ${error.message}`)
     process.exitCode = 1
+    const declared = `FAIL  ${name}: ${error.message}`
+    if (!error.message.startsWith('timed out after ')) {
+      results.push(declared)
+      return
+    }
+    clearTimeout(timer)
+    const spent = () => `${((Date.now() - startedAt) / 1000).toFixed(1)}s`
+    const late = await settleWithin(ran, LATE_SETTLE_MS)
+    if (!late.settled) {
+      results.push(`${declared}; the assertions past the deadline were still running at ${spent()} and stay unverified`)
+    } else if (late.error === undefined) {
+      results.push(`${declared}; every assertion past the deadline passed by ${spent()}`)
+    } else {
+      const message = late.error instanceof Error ? late.error.message : String(late.error)
+      results.push(`${declared}; a later assertion failed: ${message}`)
+    }
   } finally {
     clearTimeout(timer)
   }
