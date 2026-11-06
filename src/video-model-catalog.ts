@@ -108,6 +108,23 @@ const ENTRIES: Record<Exclude<VideoModelFamily, 'unknown'>, Omit<VideoCatalogEnt
     supportsSeed: false,
     requiresReference: false,
   },
+  // Muse's own video contract on an upstream that speaks `/v1/videos`: the
+  // body is {model, prompt, duration, resolution, aspect_ratio, image} -- note
+  // `duration` as a NUMBER and lowercase resolutions, and note that `seconds`
+  // and `size` are REJECTED ("invalid Muse video parameters; supported fields:
+  // ..."). Any extra field fails the submit outright, so this family must not
+  // fall through to the generic body. Measured: 720p/1080p accepted (480p and
+  // any uppercase tier are not), aspect_ratio 16:9|9:16|1:1 only.
+  muse: {
+    label: 'muse',
+    labelZh: 'Muse 视频',
+    known: true,
+    modes: ['text', 'image'],
+    resolutions: ['720P', '1080P'],
+    aspectRatios: ['16:9', '9:16', '1:1'],
+    supportsSeed: false,
+    requiresReference: false,
+  },
   // snapgen.ai is not an OpenAI-compatible endpoint: the submit is a multipart
   // POST behind a hand-rolled anti-bot guard header, it answers with a history
   // uuid instead of a task id, progress is a NUMERIC status on GET /history/{id}
@@ -235,6 +252,11 @@ export function describeVideoModel(model: string): VideoCatalogEntry {
     // honour it was never measured: the free daily cap was already spent.
     return { family: 'snapgen', ...base, modes: ['text'], aspectRatios: ['16:9', '9:16', '1:1', '4:3', '3:4'], durations: [6, 10, 15] }
   }
+  // Muse's own contract, matched EXACTLY: a bare `muse` prefix would also
+  // capture snapgen's `muse-ai-video`, which is a completely different endpoint
+  // and body (see above). Muse ids beyond `muse-video` are unmeasured, so they
+  // stay on the generic branch where the failure is at least readable.
+  if (/^muse-video$/i.test(id)) return { family: 'muse', ...ENTRIES.muse }
   // A well-known generic-video naming convention: anything that is clearly a
   // video model but not one of the families above still gets the generic
   // shape, flagged as known-but-generic so the UI can warn without blocking.

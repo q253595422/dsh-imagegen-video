@@ -105,6 +105,7 @@ const REMOTE_CANCEL: Record<string, 'supported' | 'unsupported'> = {
   seedance: 'unsupported',
   xai: 'unsupported',
   unknown: 'unsupported',  snapgen: 'unsupported',
+  muse: 'unsupported',
 
 }
 
@@ -202,6 +203,9 @@ const POLL_POLICY: Record<string, { intervalMs: number; deadlineMs: number }> = 
   // of a 6s clip landed in 1-2 minutes, and a queue slot can add a wait, so the
   // shared cadence with a 20-minute ceiling is enough.
   snapgen: { intervalMs: 5_000, deadlineMs: 20 * 60_000 },
+  // Muse measured at 1-2 minutes for a 5s clip; the shared cadence with the
+  // same ceiling covers a queue slot as well.
+  muse: { intervalMs: 5_000, deadlineMs: 20 * 60_000 },
   unknown: { intervalMs: 5_000, deadlineMs: 20 * 60_000 },
 }
 
@@ -338,6 +342,24 @@ function statusUrlFor(upstream: VideoUpstreamConfig, baseUrl: string, family: st
     ? configured.slice(0, configured.length - submitPath.length)
     : configured
   return `${base}${path}`
+}
+
+/**
+ * Resolve a provider-supplied result URL against the configured API base.
+ *
+ * Most families answer with an absolute CDN URL, but some (Muse) answer with a
+ * RELATIVE path such as `/v1/videos/{id}/content` meant to be resolved against
+ * whichever host issued the task. Left relative it breaks twice: the download
+ * `fetch` cannot parse it at all, and the same-origin check throws inside
+ * `new URL` and silently drops the key that endpoint requires (401).
+ */
+function resolveResultUrl(value: string, apiUrl: string): string {
+  if (/^[a-z][a-z0-9+.-]*:/i.test(value)) return value
+  try {
+    return new URL(value, apiUrl.endsWith('/') ? apiUrl : `${apiUrl}/`).href
+  } catch {
+    return value
+  }
 }
 
 /** Whether a URL lives on the same origin as the configured API base. */
@@ -919,8 +941,14 @@ async function pollUntilDone(
 }
 
 /** Download the finished clip, forwarding the key only to the API's origin. */
-async function downloadVideo(attempt: VideoAttempt, upstream: VideoUpstreamConfig, url: string, signal?: AbortSignal): Promise<VideoBytes> {
+async function downloadVideo(attempt: VideoAttempt, upstream: VideoUpstreamConfig, rawUrl: string, signal?: AbortSignal): Promise<VideoBytes> {
   const budget = requestSignal(signal, DOWNLOAD_TIMEOUT_MS)
+  // Some providers name the clip by a path relative to their own API base; it
+  // has to be absolute before it can be fetched or origin-checked.
+  const url = resolveResultUrl(rawUrl, upstream.apiUrl)
+  // The recorded address is the RESOLVED one: a bare `/v1/videos/x/content`
+  // in a failure row tells the reader nothing about which host was asked.
+  const shown = displayUrl(url)
   try {
     // The upstream Bearer key is only attached for the provider's own origin;
     // a third-party CDN URL must not be able to harvest it.
@@ -934,14 +962,14 @@ async function downloadVideo(attempt: VideoAttempt, upstream: VideoUpstreamConfi
       if (signal?.aborted === true) throw error
       const network = networkErrorFields(error)
       const failure = new VideoGenError(
-        `无法下载生成的视频：${network.detail}${network.errorCode === undefined ? '' : ` [${network.errorCode}]`} · 视频地址 ${attempt.url}`,
+        `无法下载生成的视频：${network.detail}${network.errorCode === undefined ? '' : ` [${network.errorCode}]`} · 视频地址 ${shown}`,
         'video-download-failed',
       )
       recordVideoFailure(attempt, failure)
       throw failure
     }
     if (!response.ok) {
-      const failure = new VideoGenError(`无法下载生成的视频（HTTP ${response.status} · ${attempt.url}）`, 'video-download-failed')
+      const failure = new VideoGenError(`无法下载生成的视频（HTTP ${response.status} · ${shown}）`, 'video-download-failed')
       recordVideoFailure(attempt, failure, { status: response.status })
       throw failure
     }
@@ -1088,6 +1116,26 @@ function submitBody(
     }
     if (entry.aspectRatios.includes(request.aspectRatio)) body.aspect_ratio = request.aspectRatio
     if (references.primary !== undefined) body.image = { url: dataUrlOf(references.primary) }
+    return body
+  }
+
+  if (familyName === 'muse') {
+    // Measured against the upstream's /v1/videos: the body is a CLOSED set --
+    // "invalid Muse video parameters; supported fields: model, prompt, duration,
+    // aspect_ratio, resolution, image, images, videos, audios, files". Anything
+    // else (the generic `seconds`/`size` pair included) is a 400 before the
+    // task exists, so only these keys are ever sent.
+    const body: Record<string, unknown> = {
+      model: request.upstream ?? request.model,
+      prompt: request.prompt,
+      // A NUMBER here; the string "5" is rejected.
+      duration: seconds,
+      // Lowercase: "720P" is rejected, "720p" is accepted.
+      resolution: resolution.toLowerCase(),
+    }
+    if (entry.aspectRatios.includes(request.aspectRatio)) body.aspect_ratio = request.aspectRatio
+    // A bare data URL in `image` (no `{ url }` wrapper, unlike xAI).
+    if (references.primary !== undefined && entry.modes.includes('image')) body.image = dataUrlOf(references.primary)
     return body
   }
 
@@ -1318,7 +1366,7 @@ async function resumeSnapgenVideo(
   const downloadAttempt: VideoAttempt = {
     ...attempt,
     phase: 'video-download',
-    url: displayUrl(finished.source.url),
+    url: displayUrl(resolveResultUrl(finished.source.url, upstream.apiUrl)),
     method: 'GET',
   }
   const downloaded = await downloadVideo(downloadAttempt, upstream, finished.source.url, options.signal)
@@ -1442,7 +1490,7 @@ function snapgenReferenceName(mime: string, index: number): string {
   const downloadAttempt: VideoAttempt = {
     ...submitAttempt,
     phase: 'video-download',
-    url: displayUrl(finished.source.url),
+    url: displayUrl(resolveResultUrl(finished.source.url, upstream.apiUrl)),
     method: 'GET',
   }
   const downloaded = await downloadVideo(downloadAttempt, upstream, finished.source.url, options.signal)
@@ -1498,7 +1546,7 @@ export async function resumeVideo(
   const downloadAttempt: VideoAttempt = {
     ...attempt,
     phase: 'video-download',
-    url: displayUrl(finished.source.url),
+    url: displayUrl(resolveResultUrl(finished.source.url, upstream.apiUrl)),
     method: 'GET',
   }
   const downloaded = await downloadVideo(downloadAttempt, upstream, finished.source.url, options.signal)
@@ -1603,7 +1651,7 @@ export async function generateVideo(
   const downloadAttempt: VideoAttempt = {
     ...submitAttempt,
     phase: 'video-download',
-    url: displayUrl(finished.source.url),
+    url: displayUrl(resolveResultUrl(finished.source.url, upstream.apiUrl)),
     method: 'GET',
   }
   const downloaded = await downloadVideo(downloadAttempt, upstream, finished.source.url, options.signal)

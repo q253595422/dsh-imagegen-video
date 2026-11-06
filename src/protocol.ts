@@ -630,6 +630,7 @@ export type VideoModelFamily =
   | 'seedance'
   | 'openai-video'
   | 'snapgen'
+  | 'muse'
   | 'unknown'
 
 /** Video output resolution tier, mapped per family by the engine. */
