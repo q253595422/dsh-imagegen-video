@@ -99,9 +99,15 @@ function normalize(raw: Raw, source: Source): Item {
  */
 function imageUrls(src: string): string[] {
   if (!safeAsset(src)) return [outfitAssetUrl(src)]
+  // jsDelivr 各全球节点：raw.githubusercontent.com 在本网络间歇不可达，
+  // cdn 主节点对图片回源到 raw，而 gcore/testingcf 等节点直连返回。
+  const mirror = (host: string) => `https://${host}/gh/anhao/ai-pose-gallery-zh@${REVISION}/${src}`
   return [
     outfitAssetUrl(src),
-    `https://cdn.jsdelivr.net/gh/anhao/ai-pose-gallery-zh@${REVISION}/${src}`,
+    mirror('gcore.jsdelivr.net'),
+    mirror('testingcf.jsdelivr.net'),
+    mirror('cdn.jsdelivr.net'),
+    mirror('fastly.jsdelivr.net'),
   ]
 }
 
@@ -118,18 +124,25 @@ function imageUrls(src: string): string[] {
  */
 function indexUrls(source: Source): string[] {
   const file = `data/${source.file}.json`
+  const mirror = (host: string) => `https://${host}/gh/anhao/ai-pose-gallery-zh@${REVISION}/${file}`
   return [
     `https://raw.githubusercontent.com/anhao/ai-pose-gallery-zh/${REVISION}/${file}`,
     // The GitHub API returns the blob base64-inlined, which needs its own
     // decode; see `fetchIndex` below.
     `https://api.github.com/repos/anhao/ai-pose-gallery-zh/contents/${file}?ref=${REVISION}`,
-    `https://cdn.jsdelivr.net/gh/anhao/ai-pose-gallery-zh@${REVISION}/${file}`,
+    mirror('gcore.jsdelivr.net'),
+    mirror('testingcf.jsdelivr.net'),
+    mirror('cdn.jsdelivr.net'),
+    mirror('fastly.jsdelivr.net'),
   ]
 }
 
-/** 图片和索引分别限制读取字节，且拒绝跟随跨域跳转。 */
+/** 图片和索引分别限制读取字节。跟随重定向以兼容回源 CDN（实测
+ *  jsDelivr 对图片返回 301 到 raw.githubusercontent.com）；最终内容仍由 Git
+ *  blob / 魔数校验兜底，即使被跳转到任意站点也只会取不到合法内容，
+ *  不会写进缓存。 */
 async function boundedFetch(url: string, maximum: number, fetcher: typeof fetch, timeoutMs = 18_000): Promise<Buffer> {
-  const result = await fetcher(url, { redirect: 'manual', signal: AbortSignal.timeout(timeoutMs) })
+  const result = await fetcher(url, { signal: AbortSignal.timeout(timeoutMs) })
   if (!result.ok || !result.body || result.redirected || result.status >= 300) throw new Error(`图库资源请求失败（HTTP ${result.status}）`)
   if (Number(result.headers.get('content-length')) > maximum) {
     await result.body.cancel().catch(() => undefined)
@@ -318,11 +331,16 @@ export class OutfitReferenceStore {
     }
     // The same reason the index needs mirrors, but worse: when raw.github is
     // unreachable EVERY card renders "预览图不可用" (measured: 18 of 18 on the
-    // pose tab). Each candidate is re-validated by its own magic bytes below,
-    // so a mirror that answers with an HTML error page is rejected as an image.
+    // pose tab). A mirror that answers with an HTML error page is skipped as
+    // "not an image" and the next candidate gets its turn, so one bad mirror
+    // cannot starve the rest; only a real image returns.
     const reasons: string[] = []
     for (const url of imageUrls(src)) {
-      try { return await boundedFetch(url, MAX_IMAGE, this.fetcher) } catch (error) { reasons.push(`${new URL(url).hostname}: ${error instanceof Error ? error.message : String(error)}`) }
+      try {
+        const data = await boundedFetch(url, MAX_IMAGE, this.fetcher)
+        if (imageType(data)) return data
+        reasons.push(`${new URL(url).hostname}: 返回的不是图片内容`)
+      } catch (error) { reasons.push(`${new URL(url).hostname}: ${error instanceof Error ? error.message : String(error)}`) }
     }
     throw new Error(`图库图片不可用（${reasons.join('；')}）`)
   }

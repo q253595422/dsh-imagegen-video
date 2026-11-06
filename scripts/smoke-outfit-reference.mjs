@@ -38,7 +38,10 @@ try {
     assert.deepEqual(calls, [
       `https://raw.githubusercontent.com/anhao/ai-pose-gallery-zh/${revision}/data/portrait-zh.json`,
       `https://api.github.com/repos/anhao/ai-pose-gallery-zh/contents/data/portrait-zh.json?ref=${revision}`,
+      `https://gcore.jsdelivr.net/gh/anhao/ai-pose-gallery-zh@${revision}/data/portrait-zh.json`,
+      `https://testingcf.jsdelivr.net/gh/anhao/ai-pose-gallery-zh@${revision}/data/portrait-zh.json`,
       `https://cdn.jsdelivr.net/gh/anhao/ai-pose-gallery-zh@${revision}/data/portrait-zh.json`,
+      `https://fastly.jsdelivr.net/gh/anhao/ai-pose-gallery-zh@${revision}/data/portrait-zh.json`,
     ])
     // The bare "fetch failed" told the user nothing; the reason names each host.
     assert.match(result.warnings[0], /raw\.githubusercontent\.com: offline/)
@@ -107,9 +110,10 @@ try {
         views: {},
       }],
     }))
-    // The HTML body reached the magic-byte gate and was refused there — that is
-    // the whole point: it is rejected as "not an image", not cached as one.
-    await assert.rejects(store3.preview('pose:gia:P001', true), /不是有效的 10MB 以内图片/)
+    // The HTML body failed the magic-byte gate inside fetchImage and was
+    // refused there — that is the whole point: it is rejected as "not an
+    // image", the next mirror is tried, and nothing is cached.
+    await assert.rejects(store3.preview('pose:gia:P001', true), /图库图片不可用/)
     assert.ok(seen.some(url => url.includes('cdn.jsdelivr.net')), 'the image mirror was tried')
     // Nothing may have been written for that key.
     const { readdir } = await import('node:fs/promises')
