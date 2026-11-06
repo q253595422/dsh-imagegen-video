@@ -8892,16 +8892,22 @@ await check('E1 client apply mounts the sidebar entry and studio (jsdom)', async
     assert.ok(aplusWorkspace.querySelector('[data-aplus-copy$="-body"]') !== null, 'a module exposes a body field for the on-image copy')
     assert.equal(aplusWorkspace.querySelectorAll('[data-aplus-copy]').length >= 12, true, 'every module can be captioned')
 
-    // The clothing upload has to stop where the wire stops: the engine takes the
-    // model shot plus four garments, so offering six meant two uploaded images
-    // were dropped without a word.
+    // The clothing upload stops at four garments because that is the cap the
+    // workspace enforces; the reference total is model + clothes + pose (six),
+    // and anything the chosen model cannot take is compressed into one numbered
+    // sheet rather than dropped. The hint has to say all of that: it used to
+    // claim five was the ceiling and that extras were simply not sent.
     const outfitSwitch = [...view.querySelectorAll('[role="tablist"] button')].find(button => button.textContent === '服饰穿戴')
     assert.ok(outfitSwitch !== undefined, 'outfit top-nav entry is present')
     outfitSwitch.dispatchEvent(new jsdomWindow.MouseEvent('click', { bubbles: true, cancelable: true }))
     await new Promise(resolve => setTimeout(resolve, 90))
     const outfitWorkspace = view.querySelector('[data-outfit]')
     assert.ok(outfitWorkspace !== null, 'outfit workspace is rendered')
-    assert.ok(outfitWorkspace.textContent?.includes('最多 4 张服装图'), 'the outfit hint states the real upload limit')
+    assert.ok(outfitWorkspace.textContent?.includes('共 6 张参考素材'), 'the outfit hint counts model, clothes and pose, not just the four garments')
+    // Same sentence has to promise the sheet, because the alternative reading
+    // ("extras are not sent") is the behaviour the workspace deliberately does
+    // not have any more: `prepareOutfitGeneration` compresses past capacity.
+    assert.ok(outfitWorkspace.textContent?.includes('压成一张编号拼图'), 'the outfit hint says overflow is compressed, never dropped')
     // Nothing has been generated yet, so the results column is showing its empty
     // state. `outfit.resultAlt` is the alt text of a finished picture ("生成结果 1")
     // and it used to stand in for the empty state, which reads like a result has
@@ -8909,6 +8915,35 @@ await check('E1 client apply mounts the sidebar entry and studio (jsdom)', async
     // other reading out so nobody quietly swaps it back.
     assert.ok(outfitWorkspace.textContent?.includes('生成结果会出现在这里'), 'the outfit results area describes an empty state, not a result')
     assert.equal(outfitWorkspace.textContent?.includes('生成结果 1'), false, 'the empty outfit results area must not read like a finished result')
+
+    // Two modes share one form: 商品试穿 pins the real product shot, 角色搭配
+    // builds a look from gallery material. 商品试穿 is the default, so a user
+    // who never touches the pills still lands on the safe reading.
+    const modeGroup = outfitWorkspace.querySelector('[role="radiogroup"][aria-label="搭配模式"]')
+    assert.ok(modeGroup !== null, 'the outfit form offers a mode switch')
+    const modeOf = label => [...modeGroup.querySelectorAll('button[role="radio"]')]
+      .find(button => (button.textContent ?? '').trim() === label)
+    const tryOnMode = modeOf('商品试穿')
+    const characterMode = modeOf('角色搭配')
+    assert.ok(tryOnMode !== undefined && characterMode !== undefined, 'both outfit modes are offered')
+    assert.equal(tryOnMode.getAttribute('aria-checked'), 'true', '商品试穿 is the default mode')
+    assert.equal(characterMode.getAttribute('aria-checked'), 'false', '角色搭配 is not preselected')
+    characterMode.dispatchEvent(new jsdomWindow.MouseEvent('click', { bubbles: true, cancelable: true }))
+    assert.equal(characterMode.getAttribute('aria-checked'), 'true', 'clicking 角色搭配 switches the mode')
+    assert.equal(tryOnMode.getAttribute('aria-checked'), 'false', 'the previously selected mode is released')
+
+    // Every reference slot has to be reachable from the workspace itself; the
+    // gallery picker is optional material, the upload path must never be behind
+    // it.
+    for (const entry of ['浏览人物图库', '上传服装 / 商品图', '浏览服装图库', '浏览姿势图库']) {
+      assert.ok(outfitWorkspace.textContent?.includes(entry), `the outfit workspace offers "${entry}"`)
+    }
+
+    // Preview-then-submit is the point of the rewrite: the button must not claim
+    // to generate while nothing has been prepared and sent yet.
+    const submitLabel = [...outfitWorkspace.querySelectorAll('button[type="submit"]')].map(button => (button.textContent ?? '').trim())
+    assert.ok(submitLabel.includes('准备参考图预览'), 'the submit button previews before it generates')
+    assert.equal(outfitWorkspace.textContent?.includes('提交前预览'), false, 'no preview panel is shown before anything was prepared')
     assert.equal(view.querySelectorAll('[role="tablist"] button').length, 9, 'outfit keeps the nine top-nav entries')
 
     // Promo mode is the ninth workspace: it has to mount a link field and the four
