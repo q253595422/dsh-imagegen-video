@@ -155,7 +155,7 @@
     "test:timeline-compose": "node scripts/verify-timeline-compose.mjs",
     "test:picker": "node scripts/smoke-video-picker.mjs",
     "test:defect-b": "node scripts/verify-b-defect.mjs",
-    "test:negative": "node scripts/verify-negative.mjs canvas-layout && node scripts/verify-negative.mjs contracts && node scripts/verify-negative.mjs smoke && node scripts/verify-negative.mjs video && node scripts/verify-negative.mjs canvas-video && node scripts/verify-negative.mjs storyboard && node scripts/verify-negative.mjs workflow && node scripts/verify-negative.mjs timeline && node scripts/verify-negative.mjs cast && node scripts/verify-negative.mjs signals && node scripts/verify-negative.mjs pack && node scripts/verify-negative.mjs tracked && node scripts/verify-negative.mjs reproducible",
+    "test:negative": "node scripts/verify-negative.mjs canvas-layout && node scripts/verify-negative.mjs contracts && node scripts/verify-negative.mjs smoke && node scripts/verify-negative.mjs video && node scripts/verify-negative.mjs canvas-video && node scripts/verify-negative.mjs storyboard && node scripts/verify-negative.mjs workflow && node scripts/verify-negative.mjs timeline && node scripts/verify-negative.mjs cast && node scripts/verify-negative.mjs signals && node scripts/verify-negative.mjs outfit && node scripts/verify-negative.mjs pack && node scripts/verify-negative.mjs tracked && node scripts/verify-negative.mjs reproducible",
     "studio:preview": "tsdown --config scripts/studio-preview.config.ts",
     "test:signals": "node scripts/smoke-signals.mjs"
   }

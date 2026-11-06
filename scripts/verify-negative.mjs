@@ -1421,6 +1421,50 @@ const CASES = [
     to: '',
     expect: /exactly one behaviour-report entry|opens the behaviour report/,
   },
+  // ------------------------------------------- the outfit gallery trust boundary
+  {
+    // The gallery index is remote JSON that names the image URLs the host will
+    // download. With the guard gone `outfitAssetUrl` passes anything through --
+    // http, loopback, another repository, a path that walks out of the pinned
+    // one -- and the host fetches whatever the index says. The smoke case pins
+    // those five refusals individually, so dropping the guard has to go red.
+    name: 'the gallery accepts any image address instead of only the pinned sources',
+    runner: 'outfit',
+    file: 'src/outfit-reference-store.ts',
+    from: "  if (url.protocol !== 'https:' || !IMAGE_HOSTS.has(url.hostname) || url.username || url.password || url.port || url.search || url.hash || !imagePath.test(expectedPath)) throw new Error('图库图片地址不在可信来源内')\n",
+    to: '',
+    expect: /Missing expected exception/,
+  },
+  {
+    // The index is pinned to a commit by GIT BLOB hash, not by an HTTP ETag: a
+    // mirror serving a different row set must be rejected instead of trusted,
+    // which is what stops the material drifting under an unchanged plugin
+    // version. Note the smoke case is built on exactly this asymmetry -- the
+    // served index is a VALID one-row index whose hash is simply not the pinned
+    // one -- so a no-op check accepts the drifted mirror and the count goes
+    // from zero rows to one.
+    name: 'a mirror whose index does not hash to the pinned commit is trusted',
+    runner: 'outfit',
+    file: 'src/outfit-reference-store.ts',
+    from: "  const header = Buffer.from(`blob ${content.byteLength}\\0`)\n  if (createHash('sha1').update(header).update(content).digest('hex') !== expected) throw new Error('远端图库索引版本已变化，请等待插件更新固定版本')",
+    to: '  void content\n  void expected',
+    expect: /1 !== 0/,
+  },
+  // --------------------------------------------------- the outfit reference sheet
+  {
+    // Past the channel's reference capacity the workspace composes ONE numbered
+    // sheet, which is what replaced the old behaviour of quietly dropping the
+    // extras. Truncating to the first N references restores that defect while
+    // the prompt is still built for the full recipe, so the model is told about
+    // images it never received -- exactly the silent loss the sheet prevents.
+    name: 'references past the channel capacity are truncated instead of composed',
+    runner: 'outfit',
+    script: 'scripts/smoke-outfit-generation.mjs',
+    file: 'src/client/outfit-generation.ts',
+    from: '    const sheet = await composeSheet(parts, blobs)\n    return { prompt: buildOutfitPrompt(recipe, true), image: sheet, images: [], sheet, referenceCount: parts.length }',
+    to: '    const kept = blobs.slice(0, referenceLimit)\n    const images = await Promise.all(kept.map(toDataUrl))\n    return { prompt: buildOutfitPrompt(recipe), image: images[0], images: images.slice(1), sheet: null, referenceCount: kept.length }',
+    expect: /falsy value/,
+  },
 ]
 
 const RUNNERS = {
@@ -1447,6 +1491,11 @@ const RUNNERS = {
   signals: { script: 'scripts/smoke-signals.mjs', build: false },
   // 身份锚定的规则也是纯函数，直接从源码 import。
   cast: { script: 'scripts/smoke-cast.mjs', build: false },
+  // 穿戴的两份套件都从源码 import（canvas / FileReader 由套件自己打桩），
+  // 不需要构建。它们同属一个组，但跑的是两个文件：单个 runner 只能挂一个
+  // script，所以 case 上可以用 `script` 覆盖默认值 —— 组名进 test:negative
+  // 的链条守卫只认 runner 名，多一个组就要多一行调用，两组反而更容易漏。
+  outfit: { script: 'scripts/smoke-outfit-reference.mjs', build: false },
   // The archive rule, run against a real `pnpm pack`. No rebuild: the archive
   // contents depend on package.json and the tree, not on the built output.
   pack: { script: 'scripts/verify-pack.mjs', build: false },
@@ -1496,7 +1545,11 @@ for (const testCase of CASES) {
   if (only !== undefined && only !== '' && testCase.runner !== only) continue
   if (nameFilter !== undefined && nameFilter !== '' && !testCase.name.includes(nameFilter)) continue
   const runner = RUNNERS[testCase.runner]
-  const script = runner.script
+  // A case may run a different suite from its group's default. The outfit
+  // group has two suites (gallery trust boundary, reference sheet) and one
+  // group name, because the chain guard below counts RUNNERS keys against
+  // `test:negative` — every extra group is another line that can be forgotten.
+  const script = testCase.script ?? runner.script
   freshCopy(runner.git === true)
   const baseline = run(script)
   if (!baseline.ok) {
