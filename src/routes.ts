@@ -40,6 +40,7 @@ import { buildReport, DEFAULT_WINDOW_DAYS } from './signal-report.ts'
 import { extractProductLink } from './link-extract.ts'
 import { MODEL_API, AGENT_IMAGE_API, CANVAS_API, CANVAS_SKILL_API, CODE_RENDER_API, CONVERSATION_IMAGE_API, DATA_FOLDER_API, DEFAULT_TEMPLATE_SOURCE_ID, DIAGNOSTICS_API, GALLERY_API, GENERATE_API, HISTORY_API, IMAGEGEN_SETTINGS_NAMESPACE, IMAGE_MODEL_API, LISTING_COPY_API, PRESETS_API, PROMPT_ENHANCE_API, SETTINGS_API, SIGNALS_API, STORAGE_API, SUBSCRIPTION_API, SUBSCRIPTION_PROVIDERS, TASK_API, TEMPLATE_FAVORITES_API, TEMPLATES_API, UPDATE_API, USAGE_API, VIDEO_API, isChannelProtocolPreference, isTemplateSourceId, type CanvasAssetRef, type CanvasDocument, type VideoDirectorPlan, type CanvasSkillCatalog, type CanvasSkillConfigApplyRequest, type CanvasSkillConfigApplyResult, type CanvasSkillConfigSaveRequest, type CanvasSkillConfigSaveResult, type CanvasSkillInstallRequest, type CanvasSkillInstallResult, type CanvasSkillLibrary, type CanvasSkillRemoveResult, type CanvasSkillRunRequest, type CanvasSkillTask, type ListingCopyRequest, type PptRunRequest, type PptRuntimeStatus, type GeneratedImage, type GenerateRequest, type HistoryEntry, type HistoryEntryInput, type ModelMapping, type PresetProviderView, type TemplateFavorite, type TemplateListResult, type TemplateRefreshResult, type TemplateSample, type CanvasVideoTaskMeta, type VideoGenerateRequest, type VideoHistoryEntry } from './protocol.ts'
 import { probeCodeRender } from './code-render-runtime.ts'
+import { makeOutfitRoutes } from './outfit-reference-routes.ts'
 
 /** Cap on JSON request bodies (settings ops and generate payloads are small). */
 const MAX_JSON_BODY_BYTES = 24 * 1024 * 1024
@@ -959,6 +960,7 @@ export function makeRoutes(deps: ImageGenRoutesDeps): WebRoute[] {
 
   return [
     ...modelRoutes,
+    ...makeOutfitRoutes({ guard, readJsonBody, writeJson }),
     // ---------------------------- composer image for /edit_image (exact)
     ...(deps.attachments?.saveImage === undefined || deps.pendingConversationImages === undefined ? [] : [{
       kind: 'exact' as const,
