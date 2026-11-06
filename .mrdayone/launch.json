@@ -1,0 +1,15 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    {
+      "name": "outfit-acceptance",
+      "runtimeExecutable": "/Users/malang/.nvm/versions/node/v24.21.0/bin/node",
+      "runtimeArgs": [
+        "serve.mjs"
+      ],
+      "port": 7391,
+      "url": "http://127.0.0.1:7391/?model=gpt",
+      "cwd": "/var/folders/88/8typ8h515712_0tkz4rdl4hr0000gn/T/mrdayone-scratch/mw3fu7oey5hj"
+    }
+  ]
+}
