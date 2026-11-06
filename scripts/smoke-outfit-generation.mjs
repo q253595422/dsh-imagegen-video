@@ -129,6 +129,12 @@ async function main() {
   const callsBefore = requested.length
   await assert.rejects(prepareOutfitGeneration(external, 5), /不是本机缓存图片/)
   assert.equal(requested.length, callsBefore, '不向外部 URL 发起下载')
+  // 绝对回环地址视为本机缓存：宿主页面协议可能与插件 API 不同源。
+  const loopbackRecipe = recipe()
+  loopbackRecipe.portrait.imageUrl = `${base}api/outfit/person`
+  const loopbackPrepared = await prepareOutfitGeneration(loopbackRecipe, 5)
+  assert.equal(loopbackPrepared.images.length, 2)
+  console.log('PASS 绝对回环参考图可加载')
   add('dress', new Uint8Array(10 * 1024 * 1024 + 1))
   await assert.rejects(prepareOutfitGeneration(recipe(), 5), /超过单张 10 MiB/)
   add('person', new Uint8Array(9 * 1024 * 1024))

@@ -32,7 +32,10 @@ export function buildOutfitPrompt(recipe: OutfitRecipe, sheet = false): string {
   return [intro, source, ...assignments, pose, recipe.scene.trim() ? `场景：${recipe.scene.trim()}。` : '', recipe.extraPrompt.trim() ? `补充要求：${recipe.extraPrompt.trim()}。` : ''].filter(Boolean).join('\n')
 }
 
-/** 只读取本机同源缓存；限制流量而非信任 Content-Length，外域链接先拒绝再 fetch。 */
+/** 只读取本机缓存；限制流量而非信任 Content-Length。
+ *  宿主可能用自定义协议加载插件页面（此时 location.origin 与 /api/…
+ *  实际服务地址不同），所以不比较 origin，而是把相对路径视为同源，
+ *  绝对地址仅接受回环主机（与页面同名主机、localhost、127.0.0.1）。 */
 async function loadReference(reference: OutfitReference): Promise<Blob> {
   const input = reference.imageUrl
   let target: string
@@ -40,10 +43,17 @@ async function loadReference(reference: OutfitReference): Promise<Blob> {
     const match = /^data:(image\/(?:png|jpeg|webp|gif));base64,([A-Za-z0-9+/=]+)$/i.exec(input)
     if (!match || Math.floor(match[2].length * 3 / 4) > MAX_REFERENCE_BYTES + 2) throw new Error(`“${reference.title}”不是有效的本地图片或超过 10 MiB`)
     target = input
+  } else if (input.startsWith('/')) {
+    // 插件 API 的站点内相对路径：直接按当前页 origin 请求。
+    if (globalThis.location?.origin) target = `${globalThis.location.origin}${input}`
+    else target = input
   } else {
     let url: URL
-    try { url = new URL(input, globalThis.location?.href) } catch { throw new Error(`“${reference.title}”的本地图片路径无效，请重新选取素材`) }
-    if (!/^https?:$/.test(url.protocol) || url.origin !== globalThis.location?.origin) throw new Error(`“${reference.title}”不是本机缓存图片，请重新选取素材`)
+    try { url = new URL(input) } catch { throw new Error(`“${reference.title}”的本地图片路径无效，请重新选取素材`) }
+    if (!/^https?:$/.test(url.protocol) || url.username || url.password) throw new Error(`“${reference.title}”不是本机缓存图片，请重新选取素材`)
+    const ownHost = globalThis.location?.hostname
+    const loopback = ['localhost', '127.0.0.1', '[::1]', '::1', '0.0.0.0'].includes(url.hostname)
+    if (!loopback && !(ownHost && url.hostname === ownHost)) throw new Error(`“${reference.title}”不是本机缓存图片，请重新选取素材`)
     target = url.href
   }
   let response: Response
