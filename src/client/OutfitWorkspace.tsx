@@ -4,7 +4,7 @@
  */
 import React, { useEffect, useRef, useState } from 'react'
 import { ImageGenApi } from './api.ts'
-import { MODEL_API } from '../protocol.ts'
+import { MODEL_API, type GenerateRequest, type GenerationTaskSummary, type HistoryEntry } from '../protocol.ts'
 import { describeModel } from '../model-catalog.ts'
 import type { OutfitReference, OutfitReferenceKind, OutfitRecipe, OutfitPreparedGeneration } from '../outfit-reference.ts'
 import type { ImageGenConfig, ImageGenScope } from './settings-scope.ts'
@@ -59,7 +59,9 @@ export default function OutfitWorkspace({ api = defaultApi, config }: OutfitWork
   const [saving, setSaving] = useState(false)
   const [busy, setBusy] = useState(false)
   const [prepared, setPrepared] = useState<OutfitPreparedGeneration | null>(null)
-  const [results, setResults] = useState<Array<{ b64?: string; mime?: string; url?: string }>>([])
+  const [tasks, setTasks] = useState<GenerationTaskSummary[]>([])
+  const [hydrated, setHydrated] = useState<Record<string, Array<{ b64?: string; mime?: string; url?: string }>>>({})
+  const [history, setHistory] = useState<HistoryEntry[]>([])
   const [error, setError] = useState('')
   const [draftError, setDraftError] = useState('')
   const clothesInput = useRef<HTMLInputElement>(null)
@@ -71,6 +73,8 @@ export default function OutfitWorkspace({ api = defaultApi, config }: OutfitWork
   const savingQueue = useRef(Promise.resolve())
   const latestDraft = useRef<OutfitRecipe | null>(null)
   const working = useRef(false)
+  const latestTasks = useRef<GenerationTaskSummary[]>([])
+  const hydratedIds = useRef(new Set<string>())
 
   const options = imageModelOptions(config)
   const initialChoice = { model: options.defaultModel ?? options.models[0] ?? '', channelId: options.defaultChannelId ?? options.groups[0]?.id ?? '' }
@@ -127,6 +131,42 @@ export default function OutfitWorkspace({ api = defaultApi, config }: OutfitWork
 
   /** 配方、渠道或模型有变化必须重新预览；过期的准备结果也不能覆盖新画面。 */
   useEffect(() => { generationEpoch.current++; setPrepared(null) }, [recipe, choice.channelId, choice.model])
+
+  /** 一次拉取服饰穿戴的任务与历史；进行中任务在任务卡里展示，历史来自宿主持久化记录。 */
+  const refreshTasks = async (): Promise<void> => {
+    try {
+      const [allTasks, allHistory] = await Promise.all([api.taskList(), api.historyList()])
+      const outfitTasks = allTasks.filter(task => task.request.refName?.startsWith('outfit-'))
+      latestTasks.current = outfitTasks
+      setTasks(outfitTasks)
+      setHistory(allHistory.filter(entry => entry.refName?.startsWith('outfit-')))
+      // 完成任务结果量小、含图，只在第一次拿到时取一次；轮询列表永远只拿摘要。
+      const pendingHydrate = outfitTasks.filter(task => task.status === 'completed' && task.resultAvailable && !hydratedIds.current.has(task.id))
+      if (pendingHydrate.length > 0) {
+        const filled = await Promise.all(pendingHydrate.map(async task => {
+          hydratedIds.current.add(task.id)
+          const full = await api.taskGet(task.id)
+          return [task.id, full.result?.images ?? []] as const
+        }))
+        setHydrated(previous => Object.assign({}, previous, Object.fromEntries(filled)))
+      }
+    } catch { /* 宿主暂时不可达时保留已有列表，不打断编辑 */ }
+  }
+
+  /** 面板挂载与重挂载时立即恢复进行中任务与历史；只有存在活跃任务才继续轮询。 */
+  useEffect(() => {
+    let cancelled = false
+    let timer: number | undefined
+    const tick = async (): Promise<void> => {
+      if (cancelled) return
+      await refreshTasks()
+      if (cancelled) return
+      const active = latestTasks.current.some(task => task.status === 'queued' || task.status === 'running')
+      if (active) timer = window.setTimeout(() => void tick(), 2000)
+    }
+    void tick()
+    return () => { cancelled = true; if (timer !== undefined) window.clearTimeout(timer) }
+  }, [api])
 
   const update = (patch: Partial<OutfitRecipe>): void => {
     generationEpoch.current++
@@ -210,19 +250,66 @@ export default function OutfitWorkspace({ api = defaultApi, config }: OutfitWork
     } catch (cause) { if (active.current && generationEpoch.current === epoch) setError(cause instanceof Error ? cause.message : String(cause)) }
     finally { working.current = false; if (active.current) setBusy(false) }
   }
+  /** 取消排队/进行中的生成任务。 */
+  const cancelTask = async (id: string): Promise<void> => {
+    try { await api.taskCancel(id); await refreshTasks() } catch { /* 列表下次轮询仍会反映实际状态 */ }
+  }
+  /** 失败/取消的任务重新入队，复用原请求。 */
+  const retryTask = async (id: string): Promise<void> => {
+    try { await api.taskRetry(id); await refreshTasks() } catch (cause) { if (active.current) setError(cause instanceof Error ? cause.message : String(cause)) }
+  }
+
+  /** 提交改走宿主异步任务队列：立即返回任务卡，面板切走再回来也能恢复进行中状态。 */
   const submitOutfit = async (): Promise<void> => {
     if (!prepared || modelMissing || !supportsEdit || working.current || previewRecipeKey.current !== JSON.stringify(fullRecipe)) return
     working.current = true; setBusy(true); setError('')
     try {
       // 不在提交时再次拼图或重写提示词：付费请求与预览必须逐字逐图相同。
-      const result = await api.generate({ mode: 'edit', prompt: prepared.prompt, model: choice.model, channelId: choice.channelId,
-        size: recipe.size, quality: recipe.quality.toLowerCase(), detail: '', n: 1, image: prepared.image, images: prepared.images, refName: recipe.mode === 'try-on' ? 'outfit-try-on' : 'outfit-character' })
+      const request: GenerateRequest = { mode: 'edit', prompt: prepared.prompt, model: choice.model, channelId: choice.channelId,
+        size: recipe.size, quality: recipe.quality.toLowerCase(), detail: '', n: 1, image: prepared.image, images: prepared.images,
+        refName: recipe.mode === 'try-on' ? 'outfit-try-on' : 'outfit-character' }
+      await api.taskSubmit(request)
       if (active.current) {
-        setResults(result.images ?? [])
-        if (result.historyError) setError(`图片已生成，但保存历史失败：${result.historyError}`)
+        await refreshTasks()
+        setPrepared(null)
       }
     } catch (cause) { if (active.current) setError(cause instanceof Error ? cause.message : String(cause)) }
     finally { working.current = false; if (active.current) setBusy(false) }
+  }
+  const timeOf = (ms: number): string => {
+    const date = new Date(ms)
+    const pad = (value: number) => String(value).padStart(2, '0')
+    return `${pad(date.getHours())}:${pad(date.getMinutes())}`
+  }
+  const renderTask = (task: GenerationTaskSummary): JSX.Element => {
+    const label = task.request.refName === 'outfit-try-on' ? '商品试穿' : '角色搭配'
+    if (task.status === 'queued' || task.status === 'running') {
+      return <div className={css.taskCard} role="status">
+        <span className={css.spinner} aria-hidden="true" />
+        <div className={css.taskMain}>
+          <strong>{task.status === 'queued' ? '排队中…' : '正在生成…'}</strong>
+          <p className={css.muted}>{label} · {task.request.model} · {timeOf(task.createdAt)} 提交</p>
+        </div>
+        {task.status === 'running' ? <button type="button" className={css.button} onClick={() => void cancelTask(task.id)}>取消</button> : null}
+      </div>
+    }
+    if (task.status === 'completed') {
+      const images = hydrated[task.id] ?? []
+      return <div className={css.taskCard}>
+        {images.length > 0
+          ? <div className={css.outputs}>{images.map((image, index) => { const src = image.url ?? (image.b64 ? `data:${image.mime ?? 'image/png'};base64,${image.b64}` : ''); return src ? <img key={`${src.slice(-30)}-${index}`} className={css.output} src={src} alt="" /> : null })}</div>
+          : <p className={css.muted}>生成完成。</p>}
+        <p className={css.muted}>生成完成 · {label} · {timeOf(task.finishedAt ?? task.createdAt)}</p>
+      </div>
+    }
+    if (task.status === 'failed') {
+      return <div className={css.taskCard}>
+        <p role="alert" className={css.error}>生成失败：{task.error ?? '未知错误'}</p>
+        <p className={css.muted}>{label} · {timeOf(task.createdAt)} 提交</p>
+        <button type="button" className={css.button} onClick={() => void retryTask(task.id)}>重试</button>
+      </div>
+    }
+    return <div className={css.taskCard}><p className={css.muted}>已取消 · {label}</p><button type="button" className={css.button} onClick={() => void retryTask(task.id)}>重新生成</button></div>
   }
   return <section className={css.root} data-outfit="true">
     <header className={css.intro}><div><h2>{tt('outfit.title')}</h2><p>{tt('outfit.hint')}</p></div><span className={css.badge}>{tt('outfit.uploadClothes', { count: recipe.costumes.length })}</span></header>
@@ -272,7 +359,15 @@ export default function OutfitWorkspace({ api = defaultApi, config }: OutfitWork
       </form>
       <section className={css.results} aria-label="生成预览与结果">
         {prepared ? <div className={css.preview}><h3>提交前预览</h3><p className={css.muted}>本次共 {prepared.referenceCount} 张素材，实际发送 {prepared.sheet ? '一张编号参考拼图' : `${1 + prepared.images.length} 张参考图`}。点击“确认生成”才会调用模型。</p><div className={css.previewImages}>{[prepared.image, ...prepared.images].map((url, index) => <figure key={index}><img src={url} alt={prepared.sheet ? '实际发送的编号参考拼图' : `实际发送的参考图 ${index + 1}`} /><figcaption>{prepared.sheet ? '编号拼图' : `参考图 ${index + 1}`}</figcaption></figure>)}</div><details><summary>查看实际发送的提示词</summary><pre className={css.promptPreview}>{prepared.prompt}</pre></details></div> : null}
-        {results.length > 0 ? <div className={css.outputs}>{results.map((image, index) => { const src = image.url ?? (image.b64 ? `data:${image.mime ?? 'image/png'};base64,${image.b64}` : ''); return src ? <img key={`${src.slice(-30)}-${index}`} className={css.output} src={src} alt={tt('outfit.resultAlt', { count: index + 1 })} /> : null })}</div> : <div className={css.empty}><span>{tt('outfit.emptyResults')}</span></div>}
+        {tasks.length > 0 ? <div className={css.taskList}>
+          <h3>生成任务</h3>
+          {tasks.slice(0, 20).map(task => <div key={task.id}>{renderTask(task)}</div>)}
+        </div> : null}
+        {history.length > 0 ? <div className={css.history}>
+          <div className={css.historyHead}><h3>历史记录</h3><span className={css.muted}>{history.length} 条</span></div>
+          <div className={css.historyGrid}>{history.map(entry => entry.images.map((image, index) => <figure key={`${entry.id}-${index}`} className={css.historyThumb}><img src={image.url} alt="" /><figcaption>{timeOf(entry.createdAt)} · {entry.refName === 'outfit-try-on' ? '试穿' : '角色'}</figcaption></figure>))}</div>
+        </div> : null}
+        {tasks.length === 0 && history.length === 0 && !prepared ? <div className={css.empty}><span>{tt('outfit.emptyResults')}</span></div> : null}
       </section>
     </div>
     {picker ? <OutfitReferencePicker kind={picker} onSelect={chooseReference} onClose={() => setPicker(null)} /> : null}

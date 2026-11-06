@@ -1465,6 +1465,17 @@ const CASES = [
     to: '    const kept = blobs.slice(0, referenceLimit)\n    const images = await Promise.all(kept.map(toDataUrl))\n    return { prompt: buildOutfitPrompt(recipe), image: images[0], images: images.slice(1), sheet: null, referenceCount: kept.length }',
     expect: /falsy value/,
   },
+  {
+    // 提交改回阻塞式 generate 后，面板既不产生任务记录也无可恢复进行中状态；
+    // 任务门禁（verify-outfit-task-gate.mjs）的四条源码不变式断言随之变红。
+    name: 'outfit generation waits blocking and leaves no restorable task record',
+    runner: 'outfit',
+    script: 'scripts/verify-outfit-task-gate.mjs',
+    file: 'src/client/OutfitWorkspace.tsx',
+    from: '      await api.taskSubmit(request)\n',
+    to: '      const result = await api.generate(request)\n      if (result.historyError) throw new Error(result.historyError)\n',
+    expect: /MISSING api\.taskSubmit/,
+  },
 ]
 
 const RUNNERS = {
