@@ -49,7 +49,13 @@ try {
     const { createHash } = await import('node:crypto')
     const blob = content => createHash('sha1').update(Buffer.from(`blob ${content.byteLength}\0`)).update(content).digest('hex')
     // A one-row index shaped exactly like the real one, hashed the way Git does.
-    const record = { id: 'P001', 标题: '测试人像', 分区: '正脸参考', 发长: '短发', 发型名称: '标准款', 原图: 'img/full_single_P001_front.png', 缩略图: 'thumb/full_single_P001_front.png' }
+    // The thumbnail must be a path `safeAsset` accepts (`img/` or `thumbs/`): a
+    // bare `thumb/...` is neither a mirrorable path nor an absolute URL, so
+    // `normalize` throws "Invalid URL" on it. That went unnoticed because this
+    // row is rejected by the blob check before it is ever normalized — and it
+    // masked the real assertion once the check was disabled (see
+    // `scripts/verify-negative.mjs`, the outfit group).
+    const record = { id: 'P001', 标题: '测试人像', 分区: '正脸参考', 发长: '短发', 发型名称: '标准款', 原图: 'img/full_single_P001_front.png', 缩略图: 'thumbs/full_single_P001_front.png' }
     const real = Buffer.from(JSON.stringify([record]))
     const sha = blob(real)
     const seen = []
