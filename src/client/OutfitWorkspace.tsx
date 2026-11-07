@@ -4,7 +4,7 @@
  */
 import React, { useEffect, useRef, useState } from 'react'
 import { ImageGenApi } from './api.ts'
-import { MODEL_API, type GenerateRequest, type GenerationTaskSummary, type HistoryEntry } from '../protocol.ts'
+import type { GenerateRequest, GenerationTaskSummary } from '../protocol.ts'
 import { describeModel } from '../model-catalog.ts'
 import type { OutfitReference, OutfitReferenceKind, OutfitRecipe, OutfitPreparedGeneration } from '../outfit-reference.ts'
 import type { ImageGenConfig, ImageGenScope } from './settings-scope.ts'
@@ -21,23 +21,12 @@ export interface OutfitWorkspaceProps { api?: ImageGenApi; config?: ImageGenConf
 const SCENES = ['纯色棚拍', '都市街头', '街角咖啡', '自然草坪', '度假海滩', '温馨居家', '艺术展馆', 'AI推荐']
 const RATIOS = ['3:4', '1:1', '9:16']
 const RESOLUTIONS = ['1K', '2K']
-const MAX_BYTES = 20 * 1024 * 1024
 const MAX_REFERENCE_BYTES = 10 * 1024 * 1024
 const MAX_CLOTHES = 4
 const IMAGE_TYPES = new Set(['image/png', 'image/jpeg', 'image/webp', 'image/gif'])
 const defaultApi = new ImageGenApi()
-type ModelEntry = { id: string; name: string; file: string; mime: string }
-
-/** 模特图片走已存在的宿主模特库，草稿只保存受控的同源路径。 */
-function modelReference(model: ModelEntry): OutfitReference {
-  return {
-    key: `model:${model.id}`, kind: 'portrait', source: 'model', sourceUrl: '', revision: 'local', title: model.name,
-    category: '我的模特', tags: [], thumbnailUrl: `${MODEL_API.image}/${encodeURIComponent(model.file)}`,
-    imageUrl: `${MODEL_API.image}/${encodeURIComponent(model.file)}`,
-  }
-}
-
-/** 上传图像转成后端接收的 Data URL；本地文件是受信任边界的输入，先查 MIME 与大小。 */
+/** 上传图像转成后端接收的 Data URL；本地文件是受信任边界的输入，先查 MIME 与大小。
+ *  10 MiB 是调用方（生成渠道与图库 store）共用的单张上限，超出就会在请求处被拒。 */
 function readImage(file: File, maxBytes = MAX_REFERENCE_BYTES): Promise<string> {
   if (!IMAGE_TYPES.has(file.type)) return Promise.reject(new Error(tt('outfit.invalidImageType')))
   if (file.size === 0 || file.size > maxBytes) return Promise.reject(new Error(tt('outfit.fileTooLarge')))
@@ -51,9 +40,6 @@ function readImage(file: File, maxBytes = MAX_REFERENCE_BYTES): Promise<string> 
 
 export default function OutfitWorkspace({ api = defaultApi, config }: OutfitWorkspaceProps): JSX.Element {
   const [recipe, setRecipe] = useState<OutfitRecipe>(defaultOutfitRecipe)
-  const [models, setModels] = useState<ModelEntry[]>([])
-  const [source, setSource] = useState<'library' | 'ai' | 'upload'>('library')
-  const [modelPrompt, setModelPrompt] = useState('')
   const [picker, setPicker] = useState<OutfitReferenceKind | null>(null)
   const [draftLoaded, setDraftLoaded] = useState(false)
   const [saving, setSaving] = useState(false)
@@ -61,11 +47,9 @@ export default function OutfitWorkspace({ api = defaultApi, config }: OutfitWork
   const [prepared, setPrepared] = useState<OutfitPreparedGeneration | null>(null)
   const [tasks, setTasks] = useState<GenerationTaskSummary[]>([])
   const [hydrated, setHydrated] = useState<Record<string, Array<{ b64?: string; mime?: string; url?: string }>>>({})
-  const [history, setHistory] = useState<HistoryEntry[]>([])
   const [error, setError] = useState('')
   const [draftError, setDraftError] = useState('')
   const clothesInput = useRef<HTMLInputElement>(null)
-  const modelInput = useRef<HTMLInputElement>(null)
   const poseInput = useRef<HTMLInputElement>(null)
   const generationEpoch = useRef(0)
   const previewRecipeKey = useRef('')
@@ -94,9 +78,8 @@ export default function OutfitWorkspace({ api = defaultApi, config }: OutfitWork
   useEffect(() => {
     active.current = true
     let cancelled = false
-    void Promise.all([api.modelList(), outfitReferenceApi.loadDraft()]).then(([savedModels, draft]) => {
+    void outfitReferenceApi.loadDraft().then(draft => {
       if (cancelled) return
-      setModels(savedModels)
       if (draft?.version === 1) setRecipe({ ...draft, costumes: draft.costumes.slice(0, MAX_CLOTHES) })
       setDraftLoaded(true)
     }).catch(cause => {
@@ -132,14 +115,14 @@ export default function OutfitWorkspace({ api = defaultApi, config }: OutfitWork
   /** 配方、渠道或模型有变化必须重新预览；过期的准备结果也不能覆盖新画面。 */
   useEffect(() => { generationEpoch.current++; setPrepared(null) }, [recipe, choice.channelId, choice.model])
 
-  /** 一次拉取服饰穿戴的任务与历史；进行中任务在任务卡里展示，历史来自宿主持久化记录。 */
+  /** 一次拉取服饰穿戴的任务；进行中/完成的任务都展示在任务卡里。
+   *  生成过什么由宿主的左侧历史列表负责，面板里不再重复一份。 */
   const refreshTasks = async (): Promise<void> => {
     try {
-      const [allTasks, allHistory] = await Promise.all([api.taskList(), api.historyList()])
+      const allTasks = await api.taskList()
       const outfitTasks = allTasks.filter(task => task.request.refName?.startsWith('outfit-'))
       latestTasks.current = outfitTasks
       setTasks(outfitTasks)
-      setHistory(allHistory.filter(entry => entry.refName?.startsWith('outfit-')))
       // 完成任务结果量小、含图，只在第一次拿到时取一次；轮询列表永远只拿摘要。
       const pendingHydrate = outfitTasks.filter(task => task.status === 'completed' && task.resultAvailable && !hydratedIds.current.has(task.id))
       if (pendingHydrate.length > 0) {
@@ -200,42 +183,23 @@ export default function OutfitWorkspace({ api = defaultApi, config }: OutfitWork
     finally { working.current = false; if (active.current) setBusy(false) }
   }
 
-  /** 模特同时保存在现有库与搭配配方里，重启后仍可从库中取原图。 */
-  const saveModel = async (name: string, data: string, mime: string): Promise<void> => {
-    const saved = await api.modelSave({ name, data, mime })
-    if (!active.current) return
-    setModels(current => [saved, ...current])
-    update({ portrait: modelReference(saved) })
-    setSource('library')
-  }
-  const uploadModel = async (file: File | undefined): Promise<void> => {
-    if (!file || working.current) return
-    working.current = true; setBusy(true); setError('')
-    try { await saveModel(file.name, await readImage(file, MAX_BYTES), file.type) }
-    catch (cause) { if (active.current) setError(cause instanceof Error ? cause.message : String(cause)) }
-    finally { working.current = false; if (active.current) setBusy(false) }
-  }
-  const generateModel = async (): Promise<void> => {
-    if (!modelPrompt.trim() || modelMissing || working.current) return
-    working.current = true; setBusy(true); setError('')
-    try {
-      const result = await api.generate({ mode: 'text', prompt: modelPrompt.trim(), model: choice.model, channelId: choice.channelId, size: recipe.size, quality: recipe.quality.toLowerCase(), detail: '', n: 1 })
-      const image = result.images?.[0]
-      if (!image?.b64) throw new Error('生成人像没有返回图片')
-      await saveModel(modelPrompt.trim().slice(0, 24), `data:${image.mime};base64,${image.b64}`, image.mime)
-      if (result.historyError && active.current) setError(`模特已保存，但生成历史保存失败：${result.historyError}`)
-    } catch (cause) { if (active.current) setError(cause instanceof Error ? cause.message : String(cause)) }
-    finally { working.current = false; if (active.current) setBusy(false) }
-  }
+  /** 刷新草稿：模特库现在归人物图库管，草稿刷新不再连带拉模特列表。 */
   const reloadDraft = async (): Promise<void> => {
     setDraftError('')
     try {
-      const [savedModels, draft] = await Promise.all([api.modelList(), outfitReferenceApi.loadDraft()])
+      const draft = await outfitReferenceApi.loadDraft()
       if (!active.current) return
-      setModels(savedModels)
       if (draft?.version === 1) setRecipe({ ...draft, costumes: draft.costumes.slice(0, MAX_CLOTHES) })
       setDraftLoaded(true)
     } catch (cause) { if (active.current) setDraftError(`无法读取搭配草稿：${cause instanceof Error ? cause.message : String(cause)}`) }
+  }
+  /** 人物图库的“AI 生成模特”走这里：图库负责界面，渠道与模型只有工作台知道。
+   *  生成走阻塞式请求而不是任务队列，因为模特必须先落盘才能在图库里被选中。 */
+  const generateModel = async (prompt: string): Promise<{ id: string; name: string; file: string }> => {
+    const result = await api.generate({ mode: 'text', prompt, model: choice.model, channelId: choice.channelId, size: recipe.size, quality: recipe.quality.toLowerCase(), detail: '', n: 1 })
+    const image = result.images?.[0]
+    if (!image?.b64) throw new Error('生成人像没有返回图片')
+    return api.modelSave({ name: prompt.slice(0, 24), data: `data:${image.mime};base64,${image.b64}`, mime: image.mime })
   }
   const preview = async (): Promise<void> => {
     if (!hasRequired || !supportsEdit || modelMissing || !draftLoaded || working.current) return
@@ -323,13 +287,7 @@ export default function OutfitWorkspace({ api = defaultApi, config }: OutfitWork
         <p className={css.muted}>{recipe.mode === 'try-on' ? '保留真实商品图的款式、图案与配色，人物和服装为必选。' : '从图库挑人物、服装与姿势，也可混合自己的图片。'}</p>
         <div className={css.field}>
           <div className={css.fieldHead}><span className={css.fieldLabel}>人物参考</span><span className={css.fieldNote}>{tt('outfit.section.modelNote')}</span></div>
-          {recipe.portrait ? <div className={css.selection}><img src={recipe.portrait.thumbnailUrl} alt={recipe.portrait.title} /><span>{recipe.portrait.title}</span><button type="button" className={css.button} onClick={() => update({ portrait: null })}>移除</button></div> : null}
-          <div className={css.pills} role="radiogroup" aria-label={tt('outfit.section.model')}>
-            {(['library', 'ai', 'upload'] as const).map((value, index) => <button key={value} type="button" className={css.pill} role="radio" aria-checked={source === value} onClick={() => setSource(value)}>{[tt('outfit.sourceLibrary'), tt('outfit.sourceAi'), tt('outfit.sourceUpload')][index]}</button>)}
-          </div>
-          {source === 'library' ? models.length === 0 ? <p className={css.muted}>{tt('outfit.emptyLibrary')}</p> : <div className={css.grid}>{models.map(item => <button key={item.id} type="button" className={css.card} aria-pressed={recipe.portrait?.key === `model:${item.id}`} onClick={() => update({ portrait: modelReference(item) })}><img src={`${MODEL_API.image}/${encodeURIComponent(item.file)}`} alt={item.name} /><span>{item.name}</span></button>)}</div> : null}
-          {source === 'ai' ? <div className={css.field}><textarea className={css.textarea} value={modelPrompt} onChange={event => setModelPrompt(event.target.value)} placeholder={tt('outfit.modelPrompt')} /><button type="button" className={css.button} disabled={busy || modelMissing || !modelPrompt.trim()} onClick={() => void generateModel()}>{busy ? tt('outfit.generating') : tt('outfit.generateModel')}</button></div> : null}
-          {source === 'upload' ? <><button type="button" className={css.drop} disabled={busy} onClick={() => modelInput.current?.click()}>{tt('outfit.selectModel')}</button><input ref={modelInput} hidden type="file" accept="image/png,image/jpeg,image/webp,image/gif" onChange={event => { void uploadModel(event.target.files?.[0]); event.target.value = '' }} /></> : null}
+          {recipe.portrait ? <div className={css.selection}><img src={recipe.portrait.thumbnailUrl} alt={recipe.portrait.title} /><span>{recipe.portrait.title}</span><button type="button" className={css.button} onClick={() => update({ portrait: null })}>移除</button></div> : <p className={css.muted}>{tt('outfit.section.modelNote')}</p>}
           <button type="button" className={css.button} disabled={busy} onClick={() => setPicker('portrait')}>浏览人物图库</button>
         </div>
         <div className={css.field}>
@@ -363,13 +321,10 @@ export default function OutfitWorkspace({ api = defaultApi, config }: OutfitWork
           <h3>生成任务</h3>
           {tasks.slice(0, 20).map(task => <div key={task.id}>{renderTask(task)}</div>)}
         </div> : null}
-        {history.length > 0 ? <div className={css.history}>
-          <div className={css.historyHead}><h3>历史记录</h3><span className={css.muted}>{history.length} 条</span></div>
-          <div className={css.historyGrid}>{history.map(entry => entry.images.map((image, index) => <figure key={`${entry.id}-${index}`} className={css.historyThumb}><img src={image.url} alt="" /><figcaption>{timeOf(entry.createdAt)} · {entry.refName === 'outfit-try-on' ? '试穿' : '角色'}</figcaption></figure>))}</div>
-        </div> : null}
-        {tasks.length === 0 && history.length === 0 && !prepared ? <div className={css.empty}><span>{tt('outfit.emptyResults')}</span></div> : null}
+        {tasks.length === 0 && !prepared ? <div className={css.empty}><span>{tt('outfit.emptyResults')}</span></div> : null}
       </section>
     </div>
-    {picker ? <OutfitReferencePicker kind={picker} onSelect={chooseReference} onClose={() => setPicker(null)} /> : null}
+    {picker ? <OutfitReferencePicker kind={picker} onSelect={chooseReference} onClose={() => setPicker(null)}
+      {...(modelMissing ? {} : { generateModel })} /> : null}
   </section>
 }

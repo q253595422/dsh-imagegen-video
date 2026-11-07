@@ -144,6 +144,56 @@ export function describeModel(model: string): ModelCatalogEntry {
   return { family: 'unknown', label: 'unknown', labelZh: '未知协议', known: false, supportsEdit: true, supportsAspectRatio: false, qualityTiers: [] }
 }
 
+/**
+ * Whether this model id can answer with an animated GIF.
+ *
+ * GPT Image 2.6 (Sunburst / Flare) is the first family that takes
+ * `output_format: 'gif'` plus `frame_count` / `frame_duration_ms` on
+ * /images/generations. Earlier gpt-image versions and every other family here
+ * reject the parameter, so the panel only offers the switch when this returns
+ * true; sending the fields anywhere else would be a request the upstream
+ * refuses. Gateway re-packagers append their own tags (`-web`, `-vip`): the
+ * VIP tier of 2.6 is documented as NOT producing GIFs, so it stays excluded.
+ */
+export function supportsGifOutput(model: string): boolean {
+  const id = model.trim().toLowerCase()
+  if (!/^gpt-image-2\.6(?:$|[-_.])/.test(id)) return false
+  return !/(?:^|[-_.])vip(?:$|[-_.])/.test(id)
+}
+
+/** Documented GIF frame limits. The guide says 2-64 while the API reference
+ *  says 2-16; 16 is the only ceiling both first-party sources agree on, so the
+ *  host clamps to it instead of guessing which page is stale. */
+export const GIF_FRAME_MIN = 2
+export const GIF_FRAME_MAX = 16
+export const GIF_FRAME_DEFAULT = 9
+/** Documented default per-frame delay, in milliseconds. */
+export const GIF_FRAME_MS_DEFAULT = 200
+
+/**
+ * Effective GIF frame count, shared by the engine, the panel's submit and the
+ * panel's duration hint so all three answer with the same number.
+ *
+ * An empty number input arrives as 0, which is not a frame count the user
+ * chose: it means "unset", so it falls back to the default exactly like
+ * undefined does. Clamping 0 to the minimum instead made the hint promise the
+ * default duration while the request asked for the shortest one.
+ */
+export function clampGifFrameCount(value: number | undefined): number {
+  if (value === undefined || !Number.isFinite(value) || value <= 0) return GIF_FRAME_DEFAULT
+  return Math.min(GIF_FRAME_MAX, Math.max(GIF_FRAME_MIN, Math.round(value)))
+}
+
+/**
+ * Effective per-frame GIF delay in milliseconds: at least 20ms, on the 10ms
+ * grid the encoder uses. Unset (undefined / NaN / an emptied input's 0) means
+ * the documented default, for the same reason as the frame count above.
+ */
+export function clampGifFrameDurationMs(value: number | undefined): number {
+  if (value === undefined || !Number.isFinite(value) || value <= 0) return GIF_FRAME_MS_DEFAULT
+  return Math.max(20, Math.round(value / 10) * 10)
+}
+
 /** Conservative fallback for providers whose /models response only has ids.
  *  Metadata-aware filtering lives in prompt-enhancer.ts; this catches common
  *  image model naming conventions without treating every unknown model as an

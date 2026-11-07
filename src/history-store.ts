@@ -48,6 +48,12 @@ interface StoredEntry {
   quality: string
   detail: string
   n: number
+  /** `gif` when this entry holds an animated GIF; absent for still images. */
+  outputFormat?: 'png' | 'gif'
+  /** GIF frame count as requested (absent for still images). */
+  frameCount?: number
+  /** GIF per-frame delay in milliseconds (absent for still images). */
+  frameDurationMs?: number
   images: StoredImage[]
   refName?: string
   channelId?: string
@@ -165,6 +171,9 @@ function toWire(entry: StoredEntry): HistoryEntry {
     quality: entry.quality,
     detail: entry.detail,
     n: entry.n,
+    ...entry.outputFormat === undefined ? {} : { outputFormat: entry.outputFormat },
+    ...entry.frameCount === undefined ? {} : { frameCount: entry.frameCount },
+    ...entry.frameDurationMs === undefined ? {} : { frameDurationMs: entry.frameDurationMs },
     images: entry.images.map(image => ({
       url: `/api/dsh-imagegen/history/image/${image.file}`,
       mime: image.mime,
@@ -224,6 +233,9 @@ export async function appendHistory(input: HistoryEntryInput): Promise<HistoryEn
       quality: input.quality,
       detail: input.detail,
       n: input.n,
+      ...input.outputFormat === undefined ? {} : { outputFormat: input.outputFormat },
+      ...input.frameCount === undefined ? {} : { frameCount: input.frameCount },
+      ...input.frameDurationMs === undefined ? {} : { frameDurationMs: input.frameDurationMs },
       images: storedImages,
       ...input.refName === undefined ? {} : { refName: input.refName },
       ...input.channelId === undefined ? {} : { channelId: input.channelId },

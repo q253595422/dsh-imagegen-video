@@ -10,7 +10,7 @@
 
 import { isChatCompletionsUrl, resolveChannelProtocol, type ChannelProtocolPreference, type GeneratedImage, type GenerateRequest, type GenerateResult } from './protocol.ts'
 import { detectImageMime } from './image-format.ts'
-import { modelFamily, promptCharLimit } from './model-catalog.ts'
+import { clampGifFrameCount, clampGifFrameDurationMs, modelFamily, promptCharLimit, supportsGifOutput } from './model-catalog.ts'
 import { bodyByteLength, excerptOf, networkErrorFields, readResponseExcerpt, readResponseText, recordDiagnostic, type DiagnosticPhase } from './diagnostics-store.ts'
 import { recordSignal } from './signal-store.ts'
 
@@ -360,6 +360,22 @@ const OPENAI_SIZE_BY_RATIO: Readonly<Record<string, string>> = {
   '21:9': '1792x1024',
 }
 
+/** The panel's aspect ratios mapped to a FRAME size for GIF output.
+ *  Every frame shares one image's pixel budget, so the 1024/1536 tiers above
+ *  would leave each frame too small to read once 9+ frames are packed in.
+ *  These are the documented working shape (512x512 for 9 frames) scaled by
+ *  ratio; every edge stays a multiple of 16, which the API requires. */
+const GIF_SIZE_BY_RATIO: Readonly<Record<string, string>> = {
+  '1:1': '512x512',
+  '3:4': '480x640',
+  '4:3': '640x480',
+  '9:16': '432x768',
+  '2:3': '480x720',
+  '3:2': '720x480',
+  '16:9': '768x432',
+  '21:9': '672x288',
+}
+
 /** Panel ratios that need renaming for a model's vocabulary. Grok documents
  *  20:9 as its ultra-wide ratio, so the panel's 21:9 label is sent as 20:9. */
 const GROK_ASPECT_ALIASES: Readonly<Record<string, string>> = {
@@ -465,6 +481,29 @@ function clampCount(n: number): number {
   return Math.min(4, Math.max(1, Math.round(n)))
 }
 
+/**
+ * Refuse a GIF request the upstream cannot serve, before any network call.
+ *
+ * Called from generateImage() ahead of the protocol dispatch, NOT from
+ * effectiveParams(): the chat-completions and native-family branches return
+ * before that point, so a gate placed there would let those requests through.
+ *
+ * Two hard limits: only gpt-image-2.6 takes `output_format: 'gif'`, and the
+ * upstream guide states /images/edits does not produce GIF — an edit request
+ * carrying the parameter would either be ignored or rejected, and either way
+ * the user paid for a still they did not ask for. Saying so up front is the
+ * only honest answer.
+ */
+function assertGifRequestSupported(request: GenerateRequest, model: string): void {
+  if (request.outputFormat !== 'gif') return
+  if (!supportsGifOutput(model)) {
+    throw new ImageGenError('该模型不支持 GIF 动图，请切换到 gpt-image-2.6', 'gif-unsupported')
+  }
+  if (request.mode === 'edit') {
+    throw new ImageGenError('GIF 动图只支持文字生成，参考图不参与动图请求', 'gif-edit-unsupported')
+  }
+}
+
 /** Pick the effective per-model request parameters. Never includes `n`: the
  *  batch parameter is rejected by Responses-API-based gateways (tools[0].n),
  *  so the count is satisfied by parallel single-image requests instead. */
@@ -479,8 +518,29 @@ function effectiveParams(request: GenerateRequest, upstream: UpstreamConfig): {
   ratio?: string
   response_format?: string
   watermark?: boolean
+  output_format?: string
+  frame_count?: number
+  frame_duration_ms?: number
 } {
   const model = wireModel(request)
+  // Animated GIF: only gpt-image-2.6 answers this, and only in generation
+  // mode. The frame knobs travel next to the ordinary OpenAI fields, and the
+  // per-frame size comes from GIF_SIZE_BY_RATIO because every frame shares one
+  // image's pixel budget.
+  if (request.outputFormat === 'gif') {
+    return {
+      model,
+      ...request.size !== '' && request.size !== 'auto' && GIF_SIZE_BY_RATIO[request.size] !== undefined
+        ? { size: GIF_SIZE_BY_RATIO[request.size] }
+        : {},
+      ...request.quality === '1k' ? { quality: 'low' } : {},
+      ...request.quality === '2k' ? { quality: 'medium' } : {},
+      ...request.quality === '4k' ? { quality: 'high' } : {},
+      output_format: 'gif',
+      frame_count: clampGifFrameCount(request.frameCount),
+      frame_duration_ms: clampGifFrameDurationMs(request.frameDurationMs),
+    }
+  }
   // dall-e-3 has no quality/detail knobs and only produces one image.
   if (model === 'dall-e-3') {
     const pixel = OPENAI_SIZE_BY_RATIO[request.size]
@@ -576,6 +636,10 @@ function effectiveParams(request: GenerateRequest, upstream: UpstreamConfig): {
 /** How many single-image requests to issue for the requested image count. */
 function effectiveCount(request: GenerateRequest): number {
   const model = wireModel(request)
+  // One animated GIF per call: frame count, frame size and image count share a
+  // single pixel budget upstream, so asking for four animations at 16 frames
+  // would be rejected rather than produced.
+  if (request.outputFormat === 'gif') return 1
   if (model === 'dall-e-3') return 1
   return clampCount(request.n)
 }
@@ -1569,7 +1633,14 @@ export async function generateImage(upstream: UpstreamConfig, request: GenerateR
   const baseUrl = normalizeModelScopeBaseUrl(configuredBaseUrl, upstream.apiUrlFull === true)
   if (baseUrl === '') throw new ImageGenError('api_url 未配置：请先在「设置 → 生图配置」中填写', 'config-missing')
   if (upstream.apiKey.trim() === '') throw new ImageGenError('api_key 未配置：请先在「设置 → 生图配置」中填写', 'config-missing')
+  assertGifRequestSupported(request, wireModel(request))
   if (resolveChannelProtocol(baseUrl, upstream.protocol) === 'chat-completions') {
+    // This body carries only model/messages/stream — there is no output_format
+    // to send — so even a GIF-capable model answers with a still here, and the
+    // history would label that still as an animation the user paid for.
+    if (request.outputFormat === 'gif') {
+      throw new ImageGenError('当前渠道走 chat/completions 协议，不支持 GIF 动图：请改用 /images/generations 渠道', 'gif-protocol-unsupported')
+    }
     return { images: await generateChatCompletionImages(upstream, baseUrl, request, options.signal) }
   }
   // A complete URL is an explicit escape hatch to the exact provider endpoint:

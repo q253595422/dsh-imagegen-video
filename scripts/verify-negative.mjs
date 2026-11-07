@@ -1476,6 +1476,103 @@ const CASES = [
     to: '      const result = await api.generate(request)\n      if (result.historyError) throw new Error(result.historyError)\n',
     expect: /MISSING api\.taskSubmit/,
   },
+  {
+    // 用户的要求是「模特库放在浏览人像图库中」。把 list 里注入模特那一行
+    // 摘掉，人物图库就退回成只有内置人像的远程图库——门禁里的第一条断言
+    // 随之失配，而模特库究竟还在不在人物图库里，正是这条用例在守的东西。
+    name: 'the model library is dropped from the portrait gallery list',
+    runner: 'outfit',
+    script: 'scripts/verify-outfit-model-gallery.mjs',
+    file: 'src/outfit-reference-store.ts',
+    from: "    const models = request.kind === 'portrait' ? (await listModels()).map(modelReference) : []\n",
+    to: '',
+    expect: /FAIL 人物图库列表没有把本机模特库并进来/,
+  },
+  {
+    // 另一种退化：模特库又搬回工作台，人物图库不再承担它。这种情况下列表
+    // 里仍有模特，但「添加 / AI 生成」的入口不在图库里了。
+    name: 'adding a model leaves the portrait gallery again',
+    runner: 'outfit',
+    script: 'scripts/verify-outfit-model-gallery.mjs',
+    file: 'src/client/OutfitReferencePicker.tsx',
+    from: '      {kind === \'portrait\' && (api.saveModel || generateModel) ? <div className={css.modelRow} data-outfit-model-add="">\n',
+    to: '      {false ? <div className={css.modelRow} data-outfit-model-add="">\n',
+    expect: /FAIL 人物图库的添加模特行没有按/,
+  },
+  // ------------------------------------------- animated GIF output (gpt-image-2.6)
+  {
+    // 把 output_format 从请求体摘掉，上游就拿不到「这是动图」这条指令，
+    // 只会退回成一张静图——用户付了动图的帧数预算却拿到 PNG。套件里
+    // 「GIF 应只发一次请求 / output_format 应为 gif」随之失配。
+    name: 'gif output forgets to ask upstream for a gif',
+    runner: 'gif',
+    file: 'src/engine.ts',
+    from: "      output_format: 'gif',\n",
+    to: '',
+    expect: /undefined !== 'gif'|output_format|GIF 应走 generations/,
+  },
+  {
+    // 另一条退化：给不支持的模型也发 GIF 参数。2.5 会拒绝或忽略，
+    // 用户看到的错误离真实原因很远，所以前置拒绝必须在。
+    name: 'gif is sent to a model that cannot produce it',
+    runner: 'gif',
+    file: 'src/engine.ts',
+    from: "  if (!supportsGifOutput(model)) {\n    throw new ImageGenError('该模型不支持 GIF 动图，请切换到 gpt-image-2.6', 'gif-unsupported')\n  }\n",
+    to: '',
+    expect: /gif-unsupported|2\.5 请求 GIF 应被拒绝/,
+  },
+  {
+    // 帧数不夹紧：99 帧会被上游直接拒绝（或超出像素预算），
+    // 面板说的「9 帧」与实际发出的不一致。
+    name: 'gif frame count is passed through unclamped',
+    runner: 'gif',
+    // 夹紧已经收进 model-catalog，引擎、面板提交、面板提示共用同一份。
+    file: 'src/model-catalog.ts',
+    from: '  return Math.min(GIF_FRAME_MAX, Math.max(GIF_FRAME_MIN, Math.round(value)))',
+    to: '  return Math.round(value)',
+    expect: /帧数上限 16|正数但低于下限时夹到 2/,
+  },
+  {
+    // 清空输入框得到的 0 被当成真实帧数夹到下限：面板提示按默认 9 帧
+    // 算时长，请求却只发 2 帧，屏幕上的秒数与拿到的动图不符。
+    name: 'gif treats an emptied frame input as a real zero',
+    runner: 'gif',
+    file: 'src/model-catalog.ts',
+    from: '  if (value === undefined || !Number.isFinite(value) || value <= 0) return GIF_FRAME_DEFAULT',
+    to: '  if (value === undefined || !Number.isFinite(value)) return GIF_FRAME_DEFAULT',
+    expect: /0 视为未设置|回落默认帧数/,
+  },
+  {
+    // 前置闸搬回 effectiveParams 的退化：chat/completions 与 Qwen / MiniMax
+    // 原生分支都在那之前 return，GIF 参数被丢掉，用户付费拿到静图
+    // 却被历史标成 GIF。
+    name: 'gif gate sits after the protocol dispatch again',
+    runner: 'gif',
+    file: 'src/engine.ts',
+    from: '  assertGifRequestSupported(request, wireModel(request))\n',
+    to: '',
+    expect: /gif-unsupported|2\.5 请求 GIF 应被拒绝|Qwen 原生分支请求 GIF 应被拒绝|MiniMax 原生分支请求 GIF 应被拒绝/,
+  },
+  {
+    // chat/completions 的请求体没有 output_format 字段，即使模型是 2.6
+    // 也只会出静图；放行这条等于让用户为一张假 GIF 付费。
+    name: 'gif is accepted on a chat-completions channel',
+    runner: 'gif',
+    file: 'src/engine.ts',
+    from: "    if (request.outputFormat === 'gif') {\n      throw new ImageGenError('当前渠道走 chat/completions 协议，不支持 GIF 动图：请改用 /images/generations 渠道', 'gif-protocol-unsupported')\n    }\n",
+    to: '',
+    expect: /gif-protocol-unsupported|chat\/completions 渠道请求 GIF 应被拒绝/,
+  },
+  {
+    // 图生图开口子：官方指南写明 /images/edits 不出 GIF，
+    // 放行等于让用户以为参考图能动起来。
+    name: 'gif is allowed through the edit endpoint',
+    runner: 'gif',
+    file: 'src/engine.ts',
+    from: "  if (request.mode === 'edit') {\n    throw new ImageGenError('GIF 动图只支持文字生成，参考图不参与动图请求', 'gif-edit-unsupported')\n  }\n",
+    to: '',
+    expect: /gif-edit-unsupported|图生图 GIF 应被拒绝/,
+  },
 ]
 
 const RUNNERS = {
@@ -1507,6 +1604,9 @@ const RUNNERS = {
   // script，所以 case 上可以用 `script` 覆盖默认值 —— 组名进 test:negative
   // 的链条守卫只认 runner 名，多一个组就要多一行调用，两组反而更容易漏。
   outfit: { script: 'scripts/smoke-outfit-reference.mjs', build: false },
+  // GIF 输出是纯请求体问题：套件自己打桩 fetch，直接 import src/engine.ts，
+  // 不发真实请求也不需要构建。
+  gif: { script: 'scripts/smoke-gif-output.mjs', build: false },
   // The archive rule, run against a real `pnpm pack`. No rebuild: the archive
   // contents depend on package.json and the tree, not on the built output.
   pack: { script: 'scripts/verify-pack.mjs', build: false },

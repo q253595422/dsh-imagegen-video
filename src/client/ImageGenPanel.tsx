@@ -40,7 +40,7 @@ import { AGENT_IMAGE_API, SUBSCRIPTION_API, SUBSCRIPTION_PROVIDERS, type Subscri
 import type { ImageGenConfig, ImageGenScope, ImageModelGroup } from './settings-scope.ts'
 import { imageModelOptions, videoModelOptions } from './settings-scope.ts'
 import { VideoPanel } from './VideoPanel.tsx'
-import { describeModel, promptCharLimit } from '../model-catalog.ts'
+import { clampGifFrameCount, clampGifFrameDurationMs, describeModel, GIF_FRAME_DEFAULT, GIF_FRAME_MAX, GIF_FRAME_MIN, GIF_FRAME_MS_DEFAULT, promptCharLimit, supportsGifOutput } from '../model-catalog.ts'
 import {
   addConversationAttachments, conversationInput, createConversationDrafts, releaseConversationDrafts,
   removeConversationAttachment, CHAT_IMAGE_EVENT,
@@ -830,7 +830,7 @@ function imageRowOf(group: HistoryGroup): UnifiedHistoryRow {
     prompt: entry.prompt,
     models: group.models,
     ...entry.images.length > 0 ? { thumbUrl: entry.images[0]!.url } : {},
-    meta: `${kindLabel} · ${imageCount} ${tt('history.images')}`,
+    meta: `${entry.outputFormat === 'gif' ? 'GIF · ' : ''}${kindLabel} · ${imageCount} ${tt('history.images')}`,
     group,
   }
 }
@@ -1051,6 +1051,10 @@ export function ImageGenPanel(props: {
   const [quality, setQuality] = useState<string>('auto')
   const [count, setCount] = useState(1)
   const [detail, setDetail] = useState('')
+  /** 'gif' asks gpt-image-2.6 for an animated GIF; other models never see it. */
+  const [outputFormat, setOutputFormat] = useState<'png' | 'gif'>('png')
+  const [frameCount, setFrameCount] = useState(GIF_FRAME_DEFAULT)
+  const [frameDurationMs, setFrameDurationMs] = useState(GIF_FRAME_MS_DEFAULT)
   const [model, setModel] = useState<string>('')
   const [modelChannelId, setModelChannelId] = useState<string>('')
   const [compareEnabled, setCompareEnabled] = useState(false)
@@ -1247,6 +1251,20 @@ export function ImageGenPanel(props: {
         .filter(group => group.models.length > 0)
     : modelGroups
   const modeModels = [...new Set(modeGroups.flatMap(group => group.models))]
+  /** GIF is a gpt-image-2.6 capability and a text-generation one: the upstream
+   *  guide states /images/edits does not produce animated output. Compare mode
+   *  hides it too — several models would mean mixed formats under one run. */
+  const gifAvailable = supportsGifOutput(model) && tab === 'text' && !compareEnabled && workspace === 'normal'
+  const gifActive = outputFormat === 'gif' && gifAvailable
+
+  /** A model that cannot answer GIF drops the format back to still. The mode
+   *  and compare controls are deliberately NOT reverted here: while GIF is
+   *  selected they are disabled with a reason instead, because undoing the
+   *  user's own click a frame later reads as a broken button. */
+  useEffect(() => {
+    if (outputFormat !== 'gif') return
+    if (!supportsGifOutput(model)) setOutputFormat('png')
+  }, [outputFormat, model])
   /** Current adapter's reference capacity. A one-image model with several
    *  thumbnails loaded would otherwise fail only at submit time, so the panel
    *  warns as soon as the mismatch exists. */
@@ -1975,11 +1993,18 @@ export function ImageGenPanel(props: {
       prompt: promptText,
       size,
       quality,
-      n: count,
+      n: gifActive ? 1 : count,
       detail,
       ...tab === 'edit' && primary !== undefined ? { image: primary.dataUrl } : {},
       ...tab === 'edit' && refs.images.length > 1 ? { images: refs.images.slice(1).map(image => image.dataUrl) } : {},
       ...tab === 'edit' && refs.images.length > 0 ? { refName: refs.images.map(image => image.name).join('、') } : {},
+      ...gifActive
+        ? {
+            outputFormat: 'gif' as const,
+            frameCount: clampGifFrameCount(frameCount),
+            frameDurationMs: clampGifFrameDurationMs(frameDurationMs),
+          }
+        : {},
     }
     setError(null)
     setSubmitting(true)
@@ -3541,6 +3566,8 @@ export function ImageGenPanel(props: {
                       tabIndex={tabIndexFor(tab === item)}
                       onKeyDown={event => { onTablistKeyDown(event, { count: MODE_TABS.length, index, select: next => { setTab(MODE_TABS[next]!) } }) }}
                       onClick={() => { setTab(item) }}
+                      disabled={outputFormat === 'gif' && item !== 'text'}
+                      title={outputFormat === 'gif' && item !== 'text' ? tt('params.gifLocksMode') : undefined}
                       className={css.modePill}
                     >{tt(item === 'text' ? 'mode.text' : item === 'edit' ? 'mode.edit' : 'mode.video')}</Pill>
                   ))}
@@ -3883,13 +3910,56 @@ export function ImageGenPanel(props: {
                   ))}
                 </div>
               </div>
+              {/* Animated GIF: only offered when the selected model can answer it
+                  and the run is a plain text generation. */}
+              {gifAvailable ? (
+                <div className={css.paramGroup}>
+                  <span className={css.paramLabel}>{tt('params.output')}</span>
+                  <div className={css.optionRow}>
+                    <Pill active={!gifActive} onClick={() => { setOutputFormat('png') }} className={css.optionPill}>{tt('params.outputStill')}</Pill>
+                    <Pill active={gifActive} onClick={() => { setOutputFormat('gif') }} className={css.optionPill}>{tt('params.outputGif')}</Pill>
+                  </div>
+                  {gifActive ? (
+                    <div className={css.gifFields}>
+                      <label className={css.gifField}>
+                        <span>{tt('params.gifFrames')}</span>
+                        <input
+                          type="number"
+                          min={GIF_FRAME_MIN}
+                          max={GIF_FRAME_MAX}
+                          value={frameCount}
+                          onChange={event => { setFrameCount(Number(event.target.value)) }}
+                        />
+                      </label>
+                      <label className={css.gifField}>
+                        <span>{tt('params.gifFrameMs')}</span>
+                        <input
+                          type="number"
+                          min={20}
+                          step={10}
+                          value={frameDurationMs}
+                          onChange={event => { setFrameDurationMs(Number(event.target.value)) }}
+                        />
+                      </label>
+                      <span className={css.paramHint}>
+                        {tt('params.gifHint', {
+                          seconds: ((clampGifFrameCount(frameCount) * clampGifFrameDurationMs(frameDurationMs)) / 1000).toFixed(1),
+                        })}
+                      </span>
+                      <span className={css.paramHint}>{tt('params.gifLocksMode')}</span>
+                    </div>
+                  ) : null}
+                </div>
+              ) : null}
               <div className={css.paramGroup}>
                 <span className={css.paramLabel}>{tt('params.count')}</span>
                 <div className={css.optionRow}>
                   {[1, 2, 3, 4].map(option => (
                     <Pill
                       key={option}
-                      active={count === option}
+                      active={gifActive ? option === 1 : count === option}
+                      disabled={gifActive && option !== 1}
+                      title={gifActive && option !== 1 ? tt('params.gifSingleCount') : undefined}
                       onClick={() => { setCount(option) }}
                       className={css.optionPill}
                     >
@@ -3897,6 +3967,7 @@ export function ImageGenPanel(props: {
                     </Pill>
                   ))}
                 </div>
+                {gifActive ? <span className={css.paramHint}>{tt('params.gifSingleCount')}</span> : null}
               </div>
               <div className={css.paramGroup}>
                 <span className={css.paramLabel}>{tt('params.detail')}</span>
@@ -3960,7 +4031,13 @@ export function ImageGenPanel(props: {
             </label> : null}
             {isGeneration ? <div className={css.compareControl}>
               <label className={css.compareToggle}>
-                <input type="checkbox" checked={compareEnabled} onChange={event => { setCompareEnabled(event.target.checked) }} />
+                <input
+                  type="checkbox"
+                  checked={compareEnabled}
+                  disabled={outputFormat === 'gif'}
+                  title={outputFormat === 'gif' ? tt('params.gifLocksMode') : undefined}
+                  onChange={event => { setCompareEnabled(event.target.checked) }}
+                />
                 <span>{tt('compare.enable')}</span>
               </label>
               {compareEnabled ? (

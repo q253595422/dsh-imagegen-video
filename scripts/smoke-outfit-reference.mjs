@@ -5,8 +5,12 @@ import { tmpdir } from 'node:os'
 import path from 'node:path'
 import { OutfitReferenceStore, outfitAssetUrl } from '../src/outfit-reference-store.ts'
 import { OUTFIT_API } from '../src/outfit-reference.ts'
+import { setImageDataRoot } from '../src/image-storage-path.ts'
 
 const root = await mkdtemp(path.join(tmpdir(), 'outfit-smoke-'))
+// 人物图库现在会读本机模特库；把数据根指到临时目录，否则「离线时 total 为 0」
+// 这条断言会被开发者自己攒的模特破掉——测试不该取决于跑测试那台机器上存了什么。
+setImageDataRoot(root)
 const png = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAusB9Wl6dVAAAAAASUVORK5CYII=', 'base64')
 let checks = 0
 async function check(name, run) { await run(); console.log(`ok ${++checks} - ${name}`) }
@@ -127,6 +131,34 @@ try {
     assert.deepEqual((await new OutfitReferenceStore({ root }).image(ref.imageUrl.split('/').pop())).data, png)
     await assert.rejects(store.upload({ kind: 'pose', name: 'not an image', data: 'data:image/png;base64,YWJj' }), /格式或大小无效/)
   })
+  await check('人物图库把本机模特库当作一种来源，选中不需联网下载', async () => {
+    const { saveModel } = await import('../src/model-store.ts')
+    const saved = await saveModel({ name: '我的模特甲', data: `data:image/png;base64,${png.toString('base64')}`, mime: 'image/png' })
+    const result = await store.list({ kind: 'portrait' })
+    const model = result.items.find(item => item.key === `model:${saved.id}`)
+    assert.ok(model !== undefined, '本机模特出现在人物图库列表里')
+    assert.equal(model.source, 'model')
+    assert.equal(model.category, '我的模特')
+    assert.ok(
+      result.sources.some(source => source.id === 'model' && source.label === '我的模特'),
+      '来源筛选器能用「我的模特」筛出它们',
+    )
+    // 模特已经在宿主模特目录里落过盘；物化只是把它按受控路径交出去，
+    // 不该再走 fetch（网络在本次测试里是关掉的）。
+    const chosen = await store.materialize({ key: `model:${saved.id}` })
+    assert.equal(chosen.imageUrl, model.imageUrl)
+    assert.match(chosen.imageUrl, new RegExp(`^${OUTFIT_API.image.replace(/\/outfit\/image$/, '')}`))
+    assert.match(chosen.imageUrl, /\/models\/image\//)
+    // 只有人物这一类看得见模特库：服装和姿势的图库不该凭空多出来源。
+    for (const kind of ['costume', 'pose']) {
+      const other = await store.list({ kind })
+      assert.equal(other.items.some(item => item.key.startsWith('model:')), false, `${kind} 不应列出模特`)
+      assert.equal(other.sources.some(source => source.id === 'model'), false, `${kind} 不应出现模特来源`)
+    }
+    // 模特没有视角可选，带视角物化要被拒，而不是返回一张错图。
+    await assert.rejects(store.materialize({ key: `model:${saved.id}`, viewId: 'front' }), /草稿模特未在模特库中/)
+  })
+
   if (process.env.OUTFIT_SMOKE_LIVE === '1') await check('固定提交六份真实数据全部可适配', async () => {
     const live = new OutfitReferenceStore({ root: path.join(root, 'live') })
     for (const [kind, count] of [['pose', 1439], ['portrait', 1499], ['costume', 3224]]) {

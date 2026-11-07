@@ -8,7 +8,7 @@
 export const IMAGEGEN_SETTINGS_NAMESPACE = 'dsh-imagegen'
 
 /** Published package version shared by the host updater and the client UI. */
-export const PLUGIN_VERSION = '1.22.2'
+export const PLUGIN_VERSION = '1.23.0'
 
 /** Same-origin route family (loopback-only, mirroring the dsh-ssh fence). */
 export const SETTINGS_API = {
@@ -630,6 +630,7 @@ export type VideoModelFamily =
   | 'seedance'
   | 'openai-video'
   | 'snapgen'
+  | 'muse'
   | 'unknown'
 
 /** Video output resolution tier, mapped per family by the engine. */
@@ -1911,6 +1912,16 @@ export interface GenerateRequest extends EcommerceTaskMeta {
    * parameters, so the UI defaults to '' (omit).
    */
   detail: string
+  /**
+   * Output format. Absent and 'png' both mean the still image path; `gif`
+   * asks gpt-image-2.6 for an animated GIF through `output_format: 'gif'`.
+   * Generation only: the upstream guide states /images/edits does not do GIF.
+   */
+  outputFormat?: 'png' | 'gif'
+  /** GIF frame count (host clamps to 2-16). Only meaningful with `gif`. */
+  frameCount?: number
+  /** GIF per-frame delay in milliseconds (host clamps to >= 20). Only with `gif`. */
+  frameDurationMs?: number
   /** Reference image as a data URL (edit mode only). */
   image?: string
   /** Additional reference images as data URLs (edit mode only). The first
@@ -2155,6 +2166,12 @@ export interface HistoryEntry extends EcommerceTaskMeta {
   quality: string
   detail: string
   n: number
+  /** `gif` when this entry is an animated GIF; absent for still images. */
+  outputFormat?: 'png' | 'gif'
+  /** GIF frame count as requested (absent for still images). */
+  frameCount?: number
+  /** GIF per-frame delay in milliseconds (absent for still images). */
+  frameDurationMs?: number
   images: HistoryImageRef[]
   /** Reference-image filename (edit mode), kept for display only. */
   refName?: string
@@ -2212,6 +2229,12 @@ export interface HistoryEntryInput extends EcommerceTaskMeta {
   quality: string
   detail: string
   n: number
+  /** `gif` when this entry is an animated GIF; absent for still images. */
+  outputFormat?: 'png' | 'gif'
+  /** GIF frame count as requested (absent for still images). */
+  frameCount?: number
+  /** GIF per-frame delay in milliseconds (absent for still images). */
+  frameDurationMs?: number
   images: GeneratedImage[]
   refName?: string
   /** Channel id snapshot, tallied by the usage endpoint. */

@@ -1,4 +1,5 @@
 /** 服饰穿戴的共享契约：图库只提供参考素材，生成仍走现有渠道。 */
+import { MODEL_API } from './protocol.ts'
 export type OutfitReferenceKind = 'portrait' | 'costume' | 'pose'
 export type OutfitMode = 'try-on' | 'character'
 export interface OutfitReferenceView { id: string; label: string }
@@ -22,6 +23,16 @@ export interface OutfitReference {
   sensitive?: boolean
   notice?: string
 }
+/** 本机模特库与图库共用同一种引用：人物图库把模特条目和内置人像放在一起浏览，
+ *  路径只指向宿主模特接口，草稿校验与提交都只认这一条受控来源。 */
+export function modelReference(model: { id: string; name: string; file: string }): OutfitReference {
+  const imageUrl = `${MODEL_API.image}/${encodeURIComponent(model.file)}`
+  return {
+    key: `model:${model.id}`, kind: 'portrait', source: 'model', sourceUrl: '', revision: 'local',
+    title: model.name, category: '我的模特', tags: [], thumbnailUrl: imageUrl, imageUrl,
+  }
+}
+
 export interface OutfitListRequest {
   kind: OutfitReferenceKind
   query?: string
@@ -82,4 +93,6 @@ export interface OutfitReferenceApi {
   loadDraft(): Promise<OutfitRecipe | null>
   saveDraft(recipe: OutfitRecipe): Promise<void>
   importDirectory(directory: string): Promise<{ count: number }>
+  /** 人物图库同时是模特库的入口：上传的模特落进宿主模特目录。 */
+  saveModel?(input: { name: string; data: string; mime: string }): Promise<{ id: string; name: string; file: string; mime: string }>
 }

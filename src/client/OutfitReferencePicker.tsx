@@ -1,7 +1,7 @@
 /** 人物、服装、姿势图库共用选图器；原图只由宿主缓存并以同源地址交给生成流程。 */
 import { useEffect, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
-import type { OutfitReference, OutfitReferenceApi, OutfitReferenceKind, OutfitListResult } from '../outfit-reference.ts'
+import { modelReference, type OutfitReference, type OutfitReferenceApi, type OutfitReferenceKind, type OutfitListResult } from '../outfit-reference.ts'
 import { outfitReferenceApi } from './outfit-reference-api.ts'
 import css from './outfit-reference-picker.module.css'
 
@@ -12,6 +12,9 @@ interface PickerProps {
   api?: OutfitReferenceApi
   onSelect: (reference: OutfitReference) => void
   onClose: () => void
+  /** 由工作台注入：用当前字渠道生成一张人像并直接存进模特库。
+   *  图库本身不知道渠道与模型配置，也不应该知道。 */
+  generateModel?: (prompt: string) => Promise<{ id: string; name: string; file: string }>
 }
 
 /** 禁止不可信数据让“查看来源”变成可执行或本机协议链接。 */
@@ -29,7 +32,7 @@ function PickerThumbnail({ item }: { item: OutfitReference }): JSX.Element {
 }
 
 /** 将远程图库项先物化成已缓存的同源原图，再把选择交给工作台。 */
-export function OutfitReferencePicker({ kind, api = outfitReferenceApi, onSelect, onClose }: PickerProps): JSX.Element {
+export function OutfitReferencePicker({ kind, api = outfitReferenceApi, onSelect, onClose, generateModel }: PickerProps): JSX.Element {
   const dialog = useRef<HTMLDialogElement>(null)
   const queryInput = useRef<HTMLInputElement>(null)
   const alive = useRef(true)
@@ -57,6 +60,13 @@ export function OutfitReferencePicker({ kind, api = outfitReferenceApi, onSelect
   const [importPath, setImportPath] = useState('')
   const [importing, setImporting] = useState(false)
   const [importMessage, setImportMessage] = useState('')
+  const [modelName, setModelName] = useState('')
+  const [modelData, setModelData] = useState('')
+  const [modelBusy, setModelBusy] = useState(false)
+  const [modelMessage, setModelMessage] = useState('')
+  const [aiPrompt, setAiPrompt] = useState('')
+  const [aiBusy, setAiBusy] = useState(false)
+  const modelInput = useRef<HTMLInputElement>(null)
 
   useEffect(() => {
     alive.current = true
@@ -141,6 +151,47 @@ export function OutfitReferencePicker({ kind, api = outfitReferenceApi, onSelect
     }
   }
 
+  /** 人物图库同时是模特库：选一张图存进宿主模特库，存好即可直接选中使用。 */
+  const pickModelFile = async (file: File | undefined): Promise<void> => {
+    if (!file || !alive.current) return
+    if (!/^image\/(png|jpeg|webp|gif)$/.test(file.type)) { setModelMessage('仅支持 PNG、JPEG、WebP 或 GIF 图片'); return }
+    if (file.size === 0 || file.size > 20 * 1024 * 1024) { setModelMessage('文件不能超过 20 MiB'); return }
+    setModelMessage('')
+    const data = await new Promise<string>((resolve, reject) => {
+      const reader = new FileReader()
+      reader.onload = () => typeof reader.result === 'string' ? resolve(reader.result) : reject(new Error('读取文件失败'))
+      reader.onerror = reader.onabort = () => reject(new Error('读取文件失败'))
+      reader.readAsDataURL(file)
+    }).catch(cause => { if (alive.current) setModelMessage(cause instanceof Error ? cause.message : String(cause)); return '' })
+    if (!data || !alive.current) return
+    setModelData(data)
+    setModelName(file.name.replace(/\.[^.]+$/, '').slice(0, 60))
+  }
+  const saveModel = async (): Promise<void> => {
+    if (!api.saveModel || !modelData || modelBusy || !alive.current) return
+    setModelBusy(true); setModelMessage('')
+    try {
+      const saved = await api.saveModel({ name: modelName.trim() || '我的模特', data: modelData, mime: /^data:(image\/[a-z]+);/.exec(modelData)?.[1] ?? 'image/png' })
+      if (!alive.current) return
+      setModelData(''); setModelName(''); setOffset(0); setReload(value => value + 1)
+      // 存完就选中它：用户来这里就是要用这个人，不该再去列表里翻一遍。
+      setSelection({ item: modelReference(saved), useDepth: false })
+    } catch (cause) { if (alive.current) setModelMessage(cause instanceof Error ? cause.message : String(cause)) }
+    finally { if (alive.current) setModelBusy(false) }
+  }
+
+  const generateAiModel = async (): Promise<void> => {
+    if (!generateModel || !aiPrompt.trim() || aiBusy || !alive.current) return
+    setAiBusy(true); setModelMessage('')
+    try {
+      const saved = await generateModel(aiPrompt.trim())
+      if (!alive.current) return
+      setAiPrompt(''); setOffset(0); setReload(value => value + 1)
+      setSelection({ item: modelReference(saved), useDepth: false })
+    } catch (cause) { if (alive.current) setModelMessage(cause instanceof Error ? cause.message : String(cause)) }
+    finally { if (alive.current) setAiBusy(false) }
+  }
+
   const pageCount = listing ? Math.ceil(listing.total / PAGE_SIZE) : 0
   const currentPage = Math.floor(offset / PAGE_SIZE) + 1
   const sourceUrl = selection ? safeSourceUrl(selection.item.sourceUrl) : undefined
@@ -186,6 +237,24 @@ export function OutfitReferencePicker({ kind, api = outfitReferenceApi, onSelect
         <span className={css.revision}>{listing?.revision ? `数据版本 ${listing.revision.slice(0, 10)}` : ''}</span>
       </div>
       {listing?.warnings.map((warning, index) => <p key={`${warning}-${index}`} className={css.warning} role="status">{warning}</p>)}
+      {kind === 'portrait' && (api.saveModel || generateModel) ? <div className={css.modelRow} data-outfit-model-add="">
+        <span className={css.modelRowLabel}>我的模特</span>
+        {modelData
+          ? <>
+            <img className={css.modelPick} src={modelData} alt="待保存的模特预览" />
+            <input type="text" value={modelName} aria-label="模特名称" placeholder="模特名称" onChange={event => setModelName(event.target.value)} />
+            <button type="button" disabled={modelBusy} onClick={() => void saveModel()}>{modelBusy ? '保存中…' : '保存到模特库'}</button>
+            <button type="button" disabled={modelBusy} onClick={() => { setModelData(''); setModelName(''); setModelMessage('') }}>取消</button>
+          </>
+          : <><span className={css.modelRowNote}>把常用人物存进模特库，下次直接在人物图库里挑。</span>
+            {api.saveModel ? <button type="button" onClick={() => modelInput.current?.click()}>添加模特照片</button> : null}</>}
+        {generateModel && !modelData ? <>
+          <input type="text" value={aiPrompt} aria-label="描述模特" placeholder="描述模特，如：短发亚洲女性，正面半身照" onChange={event => setAiPrompt(event.target.value)} />
+          <button type="button" disabled={aiBusy || !aiPrompt.trim()} onClick={() => void generateAiModel()}>{aiBusy ? '生成中…' : 'AI 生成模特'}</button>
+        </> : null}
+        <input ref={modelInput} hidden type="file" accept="image/png,image/jpeg,image/webp,image/gif" onChange={event => { void pickModelFile(event.target.files?.[0]); event.target.value = '' }} />
+        {modelMessage ? <span role="alert" className={css.modelRowError}>{modelMessage}</span> : null}
+      </div> : null}
       <div className={css.content}>
         <section className={css.browser} aria-label={`${TITLES[kind]}列表`}>
           {error ? <div className={css.notice} role="alert">{error}<button type="button" onClick={() => setReload(value => value + 1)}>重试加载</button></div> : null}

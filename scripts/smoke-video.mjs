@@ -790,6 +790,75 @@ await check('V1j a snapgen submit is refused before the network when it cannot w
   )
 })
 
+await check('V1k muse-video speaks its own closed body and resolves a relative clip URL', async () => {
+  // Measured against the upstream's /v1/videos: supported fields are exactly
+  // model, prompt, duration, aspect_ratio, resolution, image, images, videos,
+  // audios, files -- the generic `seconds`/`size` pair is a 400 every time.
+  const upstream = await startUpstream()
+  upstream.state.script = {
+    submit: { id: 'muse_1', task_id: 'muse_1', status: 'queued', object: 'video' },
+    polls: [
+      { id: 'muse_1', status: 'in_progress', progress: 40 },
+      // The finished body names the clip by a path RELATIVE to the API base.
+      { id: 'muse_1', status: 'completed', progress: 100, url: '/v1/videos/muse_1/content', video: { url: '/v1/videos/muse_1/content' } },
+    ],
+  }
+  try {
+    const result = await generateVideo(
+      { apiUrl: upstream.base, apiKey: 'sk-muse', channelName: 'MuseChannel' },
+      { mode: 'text', model: 'muse-video', prompt: 'a fox in snow', aspectRatio: '16:9', resolution: '1080P', seconds: 5 },
+      { family: 'muse' },
+    )
+    assert.equal(result.videos[0].mime, 'video/mp4')
+    const submitted = upstream.state.submits[0]
+    assert.equal(submitted.body.duration, 5, 'duration is a NUMBER, not the string "5"')
+    assert.equal(submitted.body.resolution, '1080p', 'resolution is lowercase')
+    assert.equal(submitted.body.aspect_ratio, '16:9')
+    assert.ok(!('seconds' in submitted.body), 'seconds is not a Muse parameter')
+    assert.ok(!('size' in submitted.body), 'size is not a Muse parameter')
+    assert.equal(submitted.authorization, 'Bearer sk-muse')
+    assert.equal(upstream.state.polls[0].id, 'muse_1', 'the poll uses the task id')
+    // A relative result URL has to be resolved against the API base before it
+    // can be fetched at all, and only then does the same-origin check pass --
+    // which is what forwards the key this upstream requires (401 without it).
+    const download = upstream.state.downloads.at(-1)
+    assert.equal(download.path, '/v1/videos/muse_1/content', 'the relative path reaches the provider as an absolute request')
+    assert.equal(download.authorization, 'Bearer sk-muse', 'the key is forwarded to the API origin that issued the path')
+  } finally {
+    await upstream.close()
+  }
+
+  // Image mode sends a BARE data URL in `image` (no `{ url }` wrapper), and the
+  // catalogue narrows the vocabulary so the panel cannot offer a 4:3 or 480P
+  // pick this upstream answers with a 400.
+  const still = await startUpstream()
+  still.state.script = {
+    submit: { id: 'muse_2', status: 'queued' },
+    polls: [{ id: 'muse_2', status: 'completed', url: `http://127.0.0.1:${still.port}/m.mp4` }],
+  }
+  try {
+    await generateVideo(
+      { apiUrl: still.base, apiKey: 'k' },
+      { mode: 'image', model: 'muse-video', prompt: 'p', aspectRatio: '4:3', resolution: '720P', seconds: 5, image: 'data:image/png;base64,QUJD' },
+      { family: 'muse' },
+    )
+    const body = still.state.submits[0].body
+    assert.equal(body.image, 'data:image/png;base64,QUJD', 'the frame rides as a bare data URL')
+    assert.ok(!('aspect_ratio' in body), 'a ratio Muse cannot express is dropped, not forwarded into a 400')
+  } finally {
+    await still.close()
+  }
+
+  const catalog = host.describeVideoModel('muse-video')
+  assert.equal(catalog.family, 'muse', 'muse-video is its own family, not the generic fallback')
+  assert.deepEqual(catalog.resolutions, ['720P', '1080P'], '480p is rejected upstream, so it is not offered')
+  assert.deepEqual(catalog.aspectRatios, ['16:9', '9:16', '1:1'])
+  assert.deepEqual(catalog.modes, ['text', 'image'])
+  // The exact-match guard must not swallow snapgen's completely different id.
+  assert.equal(host.describeVideoModel('muse-ai-video').family, 'snapgen', 'snapgen keeps its own muse id')
+  assert.equal(host.describeVideoModel('kling-v2-master').family, 'openai-video', 'the generic fallback still works')
+})
+
 // ---------------------------------------------------------------------- V2/V3
 // ---------------------------------------------------------------------- V2/V3
 await check('V2 the runtime persists a clip and the store serves it', async () => {

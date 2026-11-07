@@ -452,6 +452,10 @@ function parseGenerateRequest(body: Record<string, unknown>): GenerateRequest | 
     quality: typeof body.quality === 'string' ? body.quality : 'auto',
     n: typeof body.n === 'number' ? body.n : 1,
     detail: typeof body.detail === 'string' ? body.detail : '',
+    // GIF output: only an explicit 'gif' opts in; anything else stays a still.
+    ...body.outputFormat === 'gif' ? { outputFormat: 'gif' as const } : {},
+    ...typeof body.frameCount === 'number' && Number.isFinite(body.frameCount) ? { frameCount: body.frameCount } : {},
+    ...typeof body.frameDurationMs === 'number' && Number.isFinite(body.frameDurationMs) ? { frameDurationMs: body.frameDurationMs } : {},
     ...typeof body.image === 'string' && body.image !== '' ? { image: body.image } : {},
     ...Array.isArray(body.images)
       ? { images: body.images.filter((item): item is string => typeof item === 'string' && item !== '').slice(0, 4) }
@@ -657,6 +661,9 @@ function parseHistoryEntryInput(body: Record<string, unknown>): HistoryEntryInpu
     n: entry.n,
     images,
     ...typeof entry.refName === 'string' ? { refName: entry.refName } : {},
+    ...entry.outputFormat === 'gif' ? { outputFormat: 'gif' as const } : {},
+    ...typeof entry.frameCount === 'number' && Number.isFinite(entry.frameCount) ? { frameCount: entry.frameCount } : {},
+    ...typeof entry.frameDurationMs === 'number' && Number.isFinite(entry.frameDurationMs) ? { frameDurationMs: entry.frameDurationMs } : {},
     ...typeof entry.channelId === 'string' ? { channelId: entry.channelId } : {},
     ...typeof entry.channel === 'string' ? { channel: entry.channel } : {},
     ...typeof entry.comparisonId === 'string' ? { comparisonId: entry.comparisonId } : {},

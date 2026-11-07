@@ -586,8 +586,7 @@
   flex: none;
 }
 
-.taskList h3,
-.history h3 {
+.taskList h3 {
   margin: 0;
   font-size: 13px;
 }
@@ -624,52 +623,6 @@
 }
 
 /* ------------------------------------------------------------- history */
-
-.history {
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
-  flex: none;
-}
-
-.historyHead {
-  display: flex;
-  align-items: baseline;
-  justify-content: space-between;
-  gap: 8px;
-}
-
-.historyGrid {
-  display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(110px, 1fr));
-  gap: 8px;
-}
-
-.historyThumb {
-  min-width: 0;
-  margin: 0;
-  border: 1px solid var(--dsw-alias-border-l2);
-  border-radius: var(--dsw-radius-sm);
-  overflow: hidden;
-  background: var(--dsw-alias-bg-layer-2);
-}
-
-.historyThumb img {
-  display: block;
-  width: 100%;
-  aspect-ratio: 3 / 4;
-  object-fit: cover;
-}
-
-.historyThumb figcaption {
-  padding: 4px 6px;
-  color: var(--dsw-alias-label-secondary);
-  font-size: 10px;
-  line-height: 1.5;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
 
 .spinner {
   width: 14px;

@@ -3,9 +3,9 @@ import { promises as fs } from 'node:fs'
 import path from 'node:path'
 import { createHash, randomUUID } from 'node:crypto'
 import { imageDataRoot } from './image-storage-path.ts'
-import { listModels } from './model-store.ts'
+import { listModels, type ModelEntry } from './model-store.ts'
 import { MODEL_API } from './protocol.ts'
-import { OUTFIT_API, type OutfitListRequest, type OutfitListResult, type OutfitMaterializeRequest, type OutfitReference, type OutfitReferenceKind, type OutfitRecipe, type OutfitUploadRequest } from './outfit-reference.ts'
+import { OUTFIT_API, modelReference, type OutfitListRequest, type OutfitListResult, type OutfitMaterializeRequest, type OutfitReference, type OutfitReferenceKind, type OutfitRecipe, type OutfitUploadRequest } from './outfit-reference.ts'
 
 const REVISION = '488939139c69acfe078372b39d4bd0c457dc060e'
 const SOURCES = [
@@ -22,6 +22,9 @@ const ORIGINS: Record<string, { label: string; origin: string; notice: string }>
   'gia-anime': { label: 'ギア · 动漫', origin: 'https://ai-costume-anime-gallery.pages.dev/', notice: '动漫参考图片由ギア站点托管，请遵守原站条款。' },
   shisei: { label: 'Shisei · 中国历代', origin: 'https://github.com/wquguru/shisei', notice: 'Shisei 参考图，非历史服饰考据复原。' },
   upload: { label: '我的上传', origin: '', notice: '' },
+  // 模特库不是远程图库，而是宿主已经落盘的本机图片；放在人物图库里一起浏览，
+  // 不再让工作台为它维护第二套选择界面。
+  model: { label: '我的模特', origin: '', notice: '' },
 }
 const IMAGE_HOSTS = new Set(['raw.githubusercontent.com', 'ai-pose-gallery.anhao.app', 'ai-pose-gallery.pages.dev', 'ai-costume-gallery.pages.dev', 'ai-portrait-gallery.pages.dev', 'charadb-2fi.pages.dev', 'ai-costume-anime-gallery.pages.dev'])
 const MAX_IMAGE = 10 * 1024 * 1024
@@ -284,7 +287,10 @@ export class OutfitReferenceStore {
       try { return (await this.catalog(source, Boolean(request.refresh))).rows } catch (error) { warnings.push(`${source.file}：${error instanceof Error ? error.message : String(error)}`); return [] as Item[] }
     }))
     for (const source of sourceFor(request.kind)) { const warning = this.staleWarnings.get(source.file); if (warning) warnings.push(warning) }
-    const visible = [...chunks.flat().map(x => x.ref), ...(await this.readUploads()).filter(x => x.kind === request.kind)]
+    // 人物图库把本机模特库当作一种来源：模特条目排在最前，因为它们通常是
+    // 用户自己攒下的固定人物，而不是要挑的内置素材。
+    const models = request.kind === 'portrait' ? (await listModels()).map(modelReference) : []
+    const visible = [...models, ...chunks.flat().map(x => x.ref), ...(await this.readUploads()).filter(x => x.kind === request.kind)]
       .filter(x => request.includeSensitive === true || !x.sensitive)
     const query = (request.query ?? '').trim().toLocaleLowerCase()
     const category = request.category ?? ''
@@ -366,6 +372,12 @@ export class OutfitReferenceStore {
   }
   /** 原图复制进插件数据目录后才返回选择结果，避免随后第三方链接失效。 */
   async materialize(request: OutfitMaterializeRequest): Promise<OutfitReference> {
+    // 模特条目本来就已落盘在宿主模特库，不需要再下载或复制一份。
+    if (request.key.startsWith('model:')) {
+      const model = (await listModels()).find(entry => `model:${entry.id}` === request.key)
+      if (!model || request.viewId || request.useDepth) throw new Error('草稿模特未在模特库中')
+      return modelReference(model)
+    }
     if (request.key.includes(':upload:')) {
       const uploaded = (await this.readUploads()).find(entry => entry.key === request.key)
       if (!uploaded || request.viewId || request.useDepth) throw new Error('上传素材没有可选视角或深度图')

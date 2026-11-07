@@ -2686,10 +2686,47 @@ html[data-dsh-imagegen-chat-collapsed] [data-dsh-imagegen-chat-resizer] {
   justify-content: center;
 }
 
+/* GIF locks the mode, compare and count controls. The host's Pill forwards
+   `disabled` to its button but carries no disabled styling of its own, so the
+   locked state would otherwise look clickable; opacity and cursor say it
+   without introducing a colour literal. */
+.modePill:disabled,
+.optionPill:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
 .paramHint {
   font-size: 11px;
   line-height: 1.45;
   color: var(--dsw-alias-label-tertiary);
+}
+
+/* GIF frame knobs: two numeric fields plus the derived loop length. */
+.gifFields {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.gifField {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  color: var(--dsw-alias-label-secondary);
+}
+
+.gifField input {
+  width: 66px;
+  padding: 4px 6px;
+  font: inherit;
+  font-size: 12px;
+  color: var(--dsw-alias-label-primary);
+  background: var(--dsw-alias-bg-layer-2);
+  border: 1px solid var(--dsw-alias-border-l2);
+  border-radius: var(--dsw-radius-sm);
 }
 
 /* --- footer: model dropdown + generate button (fixed under the scroll) -------- */

@@ -467,6 +467,11 @@ export class ImageGenerationRuntime {
     if (channel === undefined) {
       throw new ImageGenError('尚未配置任何渠道：请先打开「设置 → 生图配置」添加渠道并填写 API 地址与密钥', 'no-channels')
     }
+    // Subscription vendors answer with stills only; requesting a GIF there
+    // would silently return one and charge for the wrong thing.
+    if (request.outputFormat === 'gif' && channel.auth === 'subscription') {
+      throw new ImageGenError('订阅渠道不支持 GIF 动图，请改用带 API Key 的 gpt-image-2.6 渠道', 'gif-unsupported')
+    }
     const result = channel.auth === 'subscription' && channel.subscription !== undefined
       ? { images: await this.generateSubscription(channel.subscription, request, signal) }
       : await generateImage({ apiUrl: channel.apiUrl, apiKey: channel.apiKey, apiUrlFull: channel.apiUrlFull, protocol: channel.protocol, channelName: channel.name, watermark: channel.watermark } satisfies UpstreamConfig, request, { signal })
@@ -484,6 +489,9 @@ export class ImageGenerationRuntime {
         quality: request.quality,
         detail: request.detail,
         n: request.n,
+        ...request.outputFormat === undefined ? {} : { outputFormat: request.outputFormat },
+        ...request.frameCount === undefined ? {} : { frameCount: request.frameCount },
+        ...request.frameDurationMs === undefined ? {} : { frameDurationMs: request.frameDurationMs },
         images: result.images,
         ...request.refName === undefined ? {} : { refName: request.refName },
         ...request.channelId === undefined ? {} : { channelId: request.channelId },
