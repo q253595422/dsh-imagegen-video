@@ -26,8 +26,10 @@ export const SUBSCRIPTION_API = {
 export const SUBSCRIPTION_PROVIDERS = ['chatgpt-sub', 'grok-sub', 'google-sub', 'openrouter-sub'] as const
 export type SubscriptionProvider = typeof SUBSCRIPTION_PROVIDERS[number]
 
-/** Transport protocol a channel uses to reach its gateway. */
-export type ChannelProtocol = 'images' | 'chat-completions'
+/** Transport protocol a channel uses to reach its gateway.
+ *  google-native talks to Google Generative Language :generateContent with
+ *  an x-goog-api-key, instead of an OpenAI-compatible gateway. */
+export type ChannelProtocol = 'images' | 'chat-completions' | 'google-native'
 
 /** Stored preference: auto keeps old channels on images unless the URL is explicit. */
 export type ChannelProtocolPreference = 'auto' | ChannelProtocol
@@ -45,12 +47,12 @@ export function isChatCompletionsUrl(value: string): boolean {
 
 /** Whether a stored value is one of the accepted protocol preferences. */
 export function isChannelProtocolPreference(value: unknown): value is ChannelProtocolPreference {
-  return value === 'auto' || value === 'images' || value === 'chat-completions'
+  return value === 'auto' || value === 'images' || value === 'chat-completions' || value === 'google-native'
 }
 
 /** Resolve a channel preference without changing legacy behavior by default. */
 export function resolveChannelProtocol(apiUrl: string, preference: ChannelProtocolPreference | undefined = 'auto'): ChannelProtocol {
-  if (preference === 'images' || preference === 'chat-completions') return preference
+  if (preference === 'images' || preference === 'chat-completions' || preference === 'google-native') return preference
   return isChatCompletionsUrl(apiUrl) ? 'chat-completions' : 'images'
 }
 
