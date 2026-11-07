@@ -178,6 +178,7 @@ jobs:
             npm publish "./${packages[0]}" \
               --access public \
               --tag latest \
+              --provenance \
               --ignore-scripts \
               --registry="$registry"
           else
