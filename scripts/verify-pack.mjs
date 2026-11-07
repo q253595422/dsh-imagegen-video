@@ -140,25 +140,34 @@ const entries = new Set(listing)
 // `readSourceText`, not `readFileSync`: this pattern anchors on `$`, which on a
 // CRLF checkout lands after the `\r` and matches nothing -- the guard would then
 // report that PLUGIN_VERSION moved, which is the wrong diagnosis.
-const protocolSource = readSourceText(join(ROOT, 'src/protocol.ts'))
-const declaredVersion = protocolSource.match(/^export const PLUGIN_VERSION = '([^']+)'$/m)?.[1]
-if (declaredVersion === undefined) {
-  fail([
-    '',
-    'FAIL: could not read PLUGIN_VERSION from src/protocol.ts.',
-    'The host updater and the client UI both read it from there; if the line',
-    'moved or changed shape, update this check rather than letting it pass.',
-  ])
-}
-if (declaredVersion !== pkg.version) {
-  fail([
-    '',
-    `FAIL: package.json says ${pkg.version} but src/protocol.ts says ${declaredVersion}.`,
-    'Both are read at runtime and neither is derived from the other, so a bump',
-    'must change both. With them apart, the update check compares the registry',
-    `against ${declaredVersion} and tells the user ${pkg.version} is available`,
-    'while they are already on it.',
-  ])
+// Backfill mode: recorded versions are checked out at their own tag, where the
+// current release-shape invariants (notes sheet, PLUGIN_VERSION, publish
+// window) did not exist or were not enforced yet. Those were decided on the
+// current tree and cannot be retrofitted onto history; the content checks below
+// still guard the archive itself. `DSH_SKIP_VERSION_SHAPE=1` is set only by
+// the npm-backfill workflow, never by release.yml or the negative runner.
+const skipVersionShape = process.env.DSH_SKIP_VERSION_SHAPE === '1'
+if (!skipVersionShape) {
+  const protocolSource = readSourceText(join(ROOT, 'src/protocol.ts'))
+  const declaredVersion = protocolSource.match(/^export const PLUGIN_VERSION = '([^']+)'$/m)?.[1]
+  if (declaredVersion === undefined) {
+    fail([
+      '',
+      'FAIL: could not read PLUGIN_VERSION from src/protocol.ts.',
+      'The host updater and the client UI both read it from there; if the line',
+      'moved or changed shape, update this check rather than letting it pass.',
+    ])
+  }
+  if (declaredVersion !== pkg.version) {
+    fail([
+      '',
+      `FAIL: package.json says ${pkg.version} but src/protocol.ts says ${declaredVersion}.`,
+      'Both are read at runtime and neither is derived from the other, so a bump',
+      'must change both. With them apart, the update check compares the registry',
+      `against ${declaredVersion} and tells the user ${pkg.version} is available`,
+      'while they are already on it.',
+    ])
+  }
 }
 
 const missing = REQUIRED.filter(entry => !entries.has(`package/${entry}`))
@@ -200,14 +209,16 @@ const notesEntry = releaseNotesEntry(pkg.version)
 // check kept being reached only from CI's last step, after two releases had
 // already gone out with the local suite green.
 const missingNotes = missingReleaseNotes(ROOT, pkg.version)
-if (missingNotes !== null) fail(missingNotes)
-if (!entries.has(`package/${notesEntry}`)) {
-  fail([
-    '',
-    `FAIL: the archive does not contain ${notesEntry}, although \`files\` lists docs/releases.`,
-    'Every release ships its own notes; an archive without them means the',
-    'manifest and the repository no longer agree on what a release contains.',
-  ])
+if (!skipVersionShape) {
+  if (missingNotes !== null) fail(missingNotes)
+  if (!entries.has(`package/${notesEntry}`)) {
+    fail([
+      '',
+      `FAIL: the archive does not contain ${notesEntry}, although \`files\` lists docs/releases.`,
+      'Every release ships its own notes; an archive without them means the',
+      'manifest and the repository no longer agree on what a release contains.',
+    ])
+  }
 }
 
 // The archive's own manifest is authoritative: `files` may be edited and the
@@ -252,27 +263,31 @@ console.log('pack: no docs/videos, no docs/images')
 // for a credential problem.
 const workflow = readSourceText(join(ROOT, '.github/workflows/release.yml'))
 const windowLoop = /for attempt in \$\(seq 1 (\d+)\); do[\s\S]{0,400}?not visible yet \(attempt \$attempt\/\d+\); waiting (\d+)s/.exec(workflow)
-if (!windowLoop) {
-  fail([
-    '',
-    'FAIL: the npm publish job no longer has a bounded visibility loop.',
-    'It must retry the read-back and print the attempt count; without both, a',
-    'read lag is indistinguishable from a version that never published.',
-  ])
+if (!skipVersionShape) {
+  if (!windowLoop) {
+    fail([
+      '',
+      'FAIL: the npm publish job no longer has a bounded visibility loop.',
+      'It must retry the read-back and print the attempt count; without both, a',
+      'read lag is indistinguishable from a version that never published.',
+    ])
+  }
+  const [, attempts, interval] = windowLoop
+  const windowSeconds = Number(attempts) * Number(interval)
+  // 3m16s was observed once. Anything under four minutes would have failed that
+  // same day, so the floor is the observation plus headroom, not a round number.
+  if (windowSeconds < 240) {
+    fail([
+      '',
+      `FAIL: the publish visibility window is ${windowSeconds}s (${attempts} x ${interval}s).`,
+      'The registry read path lagged a successful publish by 3m16s on 2026-10-18.',
+      'A shorter window reports a publish that worked as a failed one.',
+    ])
+  }
+  console.log(`pack: publish visibility window is ${windowSeconds}s, past the 3m16s read lag measured on 1.7.8`)
+} else {
+  console.log('pack: version-shape checks skipped (backfill mode)')
 }
-const [, attempts, interval] = windowLoop
-const windowSeconds = Number(attempts) * Number(interval)
-// 3m16s was observed once. Anything under four minutes would have failed that
-// same day, so the floor is the observation plus headroom, not a round number.
-if (windowSeconds < 240) {
-  fail([
-    '',
-    `FAIL: the publish visibility window is ${windowSeconds}s (${attempts} x ${interval}s).`,
-    'The registry read path lagged a successful publish by 3m16s on 2026-10-18.',
-    'A shorter window reports a publish that worked as a failed one.',
-  ])
-}
-console.log(`pack: publish visibility window is ${windowSeconds}s, past the 3m16s read lag measured on 1.7.8`)
 
 // Leave no archive behind in the working tree: the caller only wanted the
 // inspection, and a stray .tgz is what made older checks pick the wrong file.

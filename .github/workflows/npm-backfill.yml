@@ -64,9 +64,13 @@ jobs:
       - name: Test suites
         run: pnpm test
 
-      # The same archive-content assertions CI runs.
+      # The same archive-content assertions CI runs. Backfill mode skips the
+      # version-shape checks (notes sheet / PLUGIN_VERSION / publish window):
+      # those invariants postdate the recorded tags and cannot be retrofitted.
       - name: Verify the archive contents
         run: node scripts/verify-pack.mjs
+        env:
+          DSH_SKIP_VERSION_SHAPE: "1"
 
       - name: Pack and hash
         run: |
