@@ -1586,6 +1586,16 @@ const CASES = [
     to: '',
     expect: /gif-edit-unsupported|图生图 GIF 应被拒绝/,
   },
+  {
+    // issue #29：URL 型模板图引用解码后 https:// 必然切出空段；把空段限制
+    // 改回全局生效，URL 型引用就又恒死在路由校验、到不了 store 的白名单。
+    name: 'URL-type template image refs are rejected as empty-segment paths again',
+    runner: 'smoke',
+    file: 'src/routes.ts',
+    from: "    if (segment === '.' || segment === '..' || (segment === '' && !isUrlRef)) return undefined",
+    to: "    if (segment === '' || segment === '.' || segment === '..') return undefined",
+    expect: /C6a2 URL-type template image references reach the backend/,
+  },
 ]
 
 const RUNNERS = {

@@ -1951,9 +1951,13 @@ const history = {
     persistedHistory.splice(0)
     return persistedHistory
   },
-  async readImage() { return undefined },
+  async readImage() { historyImageReads += 1; return undefined },
 }
+let historyImageReads = 0
 const templateImage = Buffer.from('template-image')
+// issue #29: URL-type template sources reference thumbnails by full URL; the
+// route must hand the decoded URL to the backend untouched.
+const templateUrlRef = 'https://raw.githubusercontent.com/itgoyo/PicGoRes/master/img/case1.png'
 let templateRefreshes = 0
 const templateSamples = []
 const templates = {
@@ -1989,7 +1993,10 @@ const templates = {
     return [{ sourceId: 'vibeui', case: { id: 1, title: 'Poster template', prompt: 'Create a bright product poster', category: 'Posters & Typography', categoryZh: '海报与排版', styles: [], scenes: [], sourceLabel: '@author', sourceUrl: '', githubUrl: '', image: '', featured: false } }]
   },
   async readImage(sourceId, file) {
-    return sourceId === 'vibeui' && file === 'case1.png' ? { data: templateImage, mime: 'image/png' } : undefined
+    if (sourceId === 'vibeui' && file === 'case1.png') return { data: templateImage, mime: 'image/png' }
+    // URL-type refs arrive decoded and untouched; the real store applies the
+    // host whitelist after this point, the stub only proves the passthrough.
+    return sourceId === 'itgoyo' && file.startsWith('https://raw.githubusercontent.com/') ? { data: templateImage, mime: 'image/png' } : undefined
   },
 }
 const favorites = {
@@ -2868,6 +2875,41 @@ await check('C6 template routes are source-scoped, refresh per source, and proxy
   assert.equal(legacy.status, 404)
   const badPool = await fetch(`http://127.0.0.1:${port}/api/dsh-imagegen/templates/image/canghe/case1.png`)
   assert.equal(badPool.status, 404)
+})
+
+await check('C6a2 URL-type template image references reach the backend', async () => {
+  // issue #29: the encoded https:// inside the ref decodes to empty path
+  // segments; the route must hand the full URL to the template store (which
+  // enforces the host whitelist) instead of 404ing before it is ever called.
+  const image = await fetch(`http://127.0.0.1:${port}/api/dsh-imagegen/templates/image/itgoyo/${encodeURIComponent(templateUrlRef)}`)
+  assert.equal(image.status, 200)
+  assert.deepEqual(Buffer.from(await image.arrayBuffer()), templateImage)
+
+  // A legal URL beyond the old 400-char composite cap still resolves.
+  const longLegal = `https://raw.githubusercontent.com/${'a'.repeat(500)}.png`
+  const longOk = await fetch(`http://127.0.0.1:${port}/api/dsh-imagegen/templates/image/itgoyo/${encodeURIComponent(longLegal)}`)
+  assert.equal(longOk.status, 200)
+
+  // Traversal stays refused even inside a URL-shaped ref.
+  const traversal = await fetch(`http://127.0.0.1:${port}/api/dsh-imagegen/templates/image/itgoyo/${encodeURIComponent('https://raw.githubusercontent.com/a/../b.png')}`)
+  assert.equal(traversal.status, 404)
+
+  // Beyond the store's 4000-char URL limit the composite path is refused.
+  const tooLong = await fetch(`http://127.0.0.1:${port}/api/dsh-imagegen/templates/image/itgoyo/${encodeURIComponent(`https://raw.githubusercontent.com/${'a'.repeat(4100)}.png`)}`)
+  assert.equal(tooLong.status, 404)
+
+  // Bare names keep the strict rules: empty segments and >400 chars refuse.
+  const emptySegment = await fetch(`http://127.0.0.1:${port}/api/dsh-imagegen/templates/image/vibeui/${encodeURIComponent('case//1.png')}`)
+  assert.equal(emptySegment.status, 404)
+  const longName = await fetch(`http://127.0.0.1:${port}/api/dsh-imagegen/templates/image/vibeui/${'a'.repeat(401)}.png`)
+  assert.equal(longName.status, 404)
+
+  // The relaxation is template-only: a URL-shaped ref on the history image
+  // route still dies in path validation, before the backend is touched.
+  const before = historyImageReads
+  const historyUrl = await fetch(`http://127.0.0.1:${port}/api/dsh-imagegen/history/image/${encodeURIComponent(templateUrlRef)}`)
+  assert.equal(historyUrl.status, 404)
+  assert.equal(historyImageReads, before)
 })
 
 await check('C6b template favorites persist host-side and round-trip', async () => {

@@ -679,8 +679,12 @@ function parseHistoryEntryInput(body: Record<string, unknown>): HistoryEntryInpu
   }
 }
 
-/** Extract the image file name from a history-image request URL. */
-function imageFileFrom(rawUrl: string | undefined, basePath: string): string | undefined {
+/** Extract the image file name from an image-route request URL.
+ *  `allowUrlRef` (template route only) also accepts a whole http(s) URL as
+ *  the file: its "://" legitimately cuts empty segments, and the composite
+ *  <sourceId>/<URL> path may exceed the 400-char name cap. The templates
+ *  store still enforces protocol, host whitelist and the 4000-char URL limit. */
+function imageFileFrom(rawUrl: string | undefined, basePath: string, allowUrlRef = false): string | undefined {
   if (rawUrl === undefined) return undefined
   let pathname: string
   try {
@@ -696,12 +700,15 @@ function imageFileFrom(rawUrl: string | undefined, basePath: string): string | u
     return undefined
   }
   // A relative path of plain segments. Nested segments are allowed — the
-  // template route serves /image/<sourceId>/<file> — but no segment may be
-  // empty, "." or "..", and the value may never be absolute.
-  if (file.length === 0 || file.length > 400) return undefined
+  // template route serves /image/<sourceId>/<file>. "." and ".." are always
+  // rejected and the value may never be absolute; empty segments and the
+  // 400-char cap relax only for a URL-type template reference, whose URL
+  // may reach the store's 4000-char limit (plus sourceId and slash).
+  const isUrlRef = allowUrlRef && file.includes('://')
+  if (file.length === 0 || file.length > (isUrlRef ? 4100 : 400)) return undefined
   if (file.includes('\\') || file.includes('\0') || file.startsWith('/')) return undefined
   for (const segment of file.split('/')) {
-    if (segment === '' || segment === '.' || segment === '..') return undefined
+    if (segment === '.' || segment === '..' || (segment === '' && !isUrlRef)) return undefined
   }
   return file
 }
@@ -2471,7 +2478,7 @@ export function makeRoutes(deps: ImageGenRoutesDeps): WebRoute[] {
         }
         // Source-scoped: /image/<sourceId>/<file> (file names collide across
         // sources, so the pool on disk is per source).
-        const raw = imageFileFrom(req.url, TEMPLATES_API.image)
+        const raw = imageFileFrom(req.url, TEMPLATES_API.image, true)
         const slash = raw?.indexOf('/') ?? -1
         const sourceId = slash > 0 ? raw!.slice(0, slash) : ''
         const file = slash > 0 ? raw!.slice(slash + 1) : ''
