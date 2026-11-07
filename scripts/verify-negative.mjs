@@ -1499,6 +1499,19 @@ const CASES = [
     to: '      {false ? <div className={css.modelRow} data-outfit-model-add="">\n',
     expect: /FAIL 人物图库的添加模特行没有按/,
   },
+  // ------------------------------------------- the outfit form's draft gate
+  {
+    // 草稿读失败曾经把整张 <fieldset> 永久禁用：模式按钮、图库入口、上传全
+    // 部点不动，而提示只说「无法读取草稿」——用户看到的就是「角色搭配点不了」。
+    // 旧的 `disabled={!draftLoaded}` 在草稿永远读不到时就等于恒禁用，所以
+    // 这里直接注入恒禁用：E1 新增的两条启用态断言必须变红。
+    name: 'the outfit form goes back to a permanently disabled fieldset',
+    runner: 'smoke',
+    file: 'src/client/OutfitWorkspace.tsx',
+    from: "  const formLocked = !draftLoaded && draftError === ''",
+    to: '  const formLocked = true',
+    expect: /the outfit form is interactive, not stuck waiting on a draft read/,
+  },
   // ------------------------------------------- animated GIF output (gpt-image-2.6)
   {
     // 把 output_format 从请求体摘掉，上游就拿不到「这是动图」这条指令，

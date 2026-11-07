@@ -59,6 +59,9 @@ export default function OutfitWorkspace({ api = defaultApi, config }: OutfitWork
   const working = useRef(false)
   const latestTasks = useRef<GenerationTaskSummary[]>([])
   const hydratedIds = useRef(new Set<string>())
+  /** 草稿读失败期间用户仍可编辑（否则读不到旧草稿就等于整个面板点不动）。
+   *  这时重试成功必须保留用户眼前的编辑，而不是拿旧草稿覆盖掉它。 */
+  const editedWhileUnloaded = useRef(false)
 
   const options = imageModelOptions(config)
   const initialChoice = { model: options.defaultModel ?? options.models[0] ?? '', channelId: options.defaultChannelId ?? options.groups[0]?.id ?? '' }
@@ -74,13 +77,19 @@ export default function OutfitWorkspace({ api = defaultApi, config }: OutfitWork
   const scenePreset = SCENES.includes(recipe.scene) ? recipe.scene : '自定义'
   const hasReference = recipe.portrait !== null || recipe.costumes.length > 0 || recipe.pose !== null
   const hasRequired = recipe.mode === 'try-on' ? recipe.portrait !== null && recipe.costumes.length > 0 : hasReference
+  /** 只有「正在读草稿」这一小段窗口需要锁表单：那时到达的草稿会覆盖编辑。
+   *  读失败不再算窗口——一只失败的请求把整张表单永久禁用，用户看到的就是
+   *  「按钮点不动」，而错误提示里并没有说这一点。保存另有 `draftLoaded` 闸，
+   *  所以放开编辑不会盲覆盖磁盘上的旧草稿。 */
+  const formLocked = !draftLoaded && draftError === ''
 
   useEffect(() => {
     active.current = true
     let cancelled = false
     void outfitReferenceApi.loadDraft().then(draft => {
       if (cancelled) return
-      if (draft?.version === 1) setRecipe({ ...draft, costumes: draft.costumes.slice(0, MAX_CLOTHES) })
+      if (!editedWhileUnloaded.current && draft?.version === 1) setRecipe({ ...draft, costumes: draft.costumes.slice(0, MAX_CLOTHES) })
+      editedWhileUnloaded.current = false
       setDraftLoaded(true)
     }).catch(cause => {
       if (cancelled) return
@@ -152,6 +161,7 @@ export default function OutfitWorkspace({ api = defaultApi, config }: OutfitWork
   }, [api])
 
   const update = (patch: Partial<OutfitRecipe>): void => {
+    if (!draftLoaded) editedWhileUnloaded.current = true
     generationEpoch.current++
     previewRecipeKey.current = ''
     setPrepared(null)
@@ -159,6 +169,7 @@ export default function OutfitWorkspace({ api = defaultApi, config }: OutfitWork
     setError('')
   }
   const chooseReference = (item: OutfitReference): void => {
+    if (!draftLoaded) editedWhileUnloaded.current = true
     generationEpoch.current++
     previewRecipeKey.current = ''
     setPrepared(null)
@@ -189,7 +200,9 @@ export default function OutfitWorkspace({ api = defaultApi, config }: OutfitWork
     try {
       const draft = await outfitReferenceApi.loadDraft()
       if (!active.current) return
-      if (draft?.version === 1) setRecipe({ ...draft, costumes: draft.costumes.slice(0, MAX_CLOTHES) })
+      // 用户在读失败期间已经改过配方：保留眼前的编辑，只解除保存闸。
+      if (!editedWhileUnloaded.current && draft?.version === 1) setRecipe({ ...draft, costumes: draft.costumes.slice(0, MAX_CLOTHES) })
+      editedWhileUnloaded.current = false
       setDraftLoaded(true)
     } catch (cause) { if (active.current) setDraftError(`无法读取搭配草稿：${cause instanceof Error ? cause.message : String(cause)}`) }
   }
@@ -202,7 +215,10 @@ export default function OutfitWorkspace({ api = defaultApi, config }: OutfitWork
     return api.modelSave({ name: prompt.slice(0, 24), data: `data:${image.mime};base64,${image.b64}`, mime: image.mime })
   }
   const preview = async (): Promise<void> => {
-    if (!hasRequired || !supportsEdit || modelMissing || !draftLoaded || working.current) return
+    // 草稿没读回来不挡预览：这一步只在本机下载并排版参考图，既不写草稿也不
+    // 调模型。以前它要求 `draftLoaded`，于是草稿读失败时提交按钮看着能点、
+    // 点下去却什么都不发生——和锁死整张表单是同一类缺陷。
+    if (!hasRequired || !supportsEdit || modelMissing || working.current) return
     const epoch = generationEpoch.current
     working.current = true; setBusy(true); setError(''); setPrepared(null)
     try {
@@ -279,7 +295,7 @@ export default function OutfitWorkspace({ api = defaultApi, config }: OutfitWork
     <header className={css.intro}><div><h2>{tt('outfit.title')}</h2><p>{tt('outfit.hint')}</p></div><span className={css.badge}>{tt('outfit.uploadClothes', { count: recipe.costumes.length })}</span></header>
     <div className={css.body}>
       <form className={css.form} onSubmit={event => { event.preventDefault(); void (prepared ? submitOutfit() : preview()) }}>
-        <fieldset className={css.formFields} disabled={!draftLoaded}>
+        <fieldset className={css.formFields} disabled={formLocked}>
         <div className={css.pills} role="radiogroup" aria-label="搭配模式">
           <button type="button" className={css.pill} role="radio" aria-checked={recipe.mode === 'try-on'} onClick={() => update({ mode: 'try-on' })}>商品试穿</button>
           <button type="button" className={css.pill} role="radio" aria-checked={recipe.mode === 'character'} onClick={() => update({ mode: 'character' })}>角色搭配</button>
@@ -308,12 +324,14 @@ export default function OutfitWorkspace({ api = defaultApi, config }: OutfitWork
         <div className={css.field}><span className={css.fieldLabel}>{tt('outfit.ratio')}</span><div className={css.pills} role="radiogroup" aria-label={tt('outfit.ratio')}>{RATIOS.map(value => <button key={value} type="button" className={css.pill} role="radio" aria-checked={recipe.size === value} onClick={() => update({ size: value })}>{value}</button>)}</div></div>
         <div className={css.field}><span className={css.fieldLabel}>{tt('outfit.resolution')}</span><div className={css.pills} role="radiogroup" aria-label={tt('outfit.resolution')}>{RESOLUTIONS.map(value => <button key={value} type="button" className={css.pill} role="radio" aria-checked={recipe.quality === value} onClick={() => update({ quality: value })}>{value}</button>)}</div></div>
         </fieldset>
-        {!draftLoaded ? <div className={css.field}><p role="status" className={css.muted}>{draftError || '正在加载搭配草稿…'}</p>{draftError ? <button type="button" className={css.button} onClick={() => void reloadDraft()}>重试加载</button> : null}</div> : null}
+        {/* 读失败时表单是解锁的，所以提示里必须说清「现在能改、但还存不下来」，
+            否则用户改完以为保存了，切回来发现全没了。 */}
+        {!draftLoaded ? <div className={css.field}><p role={draftError ? 'alert' : 'status'} className={draftError ? css.error : css.muted}>{draftError ? `${draftError} 现在仍可继续编辑，但草稿要等重新加载成功才会保存。` : '正在加载搭配草稿…'}</p>{draftError ? <button type="button" className={css.button} onClick={() => void reloadDraft()}>重试加载</button> : null}</div> : null}
         {draftLoaded && (saving || draftError) ? <p role={draftError ? 'alert' : 'status'} className={draftError ? css.error : css.muted}>{draftError || '正在保存搭配草稿…'}</p> : null}
         {modelMissing ? <p role="status" className={css.error}>{tt('outfit.modelMissing')}</p> : null}
         {!modelMissing && !supportsEdit ? <p role="status" className={css.error}>当前模型不支持参考图编辑，请切换生图模型。</p> : null}
         {recipe.mode === 'try-on' && !hasRequired ? <p className={css.muted}>请先选择人物和至少一张服装图。</p> : null}
-        <div className={css.submitBar}><div className={css.submitRow}><button type="submit" className={css.primary} disabled={!draftLoaded || !hasRequired || !supportsEdit || modelMissing || busy}>{busy ? tt('outfit.generating') : prepared ? '确认生成（使用以上预览）' : '准备参考图预览'}</button>{prepared ? <button type="button" className={css.button} disabled={busy} onClick={() => setPrepared(null)}>重新预览</button> : null}</div><small className={css.muted}>{tt('outfit.consistency')}</small>{error ? <p role="alert" className={css.error}>{error}</p> : null}</div>
+        <div className={css.submitBar}><div className={css.submitRow}><button type="submit" className={css.primary} disabled={formLocked || !hasRequired || !supportsEdit || modelMissing || busy}>{busy ? tt('outfit.generating') : prepared ? '确认生成（使用以上预览）' : '准备参考图预览'}</button>{prepared ? <button type="button" className={css.button} disabled={busy} onClick={() => setPrepared(null)}>重新预览</button> : null}</div><small className={css.muted}>{tt('outfit.consistency')}</small>{error ? <p role="alert" className={css.error}>{error}</p> : null}</div>
       </form>
       <section className={css.results} aria-label="生成预览与结果">
         {prepared ? <div className={css.preview}><h3>提交前预览</h3><p className={css.muted}>本次共 {prepared.referenceCount} 张素材，实际发送 {prepared.sheet ? '一张编号参考拼图' : `${1 + prepared.images.length} 张参考图`}。点击“确认生成”才会调用模型。</p><div className={css.previewImages}>{[prepared.image, ...prepared.images].map((url, index) => <figure key={index}><img src={url} alt={prepared.sheet ? '实际发送的编号参考拼图' : `实际发送的参考图 ${index + 1}`} /><figcaption>{prepared.sheet ? '编号拼图' : `参考图 ${index + 1}`}</figcaption></figure>)}</div><details><summary>查看实际发送的提示词</summary><pre className={css.promptPreview}>{prepared.prompt}</pre></details></div> : null}

@@ -5924,6 +5924,19 @@ await check('E1 client apply mounts the sidebar entry and studio (jsdom)', async
     if (path.startsWith('/api/dsh-imagegen/agent-image?')) {
       return { ok: true, blob: async () => new Blob([pngBytes], { type: 'image/png' }) }
     }
+    // The outfit workspace reads its draft on mount and keeps its fields
+    // disabled until that read settles. Without this branch the read threw,
+    // `draftLoaded` stayed false, the whole `<fieldset>` stayed disabled — and
+    // every outfit assertion then ran against dead controls: a click on
+    // 角色搭配 was swallowed by the browser because the button was disabled,
+    // so `aria-checked` never moved and E1 failed for a reason that had nothing
+    // to do with the mode switch it was meant to cover. `null` is the honest
+    // answer here: this sandbox has no saved draft.
+    if (path.endsWith('/outfit/draft')) {
+      // Both directions answer `null`: there is no saved draft here, and a
+      // later save in this sandbox has nothing to read back.
+      return { ok: true, json: async () => ({ ok: true, value: null }) }
+    }
     if (path.endsWith('/settings/describe')) {
       return {
         ok: true,
@@ -8972,9 +8985,29 @@ await check('E1 client apply mounts the sidebar entry and studio (jsdom)', async
     const tryOnMode = modeOf('商品试穿')
     const characterMode = modeOf('角色搭配')
     assert.ok(tryOnMode !== undefined && characterMode !== undefined, 'both outfit modes are offered')
+    // Every click below is only meaningful if the control can receive one. The
+    // workspace disables its whole fieldset until the draft read settles, and a
+    // request this sandbox did not answer used to leave it disabled forever:
+    // jsdom still fires the click handler directly, so the mode switch looked
+    // covered while a real browser would have swallowed the click entirely.
+    // Pin the enabled state too, so "the click did nothing because the form was
+    // dead" can never pass as "the click did nothing because the handler broke".
+    const outfitFieldset = outfitWorkspace.querySelector('fieldset')
+    assert.ok(outfitFieldset !== null, 'the outfit form has a fieldset')
+    assert.equal(outfitFieldset.disabled, false, 'the outfit form is interactive, not stuck waiting on a draft read')
+    // `button.disabled` stays false under a disabled <fieldset>; the ancestor is
+    // what actually swallows the click, so that is what gets pinned.
+    assert.equal(characterMode.closest('fieldset')?.disabled ?? true, false, 'the mode pills sit in an enabled fieldset before they are clicked')
     assert.equal(tryOnMode.getAttribute('aria-checked'), 'true', '商品试穿 is the default mode')
     assert.equal(characterMode.getAttribute('aria-checked'), 'false', '角色搭配 is not preselected')
     characterMode.dispatchEvent(new jsdomWindow.MouseEvent('click', { bubbles: true, cancelable: true }))
+    // React batches this update: the DOM reflects it one tick later, not inside
+    // the dispatchEvent call. Reading straight after the dispatch asserts on the
+    // pre-render tree and can only pass when the update happens to be flushed
+    // synchronously — which is why this check flipped between red and green
+    // depending on how the surrounding sandbox was set up. Same wait the tab
+    // clicks above already use.
+    await new Promise(resolve => setTimeout(resolve, 60))
     assert.equal(characterMode.getAttribute('aria-checked'), 'true', 'clicking 角色搭配 switches the mode')
     assert.equal(tryOnMode.getAttribute('aria-checked'), 'false', 'the previously selected mode is released')
 
