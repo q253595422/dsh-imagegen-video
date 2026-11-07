@@ -211,6 +211,26 @@ const CASES = [
     to: importFrom('/lib/headless-chrome-not-committed.mjs'),
     expect: /which is not in the repository/,
   },
+  {
+    // The `pack` case above proves the assertion exists; this one proves it is
+    // reached BEFORE the push. WHY the second case: the check has been correct
+    // since v1.8.0, and still 1.15.2 and 1.23.0 both shipped a bump without its
+    // notes sheet, because the only place it ran was `verify-pack.mjs` -- CI's
+    // last step, four minutes after the push, on somebody else's machine. The
+    // local suite was green right up to that.
+    //
+    // `verify-tracked.mjs` is the FIRST entry in `pnpm test`, so this is the
+    // cheapest place the question can be asked. Mutating the version here is
+    // the shipped shape of the mistake: bump `package.json`, don't write the
+    // sheet. If this ever goes green, the local loop has lost the check again
+    // and the failure has moved back to being a surprise after pushing.
+    name: 'the local suite cannot see a version bump that has no notes',
+    runner: 'tracked',
+    file: 'package.json',
+    from: `  "version": "${SRC_VERSION}",`,
+    to: `  "version": "${bumped(SRC_VERSION, 1)}",`,
+    expect: new RegExp(`version ${bumped(SRC_VERSION, 1).replace(/\./g, '\\.')} has no release notes`),
+  },
   // --------------------------------------------------- the gallery trash window
   {
     // A hard delete is the regression this round removed: the entry leaves the
@@ -1101,6 +1121,17 @@ const CASES = [
     // stale the moment the package is released.
     from: `  "version": "${SRC_VERSION}",`,
     to: `  "version": "${bumped(SRC_VERSION, 1)}",`,
+    // A real bump changes both halves; leaving `src/protocol.ts` behind makes
+    // the two-copies-of-the-version guard fire FIRST, and this case then went
+    // red for a reason it never meant to test ("RED but wrong reason"). It has
+    // been that way since that guard was added -- measured on a clean checkout
+    // of 9e3cfbf, so it is not this round's doing. Carrying the second half
+    // keeps the case aimed at the notes check.
+    also: [{
+      file: 'src/protocol.ts',
+      from: `export const PLUGIN_VERSION = '${SRC_VERSION}'`,
+      to: `export const PLUGIN_VERSION = '${bumped(SRC_VERSION, 1)}'`,
+    }],
     expect: new RegExp(`version ${bumped(SRC_VERSION, 1).replace(/\./g, '\\.')} has no release notes`),
   },
   {
@@ -1596,6 +1627,56 @@ const CASES = [
     to: "    if (segment === '' || segment === '.' || segment === '..') return undefined",
     expect: /C6a2 URL-type template image references reach the backend/,
   },
+  {
+    // issue #28：Google 原生协议层的 GIF 闸。去掉它，GIF capable 模型配
+    // google-native 渠道就会发出去，用户为动图付费拿到静图。
+    name: 'google-native accepts a GIF request again',
+    runner: 'google-native',
+    file: 'src/engine.ts',
+    from: "    if (request.outputFormat === 'gif') {\n      throw new ImageGenError('当前渠道走 Google 原生协议，不支持 GIF 动图：请改用 /images/generations 渠道', 'gif-protocol-unsupported')\n    }\n",
+    to: '',
+    expect: /应抛 ImageGenError\(gif-protocol-unsupported\)/,
+  },
+  {
+    // issue #28：google-native 鉴权是 x-goog-api-key；换回 Bearer 会被
+    // Google 401，套件的请求头断言必须变红。
+    name: 'google-native authenticates with Bearer again',
+    runner: 'google-native',
+    file: 'src/engine.ts',
+    from: "        headers: { 'content-type': 'application/json', 'x-goog-api-key': upstream.apiKey.trim() },",
+    to: "        headers: { 'content-type': 'application/json', authorization: `Bearer ${upstream.apiKey.trim()}` },",
+    expect: /test-google-key/,
+  },
+  {
+    // issue #28：参考图上限 5；放宽到 6 会多发一张 inlineData，
+    // 套件的 parts 计数断言必须变红。
+    name: 'google-native carries a sixth reference image',
+    runner: 'google-native',
+    file: 'src/engine.ts',
+    from: "    const references = [request.image, ...(request.images ?? []).filter(img => typeof img === 'string' && img !== '')].slice(0, 5)",
+    to: "    const references = [request.image, ...(request.images ?? []).filter(img => typeof img === 'string' && img !== '')].slice(0, 6)",
+    expect: /5 张参考图 \+ 1 段文本/,
+  },
+  {
+    // issue #28：客户端协议选择器的 google-native 选项。去掉它用户就
+    // 选不到这条协议，D4 的源码不变式必须变红。
+    name: 'the client protocol selector drops google-native',
+    runner: 'smoke',
+    file: 'src/client/SettingsCard.tsx',
+    from: "              <option value=\"google-native\">{t('channels.protocolGoogle')}</option>\n",
+    to: '',
+    expect: /the protocol selector offers google-native/,
+  },
+  {
+    // issue #28：客户端参考图上限规则里的 google-native。去掉它 gemini
+    // 模型落回 nanobanana 族的 1 张，D4 的上限断言必须变红。
+    name: 'google-native collapses to the nanobanana single reference',
+    runner: 'smoke',
+    file: 'src/client/reference-images.ts',
+    from: "  if (protocol === 'chat-completions' || protocol === 'google-native') return EDIT_REFERENCE_LIMIT",
+    to: "  if (protocol === 'chat-completions') return EDIT_REFERENCE_LIMIT",
+    expect: /five-reference ceiling/,
+  },
 ]
 
 const RUNNERS = {
@@ -1630,6 +1711,9 @@ const RUNNERS = {
   // GIF 输出是纯请求体问题：套件自己打桩 fetch，直接 import src/engine.ts，
   // 不发真实请求也不需要构建。
   gif: { script: 'scripts/smoke-gif-output.mjs', build: false },
+  // Google 原生协议同 GIF：纯请求体问题，套件打桩 fetch 直接 import src，
+  // 零网络零构建。
+  'google-native': { script: 'scripts/smoke-google-native.mjs', build: false },
   // The archive rule, run against a real `pnpm pack`. No rebuild: the archive
   // contents depend on package.json and the tree, not on the built output.
   pack: { script: 'scripts/verify-pack.mjs', build: false },
@@ -1692,6 +1776,12 @@ for (const testCase of CASES) {
   }
   try {
     patch(testCase.file, testCase.from, testCase.to)
+    // Some defects are only reachable once an UNRELATED invariant is kept
+    // intact. `package.json` carries the version that a guard compares against
+    // `src/protocol.ts`, so bumping it alone makes that guard fire first and the
+    // case reports RED for a reason it never meant to test. `also` applies the
+    // rest of the mutation so the case can reach the check it is about.
+    for (const extra of testCase.also ?? []) patch(extra.file, extra.from, extra.to)
     if (runner.build) build()
   } catch (error) {
     results.push({ name: testCase.name, verdict: 'HARNESS BROKEN', detail: String(error.message) })

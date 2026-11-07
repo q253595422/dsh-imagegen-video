@@ -13,6 +13,7 @@ import { detectImageMime } from './image-format.ts'
 import { clampGifFrameCount, clampGifFrameDurationMs, modelFamily, promptCharLimit, supportsGifOutput } from './model-catalog.ts'
 import { bodyByteLength, excerptOf, networkErrorFields, readResponseExcerpt, readResponseText, recordDiagnostic, type DiagnosticPhase } from './diagnostics-store.ts'
 import { recordSignal } from './signal-store.ts'
+import { googleNativeUrl } from './prompt-enhancer.ts'
 
 /** The upstream credentials the panel's settings card configures. */
 export interface UpstreamConfig {
@@ -1252,6 +1253,154 @@ async function requestOneImage(
 }
 
 /**
+ * Google Generative Language native generation (:generateContent with an
+ * x-goog-api-key). The body has no `n`, so the requested count is satisfied
+ * with parallel single-image calls and flattened in order.
+ */
+async function generateGoogleNativeImages(
+  upstream: UpstreamConfig,
+  baseUrl: string,
+  request: GenerateRequest,
+  signal?: AbortSignal,
+): Promise<GeneratedImage[]> {
+  const count = effectiveCount(request)
+  const batches = await Promise.all(
+    Array.from({ length: count }, () => requestOneGoogleNativeImage(upstream, baseUrl, request, signal)),
+  )
+  return batches.flat()
+}
+
+/** Extract the image parts of one :generateContent reply. Thinking parts are
+ *  skipped (drafts, not the answer); camelCase and snake_case inlineData are
+ *  both accepted because gateways differ, and a missing mimeType falls back
+ *  to byte sniffing. */
+function googleNativeImages(body: Record<string, unknown>): GeneratedImage[] {
+  const candidates = Array.isArray(body.candidates) ? body.candidates : []
+  const images: GeneratedImage[] = []
+  for (const candidate of candidates) {
+    if (candidate === null || typeof candidate !== 'object') continue
+    const parts = (candidate as { content?: { parts?: unknown } }).content?.parts
+    if (!Array.isArray(parts)) continue
+    for (const part of parts) {
+      if (part === null || typeof part !== 'object') continue
+      const record = part as Record<string, unknown>
+      if (record.thought === true) continue
+      const inline = (record.inlineData ?? record.inline_data) as { data?: unknown; mimeType?: unknown; mime_type?: unknown } | undefined
+      if (inline === null || typeof inline !== 'object' || typeof inline.data !== 'string' || inline.data === '') continue
+      const bytes = Buffer.from(inline.data, 'base64')
+      const mime = typeof inline.mimeType === 'string' && inline.mimeType !== '' ? inline.mimeType
+        : typeof inline.mime_type === 'string' && inline.mime_type !== '' ? inline.mime_type
+          : detectImageMime(bytes) ?? 'image/png'
+      images.push({ b64: inline.data, mime })
+    }
+  }
+  return images
+}
+
+/** One :generateContent call: prompt plus up to five inline references,
+ *  synchronous base64 answer. Shares requestOneImage's diagnostics contract
+ *  so every failure lands in the buffer with URL, status and excerpt. */
+async function requestOneGoogleNativeImage(
+  upstream: UpstreamConfig,
+  baseUrl: string,
+  request: GenerateRequest,
+  signal?: AbortSignal,
+): Promise<GeneratedImage[]> {
+  const parts: Array<Record<string, unknown>> = []
+  if (request.mode === 'edit') {
+    if (typeof request.image !== 'string' || request.image === '') {
+      throw new ImageGenError('图生图需要上传参考图片', 'edit-image-missing')
+    }
+    const references = [request.image, ...(request.images ?? []).filter(img => typeof img === 'string' && img !== '')].slice(0, 5)
+    for (const dataUrl of references) {
+      const parsed = parseDataUrl(dataUrl)
+      if (parsed === undefined) throw new ImageGenError('参考图片格式无效', 'edit-image-invalid')
+      const bytes = Buffer.from(parsed.base64, 'base64')
+      if (bytes.byteLength > MAX_EDIT_IMAGE_BYTES) {
+        throw new ImageGenError('参考图片超过 10MB 上限', 'edit-image-too-large')
+      }
+      parts.push({ inlineData: { mimeType: parsed.mime, data: parsed.base64 } })
+    }
+  }
+  parts.push({ text: request.prompt })
+  // imageConfig nests inside generationConfig (same shape the Antigravity
+  // subscription adapter sends); auto/empty knobs are omitted, never widened.
+  const imageConfig: Record<string, string> = {}
+  if (request.size !== '' && request.size !== 'auto') imageConfig.aspectRatio = request.size
+  if (request.quality !== '' && request.quality !== 'auto') imageConfig.imageSize = request.quality.toUpperCase()
+  const body = JSON.stringify({
+    contents: [{ role: 'user', parts }],
+    generationConfig: {
+      candidateCount: 1,
+      responseModalities: ['TEXT', 'IMAGE'],
+      ...Object.keys(imageConfig).length > 0 ? { imageConfig } : {},
+    },
+  })
+  const requestUrl = googleNativeUrl(baseUrl, wireModel(request))
+  const budget = requestSignal(signal, UPSTREAM_TIMEOUT_MS)
+  const context = attemptContext(upstream, request, 'generate', requestUrl, 'POST', body, Date.now())
+  try {
+    let response: Response
+    try {
+      response = await fetch(requestUrl, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json', 'x-goog-api-key': upstream.apiKey.trim() },
+        body,
+        signal: budget.signal,
+      })
+    } catch (error) {
+      const network = networkErrorFields(error)
+      const failure = isBudgetTimeout(error)
+        ? new ImageGenError('上游接口响应超时（240 秒）', 'upstream-timeout')
+        : signal?.aborted === true
+          ? new ImageGenError('任务已取消', 'cancelled')
+          : new ImageGenError(
+            `无法连接上游接口：${network.detail}${network.errorCode === undefined ? '' : ` [${network.errorCode}]`} · 请求地址 ${displayUrl(requestUrl)}`,
+            'upstream-unreachable',
+          )
+      recordFailure(context, failure)
+      throw failure
+    }
+    const responseText = await readResponseText(response)
+    let payload: unknown
+    try {
+      payload = JSON.parse(responseText)
+    } catch (error) {
+      const failure = isBudgetTimeout(error)
+        ? new ImageGenError('上游接口响应超时（240 秒）', 'upstream-timeout')
+        : signal?.aborted === true
+          ? new ImageGenError('任务已取消', 'cancelled')
+          : new ImageGenError(`上游接口返回了非 JSON 响应（HTTP ${response.status}）`, 'upstream-invalid')
+      recordFailure(context, failure, { status: response.status, bodyExcerpt: responseText })
+      throw failure
+    }
+    if (!response.ok || payload === null || typeof payload !== 'object') {
+      const failure = new ImageGenError(
+        `${upstreamMessage(payload, response.status)}（HTTP ${response.status} · ${displayUrl(requestUrl)}）`,
+        'upstream-rejected',
+      )
+      recordFailure(context, failure, {
+        status: response.status,
+        bodyExcerpt: responseText,
+        responseBytes: Buffer.byteLength(responseText, 'utf8'),
+      })
+      throw failure
+    }
+    const images = googleNativeImages(payload as Record<string, unknown>)
+    if (images.length === 0) {
+      const feedback = (payload as { promptFeedback?: { blockReason?: unknown } }).promptFeedback
+      const reason = typeof feedback?.blockReason === 'string' && feedback.blockReason !== '' ? `：${feedback.blockReason}` : ''
+      const failure = new ImageGenError(`Google 原生接口没有返回图片${reason}`, 'upstream-empty')
+      recordFailure(context, failure, { status: response.status, bodyExcerpt: responseText })
+      throw failure
+    }
+    return images
+  } finally {
+    budget.dispose()
+  }
+}
+
+/**
  * Qwen-Image (DashScope native multimodal-generation): one chat-style request
  * carries the prompt (plus the reference image for edit mode) and answers
  * synchronously with image URLs in the reply content. The versioned series
@@ -1634,7 +1783,16 @@ export async function generateImage(upstream: UpstreamConfig, request: GenerateR
   if (baseUrl === '') throw new ImageGenError('api_url 未配置：请先在「设置 → 生图配置」中填写', 'config-missing')
   if (upstream.apiKey.trim() === '') throw new ImageGenError('api_key 未配置：请先在「设置 → 生图配置」中填写', 'config-missing')
   assertGifRequestSupported(request, wireModel(request))
-  if (resolveChannelProtocol(baseUrl, upstream.protocol) === 'chat-completions') {
+  const protocol = resolveChannelProtocol(baseUrl, upstream.protocol)
+  if (protocol === 'google-native') {
+    // Gemini image models answer :generateContent with stills only; a GIF
+    // request here would pay for a still the history labels an animation.
+    if (request.outputFormat === 'gif') {
+      throw new ImageGenError('当前渠道走 Google 原生协议，不支持 GIF 动图：请改用 /images/generations 渠道', 'gif-protocol-unsupported')
+    }
+    return { images: await generateGoogleNativeImages(upstream, baseUrl, request, options.signal) }
+  }
+  if (protocol === 'chat-completions') {
     // This body carries only model/messages/stream — there is no output_format
     // to send — so even a GIF-capable model answers with a still here, and the
     // history would label that still as an animation the user paid for.

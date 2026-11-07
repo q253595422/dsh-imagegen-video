@@ -121,6 +121,16 @@ export const IMAGE_PRESETS: PresetProvider[] = [
     ],
   },
   {
+    id: 'google-gemini-native',
+    name: 'Google Gemini 官方（原生）',
+    apiUrl: 'https://generativelanguage.googleapis.com/v1beta',
+    hint: 'Google Generative Language 原生 :generateContent 接口：密钥填 Google API Key，接口协议请手动选择「Google 原生」；Gemini 图像模型支持最多 5 张参考图',
+    models: [
+      { alias: 'gemini-3-pro-image', id: 'gemini-3-pro-image' },
+      { alias: 'gemini-2.5-flash-image', id: 'gemini-2.5-flash-image' },
+    ],
+  },
+  {
     id: 'snapgen',
     name: 'snapgen.ai',
     apiUrl: 'https://api.snapgen.ai',

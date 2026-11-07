@@ -24,8 +24,29 @@ import { execFileSync } from 'node:child_process'
 import { readdirSync, readFileSync } from 'node:fs'
 import { dirname, join, relative, resolve, sep } from 'node:path'
 import { fileURLToPath } from 'node:url'
+import { missingReleaseNotes } from './lib/release-shape.mjs'
 
 const ROOT = dirname(dirname(fileURLToPath(import.meta.url)))
+
+// ------------------------------------------------------------ release shape
+//
+// Asked here, first in `pnpm test`, and again in `verify-pack.mjs` before
+// anything is packed. WHY both: the assertion was correct all along but reached
+// only from CI's last step, so "bumped the version, forgot the notes sheet" was
+// green locally for BOTH releases it bit -- 1.15.2, and then 1.23.0, where it
+// stopped the release outright and left the registry on 1.22.2 until 1.23.1 was
+// cut. A check that only runs on someone else's machine, four minutes after a
+// push, is not part of the loop that edits the version.
+//
+// Before the git probe below on purpose: this is a question about the files on
+// disk, and an unpacked tarball has them. A skip that hides a missing notes
+// sheet in the archive that was JUST packed would be the worst place to hide it.
+const declaredVersion = JSON.parse(readFileSync(join(ROOT, 'package.json'), 'utf8')).version
+const notesProblem = missingReleaseNotes(ROOT, declaredVersion)
+if (notesProblem !== null) {
+  console.error(notesProblem.join('\n'))
+  process.exit(1)
+}
 
 /**
  * Git's spelling of a path, which is posix on every platform.

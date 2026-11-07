@@ -49,10 +49,35 @@ async function responseJson(response: Response): Promise<Record<string, unknown>
 
 type ModelRecord = Record<string, unknown> & { id: string }
 
+/** Google-native endpoint URL from a configured base or full URL: known
+ *  suffixes (/models/<id>:generateContent, /interactions, /models) are stripped
+ *  back to the versioned base, then one model is addressed. Without a model
+ *  this is the GET models-list URL. Query and hash never travel. */
+export function googleNativeUrl(apiUrl: string, model = ''): string {
+  const trimmed = apiUrl.trim()
+  if (trimmed === '') throw new Error('API URL is required')
+  let url: URL
+  try {
+    url = new URL(trimmed)
+  } catch {
+    throw new Error('Google 原生协议需要绝对 API URL（如 https://generativelanguage.googleapis.com/v1beta）')
+  }
+  const path = url.pathname.replace(/\/+$/, '')
+    .replace(/\/models\/[^/]+:generateContent$/, '')
+    .replace(/\/interactions$/, '')
+    .replace(/\/models$/, '')
+  const id = model.trim().replace(/^models\//, '')
+  url.pathname = id === '' ? `${path}/models` : `${path}/models/${encodeURIComponent(id)}:generateContent`
+  url.search = ''
+  url.hash = ''
+  return url.toString()
+}
+
 /** Candidate /models URLs for a configured base URL, most specific first. */
 function modelListUrls(config: ModelListConfig): string[] {
   const base = config.apiUrl.trim().replace(/\/+$/, '')
   if (base === '') throw new Error('API URL is required')
+  if (resolveChannelProtocol(base, config.protocol) === 'google-native') return [googleNativeUrl(base)]
   const urls: string[] = []
   if (resolveChannelProtocol(base, config.protocol) === 'chat-completions' && isChatCompletionsUrl(base)) {
     const url = new URL(base)
@@ -105,7 +130,10 @@ function modelRecordsOf(body: unknown): ModelRecord[] | undefined {
       ? item.trim()
       : item !== null && typeof item === 'object' && typeof (item as { id?: unknown }).id === 'string'
         ? (item as { id: string }).id.trim()
-        : ''
+        // Google's native list names models `models/<id>` instead of `id`.
+        : item !== null && typeof item === 'object' && typeof (item as { name?: unknown }).name === 'string'
+          ? (item as { name: string }).name.trim().replace(/^models\//, '')
+          : ''
     return id === '' ? [] : [{ ...(typeof item === 'object' && item !== null ? item as Record<string, unknown> : {}), id }]
   })
 }
@@ -116,9 +144,10 @@ interface ModelListAttempt {
   retryable: boolean
 }
 
-async function fetchModelRecords(url: string, apiKey: string): Promise<ModelListAttempt> {
+async function fetchModelRecords(url: string, apiKey: string, googleNative = false): Promise<ModelListAttempt> {
   const response = await fetch(url, {
-    headers: headers(apiKey),
+    // Google's native list authenticates with x-goog-api-key, not Bearer.
+    headers: googleNative ? { 'x-goog-api-key': apiKey.trim() } : headers(apiKey),
     signal: AbortSignal.timeout(MODELS_TIMEOUT_MS),
   })
   const text = await response.text().catch(() => '')
@@ -155,11 +184,12 @@ async function fetchModelRecords(url: string, apiKey: string): Promise<ModelList
 
 async function listModelRecords(config: ModelListConfig): Promise<ModelRecord[]> {
   const urls = modelListUrls(config)
+  const googleNative = resolveChannelProtocol(config.apiUrl.trim(), config.protocol) === 'google-native'
   let lastError: Error | undefined
   for (const url of urls) {
     let attempt: ModelListAttempt
     try {
-      attempt = await fetchModelRecords(url, config.apiKey)
+      attempt = await fetchModelRecords(url, config.apiKey, googleNative)
     } catch (error) {
       lastError = error instanceof Error ? error : new Error(String(error))
       continue

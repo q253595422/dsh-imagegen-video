@@ -5608,6 +5608,21 @@ await check('D3 sidebar entry mounts inside desktop and unknown sidebar shells, 
   jsdomWindow.setTimeout = realSetTimeout
 })
 
+// ------------------------------- D4 google-native channel protocol (issue #28)
+await check('D4 google-native protocol is offered and wired on the client', () => {
+  const settings = readFileSync(new URL('../src/client/SettingsCard.tsx', import.meta.url), 'utf8')
+  assert.match(settings, /<option value="google-native">\{t\('channels\.protocolGoogle'\)\}<\/option>/, 'the protocol selector offers google-native')
+  assert.match(settings, /resolvedProtocol === 'chat-completions' \|\| resolvedProtocol === 'google-native'/, 'exact-URL model detection stays open for google-native')
+  const locales = readFileSync(new URL('../src/client/locales.ts', import.meta.url), 'utf8')
+  assert.equal([...locales.matchAll(/'channels\.protocolGoogle':/g)].length, 3, 'zh/en/ru each label the google-native option')
+  const refs = readFileSync(new URL('../src/client/reference-images.ts', import.meta.url), 'utf8')
+  assert.match(refs, /protocol === 'chat-completions' \|\| protocol === 'google-native'/, 'google-native keeps the five-reference ceiling instead of the nanobanana single')
+  const presets = readFileSync(new URL('../src/presets.ts', import.meta.url), 'utf8')
+  assert.match(presets, /https:\/\/generativelanguage\.googleapis\.com\/v1beta/, 'the official Google endpoint ships as a preset')
+  const bundle = readFileSync(new URL('../lib/client.js', import.meta.url), 'utf8')
+  assert.ok(bundle.includes('google-native'), 'the built client bundle carries the google-native option')
+})
+
 // --------------- E. full client apply in jsdom (mounts the sidebar entry)
 await check('E1 client apply mounts the sidebar entry and studio (jsdom)', async () => {
   const { JSDOM } = await import('jsdom')

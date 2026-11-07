@@ -1418,8 +1418,13 @@ function ChannelEditor(props: {
     return channelBucket[alias] ?? props.usage.totals[alias] ?? 0
   }
 
+  // Exact-URL channels can still derive a model list on Chat Completions and
+  // on Google's native protocol (its models list sits next to :generateContent).
+  const resolvedProtocol = resolveChannelProtocol(channel.apiUrl, channel.protocol)
+  const detectable = !channel.apiUrlFull || resolvedProtocol === 'chat-completions' || resolvedProtocol === 'google-native'
+
   const detect = (): void => {
-    if (channel.apiUrlFull && resolveChannelProtocol(channel.apiUrl, channel.protocol) !== 'chat-completions') return
+    if (!detectable) return
     setDetecting(true)
     setDetectError(null)
     const payload: Record<string, unknown> = {
@@ -1477,7 +1482,7 @@ function ChannelEditor(props: {
   useEffect(() => {
     if (autoDetected.current) return
     autoDetected.current = true
-    if (!subscriptionMode && (!channel.apiUrlFull || resolveChannelProtocol(channel.apiUrl, channel.protocol) === 'chat-completions') && channel.apiUrl.trim() !== '' && (props.keyHeld || keyDraft.trim() !== '')) detect()
+    if (!subscriptionMode && detectable && channel.apiUrl.trim() !== '' && (props.keyHeld || keyDraft.trim() !== '')) detect()
   }, [])
 
   const addManual = (): void => {
@@ -1624,6 +1629,7 @@ function ChannelEditor(props: {
               <option value="auto">{t('channels.protocolAuto')}</option>
               <option value="images">{t('channels.protocolImages')}</option>
               <option value="chat-completions">{t('channels.protocolChat')}</option>
+              <option value="google-native">{t('channels.protocolGoogle')}</option>
             </Select>
           </div>
         </div>
@@ -1676,7 +1682,7 @@ function ChannelEditor(props: {
         <div className={css.modelCatalog}>
         <div className={css.editorSectionHeader}>
           <h4 className={css.label}>{t('channels.modelCatalogTitle')}</h4>
-          <button type="button" className={css.modelFetch} disabled={!props.writable || detecting || (channel.apiUrlFull && resolveChannelProtocol(channel.apiUrl, channel.protocol) !== 'chat-completions')} onClick={detect}>
+          <button type="button" className={css.modelFetch} disabled={!props.writable || detecting || !detectable} onClick={detect}>
             {detecting ? t('channels.detecting') : candidates === null && channel.models.length === 0 ? t('channels.detectFirst') : t('channels.detect')}
           </button>
           <button

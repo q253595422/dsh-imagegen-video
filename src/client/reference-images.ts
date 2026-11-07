@@ -15,7 +15,11 @@ export interface EditReference { id: string; name: string; dataUrl: string; byte
 /** Current adapter capabilities, not a claim about every vendor's API. */
 export function editReferenceLimit(model: string, channel?: Pick<ChannelConfig, 'apiUrl' | 'apiUrlFull' | 'protocol' | 'auth' | 'models'>): number {
   if (channel?.auth === 'subscription') return EDIT_REFERENCE_LIMIT
-  if (resolveChannelProtocol(channel?.apiUrl ?? '', channel?.protocol) === 'chat-completions') return EDIT_REFERENCE_LIMIT
+  const protocol = resolveChannelProtocol(channel?.apiUrl ?? '', channel?.protocol)
+  // Google's native adapter carries up to five inlineData references — the
+  // same primary + four extras ceiling as the host contract. Without this the
+  // gemini ids fall into the nanobanana family branch and collapse to one.
+  if (protocol === 'chat-completions' || protocol === 'google-native') return EDIT_REFERENCE_LIMIT
   const upstream = channel?.models.find(item => item.alias === model)?.id || model
   const { family } = describeModel(upstream)
   if (family === 'grok' || family === 'nanobanana' || family === 'dall-e') return 1

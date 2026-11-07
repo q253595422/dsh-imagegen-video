@@ -29,6 +29,7 @@ import { existsSync, readFileSync, readdirSync, rmSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { readSourceText } from './lib/source-text.mjs'
+import { missingReleaseNotes, releaseNotesEntry } from './lib/release-shape.mjs'
 
 const ROOT = dirname(dirname(fileURLToPath(import.meta.url)))
 
@@ -193,16 +194,13 @@ if (present.length > 0) {
 // The second half is about the archive, not the Release: `docs/releases` is in
 // `files`, so a tarball that cannot carry its own notes means the manifest
 // drifted from the convention that every release has one.
-const notesEntry = `docs/releases/v${pkg.version}.md`
-if (!existsSync(join(ROOT, notesEntry))) {
-  fail([
-    '',
-    `FAIL: version ${pkg.version} has no release notes (${notesEntry}).`,
-    'release.yml would publish this version with GitHub\'s one-line compare link',
-    'as its entire body, and only a warning to say so. Write the notes first:',
-    'they are the only place the user-visible changes of a version are explained.',
-  ])
-}
+const notesEntry = releaseNotesEntry(pkg.version)
+// Defined in `scripts/lib/release-shape.mjs` and asked here as well as from
+// `verify-tracked.mjs`. The message is not repeated at either call site: this
+// check kept being reached only from CI's last step, after two releases had
+// already gone out with the local suite green.
+const missingNotes = missingReleaseNotes(ROOT, pkg.version)
+if (missingNotes !== null) fail(missingNotes)
 if (!entries.has(`package/${notesEntry}`)) {
   fail([
     '',

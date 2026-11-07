@@ -5,6 +5,13 @@ Attribution for third-party code is in [NOTICE](./NOTICE).
 
 ## Releases
 
+### 1.24.0 — Google 原生渠道协议；URL 型模板图不再 404
+
+- **渠道「接口协议」新增 Google 原生（#28）。** 用 Google API Key 直连 Generative Language `:generateContent`：`x-goog-api-key` 鉴权，参考图最多 5 张走 `inlineData`，比例/清晰度嵌套在 `generationConfig.imageConfig`，auto 省略；body 不带 `n`，多张由并行单图请求满足；响应跳过 `thought` 部分、兼容 `inline_data`、缺 mimeType 按字节嗅探，空结果报 `blockReason`。配置地址带 `/models`、`:generateContent`、`/interactions` 后缀时自动剥回基址。GIF 请求在网络调用前拒绝，不静默降级成静图计费。
+- **google-native 渠道支持模型检测。** GET models 列表解析 `name` 字段、剥 `models/` 前缀、只留图像模型；完整 URL 模式下检测按钮放行。新增「Google Gemini 官方（原生）」预设（v1beta，预填 gemini-3-pro-image / gemini-2.5-flash-image），协议选项与提示补齐 zh/en/ru；参考图上限对 google-native 给 5 张。
+- **URL 型模板图缩略图全部 404 修复（#29）。** `imageFileFrom` 的空段校验把解码后 `https://` 的 `//` 判成空段，五个 URL 型模板源的引用恒死在路由层。仅对模板路由放行 URL 型引用（空段不拦、复合上限 400→4100），`.`/`..`/绝对路径照旧拒绝，主机白名单仍由 store 兜底；其余图片路由不受影响。
+- 新增 `smoke-google-native.mjs`（桩 fetch、零网络、直接 import src）接入 `pnpm test` 与 `test:negative`；smoke 新增 C6a2（URL 型模板图透传/穿越/超长/作用域）与 D4（客户端 google-native 接线）。反向用例 6 条全部 RED as expected。
+
 ### 1.23.1 — 服饰穿戴：草稿读失败不再把整张表单锁死
 
 - **「角色搭配」点不动的根因是草稿读失败变成了永久禁用。** 面板在草稿读回来之前会把整张
