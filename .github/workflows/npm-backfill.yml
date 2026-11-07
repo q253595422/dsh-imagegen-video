@@ -64,6 +64,20 @@ jobs:
       - name: Test suites
         run: pnpm test
 
+      # The tag's own scripts/verify-pack.mjs predates the skip switch (and the
+      # notes/version-shape invariants), so it would fail on retrofitted
+      # history no matter what. Overlay the current tree's check scripts before
+      # running them; they are not part of the published artifact, so the
+      # archive's contents stay the tag's.
+      - name: Use the current verify-pack checks
+        run: |
+          set -euo pipefail
+          git fetch origin main
+          git checkout FETCH_HEAD -- \
+            scripts/verify-pack.mjs \
+            scripts/lib/release-shape.mjs \
+            scripts/lib/source-text.mjs
+
       # The same archive-content assertions CI runs. Backfill mode skips the
       # version-shape checks (notes sheet / PLUGIN_VERSION / publish window):
       # those invariants postdate the recorded tags and cannot be retrofitted.
