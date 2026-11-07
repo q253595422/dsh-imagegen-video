@@ -1,0 +1,174 @@
+name: npm backfill
+
+# One-off workflow to re-publish npm versions that were never shipped (the
+# v1.11.0 / v1.12.0 / v1.23.0 gap). The normal release.yml only publishes the
+# version on the tip of main, so it cannot cover these. This workflow takes a
+# version, checks out the matching tag, runs the same gates as a release, and
+# publishes exactly the verified tarball to npm via OIDC trusted publishing.
+# It deliberately does NOT touch git tags or GitHub Releases -- those already
+# exist for the backfilled versions.
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: Version to backfill (e.g. 1.11.0). The tag v<version> must exist.
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: Validate and package <version>
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          # The tag is the source of truth; the branch this workflow runs from
+          # is irrelevant.
+          ref: refs/tags/v${{ inputs.version }}
+          fetch-depth: 0
+          fetch-tags: true
+
+      - name: Confirm the checked-out version matches the input
+        run: |
+          set -euo pipefail
+          actual=$(node -p "require('./package.json').version")
+          if [ "$actual" != "${{ inputs.version }}" ]; then
+            echo "::error::checked out version $actual != requested ${{ inputs.version }}"
+            exit 1
+          fi
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 12.11.2
+
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 24
+          cache: pnpm
+
+      - name: Install locked dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Typecheck
+        run: pnpm run typecheck
+
+      - name: Build
+        run: pnpm run build
+
+      # Same suite release.yml runs before shipping anything.
+      - name: Test suites
+        run: pnpm test
+
+      # The same archive-content assertions CI runs.
+      - name: Verify the archive contents
+        run: node scripts/verify-pack.mjs
+
+      - name: Pack and hash
+        run: |
+          set -euo pipefail
+          mkdir -p dist
+          pnpm pack --pack-destination dist --ignore-scripts
+          cd dist
+          sha256sum ./*.tgz > SHA256SUMS
+          cat SHA256SUMS
+
+      - name: Upload the verified package
+        uses: actions/upload-artifact@v4
+        with:
+          name: npm-package
+          path: |
+            dist/*.tgz
+            dist/SHA256SUMS
+          if-no-files-found: error
+          retention-days: 7
+
+  publish-npm:
+    name: Publish to npm
+    needs: build
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 24
+
+      - name: Install an OIDC-capable npm CLI
+        run: npm install --global npm@12.2.0
+      - run: npm --version
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: npm-package
+          path: dist
+
+      - name: Verify the downloaded checksum
+        working-directory: dist
+        run: sha256sum --check SHA256SUMS
+
+      - name: Publish with trusted publishing
+        shell: bash
+        run: |
+          set -euo pipefail
+          package=$(node -p "require('./package.json').name")
+          version=$(node -p "require('./package.json').version")
+          registry=https://registry.npmjs.org
+          probe="$RUNNER_TEMP/npm-probe.log"
+          packageProbe="$RUNNER_TEMP/npm-package-probe.log"
+
+          # Same E404 distinction as release.yml: "no such package" is a setup
+          # problem, "no such version" is the normal backfill case.
+          if ! npm view "$package" version --json --registry="$registry" >"$packageProbe" 2>&1; then
+            if grep -q 'E404' "$packageProbe"; then
+              echo "::error::$package is not on the registry yet, so it has no trusted publisher to publish against. Run \`npm publish --access public\` once from a machine logged in to npm, then re-run this job."
+              exit 1
+            fi
+            cat "$packageProbe"
+            echo "::error::could not read $package from the registry; refusing to publish."
+            exit 1
+          fi
+
+          if npm view "$package@$version" version --json --registry="$registry" >"$probe" 2>&1; then
+            echo "$package@$version is already published; nothing to do."
+            exit 0
+          elif grep -q 'E404' "$probe"; then
+            shopt -s nullglob
+            packages=(dist/*.tgz)
+            if [ "${#packages[@]}" -ne 1 ]; then
+              echo "::error::expected exactly one tarball in dist/, found ${#packages[@]}"
+              ls -la dist || true
+              exit 1
+            fi
+            echo "Publishing ${packages[0]} -> $package@$version"
+            npm publish "./${packages[0]}" \
+              --access public \
+              --tag latest \
+              --ignore-scripts \
+              --registry="$registry"
+          else
+            cat "$probe"
+            echo "::error::could not determine whether $package@$version exists; refusing to publish."
+            exit 1
+          fi
+
+          # Registry read lags a successful write; verify with retries, never
+          # re-publish.
+          for attempt in $(seq 1 30); do
+            if npm view "$package@$version" version --prefer-online --registry="$registry"; then
+              echo "Verified on the registry: $package@$version"
+              exit 0
+            fi
+            echo "not visible yet (attempt $attempt/30); waiting 10s"
+            sleep 10
+          done
+          echo "::error::$package@$version was published and npm exited 0, but it is still not readable after ~5m. Check https://www.npmjs.com/package/$package/v/$version before retrying."
+          exit 1
