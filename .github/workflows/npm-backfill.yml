@@ -114,7 +114,15 @@ jobs:
       contents: read
       id-token: write
     steps:
+      # Must be the SAME tag the build job packed: the publish probe reads the
+      # version from package.json, and if this job checks out main instead, it
+      # probes the tip version and reports "already published" for the wrong
+      # version -- leaving the backfill silently unpublished.
       - uses: actions/checkout@v5
+        with:
+          ref: refs/tags/v${{ inputs.version }}
+          fetch-depth: 0
+          fetch-tags: true
 
       - uses: actions/setup-node@v5
         with:
