@@ -169,6 +169,8 @@ dsh plugin --profile web add ./q253595422-dsh-imagegen-video-X.Y.Z.tgz
   <p><em>姿势图库：线稿姿势参考，支持分类、来源、视角三重筛选；不选则沿用人物原图的姿势，选了也只作视觉参考。</em></p>
   <img src="docs/images/outfit-tryon-result.png" alt="商品试穿生成结果：商品组合穿到指定模特身上，左侧历史记录可回看" width="100%" />
   <p><em>生成结果（商品试穿）：商品组合穿到指定模特身上，版型与材质保留自商品图；每次生成进入左侧历史记录，随时回看、复用配方再改一版。</em></p>
+  <img src="docs/images/outfit-history-recall.png" alt="历史回看：点左侧试穿记录，右侧展示当次完整提示词与成片" width="100%" />
+  <p><em>历史回看：点左侧任一试穿记录，右侧还原当次提交的完整提示词——编号参考图各借用什么用途、场景与尺寸清晰度——以及成片，照着改一版再提交即可。</em></p>
 </div>
 
 <details>
