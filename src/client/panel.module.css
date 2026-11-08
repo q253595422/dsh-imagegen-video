@@ -4536,8 +4536,8 @@ a.galleryCardAction {
    * the seat (:has over the stable shell slot) and reserve the corner row. */
   html[data-dsh-imagegen-active] [data-sidebar-opener='true'] {
     position: relative;
-    z-index: 70;
+    z-index: var(--z-shell-seat);
   }
-  html[data-dsh-imagegen-active] div:has(> [data-slot='shell.leading']) { z-index: 70; }
+  html[data-dsh-imagegen-active] div:has(> [data-slot='shell.leading']) { z-index: var(--z-shell-seat); }
   html[data-dsh-imagegen-active] .panel { padding-top: 46px; }
 }
