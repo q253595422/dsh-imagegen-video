@@ -759,3 +759,12 @@
     grid-template-columns: minmax(0, 1fr);
   }
 }
+
+/* Mobile: the stacked container-query layout clamped the form row to its
+ * min-content height (~330px) while the form content is ~900px tall and
+ * paints with `overflow: visible` — the results card (later grid item) drew
+ * over the middle of the form. Size the row to its content so the whole form
+ * flows above the results card and the body scrolls as one column. */
+@media (max-width: 760px) {
+  .body { grid-template-rows: max-content minmax(240px, 1fr); }
+}

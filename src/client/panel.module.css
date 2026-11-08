@@ -2394,6 +2394,15 @@ html[data-dsh-imagegen-active] .sidebarHistoryHost {
   gap: 10px;
 }
 
+/* Wrapper around GooeyNav. Desktop: `display: contents` — the nav's own root
+ * stays a direct flex child of the header exactly as before the wrapper
+ * existed. Mobile (see the 760px block at the bottom): the wrapper becomes a
+ * real box so `order`/`flex-basis` can promote the nav onto its own
+ * full-width, horizontally scrollable row under the title. */
+.panelNav {
+  display: contents;
+}
+
 .chatToggle {
   display: inline-flex;
   align-items: center;
@@ -4451,3 +4460,84 @@ a.galleryCardAction {
    rather than a literal. Used by ListingCopyCard when the generated title exceeds
    the platform cap. */
 .listingOverLimit { color: var(--dsw-alias-state-error-primary); }
+
+/* ---------------------------------------------------------------- mobile --
+ * Narrow-viewport adjustments (phones, ~390-430px). Everything here is
+ * scoped to ≤760px, so the desktop three-column studio is untouched.
+ *
+ * 1. The stacked studio/conversation grid: the conversation row gets a 45vh
+ *    ceiling (a long conversation used to squeeze the studio row to zero), and
+ *    collapses entirely when the chat is toggled off (the host hides the pane,
+ *    the row must not leave a blank 45vh strip behind).
+ * 2. The panel header wraps: the title row (title · GitHub · chat toggle ·
+ *    connection) stays on line one and the workspace nav gets its own
+ *    full-width scrollable row instead of overlapping the clipped title.
+ * 3. E-commerce hints stop forcing a 414px min-content width that clipped
+ *    every card off the right edge of a 402px phone.
+ * 4. The gallery masonry lane stretches instead of holding a fixed 220px.
+ * 5. The shell's sidebar hamburger is lifted above the takeover view and the
+ *    panel reserves the corner row for it (it was painted under the panel).
+ */
+@media (max-width: 760px) {
+  html[data-dsh-imagegen-active]:not([data-dsh-taskboard-active]):not([data-dsh-ssh-active]) [data-pane='conversation'],
+  html[data-dsh-imagegen-active]:not([data-dsh-taskboard-active]):not([data-dsh-ssh-active]) [data-dsh-imagegen-center-col] {
+    grid-template-rows: minmax(0, 1fr) minmax(min(340px, 45vh), 45vh);
+  }
+
+  html[data-dsh-imagegen-chat-collapsed][data-dsh-imagegen-active]:not([data-dsh-taskboard-active]):not([data-dsh-ssh-active]) [data-pane='conversation'],
+  html[data-dsh-imagegen-chat-collapsed][data-dsh-imagegen-active]:not([data-dsh-taskboard-active]):not([data-dsh-ssh-active]) [data-dsh-imagegen-center-col] {
+    grid-template-rows: minmax(0, 1fr) 0px;
+  }
+  html[data-dsh-imagegen-chat-collapsed][data-dsh-imagegen-active] [data-slot='conversation'] { display: none; }
+
+  .panelHeader {
+    flex-wrap: wrap;
+    row-gap: 8px;
+    align-items: center;
+  }
+  .panelHeader .panelHeading {
+    flex-direction: row;
+    align-items: center;
+    gap: 8px;
+    flex: 1 1 auto;
+    min-width: 0;
+    order: 1;
+  }
+  .panelHeader .panelTitle {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    min-width: 0;
+    flex: 0 1 auto;
+  }
+  .panelHeader .panelHeaderActions {
+    flex: none;
+    order: 2;
+    margin-left: auto;
+  }
+  .panelNav {
+    display: block;
+    order: 3;
+    flex: 1 1 100%;
+    max-width: 100%;
+  }
+
+  .ecommerceSectionHint { white-space: normal; }
+  .ecommerceSlotCard { white-space: normal; line-height: 1.25; }
+
+  .galleryColumn {
+    flex: 1 1 auto;
+    width: auto;
+    max-width: none;
+  }
+
+  /* The shell hamburger lives in the frame's leading seat; the takeover view
+   * (z 60) paints over it. The seat itself is absolutely positioned at z 15,
+   * so the button's own z-index cannot escape that stacking context — lift
+   * the seat (:has over the stable shell slot) and reserve the corner row. */
+  html[data-dsh-imagegen-active] [data-sidebar-opener='true'] {
+    position: relative;
+    z-index: 70;
+  }
+  html[data-dsh-imagegen-active] div:has(> [data-slot='shell.leading']) { z-index: 70; }
+  html[data-dsh-imagegen-active] .panel { padding-top: 46px; }
+}
