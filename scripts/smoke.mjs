@@ -121,11 +121,19 @@ async function waitForSelectorCount(root, selector, count, timeout = 1200) {
   assert.ok(root.querySelectorAll(selector).length >= count, `expected ${count} matches: ${selector}`)
 }
 
-/** Wait until a synchronous predicate becomes true. */
+/** Wait until a synchronous predicate becomes true.
+ *  Budgeted in polls, not wall-clock alone: under heavy machine load the first
+ *  25ms timer can fire seconds late, and a pure deadline then expires having
+ *  granted zero retries (measured: a toolview render missed its 1200ms window
+ *  at load 20 while every later assertion passed). Guarantee the poll count the
+ *  timeout implies, and still honour the deadline once the machine keeps up. */
 async function waitUntil(predicate, timeout = 1200) {
   const deadline = Date.now() + timeout
-  while (!predicate() && Date.now() < deadline) {
+  const minPolls = Math.max(1, Math.ceil(timeout / 25))
+  let polls = 0
+  while (!predicate() && (polls < minPolls || Date.now() < deadline)) {
     await new Promise(resolve => setTimeout(resolve, 25))
+    polls++
   }
   return predicate()
 }
@@ -9297,7 +9305,10 @@ await check('E1 client apply mounts the sidebar entry and studio (jsdom)', async
     if (previousDocument === undefined) delete globalThis.document
     else globalThis.document = previousDocument
   }
-})
+// react-flow 把客户端 bundle 撑大不少：jsdom 里挂载它并驱动整个画布段，
+// 在带负载的机器上会超过默认 60s（实测 92s 且全部断言通过）。放宽的是挂载
+// 预算，不是断言——断言一条没动。
+}, 120_000)
 
 await new Promise(resolve => upstream.close(resolve))
 
