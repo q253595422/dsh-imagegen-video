@@ -10,14 +10,35 @@
  *    modules through the injected require and inlining everything else; CSS
  *    Modules are compiled by lightningcss and injected as <style> tags).
  */
-import { existsSync } from 'node:fs'
+import { existsSync, readFileSync } from 'node:fs'
 import { readFile } from 'node:fs/promises'
+import { createRequire } from 'node:module'
 import { basename, dirname, relative, resolve as resolvePath } from 'node:path'
 import type { UserConfig } from 'tsdown'
 import { transform } from 'lightningcss'
 
+/** Resolve bare package CSS paths (e.g. @xyflow/react/dist/style.css) without
+ *  involving rolldown's resolver — going through this.resolve() makes rolldown
+ *  record the original specifier as an external dependency and hoist a stray
+ *  `require("@xyflow/react/dist/style.css")` into the CJS bundle that the host
+ *  loader cannot resolve. */
+const nodeRequire = createRequire(import.meta.url)
+
 /** Plugin id (package name) stamped into the __ModuleLoader__.load handoff. */
 const ID = '@q253595422/dsh-imagegen-video'
+
+/** react-flow ships a global stylesheet (.react-flow__* rules). Importing it
+ *  through JS makes rolldown hoist a `require("@xyflow/react/dist/style.css")`
+ *  into the CJS bundle that the host loader cannot resolve, so instead we read
+ *  and minify it at build time and inject it from the client intro. The bytes
+ *  are stable (no cssModules hash), keeping the build reproducible. */
+const xyflowCss = transform({
+  filename: '@xyflow/react/dist/style.css',
+  code: readFileSync(nodeRequire.resolve('@xyflow/react/dist/style.css')),
+  minify: true,
+}).code.toString()
+const xyflowCssTag = `${ID}/xyflow-style.css`
+const xyflowCssInjection = `if(typeof document!=='undefined'&&document.querySelector('style[data-plugin-css='+JSON.stringify(${JSON.stringify(xyflowCssTag)})+']')===null){var __xyflowStyle=document.createElement('style');__xyflowStyle.dataset.plugin=${JSON.stringify(ID)};__xyflowStyle.dataset.pluginCss=${JSON.stringify(xyflowCssTag)};__xyflowStyle.textContent=${JSON.stringify(xyflowCss)};document.head.appendChild(__xyflowStyle);}`
 
 /**
  * The module specifiers the web shell shares into the frozen module table
@@ -48,6 +69,13 @@ const CLIENT_EXTERNALS: readonly string[] = [
  */
 const CSS_VIRTUAL_PREFIX = '\0dsh-css:'
 const CSS_VIRTUAL_SUFFIX = '.mjs'
+/** Global (non-module) CSS — e.g. `@xyflow/react/dist/style.css` — inlined as a
+ *  plain <style> tag with NO class-name hashing. A separate prefix lets load()
+ *  skip cssModules for it: react-flow ships global `.react-flow__*` rules that
+ *  must keep their original names, and copying them into src/client/ would trip
+ *  the native-UI guard (which only scans src/client), so they stay in
+ *  node_modules and are inlined here at build time. */
+const GLOBAL_CSS_PREFIX = '\0dsh-global-css:'
 /** Absolute CSS path -> synthetic virtual id (repo-relative). */
 function cssVirtualId(absolutePath: string): string {
   return CSS_VIRTUAL_PREFIX + relative(process.cwd(), absolutePath) + CSS_VIRTUAL_SUFFIX
@@ -120,7 +148,10 @@ const clientConfig: UserConfig = {
     // forced in: `dependencies` default to external, which a browser bundle
     // cannot resolve at runtime.
     neverBundle: [...CLIENT_EXTERNALS],
-    alwaysBundle: ['lucide-react'],
+    // react-flow and its transitive runtime deps must be inlined: a browser
+    // bundle cannot resolve bare requires at runtime. react/react-dom stay
+    // external (CLIENT_EXTERNALS) so react-flow uses the host's single React.
+    alwaysBundle: ['lucide-react', '@xyflow/react', '@xyflow/system', 'zustand', 'classcat'],
   },
   define: {
     'process.env.NODE_ENV': JSON.stringify(process.env.NODE_ENV ?? 'production'),
@@ -129,12 +160,48 @@ const clientConfig: UserConfig = {
   },
   plugins: [{
     name: 'dsh-css-modules-inline',
-    resolveId(source: string, importer: string | undefined) {
-      if (!source.endsWith('.module.css')) return null
-      const abs = importer !== undefined ? sourceAssetPath(source, importer) : source
-      return cssVirtualId(abs)
+    async resolveId(source: string, importer: string | undefined) {
+      if (source.endsWith('.module.css')) {
+        const abs = importer !== undefined ? sourceAssetPath(source, importer) : source
+        // CSS injection is a side effect: keep it even when the importing
+        // module's exports are tree-shaken (e.g. react-flow's global sheet).
+        return { id: cssVirtualId(abs), moduleSideEffects: true }
+      }
+      if (source.endsWith('.css')) {
+        // Global stylesheet (react-flow's dist/style.css). Resolve bare package
+        // specifiers via Node's resolver (NOT this.resolve, which would make
+        // rolldown hoist a stray external require), then wrap in the global
+        // virtual id; load() inlines it without cssModules hashing.
+        const abs = source.startsWith('.')
+          ? (importer !== undefined ? sourceAssetPath(source, importer) : resolvePath(source))
+          : nodeRequire.resolve(source)
+        return { id: `${GLOBAL_CSS_PREFIX}${abs}${CSS_VIRTUAL_SUFFIX}`, moduleSideEffects: true }
+      }
+      return null
     },
     async load(virtualId: string) {
+      if (virtualId.startsWith(GLOBAL_CSS_PREFIX)) {
+        const fileId = virtualId.slice(GLOBAL_CSS_PREFIX.length, -CSS_VIRTUAL_SUFFIX.length)
+        this.addWatchFile(fileId)
+        const source = await readFile(fileId)
+        // Package-relative name keeps the injected tag id (and thus the bundle
+        // bytes) stable across machines; no cssModules, so no hash depends on it.
+        const cssName = fileId.split('node_modules/').pop() ?? relative(process.cwd(), fileId)
+        const { code } = transform({ filename: cssName, code: source, minify: true })
+        const tagId = `${ID}/${cssName}`
+        return [
+          `const css = ${JSON.stringify(code.toString())};`,
+          `const tagId = ${JSON.stringify(tagId)};`,
+          'if (typeof document !== \'undefined\' && document.querySelector(\'style[data-plugin-css=\' + JSON.stringify(tagId) + \']\') === null) {',
+          '  const tag = document.createElement(\'style\');',
+          `  tag.dataset.plugin = ${JSON.stringify(ID)};`,
+          '  tag.dataset.pluginCss = tagId;',
+          '  tag.textContent = css;',
+          '  document.head.appendChild(tag);',
+          '}',
+          'export default {};',
+        ].join('\n')
+      }
       if (!virtualId.startsWith(CSS_VIRTUAL_PREFIX)) return null
       const fileId = cssRealPath(virtualId)
       this.addWatchFile(fileId)
@@ -184,12 +251,21 @@ const clientConfig: UserConfig = {
         `export default ${JSON.stringify(classMap)};`,
       ].join('\n')
     },
+    renderChunk(code: string) {
+      // Rolldown stamps each module's resolved id into a `//#region <id>`
+      // banner. node_modules ids resolve through symlinks to a real path, so
+      // the relative prefix depends on the checkout directory (a mirror with
+      // a symlinked node_modules emits `../../../Users/…/node_modules/…`
+      // where the original emits `node_modules/…`). Normalise the prefix away
+      // so the published bytes are a pure function of the source tree.
+      return code.replace(/\/\/#region [^\n]*?(node_modules\/[^\n]*)/g, '//#region $1')
+    },
   }],
   outputOptions: {
     entryFileNames: 'client.js',
     banner: `window.__ModuleLoader__.load({ id: ${JSON.stringify(ID)}, factory: (require) => {`,
     footer: 'return module.exports; } });',
-    intro: 'var module = { exports: {} }; var exports = module.exports;',
+    intro: `var module = { exports: {} }; var exports = module.exports;${xyflowCssInjection}`,
   },
 }
 

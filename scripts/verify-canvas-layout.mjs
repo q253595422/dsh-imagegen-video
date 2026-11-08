@@ -81,7 +81,7 @@ ${css}
         <aside class="minimap" id="minimap"><div class="minimapCanvas"><div class="minimapViewport" style="left:12px;top:14px;width:120px;height:70px"></div></div></aside>
         <div class="zoomDock" id="zoomDock">
           <button class="iconButton"></button><button class="iconButton"></button>
-          <input type="range" min="5" max="500" value="100"><span class="zoomValue">100%</span>
+          <button class="zoomValue">100%</button>
         </div>
       </div>
       <div class="dockOuter" id="dockOuter"><div class="dock" id="dock" role="toolbar">${dockMarkup}</div></div>

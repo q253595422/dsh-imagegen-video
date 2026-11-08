@@ -6555,11 +6555,29 @@ await check('E1 client apply mounts the sidebar entry and studio (jsdom)', async
   // Evaluate the bundle in a jsdom-backed sandbox.
   const source = readFileSync(new URL('../lib/client.js', import.meta.url), 'utf8')
   let handoff
+  // react-flow（d3-zoom 读 navigator、updateNodeInternals 读 DOMMatrixReadOnly、
+  // 节点测量需 ResizeObserver 真报尺寸）需要这些裸全局；jsdom 默认没有。
+  jsdomWindow.ResizeObserver = class {
+    constructor(callback) { this.callback = callback }
+    observe(target) { setTimeout(() => this.callback([{ target, contentRect: { width: 200, height: 100 }, borderBoxSize: [{ inlineSize: 200, blockSize: 100 }] }], this), 0) }
+    unobserve() {}
+    disconnect() {}
+  }
+  jsdomWindow.DOMMatrixReadOnly = class { constructor() { this.m11 = 1; this.m22 = 1; this.m41 = 0; this.m42 = 0; this.a = 1; this.d = 1; this.e = 0; this.f = 0 } }
+  jsdomWindow.DOMMatrix = jsdomWindow.DOMMatrixReadOnly
   const sandbox = {
     window: jsdomWindow,
     document: jsdomDocument,
     MutationObserver: jsdomWindow.MutationObserver,
     ResizeObserver: jsdomWindow.ResizeObserver,
+    navigator: jsdomWindow.navigator,
+    DOMMatrixReadOnly: jsdomWindow.DOMMatrixReadOnly,
+    DOMMatrix: jsdomWindow.DOMMatrix,
+    setTimeout: jsdomWindow.setTimeout.bind(jsdomWindow),
+    clearTimeout: jsdomWindow.clearTimeout.bind(jsdomWindow),
+    requestAnimationFrame: jsdomWindow.requestAnimationFrame?.bind(jsdomWindow) ?? (cb => setTimeout(() => cb(Date.now()), 0)),
+    cancelAnimationFrame: jsdomWindow.cancelAnimationFrame?.bind(jsdomWindow) ?? clearTimeout,
+    getComputedStyle: jsdomWindow.getComputedStyle?.bind(jsdomWindow),
     CustomEvent: jsdomWindow.CustomEvent,
     HTMLElement: jsdomWindow.HTMLElement,
     FileReader: jsdomWindow.FileReader,
@@ -8591,12 +8609,18 @@ await check('E1 client apply mounts the sidebar entry and studio (jsdom)', async
       const configEl = view.querySelector('[data-node-id="node-config"]')
       assert.ok(coveredEl !== null && configEl !== null, 'both nodes are on the canvas')
       // 从 DOM 读位置：重开画布后第一次保存还没发生，canvasSaves 里可能仍是上一版。
-      const boxOf = (element) => ({
-        x: Number.parseFloat(element.style.left),
-        y: Number.parseFloat(element.style.top),
-        width: Number.parseFloat(element.style.width),
-        height: Number.parseFloat(element.style.height),
-      })
+      // react-flow 用外层 .react-flow__node 的 transform 定位（世界坐标），
+      // 内层 [data-node-id] 只有 width/height；left/top 已不再写在内层。
+      const boxOf = (element) => {
+        const wrapper = element.closest('.react-flow__node')
+        const match = /translate\(([-\d.]+)px,\s*([-\d.]+)px\)/.exec(wrapper?.style.transform ?? '')
+        return {
+          x: match !== null ? Number.parseFloat(match[1]) : Number.parseFloat(element.style.left),
+          y: match !== null ? Number.parseFloat(match[2]) : Number.parseFloat(element.style.top),
+          width: Number.parseFloat(element.style.width),
+          height: Number.parseFloat(element.style.height),
+        }
+      }
       const coveredNode = boxOf(coveredEl)
       const coverNode = boxOf(configEl)
       // 目标：小节点落在配置节点正中（四周都留余量，包含关系才成立）。

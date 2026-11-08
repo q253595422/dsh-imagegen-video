@@ -38,6 +38,9 @@ import { CanvasFileBody, CanvasFileOverlay, fileKindLabel, fileKindOfAsset, file
 import { DotFieldBackground, DotGridBackground, FaultyTerminalBackground, FloatingLinesBackground, FlowBackground, GalaxyBackground, LiquidEtherBackground, ShapeGridBackground, SilkBackground, WavesBackground } from './CanvasBackgrounds.tsx'
 import { Select } from './Select.tsx'
 import { CanvasVideoPicker } from './CanvasVideoPicker.tsx'
+import { ReactFlow, ReactFlowProvider, Background, BackgroundVariant, MiniMap, NodeResizer, type NodeChange, type EdgeChange, type Connection, type Viewport, type NodeProps } from '@xyflow/react'
+import { CanvasFlowProvider, canvasNodeTypes, useCanvasFlow, type CanvasFlowContextValue } from './canvas-flow-context.tsx'
+import { nodesToFlow, connectionsToEdges, edgeToConnection, viewportToFlow, viewportFromFlow, type CanvasFlowNode } from './canvas-flow-adapter.ts'
 import { onTablistKeyDown, tabIndexFor } from './tablist.ts'
 import css from './canvas-workspace.module.css'
 
@@ -48,7 +51,8 @@ type BackgroundMode = CanvasDocument['background']
 const PICKER_TABS = ['upload', 'history', 'gallery', 'generate'] as const
 
 const MIN_SCALE = 0.05
-const MAX_SCALE = 5
+// 800% 上限：缩放菜单的最高预设（LibTV 同款），滚轮/捏合同样到此为止。
+const MAX_SCALE = 8
 const GRID_SIZE = 48
 const IMAGE_NODE_SIZE = { width: 240, height: 240 }
 const TEXT_NODE_SIZE = { width: 280, height: 150 }
@@ -1713,6 +1717,12 @@ export function CanvasWorkspace(props: CanvasWorkspaceProps): React.JSX.Element 
   const [createMenu, setCreateMenu] = useState<{ screen: Point; world: Point } | null>(null)
   const [nodeAddMenu, setNodeAddMenu] = useState<{ nodeId: string; nodeType: CanvasNode['type']; screen: Point } | null>(null)
   const [minimapOpen, setMinimapOpen] = useState(true)
+  // 缩放预设菜单与视图开关。snapEnabledRef 给全局 move 监听器读：那个
+  // useEffect 不随状态重建，ref 是唯一不会过期的读法。
+  const [zoomMenuOpen, setZoomMenuOpen] = useState(false)
+  const [snapEnabled, setSnapEnabled] = useState(true)
+  const snapEnabledRef = useRef(true)
+  const [connectionsHidden, setConnectionsHidden] = useState(false)
   const [pickerOpen, setPickerOpen] = useState(false)
   /**
    * Which image node the poster overlay editor is open on. Carries the canvas id
@@ -5002,7 +5012,7 @@ export function CanvasWorkspace(props: CanvasWorkspaceProps): React.JSX.Element 
       if (documentRef.current === null) return
       const mod = event.ctrlKey || event.metaKey
       if (event.key === 'Escape') {
-        setContextMenu(null); setCreateMenu(null); setBackgroundMenu(null); setImageMenu(null); setNodeAddMenu(null)
+        setContextMenu(null); setCreateMenu(null); setBackgroundMenu(null); setImageMenu(null); setNodeAddMenu(null); setZoomMenuOpen(false)
         setColorPickerNodeId(null)
         // The legend is the topmost surface whenever it is open, so Esc closes it
         // before anything behind it (the selection it would otherwise clear is
@@ -5168,14 +5178,13 @@ export function CanvasWorkspace(props: CanvasWorkspaceProps): React.JSX.Element 
 
   const onViewportPointerDown = (event: ReactPointerEvent<HTMLDivElement>): void => {
     const target = event.target as Element | null
-    setContextMenu(null); setCreateMenu(null); setNodeAddMenu(null)
+    setContextMenu(null); setCreateMenu(null); setNodeAddMenu(null); setZoomMenuOpen(false)
     if (closestOf(target, '[data-canvas-no-zoom]') === null) { setBackgroundMenu(null); setImageMenu(null) }
+    // 捏合缩放保留自定义引擎（jsdom 合成触摸可驱动；react-flow 的 d3-zoom
+    // 触摸捏合在 jsdom 里不生效），故 ReactFlow 设 zoomOnPinch=false 避免双重缩放。
     if (event.pointerType === 'touch') {
       activePointersRef.current.set(event.pointerId, { x: event.clientX, y: event.clientY })
       if (activePointersRef.current.size === 2) {
-        // The second finger turns a pending pan or marquee into a pinch: the
-        // single-pointer gesture it started is superseded, and leaving it armed
-        // would pan the canvas under the pinch.
         panRef.current = null
         marqueeRef.current = null
         setMarquee(null)
@@ -5185,18 +5194,9 @@ export function CanvasWorkspace(props: CanvasWorkspaceProps): React.JSX.Element 
       }
       if (activePointersRef.current.size > 2) return
     }
+    // pan/zoom（滚轮/拖拽）由 react-flow 的 d3-zoom 接管；这里只保留选择工具下的框选。
     const isBackground = closestOf(target, '[data-node-id],[data-connection-hit]') === null
-    const shouldPan = event.button === 1 || (event.button === 0 && (tool === 'pan' || temporaryPanTool) && isBackground)
-    if (shouldPan) {
-      event.preventDefault()
-      event.currentTarget.setPointerCapture(event.pointerId)
-      const current = documentRef.current
-      if (current !== null) {
-        panRef.current = { startX: event.clientX, startY: event.clientY, viewportX: current.viewport.x, viewportY: current.viewport.y, hasMoved: false, startedOnBackground: isBackground }
-      }
-      return
-    }
-    if (event.button === 0 && isBackground && tool === 'select') {
+    if (event.button === 0 && isBackground && tool === 'select' && event.pointerType !== 'touch') {
       event.preventDefault()
       event.currentTarget.setPointerCapture(event.pointerId)
       const world = screenToWorld(event.clientX, event.clientY)
@@ -5306,7 +5306,7 @@ export function CanvasWorkspace(props: CanvasWorkspaceProps): React.JSX.Element 
           const primary = documentRef.current?.nodes.find(node => node.id === drag.primaryId)
           const origin = drag.origins.get(drag.primaryId)
           let snap = { x: 0, y: 0 }
-          if (primary !== undefined && origin !== undefined) {
+          if (snapEnabledRef.current && primary !== undefined && origin !== undefined) {
             const moving = new Set(drag.origins.keys())
             const others = (documentRef.current?.nodes ?? []).filter(node => !moving.has(node.id))
             snap = snapOffset({ ...primary, x: origin.x, y: origin.y }, others, dx, dy, SNAP_SCREEN_PX / scale)
@@ -5722,7 +5722,53 @@ export function CanvasWorkspace(props: CanvasWorkspaceProps): React.JSX.Element 
     return { ids: new Set([hit.coveredId, hit.coverId]), coveredId: hit.coveredId, coverTitle }
   })()
 
-  const renderNode = (node: CanvasNode): React.JSX.Element => {
+  const nodeClassName = (node: CanvasNode): string => {
+    const isSketch = isSketchNode(node)
+    const isStoryboard = node.type === 'storyboard'
+    const isConfig = node.type === 'config'
+    const isTextual = node.type === 'text' || isConfig
+    const isSelected = selectedIds.has(node.id)
+    const isRelated = relatedIds.has(node.id)
+    const isConnectTarget = connecting?.targetId === node.id
+    const isOverlapping = liveOverlap !== null && liveOverlap.ids.has(node.id)
+    return `${css.node} ${isSketch ? css.sketchNode : isStoryboard ? css.storyboardNode : isConfig ? css.configNode : isTextual ? css.textNode : css.imageNode} ${isSelected ? css.nodeSelected : ''} ${isRelated ? css.nodeRelated : ''} ${isConnectTarget ? css.nodeConnectTarget : ''} ${isOverlapping ? css.nodeOverlap : ''}`
+  }
+
+  const handleNodeDoubleClick = (event: React.MouseEvent, node: CanvasNode): void => {
+    if (closestOf(event.target, 'button, input, select, textarea, [data-toolbar]') !== null) return
+    const video = videoOf(node)
+    if (node.type === 'video' && video !== undefined && video.url !== '') {
+      event.preventDefault(); event.stopPropagation(); setVideoPreviewNodeId(node.id); return
+    }
+    const asset = assetOf(node)
+    if (node.type !== 'image' || asset === undefined || asset.url === '') return
+    event.preventDefault(); event.stopPropagation(); openImageNode(node)
+  }
+
+  const handleNodeContextMenu = (event: React.MouseEvent, node: CanvasNode): void => {
+    if (closestOf(event.target, 'textarea, input, select') !== null) return
+    event.preventDefault(); event.stopPropagation()
+    if (!selectedIds.has(node.id)) setSelectedIds(new Set([node.id]))
+    setContextMenu({ type: 'node', screen: { x: event.clientX, y: event.clientY }, nodeId: node.id })
+  }
+
+  const handleNodeClick = (event: React.MouseEvent, node: CanvasNode): void => {
+    if (closestOf(event.target, 'button, input, select, textarea, [data-toolbar]') !== null) return
+    event.stopPropagation()
+    const additive = event.shiftKey || event.ctrlKey || event.metaKey
+    setNodeAddMenu(null)
+    setSelectedIds(previous => {
+      if (additive) {
+        const next = new Set(previous)
+        if (next.has(node.id)) next.delete(node.id); else next.add(node.id)
+        return next
+      }
+      return previous.has(node.id) ? previous : new Set([node.id])
+    })
+    setSelectedConnectionId(null)
+  }
+
+  const renderNodeBody = (node: CanvasNode): React.JSX.Element => {
     const metadata = nodeMetadata(node)
     const isSelected = selectedIds.has(node.id)
     const isRelated = relatedIds.has(node.id)
@@ -5771,42 +5817,7 @@ export function CanvasWorkspace(props: CanvasWorkspaceProps): React.JSX.Element 
       width: `${rect.width * 100}%`,
       height: `${rect.height * 100}%`,
     })
-    return <div
-      key={node.id}
-      data-node-id={node.id}
-      data-annotating={annotating ? '' : undefined}
-      // The node is the tab stop, not the toolbar buttons. A hidden toolbar
-      // cannot hold focus at all (`visibility: hidden` removes its subtree from
-      // the tab order), so `.node:focus-within` below would never fire if the
-      // buttons were the only way in -- the two rules would deadlock and the
-      // node's actions would be unreachable by keyboard. Focusing the node makes
-      // the toolbar visible, and only then do its buttons become focusable.
-      tabIndex={0}
-      role="group"
-      aria-label={node.title}
-      className={`${css.node} ${isSketch ? css.sketchNode : isStoryboard ? css.storyboardNode : isConfig ? css.configNode : isTextual ? css.textNode : css.imageNode} ${isSelected ? css.nodeSelected : ''} ${isRelated ? css.nodeRelated : ''} ${isConnectTarget ? css.nodeConnectTarget : ''} ${isOverlapping ? css.nodeOverlap : ''}`}
-      style={{ left: node.x, top: node.y, width: node.width, height: node.height }}
-      onPointerDown={event => handleNodePointerDown(event, node.id)}
-      onDoubleClick={event => {
-        if ((event.target as Element).closest('button, input, select, textarea, [data-toolbar]')) return
-        if (isVideo && hasVideo) {
-          event.preventDefault()
-          event.stopPropagation()
-          setVideoPreviewNodeId(node.id)
-          return
-        }
-        if (!hasImage || node.type !== 'image') return
-        event.preventDefault()
-        event.stopPropagation()
-        openImageNode(node)
-      }}
-      onContextMenu={event => {
-        if ((event.target as Element).closest('textarea, input, select')) return
-        event.preventDefault(); event.stopPropagation()
-        if (!selectedIds.has(node.id)) setSelectedIds(new Set([node.id]))
-        setContextMenu({ type: 'node', screen: { x: event.clientX, y: event.clientY }, nodeId: node.id })
-      }}
-    >
+    return <>
       <div className={css.nodeGlow} aria-hidden="true" />
       {coverNote !== null
         ? <span
@@ -6052,7 +6063,8 @@ export function CanvasWorkspace(props: CanvasWorkspaceProps): React.JSX.Element 
               onMouseEnter={() => { window.setTimeout(() => { if (connectRef.current === null) openNodeAddMenu(node) }, 120) }}
               onMouseLeave={scheduleNodeAddMenuClose}
             />
-          </>}      <div className={`${css.hoverToolbar} ${node.type === 'image' && hasImage ? css.hoverToolbarBottom : ''}`} data-toolbar={node.type === 'image' && hasImage ? 'bottom' : 'top'} onPointerDown={event => event.stopPropagation()}>
+          </>}
+      <div className={`${css.hoverToolbar} ${node.type === 'image' && hasImage ? css.hoverToolbarBottom : ''}`} data-toolbar={node.type === 'image' && hasImage ? 'bottom' : 'top'} onPointerDown={event => event.stopPropagation()}>
         {isVideo && hasVideo ? <>
           <ModelPicker
             groups={videoGroups ?? []}
@@ -6133,13 +6145,90 @@ export function CanvasWorkspace(props: CanvasWorkspaceProps): React.JSX.Element 
         {isAnnotationCard(node) ? null : <IconButton name="duplicate" label={tt('canvas.duplicate')} onClick={() => duplicateNode(node.id)} />}
         <IconButton name="trash" label={tt('canvas.delete')} onClick={() => deleteNode(node.id)} />
       </div>
-    </div>
+    </>
   }
+
+  // ------------------------------------------------------ react-flow 受控视图
+  // document 是唯一真源；flow 节点/边/视口都由它派生，变更回写 document。
+  // screenToWorld/canvasCenter/fitView 仍读写 document.viewport（经 onViewportChange
+  // 同步），所以原样可用。拖拽历史走 onNodeDragStart/Stop（保 3px 阈值语义）。
+  const flowNodes = useMemo(
+    () => nodesToFlow(document?.nodes ?? []).map(node => ({ ...node, selected: selectedIds.has(node.id) })),
+    [document, selectedIds],
+  )
+  const flowEdges = useMemo(
+    () => connectionsToEdges((document?.connections ?? []).filter(connection => {
+      const from = nodeById.get(connection.fromNodeId)
+      const to = nodeById.get(connection.toNodeId)
+      return from !== undefined && to !== undefined && !isAnnotationCard(from) && !isAnnotationCard(to)
+    })),
+    [document, nodeById],
+  )
+  const flowViewport = viewportToFlow(document?.viewport ?? { x: 0, y: 0, k: 1 })
+  const dragSnapshotRef = useRef<string | null>(null)
+
+  const handleNodesChange = useCallback((changes: NodeChange<CanvasFlowNode>[]): void => {
+    const positions = changes.filter((change): change is Extract<NodeChange<CanvasFlowNode>, { type: 'position' }> => change.type === 'position')
+    const selects = changes.filter((change): change is Extract<NodeChange<CanvasFlowNode>, { type: 'select' }> => change.type === 'select')
+    const removes = changes.filter((change): change is Extract<NodeChange<CanvasFlowNode>, { type: 'remove' }> => change.type === 'remove')
+    if (positions.length > 0) {
+      updateNodes(nodes => nodes.map(node => {
+        const change = positions.find(item => item.id === node.id)
+        return change !== undefined && change.position !== undefined ? { ...node, x: change.position.x, y: change.position.y } : node
+      }))
+    }
+    if (selects.length > 0) {
+      setSelectedIds(previous => {
+        const next = new Set(previous)
+        for (const change of selects) { if (change.selected) next.add(change.id); else next.delete(change.id) }
+        return next
+      })
+    }
+    if (removes.length > 0) {
+      const ids = new Set(removes.map(change => change.id))
+      mutate(previous => ({ ...previous, nodes: previous.nodes.filter(node => !ids.has(node.id)), connections: previous.connections.filter(connection => !ids.has(connection.fromNodeId) && !ids.has(connection.toNodeId)) }))
+    }
+  }, [updateNodes, mutate])
+
+  const handleEdgesChange = useCallback((changes: EdgeChange[]): void => {
+    const removes = changes.filter(change => change.type === 'remove')
+    if (removes.length === 0) return
+    const ids = new Set(removes.map(change => change.id))
+    mutate(previous => ({ ...previous, connections: previous.connections.filter(connection => !ids.has(connection.id)) }))
+  }, [mutate])
+
+  const handleConnect = useCallback((connection: Connection): void => {
+    if (connection.source !== null && connection.target !== null) connectNodes(connection.source, connection.target)
+  }, [connectNodes])
+
+  const handleViewportChange = useCallback((viewport: Viewport): void => {
+    // jsdom 无 layout（rect 恒 0）时 react-flow 可能回 NaN 视口；守住边界，
+    // 不让它污染 document.viewport（真浏览器里视口始终有限）。
+    if (!Number.isFinite(viewport.x) || !Number.isFinite(viewport.y) || !Number.isFinite(viewport.zoom)) return
+    setViewport(viewportFromFlow(viewport))
+  }, [setViewport])
+
+  const handleNodeDragStart = useCallback((): void => {
+    dragSnapshotRef.current = beginHistory()
+    dragMovingIdsRef.current = new Set(selectedIdsRef.current)
+  }, [beginHistory])
+
+  const handleNodeDragStop = useCallback((): void => {
+    commitSnapshot(dragSnapshotRef.current)
+    dragSnapshotRef.current = null
+  }, [commitSnapshot])
+
+  const handlePaneClick = useCallback((): void => {
+    setContextMenu(null); setCreateMenu(null); setNodeAddMenu(null)
+    setSelectedIds(new Set()); setSelectedConnectionId(null)
+  }, [])
 
   const renderConnections = (): React.JSX.Element => {
     // Legacy canvases wired annotation cards into the graph; those edges are
     // implicit now (the card is attached to its image), so they are not drawn.
-    const visible = (document?.connections ?? []).filter(connection => {
+    // 隐藏连线只藏持久边；connecting 预览与技能运行边仍画——正在进行的
+    // 动作不能因为视图开关而消失。
+    const visible = connectionsHidden ? [] : (document?.connections ?? []).filter(connection => {
       const from = nodeById.get(connection.fromNodeId)
       const to = nodeById.get(connection.toNodeId)
       if (from === undefined || to === undefined) return false
@@ -6612,7 +6701,6 @@ export function CanvasWorkspace(props: CanvasWorkspaceProps): React.JSX.Element 
       ref={viewportRef}
       className={`${css.viewport} ${cursorClass}`}
       onPointerDown={onViewportPointerDown}
-      onWheel={onWheel}
       onDoubleClick={event => {
         const target = event.target as Element | null
         if (closestOf(target, '[data-node-id],[data-canvas-no-zoom]') !== null) return
@@ -6649,17 +6737,50 @@ export function CanvasWorkspace(props: CanvasWorkspaceProps): React.JSX.Element 
         {backgroundMode === 'dotGrid' ? <DotGridBackground /> : null}
         {backgroundMode === 'shapeGrid' ? <ShapeGridBackground /> : null}
       </div>
-      <div className={css.world} style={{ transform: `translate(${document?.viewport.x ?? 0}px, ${document?.viewport.y ?? 0}px) scale(${document?.viewport.k ?? 1})` }}>
-        {renderConnections()}
-        {document?.nodes.map(renderNode)}
-        {Object.entries(skillRuns).map(([taskId, trace]) => <SkillRunCard
-          key={taskId}
+      {document !== null ? (
+        <div className={css.flowRoot}>
+          <ReactFlowProvider>
+            <CanvasFlowProvider value={{
+              document, selectedIds, colorMode: 'system', annotatingNodeId: annotateNodeId,
+              nodeById: id => nodeById.get(id), nodeClassName, renderNodeBody,
+              onNodeDoubleClick: handleNodeDoubleClick, onNodeContextMenu: handleNodeContextMenu,
+              onNodePointerDown: handleNodePointerDown,
+              screenToWorld, canvasCenter, mutate, patchNode,
+            }}>
+              <ReactFlow
+                nodes={flowNodes}
+                edges={[]}
+                nodeTypes={canvasNodeTypes}
+                viewport={flowViewport}
+                onViewportChange={handleViewportChange}
+                onPaneClick={handlePaneClick}
+                minZoom={MIN_SCALE}
+                maxZoom={MAX_SCALE}
+                panOnDrag={tool === 'pan'}
+                selectionOnDrag={false}
+                elementsSelectable={false}
+                nodesDraggable={false}
+                nodesConnectable={false}
+                panActivationKeyCode="Space"
+                zoomOnDoubleClick={false}
+                zoomOnPinch={false}
+                deleteKeyCode={null}
+                proOptions={{ hideAttribution: true }}
+                colorMode="system"
+              />
+            </CanvasFlowProvider>
+          </ReactFlowProvider>
+        </div>
+      ) : null}
+      <div className={css.world} style={{ transform: `translate(${document?.viewport.x ?? 0}px, ${document?.viewport.y ?? 0}px) scale(${document?.viewport.k ?? 1})`, pointerEvents: 'none' }}>
+        <div style={{ pointerEvents: 'auto' }}>{renderConnections()}</div>
+        {Object.entries(skillRuns).map(([taskId, trace]) => <div key={taskId} style={{ pointerEvents: 'auto' }}><SkillRunCard
           taskId={taskId}
           trace={trace}
           onCancel={taskId => { void cancelSkillRun(taskId) }}
           onDismiss={dismissSkillRun}
           onRetry={retrySkillRun}
-        />)}
+        /></div>)}
         {renderAnnotationLinks()}
       </div>
       {marqueeRect !== null ? <div className={css.marquee} style={marqueeRect} aria-hidden="true" /> : null}
@@ -6688,16 +6809,56 @@ export function CanvasWorkspace(props: CanvasWorkspaceProps): React.JSX.Element 
         <div className={css.zoomDock}>
           <IconButton name="minimap" label={minimapOpen ? tt('canvas.minimapClose') : tt('canvas.minimapOpen')} active={minimapOpen} onClick={() => setMinimapOpen(previous => !previous)} />
           <IconButton name="fit" label={tt('canvas.fitView')} onClick={fitView} />
-          <input
-            type="range"
-            min={5}
-            max={500}
-            step={1}
-            value={Math.round((document?.viewport.k ?? 1) * 100)}
-            onChange={event => setZoomAtCenter(Number(event.target.value) / 100)}
+          <button
+            type="button"
+            className={css.zoomValue}
+            aria-haspopup="menu"
+            aria-expanded={zoomMenuOpen}
             aria-label={tt('canvas.zoom')}
-          />
-          <span className={css.zoomValue}>{Math.round((document?.viewport.k ?? 1) * 100)}%</span>
+            onClick={() => setZoomMenuOpen(open => !open)}
+          >{Math.round((document?.viewport.k ?? 1) * 100)}%</button>
+          {zoomMenuOpen ? <div className={css.zoomMenu} role="menu" data-canvas-no-zoom="">
+            <button type="button" role="menuitem" onClick={() => { setZoomAtCenter((document?.viewport.k ?? 1) * 1.25); setZoomMenuOpen(false) }}>{tt('canvas.zoomIn')}</button>
+            <button type="button" role="menuitem" onClick={() => { setZoomAtCenter((document?.viewport.k ?? 1) * 0.8); setZoomMenuOpen(false) }}>{tt('canvas.zoomOut')}</button>
+            <button type="button" role="menuitem" onClick={() => { fitView(); setZoomMenuOpen(false) }}>{tt('canvas.fitView')}</button>
+            <span className={css.zoomMenuDivider} aria-hidden="true" />
+            {[0.5, 1, 2, 4, 8].map(scale => (
+              <button
+                key={scale}
+                type="button"
+                role="menuitem"
+                data-active={Math.abs((document?.viewport.k ?? 1) - scale) < 0.005 ? '' : undefined}
+                onClick={() => { setZoomAtCenter(scale); setZoomMenuOpen(false) }}
+              >{scale * 100}%</button>
+            ))}
+            <span className={css.zoomMenuDivider} aria-hidden="true" />
+            <button
+              type="button"
+              role="menuitemcheckbox"
+              aria-checked={snapEnabled}
+              data-active={snapEnabled ? '' : undefined}
+              onClick={() => { snapEnabledRef.current = !snapEnabledRef.current; setSnapEnabled(snapEnabledRef.current) }}
+            >{tt('canvas.snapAlign')}</button>
+            <button
+              type="button"
+              role="menuitemcheckbox"
+              aria-checked={!connectionsHidden}
+              data-active={!connectionsHidden ? '' : undefined}
+              onClick={() => setConnectionsHidden(hidden => !hidden)}
+            >{tt('canvas.showConnections')}</button>
+            <span className={css.zoomMenuDivider} aria-hidden="true" />
+            <form
+              className={css.zoomCustom}
+              onSubmit={event => {
+                event.preventDefault()
+                const value = Number(new FormData(event.currentTarget).get('zoom'))
+                if (Number.isFinite(value) && value > 0) { setZoomAtCenter(value / 100); setZoomMenuOpen(false) }
+              }}
+            >
+              <input name="zoom" type="number" min={5} max={800} defaultValue={Math.round((document?.viewport.k ?? 1) * 100)} aria-label={tt('canvas.zoomCustom')} />
+              <button type="submit">%</button>
+            </form>
+          </div> : null}
         </div>
       </div>
       <div className={css.dockOuter} ref={dockOuterRef}>

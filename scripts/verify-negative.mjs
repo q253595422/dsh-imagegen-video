@@ -37,7 +37,11 @@ function freshCopy (needsGit = false) {
   // check throw ENOENT -- the harness reporting its own incompleteness as if
   // it were the injected defect, which reads as "0/N defects turn the check
   // red" and hides whether the mutation works at all.
-  for (const entry of ['src', 'scripts', 'lib', 'package.json', 'tsdown.config.ts', '.gitignore', '.github']) {
+  // pnpm-lock.yaml + tsconfig.json: verify-reproducible's mirrorSourceTree
+  // copies its BUILD_INPUTS whitelist from the copy; a missing entry dies with
+  // ENOENT before the check runs, which reads as HARNESS BROKEN rather than
+  // the injected defect.
+  for (const entry of ['src', 'scripts', 'lib', 'package.json', 'pnpm-lock.yaml', 'tsconfig.json', 'tsdown.config.ts', '.gitignore', '.github']) {
     cpSync(join(SRC, entry), join(COPY, entry), { recursive: true })
   }
   // `verify-pack.mjs` reads the packed manifest and requires every entry point
@@ -737,10 +741,30 @@ const CASES = [
     // revealed and the deadlock is back.
     name: 'the node stops being a tab stop in a real browser',
     runner: 'contracts',
-    file: 'src/client/CanvasWorkspace.tsx',
+    file: 'src/client/canvas-flow-context.tsx',
     from: '      tabIndex={0}\n      role="group"\n      aria-label={node.title}',
     to: '      role="group"\n      aria-label={node.title}',
     expect: /canvas node root is not focusable|does not reveal its toolbar/,
+  },
+  {
+    // The adapter is the save boundary: dropping the metadata spread means
+    // every autosave silently strips prompts/annotations off the user's nodes.
+    name: 'the flow adapter drops node metadata on the way back',
+    runner: 'contracts',
+    file: 'src/client/canvas-flow-adapter.ts',
+    from: '    ...(flow.data.metadata !== undefined ? { metadata: flow.data.metadata } : {}),\n',
+    to: '',
+    expect: /flow adapter round-trip is lossy/,
+  },
+  {
+    // Without the finite guard a layout-less react-flow reports NaN straight
+    // into document.viewport, and every coordinate after that inherits it.
+    name: 'the viewport write-back accepts non-finite geometry',
+    runner: 'contracts',
+    file: 'src/client/CanvasWorkspace.tsx',
+    from: '    if (!Number.isFinite(viewport.x) || !Number.isFinite(viewport.y) || !Number.isFinite(viewport.zoom)) return\n',
+    to: '',
+    expect: /viewport write-back lost its finite guard/,
   },
 
   // ------------------------------------------------------ issues #22 and #23
@@ -967,7 +991,7 @@ const CASES = [
     name: 'the video studio stops offering the diagnostics record',
     runner: 'smoke',
     file: 'src/client/VideoPanel.tsx',
-    from: '      <div className={css.videoDiagnosticsRow}>\n        <DiagnosticsButton open={diagnosticsOpen} onToggle={() => { setDiagnosticsOpen(open => !open) }} />\n      </div>',
+    from: '      <div className={css.videoDiagnosticsRow}>\n        <DiagnosticsButton open={diagnosticsOpen} onToggle={() => { setDiagnosticsOpen(open => !open) }} />\n        <SignalsButton open={signalsOpen} onToggle={() => { setSignalsOpen(open => !open) }} />\n      </div>',
     to: '',
     expect: /renders exactly one diagnostics entry|opens the diagnostics record/,
   },
@@ -1170,7 +1194,9 @@ const CASES = [
     file: 'tsdown.config.ts',
     from: 'for (const local of Object.keys(exported).sort()) classMap[local] = exported[local].name',
     to: 'for (const [local, exp] of Object.entries(exported)) classMap[local] = exp.name',
-    expect: /two builds of the same source tree produced different bytes/,
+    // The drift can surface in either comparison (the native map's order is
+    // per-process); the invariant header is printed for both.
+    expect: /same input yields different output/,
   },
   // --------------------------------------------------------------- identity
   {
@@ -1771,7 +1797,7 @@ for (const testCase of CASES) {
   freshCopy(runner.git === true)
   const baseline = run(script)
   if (!baseline.ok) {
-    results.push({ name: testCase.name, verdict: 'HARNESS BROKEN', detail: baseline.out.slice(-400) })
+    results.push({ name: testCase.name, verdict: 'HARNESS BROKEN', detail: baseline.out.slice(-3000) })
     continue
   }
   try {

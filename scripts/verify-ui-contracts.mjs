@@ -74,6 +74,55 @@ if (guessedPorts.length > 0) {
 }
 console.log(`DevTools port: ${launcherUsers.length} scripts scanned, none guesses one`)
 
+// ------------------------------------------- flow adapter: lossless boundary
+// CanvasDocument is the only source of truth and react-flow is a controlled
+// view, so the adapter between them must round-trip EVERY field: a dropped
+// metadata key is a silent rewrite of the user's saved canvas on the next
+// autosave. Node 24 strips the module's type-only imports, so the real adapter
+// runs here directly — no bundle, no browser, no copy of the logic.
+const flowAdapter = await import(new URL('../src/client/canvas-flow-adapter.ts', import.meta.url))
+const roundTripNodes = [
+  { id: 'i1', type: 'image', title: 'img', x: 10, y: 20, width: 240, height: 240, metadata: { prompt: 'a cat', annotations: [{ sourceNodeId: 'x', rect: { x: 0.1, y: 0.1, width: 0.5, height: 0.5 } }] } },
+  { id: 't1', type: 'text', title: 'txt', x: 0, y: 0, width: 280, height: 150, metadata: { text: 'hello', bold: true } },
+  { id: 'v1', type: 'video', title: 'vid', x: -5, y: 7, width: 320, height: 180, metadata: { videoMode: 'i2v', seconds: 5 } },
+  // The absent-vs-empty metadata distinction is part of the document shape.
+  { id: 'f1', type: 'file', title: 'file', x: 3, y: 4, width: 300, height: 170 },
+  { id: 'c1', type: 'config', title: 'cfg', x: 9, y: 9, width: 320, height: 190, metadata: {} },
+]
+const adapterProblems = []
+for (const node of roundTripNodes) {
+  const back = flowAdapter.nodeFromFlow(flowAdapter.nodeToFlow(node))
+  if (JSON.stringify(back) !== JSON.stringify(node)) adapterProblems.push(`node ${node.id} changed shape: ${JSON.stringify(back)}`)
+}
+if ('metadata' in flowAdapter.nodeFromFlow(flowAdapter.nodeToFlow(roundTripNodes[3]))) adapterProblems.push('a node without metadata grew one on the way back')
+const roundTripConnection = { id: 'e1', fromNodeId: 'i1', toNodeId: 'v1' }
+if (JSON.stringify(flowAdapter.edgeToConnection(flowAdapter.connectionToEdge(roundTripConnection))) !== JSON.stringify(roundTripConnection)) adapterProblems.push('the connection shape changed (workflow/compose read {fromNodeId,toNodeId} directly)')
+for (const viewport of [{ x: 0, y: 0, k: 1 }, { x: -120, y: 88, k: 0.37 }]) {
+  if (JSON.stringify(flowAdapter.viewportFromFlow(flowAdapter.viewportToFlow(viewport))) !== JSON.stringify(viewport)) adapterProblems.push(`viewport ${JSON.stringify(viewport)} changed`)
+}
+if (adapterProblems.length > 0) {
+  console.error('\nFAIL: the flow adapter round-trip is lossy.')
+  for (const entry of adapterProblems) console.error(`  - ${entry}`)
+  console.error('Every autosave would rewrite the user\'s document through this boundary.')
+  process.exit(1)
+}
+console.log('flow adapter: nodes / connections / viewport round-trip lossless')
+
+// ------------------------------------------- viewport write-back stays finite
+// react-flow reports NaN viewport geometry when there is no layout (jsdom,
+// a detached pane); without the guard that NaN reaches document.viewport and
+// every later coordinate math inherits it. No browser here reproduces a NaN
+// viewport, so the guard is checked as the source invariant it is.
+const workspaceText = readSourceText(new URL('../src/client/CanvasWorkspace.tsx', import.meta.url))
+const viewportHandler = workspaceText.match(/const handleViewportChange = useCallback\(\(viewport: Viewport\): void => \{[\s\S]{0,500}?\}, \[setViewport\]\)/)
+if (viewportHandler === null || !/Number\.isFinite\(viewport\.x\)[\s\S]*?Number\.isFinite\(viewport\.y\)[\s\S]*?Number\.isFinite\(viewport\.zoom\)/.test(viewportHandler[0])) {
+  console.error('\nFAIL: the viewport write-back lost its finite guard.')
+  console.error('react-flow can report NaN geometry without a layout; the document')
+  console.error('must never inherit it.')
+  process.exit(1)
+}
+console.log('viewport write-back: non-finite geometry never reaches the document')
+
 if (CHROME === null) skipWithoutChrome('the UI contract guards did NOT run.')
 
 const clientDir = new URL('../src/client/', import.meta.url)
@@ -924,13 +973,15 @@ if (cssLiteral.length > 0) {
 }
 console.log('annotation marker: CSS and Canvas2D both read the same token, no literals left')
 
-const canvasSource = read('CanvasWorkspace.tsx')
+const canvasSource = read('canvas-flow-context.tsx')
 // The browser fixture below hardcodes `tabindex` on its node, so it measures the
 // CSS contract only -- it cannot see whether the COMPONENT still makes the node
 // focusable. That half is a source invariant: without tabIndex on the node root
 // the toolbar can never be revealed, because a hidden toolbar's own buttons are
-// not focusable and `.node:focus-within` would never fire.
-const nodeRoot = canvasSource.match(/<div\s*\n\s*key=\{node\.id\}[\s\S]{0,1400}?onPointerDown=\{event => handleNodePointerDown/)
+// not focusable and `.node:focus-within` would never fire. The node root is the
+// react-flow custom-node shell (CanvasNodeShell), which delegates the pointer
+// gesture back to the workspace's handleNodePointerDown via context.
+const nodeRoot = canvasSource.match(/<div\s*\n\s*data-node-id=\{node\.id\}[\s\S]{0,1400}?onPointerDown=\{event => ctx\.onNodePointerDown/)
 if (nodeRoot === null) {
   console.error('\nFAIL: could not locate the node root element to check its focusability.')
   process.exit(1)
@@ -2204,8 +2255,11 @@ if (!/data-preview-stage=""/.test(previewSource)) {
 if (!/data-preview-zoom-hint=""/.test(previewSource)) {
   wheelProblems.push('nothing on screen says how to zoom (`data-preview-zoom-hint`)')
 }
-if (!/addEventListener\(\s*'wheel'[\s\S]{0,600}?passive:\s*false/.test(previewSource)) {
-  wheelProblems.push('no `addEventListener(\'wheel\', handler, { passive: false })` — without it preventDefault is dead code')
+// Anchored to the STAGE listener: the overlay's containWheel binding further
+// down also says `passive: false`, and an unanchored search let that one satisfy
+// this check while the stage handler had gone passive (a negative case proved it).
+if (!/stage\.addEventListener\(\s*'wheel'[\s\S]{0,120}?passive:\s*false/.test(previewSource)) {
+  wheelProblems.push('no `addEventListener(\'wheel\', handler, { passive: false })` on the stage — without it preventDefault is dead code')
 }
 if (/onWheel=\{(?:(?!\}\}).){0,600}?preventDefault\(\)/s.test(previewSource)) {
   wheelProblems.push('a React `onWheel` still calls preventDefault(), which React 18 ignores')

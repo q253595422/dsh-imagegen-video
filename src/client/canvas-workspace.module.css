@@ -322,6 +322,13 @@
   transform-origin: 0 0;
 }
 
+/* react-flow 受控视图容器：填满 viewport，react-flow 自带 viewport transform。
+   节点/边由 react-flow 渲染；技能运行卡与标注引线仍走 .world 覆盖层。 */
+.flowRoot {
+  position: absolute;
+  inset: 0;
+}
+
 .marquee {
   position: absolute;
   z-index: var(--z-marquee);
@@ -1435,17 +1442,87 @@
   backdrop-filter: blur(10px);
 }
 
-.zoomDock input[type="range"] {
-  width: 96px;
-  accent-color: var(--dsw-alias-brand-primary);
-}
-
 .zoomValue {
-  width: 40px;
+  min-width: 40px;
+  padding: 2px 4px;
+  border: none;
+  border-radius: var(--dsw-radius-sm);
+  background: transparent;
   text-align: right;
   font-size: 11px;
   color: var(--dsw-alias-label-secondary);
   font-variant-numeric: tabular-nums;
+  cursor: pointer;
+}
+
+.zoomValue:hover { background: var(--dsw-alias-interactive-bg-hover); color: var(--dsw-alias-label-primary); }
+
+/* 预设菜单从 zoom dock 向上开：chrome 钉在底边，下方没有空间。
+   表面配方与 backgroundMenu 一致，不新增 z-index rung。 */
+.zoomMenu {
+  position: absolute;
+  bottom: calc(100% + 8px);
+  left: 0;
+  z-index: var(--z-anchored-menu);
+  min-width: 160px;
+  padding: 5px;
+  border-radius: var(--dsw-radius-md);
+  border: 1px solid var(--dsw-alias-border-l1);
+  background: color-mix(in srgb, var(--dsw-alias-bg-layer-1) 96%, transparent);
+  box-shadow: var(--dsw-shadow-lv3);
+  display: flex;
+  flex-direction: column;
+}
+
+.zoomMenu button {
+  display: flex;
+  align-items: center;
+  justify-content: flex-start;
+  border: none;
+  border-radius: var(--dsw-radius-sm);
+  background: transparent;
+  color: var(--dsw-alias-label-primary);
+  font-size: 12px;
+  padding: 7px 10px;
+  cursor: pointer;
+  text-align: left;
+}
+
+.zoomMenu button:hover { background: var(--dsw-alias-interactive-bg-hover); }
+
+.zoomMenu button[data-active] {
+  color: var(--dsw-alias-brand-primary);
+  background: color-mix(in srgb, var(--dsw-alias-brand-primary) 12%, transparent);
+}
+
+.zoomMenuDivider {
+  height: 1px;
+  margin: 4px 6px;
+  background: var(--dsw-alias-border-l1);
+}
+
+.zoomCustom {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 4px 6px 2px;
+}
+
+.zoomCustom input {
+  width: 64px;
+  height: 26px;
+  padding: 0 6px;
+  border: 1px solid var(--dsw-alias-border-l1);
+  border-radius: var(--dsw-radius-sm);
+  background: transparent;
+  color: var(--dsw-alias-label-primary);
+  font-size: 12px;
+}
+
+.zoomCustom button {
+  height: 26px;
+  padding: 0 8px;
+  justify-content: center;
 }
 
 /* -------------------------------------------------------------- minimap */

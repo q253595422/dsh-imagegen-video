@@ -5,6 +5,13 @@ Attribution for third-party code is in [NOTICE](./NOTICE).
 
 ## Releases
 
+### 1.25.0 — 无限画布换用 react-flow 引擎；LibTV 式缩放菜单与视图开关
+
+- **画布渲染与视口交给 @xyflow/react v12（受控视图），现有功能全部保留。** `CanvasDocument` v2 仍是唯一真源：宿主校验、revision 乐观锁、自动保存、撤销重做留在文档层，用户磁盘数据零破坏。节点拖动（边缘对齐吸附、标注卡随行、重叠提示）、四角 resize、选择、连线、捏合缩放、框选保留自定义引擎，手势与快捷键一个不丢。
+- **无损适配层。** 新增 `canvas-flow-adapter`（节点/连线/视口双向 round-trip，metadata 全字段与「无/空 metadata」区别保住）与 `canvas-flow-context`（模块级稳定节点外壳）。连线持久化仍存 `{fromNodeId,toNodeId}`，workflow/compose/storyboard 纯函数契约不动。react-flow 样式构建时内联，跨目录可复现构建字节一致。
+- **LibTV 式 chrome。** 缩放百分比点开预设菜单：放大/缩小/适应、50–800% 预设、自定义输入（上限 500%→800%）；视图开关：对齐吸附、显示连线（隐藏持久边，进行中预览不受影响）。文案补齐 zh/en/ru。
+- 测试契约同步：smoke 沙箱补 react-flow 所需桩（测量 ResizeObserver/DOMMatrix/navigator），boxOf 改读 wrapper transform；verify-ui-contracts 新增 adapter round-trip 与视口有限值守卫；反向锚点迁移并新增四条用例。真机逐项走查缩放菜单、草图重绘、标注引线、重叠徽标、视频节点工具条与拼接条。
+
 ### 1.24.0 — Google 原生渠道协议；URL 型模板图不再 404
 
 - **渠道「接口协议」新增 Google 原生（#28）。** 用 Google API Key 直连 Generative Language `:generateContent`：`x-goog-api-key` 鉴权，参考图最多 5 张走 `inlineData`，比例/清晰度嵌套在 `generationConfig.imageConfig`，auto 省略；body 不带 `n`，多张由并行单图请求满足；响应跳过 `thought` 部分、兼容 `inline_data`、缺 mimeType 按字节嗅探，空结果报 `blockReason`。配置地址带 `/models`、`:generateContent`、`/interactions` 后缀时自动剥回基址。GIF 请求在网络调用前拒绝，不静默降级成静图计费。

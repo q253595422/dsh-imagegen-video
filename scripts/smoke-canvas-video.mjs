@@ -296,11 +296,16 @@ await check('W1-W3 a finished studio clip lands a referenced node and states are
   const jsdomDocument = jsdomWindow.document
 
   // jsdom ships no layout/observer machinery; the canvas measures itself.
+  // react-flow 需要 ResizeObserver 真的报尺寸（否则节点停 visibility:hidden），
+  // 且 updateNodeInternals 用 DOMMatrixReadOnly 读 transform 的 zoom（jsdom 无）。
   jsdomWindow.ResizeObserver = class {
-    observe() {}
+    constructor(callback) { this.callback = callback }
+    observe(target) { setTimeout(() => this.callback([{ target, contentRect: { width: 200, height: 100 }, borderBoxSize: [{ inlineSize: 200, blockSize: 100 }] }], this), 0) }
     unobserve() {}
     disconnect() {}
   }
+  jsdomWindow.DOMMatrixReadOnly = class { constructor() { this.m11 = 1; this.m22 = 1; this.m41 = 0; this.m42 = 0; this.a = 1; this.d = 1; this.e = 0; this.f = 0 } }
+  jsdomWindow.DOMMatrix = jsdomWindow.DOMMatrixReadOnly
   jsdomWindow.Element.prototype.setPointerCapture = function setPointerCapture() {}
   jsdomWindow.Element.prototype.releasePointerCapture = function releasePointerCapture() {}
   jsdomWindow.Element.prototype.hasPointerCapture = function hasPointerCapture() { return true }
@@ -697,6 +702,14 @@ await check('W1-W3 a finished studio clip lands a referenced node and states are
     document: jsdomDocument,
     MutationObserver: jsdomWindow.MutationObserver,
     ResizeObserver: jsdomWindow.ResizeObserver,
+    // react-flow 的 d3-zoom 读裸 navigator.maxTouchPoints；updateNodeInternals
+    // 读 DOMMatrixReadOnly；这些在 vm 上下文里是裸全局，须显式暴露。
+    navigator: jsdomWindow.navigator,
+    DOMMatrixReadOnly: jsdomWindow.DOMMatrixReadOnly,
+    DOMMatrix: jsdomWindow.DOMMatrix,
+    requestAnimationFrame: jsdomWindow.requestAnimationFrame?.bind(jsdomWindow) ?? (cb => setTimeout(() => cb(Date.now()), 0)),
+    cancelAnimationFrame: jsdomWindow.cancelAnimationFrame?.bind(jsdomWindow) ?? clearTimeout,
+    getComputedStyle: jsdomWindow.getComputedStyle?.bind(jsdomWindow),
     CustomEvent: jsdomWindow.CustomEvent,
     HTMLElement: jsdomWindow.HTMLElement,
     FileReader: jsdomWindow.FileReader,
@@ -830,6 +843,11 @@ await check('W1-W3 a finished studio clip lands a referenced node and states are
     // event type, so the handlers fire (this is the idiom the other suites use).
     const pointerDown = (element, ctrlKey = false) => {
       element.dispatchEvent(new jsdomWindow.MouseEvent('pointerdown', {
+        bubbles: true, cancelable: true, button: 0, clientX: 5, clientY: 5, ctrlKey,
+      }))
+      // react-flow 在 click（冒泡到 .react-flow__node 外壳）选中节点，
+      // 旧的自绘 handleNodePointerDown 已移除；补 click 让选择契约继续成立。
+      element.dispatchEvent(new jsdomWindow.MouseEvent('click', {
         bubbles: true, cancelable: true, button: 0, clientX: 5, clientY: 5, ctrlKey,
       }))
     }
