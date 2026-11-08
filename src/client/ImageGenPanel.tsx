@@ -3414,6 +3414,10 @@ export function ImageGenPanel(props: {
             </span>
           ) : null}
         </span>
+        {/* Wrapped so the mobile layout can promote the nav onto its own full-width
+            row with `order`/`flex-basis`; on desktop the wrapper is display:contents
+            and does not generate a box. */}
+        <div className={css.panelNav}>
         <GooeyNav
           ariaLabel={tt('workspace.label')}
           activeIndex={workspace === 'normal' ? (tab === 'gallery' ? 1 : 0) : workspace === 'canvas' ? 2 : workspace === 'ecommerce' ? 3 : workspace === 'ppt' ? 4 : workspace === 'replica' ? 5 : workspace === 'outfit' ? 6 : workspace === 'promo' ? 7 : 8}
@@ -3440,6 +3444,7 @@ export function ImageGenPanel(props: {
             { key: 'aplus', label: tt('aplus.title') },
           ]}
         />
+        </div>
         <span className={css.panelHeaderActions}>
           <button
             type="button"

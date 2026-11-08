@@ -523,3 +523,10 @@
     overflow: visible;
   }
 }
+
+/* Mobile: same stacked container-query fix as the outfit workspace — the
+ * form row must size to its content, or the results card paints over the
+ * middle of the form. */
+@media (max-width: 760px) {
+  .body { grid-template-rows: max-content minmax(240px, 1fr); }
+}
