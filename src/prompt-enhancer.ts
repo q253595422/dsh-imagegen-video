@@ -1,7 +1,7 @@
 /** OpenAI-compatible chat helpers used by the optional prompt-enhancement UI. */
 
 import { isLikelyImageModelId } from './model-catalog.ts'
-import { isChatCompletionsUrl, resolveChannelProtocol, type ChannelProtocolPreference } from './protocol.ts'
+import { isChatCompletionsUrl, qwenDrawBaseUrl, resolveChannelProtocol, type ChannelProtocolPreference } from './protocol.ts'
 
 /** Bounded wait for one chat completion. A hung chat endpoint would otherwise
  *  leave prompt enhancement (and the canvas light tier) pending forever. */
@@ -78,6 +78,10 @@ function modelListUrls(config: ModelListConfig): string[] {
   const base = config.apiUrl.trim().replace(/\/+$/, '')
   if (base === '') throw new Error('API URL is required')
   if (resolveChannelProtocol(base, config.protocol) === 'google-native') return [googleNativeUrl(base)]
+  if (resolveChannelProtocol(base, config.protocol) === 'qwen-draw') {
+    const root = qwenDrawBaseUrl(base)
+    return [root === '' ? '/api/models' : `${root}/api/models`]
+  }
   const urls: string[] = []
   if (resolveChannelProtocol(base, config.protocol) === 'chat-completions' && isChatCompletionsUrl(base)) {
     const url = new URL(base)
@@ -251,7 +255,15 @@ export async function listOpenAIModels(config: ModelListConfig): Promise<string[
 
 /** List only models that advertise or conventionally represent image generation. */
 export async function listImageModels(config: ModelListConfig): Promise<string[]> {
-  return [...new Set((await listModelRecords(config)).filter(isImageModelRecord).map(record => record.id))]
+  const records = await listModelRecords(config)
+  // The 千问生图 API's /api/models lists image models only; its ids
+  // (qwen-turbo / qwen-gguf / krea2-turbo / sdxl) do not follow the usual
+  // image-model naming conventions, so the capability heuristic would drop
+  // every one of them.
+  if (resolveChannelProtocol(config.apiUrl.trim(), config.protocol) === 'qwen-draw') {
+    return [...new Set(records.map(record => record.id))].sort((a, b) => a.localeCompare(b))
+  }
+  return [...new Set(records.filter(isImageModelRecord).map(record => record.id))]
     .sort((a, b) => a.localeCompare(b))
 }
 

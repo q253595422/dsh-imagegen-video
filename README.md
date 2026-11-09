@@ -355,6 +355,7 @@ dsh plugin --profile web add ./q253595422-dsh-imagegen-video-X.Y.Z.tgz
 
 - 通用渠道默认自动判断 Images API 与 Chat Completions；也可在设置中手动指定。
 - One-API、New API、LiteLLM 等只暴露 `/chat/completions` 的网关，可填写完整接口地址并选择对应模型。
+- 千问生图 API（自建 ComfyUI HTTP 封装）：协议选「千问生图 API」，填服务根地址（如 `http://127.0.0.1:8787`）与 API Key。插件调用 `GET /api/models` 检测模型，`POST /api/draw` 提交异步任务并轮询 `GET /api/jobs/{id}`，再从 `/api/images/…` 拉回结果；图生图先 `POST /api/upload` 逐张上传参考图（最多 5 张），单张用 `image_id`、多张用 `image_ids` 提交；服务端若关闭鉴权（首页显示「无需鉴权」），渠道密钥可以留空。
 - API 密钥保存在 DSH 宿主设置中；未被自动识别的兼容模型可手动添加。
 - 不同服务商的图生图、尺寸与返回格式可能不同，请确认所选模型实际支持的能力。
 

@@ -8,7 +8,7 @@
  * it directly.
  */
 
-import { isChatCompletionsUrl, resolveChannelProtocol, type ChannelProtocolPreference, type GeneratedImage, type GenerateRequest, type GenerateResult } from './protocol.ts'
+import { isChatCompletionsUrl, qwenDrawBaseUrl, resolveChannelProtocol, type ChannelProtocolPreference, type GeneratedImage, type GenerateRequest, type GenerateResult } from './protocol.ts'
 import { detectImageMime } from './image-format.ts'
 import { clampGifFrameCount, clampGifFrameDurationMs, modelFamily, promptCharLimit, supportsGifOutput } from './model-catalog.ts'
 import { bodyByteLength, excerptOf, networkErrorFields, readResponseExcerpt, readResponseText, recordDiagnostic, type DiagnosticPhase } from './diagnostics-store.ts'
@@ -1528,6 +1528,287 @@ async function generateQwenImage(
 }
 
 /**
+ * 千问生图 API（自建 ComfyUI HTTP 封装）的异步任务状态词表。它先 POST
+ * /api/draw 拿任务 id，再轮询 GET /api/jobs/{id}，成功后从 result.url 下载
+ * 图片——与 OpenAI 的同步 /images/generations 返回形状完全不同。
+ */
+const QWEN_DRAW_PENDING_STATES = new Set(['queued', 'pending', 'running', 'processing', 'in_progress'])
+const QWEN_DRAW_DONE_STATES = new Set(['done', 'completed', 'succeeded', 'success'])
+const QWEN_DRAW_FAILED_STATES = new Set(['failed', 'failure', 'error', 'cancelled', 'canceled'])
+
+/** 千问生图 API 文档列出的比例；21:9 没有对应档位，按最接近的 16:9 发送。 */
+const QWEN_DRAW_RATIOS = new Set(['1:1', '3:4', '4:3', '2:3', '3:2', '16:9', '9:16'])
+
+/** 面板清晰度 → API 的 megapixels。上游上限是 2MP，2k/4k 都取最高档。 */
+const QWEN_DRAW_MEGAPIXELS: Readonly<Record<string, number>> = {
+  '1k': 1,
+  '2k': 2,
+  '4k': 2,
+}
+
+/** 轮询一个千问生图任务，直到返回 result.url。 */
+async function pollQwenDrawJob(
+  baseUrl: string,
+  upstream: UpstreamConfig,
+  request: GenerateRequest,
+  taskId: string,
+  signal?: AbortSignal,
+): Promise<Record<string, unknown>> {
+  const deadline = Date.now() + ASYNC_POLL_MAX_MS
+  let delay = 700
+  const pollUrl = `${baseUrl}/api/jobs/${encodeURIComponent(taskId)}`
+  while (Date.now() < deadline) {
+    const budget = requestSignal(signal, Math.min(ASYNC_POLL_REQUEST_TIMEOUT_MS, Math.max(1, deadline - Date.now())))
+    const context = attemptContext(upstream, request, 'poll-task', pollUrl, 'GET', undefined, Date.now())
+    try {
+      let response: Response
+      try {
+        response = await fetch(pollUrl, {
+          method: 'GET',
+          headers: qwenDrawAuthHeaders(upstream),
+          signal: budget.signal,
+        })
+      } catch (error) {
+        const failure = signal?.aborted === true
+          ? new ImageGenError('任务已取消', 'cancelled')
+          : isBudgetTimeout(error)
+            ? new ImageGenError('千问生图 API 轮询超时', 'upstream-timeout')
+            : new ImageGenError(`无法轮询千问生图 API：${error instanceof Error ? error.message : String(error)}`, 'upstream-unreachable')
+        recordFailure(context, failure)
+        throw failure
+      }
+      const responseText = await readResponseText(response)
+      let payload: unknown
+      try {
+        payload = JSON.parse(responseText)
+      } catch (error) {
+        const failure = isBudgetTimeout(error)
+          ? new ImageGenError('千问生图 API 轮询超时', 'upstream-timeout')
+          : new ImageGenError(`千问生图 API 任务接口返回了非 JSON 响应（HTTP ${response.status}）`, 'upstream-invalid')
+        recordFailure(context, failure, { status: response.status, bodyExcerpt: responseText })
+        throw failure
+      }
+      if (!response.ok || payload === null || typeof payload !== 'object') {
+        const failure = new ImageGenError(asyncErrorMessage(payload, `千问生图 API 任务轮询失败（HTTP ${response.status}）`), 'upstream-rejected')
+        recordFailure(context, failure, { status: response.status, bodyExcerpt: responseText })
+        throw failure
+      }
+      const record = payload as Record<string, unknown>
+      const stateText = record.state ?? record.status
+      const state = typeof stateText === 'string' ? stateText.toLowerCase() : ''
+      if (QWEN_DRAW_FAILED_STATES.has(state)) {
+        throw new ImageGenError(asyncErrorMessage(payload, `千问生图 API 任务失败（${state || 'unknown'}）`), 'upstream-rejected')
+      }
+      if (QWEN_DRAW_DONE_STATES.has(state)) {
+        const result = record.result
+        if (result !== null && typeof result === 'object' && typeof (result as Record<string, unknown>).url === 'string' && (result as Record<string, unknown>).url !== '') {
+          return result as Record<string, unknown>
+        }
+        throw new ImageGenError('千问生图 API 任务完成但没有返回图片地址', 'upstream-empty')
+      }
+      if (state !== '' && !QWEN_DRAW_PENDING_STATES.has(state)) {
+        throw new ImageGenError(`千问生图 API 返回了未知任务状态：${state}`, 'upstream-invalid')
+      }
+    } finally {
+      budget.dispose()
+    }
+    await waitForPoll(Math.min(delay, Math.max(1, deadline - Date.now())), signal)
+    delay = Math.min(2500, delay * 1.4)
+  }
+  throw new ImageGenError('千问生图 API 出图超时（240 秒）', 'upstream-timeout')
+}
+
+/** Optional Bearer header for 千问生图 API (the service can run without auth). */
+function qwenDrawAuthHeaders(upstream: UpstreamConfig): Record<string, string> {
+  const key = upstream.apiKey.trim()
+  return key === '' ? {} : { authorization: `Bearer ${key}` }
+}
+
+/** Upload one reference image to 千问生图 API and return its upload id.
+ *  The wrapper takes the raw image bytes (not multipart), checks the magic
+ *  header, and returns { ok, id } for the subsequent draw call. */
+async function uploadQwenDrawReference(
+  baseUrl: string,
+  upstream: UpstreamConfig,
+  request: GenerateRequest,
+  image: string,
+  signal?: AbortSignal,
+): Promise<string> {
+  const parsed = parseDataUrl(image)
+  if (parsed === undefined) throw new ImageGenError('参考图片格式无效', 'edit-image-invalid')
+  const bytes = Buffer.from(parsed.base64, 'base64')
+  if (bytes.byteLength > MAX_EDIT_IMAGE_BYTES) {
+    throw new ImageGenError('参考图片超过 10MB 上限', 'edit-image-too-large')
+  }
+  const uploadUrl = `${baseUrl}/api/upload`
+  const budget = requestSignal(signal, UPSTREAM_TIMEOUT_MS)
+  const context = attemptContext(upstream, request, 'generate', uploadUrl, 'POST', undefined, Date.now())
+  try {
+    let response: Response
+    try {
+      response = await fetch(uploadUrl, {
+        method: 'POST',
+        headers: {
+          ...qwenDrawAuthHeaders(upstream),
+          'content-type': parsed.mime,
+        },
+        body: new Uint8Array(bytes),
+        signal: budget.signal,
+      })
+    } catch (error) {
+      const network = networkErrorFields(error)
+      const failure = isBudgetTimeout(error)
+        ? new ImageGenError('千问生图 API 参考图上传超时（240 秒）', 'upstream-timeout')
+        : signal?.aborted === true
+          ? new ImageGenError('任务已取消', 'cancelled')
+          : new ImageGenError(
+            `无法上传千问生图 API 参考图：${network.detail}${network.errorCode === undefined ? '' : ` [${network.errorCode}]`} · 请求地址 ${displayUrl(uploadUrl)}`,
+            'upstream-unreachable',
+          )
+      recordFailure(context, failure)
+      throw failure
+    }
+    const responseText = await readResponseText(response)
+    let payload: unknown
+    try {
+      payload = JSON.parse(responseText)
+    } catch (error) {
+      const failure = isBudgetTimeout(error)
+        ? new ImageGenError('千问生图 API 参考图上传超时（240 秒）', 'upstream-timeout')
+        : new ImageGenError(`千问生图 API 参考图上传返回了非 JSON 响应（HTTP ${response.status}）`, 'upstream-invalid')
+      recordFailure(context, failure, { status: response.status, bodyExcerpt: responseText })
+      throw failure
+    }
+    if (!response.ok || payload === null || typeof payload !== 'object') {
+      const failure = new ImageGenError(
+        `${asyncErrorMessage(payload, '千问生图 API 拒绝了参考图')}（HTTP ${response.status} · ${displayUrl(uploadUrl)}）`,
+        'upstream-rejected',
+      )
+      recordFailure(context, failure, { status: response.status, bodyExcerpt: responseText })
+      throw failure
+    }
+    const record = payload as Record<string, unknown>
+    if (record.ok === false) {
+      const failure = new ImageGenError(asyncErrorMessage(record, '千问生图 API 拒绝了参考图'), 'upstream-rejected')
+      recordFailure(context, failure, { status: response.status, bodyExcerpt: responseText })
+      throw failure
+    }
+    const id = typeof record.id === 'string' ? record.id.trim() : ''
+    if (id === '') throw new ImageGenError('千问生图 API 参考图上传没有返回 id', 'upstream-invalid')
+    return id
+  } finally {
+    budget.dispose()
+  }
+}
+
+/** 一个千问生图请求；n 由并行的单图任务满足。 */
+async function generateQwenDrawImages(
+  baseUrlInput: string,
+  upstream: UpstreamConfig,
+  request: GenerateRequest,
+  signal?: AbortSignal,
+): Promise<GeneratedImage[]> {
+  const baseUrl = qwenDrawBaseUrl(baseUrlInput)
+  const model = wireModel(request)
+  let referenceIds: string[] = []
+  if (request.mode === 'edit') {
+    const references = [request.image, ...(request.images ?? [])]
+      .filter((image): image is string => typeof image === 'string' && image !== '')
+      .slice(0, 5)
+    if (references.length === 0) {
+      throw new ImageGenError('图生图需要上传参考图片', 'edit-image-missing')
+    }
+    referenceIds = await Promise.all(references.map(image => uploadQwenDrawReference(baseUrl, upstream, request, image, signal)))
+  }
+  const size = request.size === '' || request.size === 'auto'
+    ? undefined
+    : QWEN_DRAW_RATIOS.has(request.size)
+      ? request.size
+      : request.size === '21:9'
+        ? '16:9'
+        : undefined
+  const megapixels = request.quality === '' || request.quality === 'auto'
+    ? undefined
+    : QWEN_DRAW_MEGAPIXELS[request.quality.trim().toLowerCase()]
+  const body = JSON.stringify({
+    prompt: request.prompt,
+    model,
+    ...referenceIds.length === 1 ? { image_id: referenceIds[0] } : {},
+    ...referenceIds.length > 1 ? { image_ids: referenceIds } : {},
+    ...size === undefined ? {} : { size },
+    ...megapixels === undefined ? {} : { megapixels },
+  })
+  const count = effectiveCount(request)
+  const images = await Promise.all(Array.from({ length: count }, async () => {
+    const drawUrl = `${baseUrl}/api/draw`
+    const context = attemptContext(upstream, request, 'generate', drawUrl, 'POST', body, Date.now())
+    const budget = requestSignal(signal, UPSTREAM_TIMEOUT_MS)
+    try {
+      let response: Response
+      try {
+        response = await fetch(drawUrl, {
+          method: 'POST',
+          headers: {
+            ...qwenDrawAuthHeaders(upstream),
+            'content-type': 'application/json',
+          },
+          body,
+          signal: budget.signal,
+        })
+      } catch (error) {
+        const network = networkErrorFields(error)
+        const failure = isBudgetTimeout(error)
+          ? new ImageGenError('千问生图 API 提交超时（240 秒）', 'upstream-timeout')
+          : signal?.aborted === true
+            ? new ImageGenError('任务已取消', 'cancelled')
+            : new ImageGenError(
+              `无法连接千问生图 API：${network.detail}${network.errorCode === undefined ? '' : ` [${network.errorCode}]`} · 请求地址 ${displayUrl(drawUrl)}`,
+              'upstream-unreachable',
+            )
+        recordFailure(context, failure)
+        throw failure
+      }
+      const responseText = await readResponseText(response)
+      let payload: unknown
+      try {
+        payload = JSON.parse(responseText)
+      } catch (error) {
+        const failure = isBudgetTimeout(error)
+          ? new ImageGenError('千问生图 API 提交超时（240 秒）', 'upstream-timeout')
+          : new ImageGenError(`千问生图 API 返回了非 JSON 响应（HTTP ${response.status}）`, 'upstream-invalid')
+        recordFailure(context, failure, { status: response.status, bodyExcerpt: responseText })
+        throw failure
+      }
+      if (!response.ok || payload === null || typeof payload !== 'object') {
+        const failure = new ImageGenError(
+          `${asyncErrorMessage(payload, '千问生图 API 拒绝了请求')}（HTTP ${response.status} · ${displayUrl(drawUrl)}）`,
+          'upstream-rejected',
+        )
+        recordFailure(context, failure, { status: response.status, bodyExcerpt: responseText })
+        throw failure
+      }
+      const record = payload as Record<string, unknown>
+      if (record.ok === false) {
+        const failure = new ImageGenError(asyncErrorMessage(record, '千问生图 API 拒绝了请求'), 'upstream-rejected')
+        recordFailure(context, failure, { status: response.status, bodyExcerpt: responseText })
+        throw failure
+      }
+      const taskId = typeof record.id === 'string' ? record.id.trim() : ''
+      if (taskId === '') throw new ImageGenError('千问生图 API 没有返回任务 id', 'upstream-invalid')
+      const result = await pollQwenDrawJob(baseUrl, upstream, request, taskId, signal)
+      const resultUrl = typeof result.url === 'string' ? result.url : ''
+      if (resultUrl === '') throw new ImageGenError('千问生图 API 任务完成但没有返回图片地址', 'upstream-empty')
+      const absoluteUrl = new URL(resultUrl, `${baseUrl}/`).toString()
+      const normalized = await normalizeItem({ url: absoluteUrl }, upstream, signal)
+      return { b64: normalized.b64, mime: normalized.mime }
+    } finally {
+      budget.dispose()
+    }
+  }))
+  return images
+}
+
+/**
  * MiniMax image-01 (native `/image_generation`): one JSON request that batches
  * up to 9 images and returns them inline as base64. Image-to-image rides the
  * `subject_reference` array (a character reference, data URL accepted). The
@@ -1781,9 +2062,12 @@ export async function generateImage(upstream: UpstreamConfig, request: GenerateR
   const configuredBaseUrl = upstream.apiUrl.trim().replace(/\/+$/, '')
   const baseUrl = normalizeModelScopeBaseUrl(configuredBaseUrl, upstream.apiUrlFull === true)
   if (baseUrl === '') throw new ImageGenError('api_url 未配置：请先在「设置 → 生图配置」中填写', 'config-missing')
-  if (upstream.apiKey.trim() === '') throw new ImageGenError('api_key 未配置：请先在「设置 → 生图配置」中填写', 'config-missing')
-  assertGifRequestSupported(request, wireModel(request))
   const protocol = resolveChannelProtocol(baseUrl, upstream.protocol)
+  // 千问生图 API 可以关闭鉴权（首页现在明确写「无需鉴权」）；其余协议仍必须有 Key。
+  if (upstream.apiKey.trim() === '' && protocol !== 'qwen-draw') {
+    throw new ImageGenError('api_key 未配置：请先在「设置 → 生图配置」中填写', 'config-missing')
+  }
+  assertGifRequestSupported(request, wireModel(request))
   if (protocol === 'google-native') {
     // Gemini image models answer :generateContent with stills only; a GIF
     // request here would pay for a still the history labels an animation.
@@ -1800,6 +2084,12 @@ export async function generateImage(upstream: UpstreamConfig, request: GenerateR
       throw new ImageGenError('当前渠道走 chat/completions 协议，不支持 GIF 动图：请改用 /images/generations 渠道', 'gif-protocol-unsupported')
     }
     return { images: await generateChatCompletionImages(upstream, baseUrl, request, options.signal) }
+  }
+  if (protocol === 'qwen-draw') {
+    if (request.outputFormat === 'gif') {
+      throw new ImageGenError('千问生图 API 不支持 GIF 动图', 'gif-protocol-unsupported')
+    }
+    return { images: await generateQwenDrawImages(baseUrl, upstream, request, options.signal) }
   }
   // A complete URL is an explicit escape hatch to the exact provider endpoint:
   // use the generic OpenAI-compatible request shape instead of native family

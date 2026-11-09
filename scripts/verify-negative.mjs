@@ -1716,6 +1716,16 @@ const CASES = [
     expect: /5 张参考图 \+ 1 段文本/,
   },
   {
+    // 千问生图 API 的 model 必须把渠道别名原样发给上游；写死成默认模型
+    // 会让所有模型都出同一套结果，套件的请求体断言必须变红。
+    name: 'qwen-draw ignores the requested model',
+    runner: 'qwen-draw',
+    file: 'src/engine.ts',
+    from: "    prompt: request.prompt,\n    model,\n",
+    to: "    prompt: request.prompt,\n    model: 'krea2-turbo',\n",
+    expect: /qwen-draw must send the requested model/,
+  },
+  {
     // issue #28：客户端协议选择器的 google-native 选项。去掉它用户就
     // 选不到这条协议，D4 的源码不变式必须变红。
     name: 'the client protocol selector drops google-native',
@@ -1772,6 +1782,8 @@ const RUNNERS = {
   // Google 原生协议同 GIF：纯请求体问题，套件打桩 fetch 直接 import src，
   // 零网络零构建。
   'google-native': { script: 'scripts/smoke-google-native.mjs', build: false },
+  // 千问生图 API 同样是纯请求体/轮询桩，套件直接 import src，无需构建。
+  'qwen-draw': { script: 'scripts/smoke-qwen-draw.mjs', build: false },
   // The archive rule, run against a real `pnpm pack`. No rebuild: the archive
   // contents depend on package.json and the tree, not on the built output.
   pack: { script: 'scripts/verify-pack.mjs', build: false },

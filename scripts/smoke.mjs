@@ -5631,6 +5631,19 @@ await check('D4 google-native protocol is offered and wired on the client', () =
   assert.ok(bundle.includes('google-native'), 'the built client bundle carries the google-native option')
 })
 
+// ------------------------------- D5 qwen-draw channel protocol
+await check('D5 qwen-draw protocol is offered and wired on the client', () => {
+  const settings = readFileSync(new URL('../src/client/SettingsCard.tsx', import.meta.url), 'utf8')
+  assert.match(settings, /<option value="qwen-draw">\{t\('channels\.protocolQwenDraw'\)\}<\/option>/, 'the protocol selector offers qwen-draw')
+  assert.match(settings, /resolvedProtocol === 'chat-completions' \|\| resolvedProtocol === 'google-native' \|\| resolvedProtocol === 'qwen-draw'/, 'exact-URL model detection stays open for qwen-draw')
+  const locales = readFileSync(new URL('../src/client/locales.ts', import.meta.url), 'utf8')
+  assert.equal([...locales.matchAll(/'channels\.protocolQwenDraw':/g)].length, 3, 'zh/en/ru each label the qwen-draw option')
+  const protocol = readFileSync(new URL('../src/protocol.ts', import.meta.url), 'utf8')
+  assert.match(protocol, /'qwen-draw'/, 'the protocol union carries qwen-draw')
+  const bundle = readFileSync(new URL('../lib/client.js', import.meta.url), 'utf8')
+  assert.ok(bundle.includes('qwen-draw'), 'the built client bundle carries the qwen-draw option')
+})
+
 // --------------- E. full client apply in jsdom (mounts the sidebar entry)
 await check('E1 client apply mounts the sidebar entry and studio (jsdom)', async () => {
   const { JSDOM } = await import('jsdom')

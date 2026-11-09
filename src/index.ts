@@ -474,7 +474,7 @@ const configSchema = z.object({
     apiUrlFull: z.boolean().default(false),
     /** Seedream watermark opt-out (#56): absent/true keeps the badge on. */
     watermark: z.boolean().default(true),
-    protocol: z.union([z.const('auto'), z.const('images'), z.const('chat-completions')]).default('auto'),
+    protocol: z.union([z.const('auto'), z.const('images'), z.const('chat-completions'), z.const('google-native'), z.const('qwen-draw')]).default('auto'),
     auth: z.union([z.const('api-key'), z.const('subscription')]).default('api-key'),
     subscription: z.string().default(''),
     models: z.array(z.object({
