@@ -2286,6 +2286,95 @@ if (wheelProblems.length > 0) {
 }
 console.log('preview wheel: scroll is scroll, Ctrl/⌘ zooms through a non-passive listener')
 
+// --- issue #31: a zoomed photo has to be draggable --------------------------
+// The reporter's complaint was not "the gesture feels wrong" — there was no
+// gesture. At 200% the image occupies real scrollable space, the stage is
+// `overflow: auto`, and the ONLY way to reach the edges was the scrollbar in
+// the margin. Nothing asserted panning, so nothing could fail: the wheel check
+// above was green the whole time, because scroll-to-pan and drag-to-pan are
+// different contracts that happened to share a container.
+//
+// Source invariants rather than a driven drag, and deliberately so: pointer
+// capture, the pointerType gate and the click that follows a drag are decided
+// by event ORDER inside a mounted React panel with a host and a real image —
+// a fixture would have to re-implement the very listeners under test, and then
+// it would only prove the fixture works.
+const panProblems = []
+if (!/PREVIEW_DRAG_THRESHOLD/.test(previewSource)) {
+  panProblems.push('no drag threshold — every click would pan by its own jitter')
+}
+// Anchored to the STAGE: the panel has other pointerdown handlers (the config
+// resizer, the canvas node drags), so an unanchored search proves nothing.
+if (!/stage\.addEventListener\(\s*'pointerdown'/.test(previewSource)) {
+  panProblems.push('the stage does not bind `pointerdown`, so there is no pan gesture at all')
+}
+if (!/stage\.addEventListener\(\s*'pointermove'/.test(previewSource)) {
+  panProblems.push('`pointermove` is not bound to the stage — the press can never become a pan')
+}
+if (!/stage\.addEventListener\(\s*'pointerup'/.test(previewSource)) {
+  panProblems.push('`pointerup` is not bound to the stage — the gesture would never end')
+}
+if (!/stage\.addEventListener\(\s*'pointercancel'/.test(previewSource)) {
+  panProblems.push('`pointercancel` is not bound — a cancelled gesture leaves `data-dragging` stuck')
+}
+if (!/setPointerCapture\(/.test(previewSource)) {
+  panProblems.push('no `setPointerCapture` — a pan that leaves the stage stops receiving moves')
+}
+if (!/pointerType\s*===\s*'touch'/.test(previewSource)) {
+  panProblems.push('touch is not handed to the browser (pointerType gate missing) — capturing it fights native momentum panning')
+}
+if (!/button\s*!==\s*0/.test(previewSource)) {
+  panProblems.push('the pan does not gate on the primary button — middle/right drags would move the photo')
+}
+for (const axis of ['scrollLeft', 'scrollTop']) {
+  if (!new RegExp(`stage\\.${axis}\\s*=`).test(previewSource)) {
+    panProblems.push(`the pan never writes \`stage.${axis}\`, so it moves nothing`)
+  }
+}
+// The trap: `closePreview` is bound to the OVERLAY, and a pointer released
+// outside the stage still resolves its click to that overlay. Without the
+// suppressor every pan ends by closing the preview — the fix would look like a
+// new bug. Capture phase on the dialog, because the click has to be stopped
+// before it reaches the overlay's own handler.
+if (!/dialog\.addEventListener\(\s*'click',\s*onClickCapture,\s*true\s*\)/.test(previewSource)) {
+  panProblems.push('no capture-phase click suppressor on the dialog — the click that ends a pan would bubble to `closePreview` and close the preview')
+}
+if (panProblems.length > 0) {
+  console.error('\nFAIL: a zoomed photo in the preview cannot be dragged (issue #31).')
+  for (const entry of panProblems) console.error(`  - ${entry}`)
+  console.error('`overflow: auto` is not a pan gesture. At 200% most of the image sits')
+  console.error('outside the viewport, and the margin scrollbar is not an affordance.')
+  console.error('Pan by moving `scrollLeft`/`scrollTop` against the pointer, and')
+  console.error('swallow exactly one click per drag — the overlay underneath closes')
+  console.error('the preview on click.')
+  process.exit(1)
+}
+// The cursor is a computed value in the real cascade, so it is measured rather
+// than grepped: `grab` has to win on the stage and lose to `grabbing` only
+// while a drag is in progress.
+const cursorStates = JSON.parse(await lightboxSession.evaluate(`(() => {
+  const stage = document.querySelector('[data-preview-stage]')
+  const out = { rest: getComputedStyle(stage).cursor }
+  stage.setAttribute('data-dragging', '')
+  out.dragging = getComputedStyle(stage).cursor
+  stage.removeAttribute('data-dragging')
+  out.restored = getComputedStyle(stage).cursor
+  return JSON.stringify(out)
+})()`))
+const cursorBad = [
+  ['rest', cursorStates.rest, 'grab'],
+  ['dragging', cursorStates.dragging, 'grabbing'],
+  ['restored', cursorStates.restored, 'grab'],
+].filter(([, actual, want]) => actual !== want)
+if (cursorBad.length > 0) {
+  console.error('\nFAIL: the preview stage does not advertise that it can be dragged (issue #31).')
+  for (const [state, actual, want] of cursorBad) console.error(`  ${state}: cursor is ${actual}, expected ${want}`)
+  console.error('A pannable surface with a text cursor reads as "this does not move",')
+  console.error('which is how the reporter concluded there was no gesture to find.')
+  process.exit(1)
+}
+console.log(`preview pan: stage cursor ${cursorStates.rest} → ${cursorStates.dragging} while dragging`)
+
 // --- a notch anywhere in the overlay stays in the overlay ------------------
 // The string checks above prove the listener EXISTS; this proves it works.
 // Issue #22's fourth bullet ("在预览层内操作时，不应同时带动底层工作台滚动") is about

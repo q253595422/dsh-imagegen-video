@@ -3364,6 +3364,17 @@ html[data-dsh-imagegen-chat-collapsed] [data-dsh-imagegen-chat-resizer] {
      would scroll-chain through to the workbench underneath the overlay. Contained
      here, the wheel notch stays inside the preview. */
   overscroll-behavior: contain;
+  /* Issue #31: the pan gesture. Without it the only way to reach the rest of a
+     zoomed photo was the scrollbar in the margin — which the reporter could not
+     grab. `grab` is also the affordance: it says the surface moves. */
+  cursor: grab;
+}
+
+.lightboxStage:active,
+.lightboxStage[data-dragging] {
+  cursor: grabbing;
+  /* A pan that selects the photo's alt text instead reads as a broken drag. */
+  user-select: none;
 }
 
 .lightboxScaleFrame {

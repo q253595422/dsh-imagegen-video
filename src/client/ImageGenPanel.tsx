@@ -156,6 +156,9 @@ const CONVERSATION_IMAGE_JPEG_QUALITY = 0.9
 const PREVIEW_SCALE_MIN = 0.5
 const PREVIEW_SCALE_MAX = 3
 const PREVIEW_SCALE_STEP = 0.25
+/** Pointer travel below this stays a click. Issue #31 wanted drag-to-pan; a
+ *  hand that moves one pixel while clicking must not pan instead. */
+const PREVIEW_DRAG_THRESHOLD = 3
 const CONFIG_COLLAPSED_STORAGE_KEY = 'dsh-imagegen-config-collapsed'
 const ECOMMERCE_DRAFT_STORAGE_KEY = 'dsh-imagegen-ecommerce-draft'
 /** Reference roles an uploaded product asset can play (slot selections can
@@ -1286,6 +1289,8 @@ export function ImageGenPanel(props: {
     ? tt('ecommerce.refLimit', { count: ecommerceReferenceCapacity })
     : null
   const previewStage = useRef<HTMLDivElement>(null)
+  // Set by the pan gesture, consumed by the click that immediately follows it.
+  const previewDraggedRef = useRef(false)
   // The three overlays that claim `role="dialog"`; see useDialogFocus.
   const previewDialogRef = useRef<HTMLDivElement>(null)
   const comparisonFullscreenRef = useRef<HTMLDivElement>(null)
@@ -2349,6 +2354,92 @@ export function ImageGenPanel(props: {
     return () => {
       stage.removeEventListener('wheel', onWheel)
       dialog?.removeEventListener('wheel', containWheel)
+    }
+  }, [preview])
+
+  // Drag to pan (issue #31). A scaled image occupies real scrollable space, so
+  // at 200% most of it sits outside the viewport — and until this gesture
+  // existed the ONLY way to reach the rest was the scrollbar in the margin. The
+  // wheel, the ± buttons and the keyboard all keep their behaviour: this adds a
+  // gesture, it does not take one over.
+  //
+  // Native listeners rather than React props for the same reason as the wheel
+  // above: `setPointerCapture` and the click that follows a drag are decided by
+  // event order, and the capture phase is where that order is set. React
+  // retargets through its own root, so the single click this has to swallow is
+  // easier to place here than to fight there.
+  useEffect(() => {
+    if (preview === null) return
+    const stage = previewStage.current
+    const dialog = previewDialogRef.current
+    if (stage === null || dialog === null) return
+    let pointerId: number | null = null
+    let startX = 0
+    let startY = 0
+    let startScrollLeft = 0
+    let startScrollTop = 0
+    let moved = false
+    const onPointerDown = (event: PointerEvent): void => {
+      // A fresh press always starts as a click; only this gesture may mark it
+      // as a drag. Without the reset a drag that ended off-window would leave
+      // the flag set and swallow the next deliberate click.
+      previewDraggedRef.current = false
+      // Touch belongs to the browser: it already pans this container with
+      // momentum and zooms on pinch, and capturing it fights both.
+      if (event.pointerType === 'touch') return
+      if (event.button !== 0) return
+      // Nothing overflows, so there is nothing to pan — leave the press alone.
+      if (stage.scrollWidth <= stage.clientWidth && stage.scrollHeight <= stage.clientHeight) return
+      pointerId = event.pointerId
+      startX = event.clientX
+      startY = event.clientY
+      startScrollLeft = stage.scrollLeft
+      startScrollTop = stage.scrollTop
+      moved = false
+      stage.setPointerCapture(event.pointerId)
+    }
+    const onPointerMove = (event: PointerEvent): void => {
+      if (pointerId === null || event.pointerId !== pointerId) return
+      const dx = event.clientX - startX
+      const dy = event.clientY - startY
+      if (!moved && Math.abs(dx) < PREVIEW_DRAG_THRESHOLD && Math.abs(dy) < PREVIEW_DRAG_THRESHOLD) return
+      moved = true
+      stage.dataset.dragging = ''
+      // Scroll position runs opposite to the pointer: dragging right shows what
+      // was to the LEFT, which is what every image viewer does.
+      stage.scrollLeft = startScrollLeft - dx
+      stage.scrollTop = startScrollTop - dy
+    }
+    const onPointerUp = (event: PointerEvent): void => {
+      if (pointerId === null || event.pointerId !== pointerId) return
+      pointerId = null
+      delete stage.dataset.dragging
+      if (stage.hasPointerCapture(event.pointerId)) stage.releasePointerCapture(event.pointerId)
+      previewDraggedRef.current = moved
+    }
+    // Capture phase on the DIALOG, not on the stage: pointer capture retargets
+    // the pointerup, but a click released outside the stage still resolves to
+    // the common ancestor — the overlay, which is where `closePreview` is
+    // bound. Swallowing one click there is the difference between "pan the
+    // photo" and "pan the photo and lose it".
+    const onClickCapture = (event: MouseEvent): void => {
+      if (!previewDraggedRef.current) return
+      previewDraggedRef.current = false
+      event.stopPropagation()
+      event.preventDefault()
+    }
+    stage.addEventListener('pointerdown', onPointerDown)
+    stage.addEventListener('pointermove', onPointerMove)
+    stage.addEventListener('pointerup', onPointerUp)
+    stage.addEventListener('pointercancel', onPointerUp)
+    dialog.addEventListener('click', onClickCapture, true)
+    return () => {
+      stage.removeEventListener('pointerdown', onPointerDown)
+      stage.removeEventListener('pointermove', onPointerMove)
+      stage.removeEventListener('pointerup', onPointerUp)
+      stage.removeEventListener('pointercancel', onPointerUp)
+      dialog.removeEventListener('click', onClickCapture, true)
+      delete stage.dataset.dragging
     }
   }, [preview])
 
@@ -4728,6 +4819,10 @@ export function ImageGenPanel(props: {
                     style={{ width: `${previewImageScale * 100}%`, height: `${previewImageScale * 100}%` }}
                     src={srcOf(previewImage)}
                     alt={previewImage.revisedPrompt ?? tt('preview.title')}
+                    /* Drag-to-pan is a pointer gesture; the browser's own
+                       image drag would start on the same press and cancel it. */
+                    draggable={false}
+                    onDragStart={event => event.preventDefault()}
                   />
                 </div>
               </div>
