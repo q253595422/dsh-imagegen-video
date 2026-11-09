@@ -1421,7 +1421,7 @@ function ChannelEditor(props: {
   // Exact-URL channels can still derive a model list on Chat Completions and
   // on Google's native protocol (its models list sits next to :generateContent).
   const resolvedProtocol = resolveChannelProtocol(channel.apiUrl, channel.protocol)
-  const detectable = !channel.apiUrlFull || resolvedProtocol === 'chat-completions' || resolvedProtocol === 'google-native'
+  const detectable = !channel.apiUrlFull || resolvedProtocol === 'chat-completions' || resolvedProtocol === 'google-native' || resolvedProtocol === 'qwen-draw'
 
   const detect = (): void => {
     if (!detectable) return
@@ -1630,6 +1630,7 @@ function ChannelEditor(props: {
               <option value="images">{t('channels.protocolImages')}</option>
               <option value="chat-completions">{t('channels.protocolChat')}</option>
               <option value="google-native">{t('channels.protocolGoogle')}</option>
+              <option value="qwen-draw">{t('channels.protocolQwenDraw')}</option>
             </Select>
           </div>
         </div>

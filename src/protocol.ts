@@ -28,8 +28,10 @@ export type SubscriptionProvider = typeof SUBSCRIPTION_PROVIDERS[number]
 
 /** Transport protocol a channel uses to reach its gateway.
  *  google-native talks to Google Generative Language :generateContent with
- *  an x-goog-api-key, instead of an OpenAI-compatible gateway. */
-export type ChannelProtocol = 'images' | 'chat-completions' | 'google-native'
+ *  an x-goog-api-key, instead of an OpenAI-compatible gateway.
+ *  qwen-draw is the self-hosted 千问生图 API (a ComfyUI HTTP wrapper): a
+ *  custom POST /api/draw + GET /api/jobs/{id} submit/poll protocol. */
+export type ChannelProtocol = 'images' | 'chat-completions' | 'google-native' | 'qwen-draw'
 
 /** Stored preference: auto keeps old channels on images unless the URL is explicit. */
 export type ChannelProtocolPreference = 'auto' | ChannelProtocol
@@ -47,13 +49,32 @@ export function isChatCompletionsUrl(value: string): boolean {
 
 /** Whether a stored value is one of the accepted protocol preferences. */
 export function isChannelProtocolPreference(value: unknown): value is ChannelProtocolPreference {
-  return value === 'auto' || value === 'images' || value === 'chat-completions' || value === 'google-native'
+  return value === 'auto' || value === 'images' || value === 'chat-completions' || value === 'google-native' || value === 'qwen-draw'
 }
 
 /** Resolve a channel preference without changing legacy behavior by default. */
 export function resolveChannelProtocol(apiUrl: string, preference: ChannelProtocolPreference | undefined = 'auto'): ChannelProtocol {
-  if (preference === 'images' || preference === 'chat-completions' || preference === 'google-native') return preference
+  if (preference === 'images' || preference === 'chat-completions' || preference === 'google-native' || preference === 'qwen-draw') return preference
   return isChatCompletionsUrl(apiUrl) ? 'chat-completions' : 'images'
+}
+
+/**
+ * Normalize the 千问生图 API service root. A user may paste the exact
+ * generation URL (`/api/draw` or `/api/draw/sync`) or the model list URL
+ * (`/api/models`); model discovery and job polling both need the bare root.
+ */
+export function qwenDrawBaseUrl(value: string): string {
+  const trimmed = value.trim().replace(/\/+$/, '')
+  if (trimmed === '') return ''
+  try {
+    const url = new URL(trimmed)
+    url.pathname = url.pathname.replace(/\/api\/(?:draw(?:\/sync)?|models)\/?$/i, '')
+    url.search = ''
+    url.hash = ''
+    return url.toString().replace(/\/$/, '')
+  } catch {
+    return trimmed
+  }
 }
 
 /** Subscription channels with a fixed image model. */
