@@ -5,6 +5,14 @@ Attribution for third-party code is in [NOTICE](./NOTICE).
 
 ## Releases
 
+### 1.27.0 — 千问生图 API；大图预览可按住拖动（一并发布 1.25.0 / 1.26.0）
+
+- **v1.24.0 之后的第一个发布版本。** 1.25.0（react-flow 画布引擎）与 1.26.0（画布布局对齐 LibTV）此前只推了代码、没有 tag 与 Release，它们的改动随本版一起发出，条目保留在下面各自的小节里。
+- **渠道协议新增「千问生图 API」（#32）**，文生图与图生图都支持。走 DashScope 异步任务链路：提交拿 `task_id` 再轮询，上限 240 秒、超时抛 `upstream-timeout`；进行中/完成/失败三张状态词表（失败含 `cancelled`/`canceled`），词表外的状态直接报 `upstream-invalid`，不当成「还在跑」无限等待。比例按文档档位发送，**21:9 无对应档位按 16:9 发**；清晰度映射 `megapixels`，**上游上限 2MP，2k/4k 都取最高档**。图生图上传参考图原始字节；空 Key 不发空 `Bearer ` 头。渠道支持模型检测，文案补齐 zh/en/ru。
+- **修复配置校验拒绝 `google-native`。** `src/index.ts` 的 schemastery `protocol` 联合漏了类型里早已存在的 `google-native`，实测旧 schema 报 `expected "auto" | "images" | "chat-completions" but got "google-native"`。#32 顺带修掉的独立缺陷。
+- **修复大图预览放大后无法拖动（#31）。** 以前放大后只能拉滚动条，现在按住鼠标左键直接拖画面平移：pointer 事件 + `setPointerCapture`，反向写 `scrollLeft`/`scrollTop`，移动距离与鼠标一致；光标 `grab` → 拖动中 `grabbing` → 松手复原。拖动后紧跟的那一次 click 由浮层捕获阶段的一次性抑制器吞掉，不会误关预览，随后的普通点击照常关闭。只接管鼠标主键，触摸交浏览器，内容不溢出不拦按下；图片禁用原生拖拽。
+- 测试：新增 `smoke-qwen-draw.mjs`（桩 fetch、零网络，断言请求体深度相等、`21:9→16:9`、`4k→2MP`、上传原始字节）接入 `test` 与 `test:negative`；`verify-ui-contracts` 新增 11 条预览拖拽不变量与 1 条真实 `getComputedStyle` 测量。#31 在打包产物解包部署后的真实实例上复验（200% 下拖 200×80，scrollLeft 547.5→347.5、scrollTop 296→216，拖后 click 不关、普通 click 正常关）。千问协议未用真实 Key 发起过请求，线上返回未验证。
+
 ### 1.26.0 — 画布布局对齐 LibTV：悬浮顶栏、左下工具排、分组 dock、空态快捷卡
 
 - **顶栏改悬浮细栏。** 不再占布局高度，画布铺满整个区域；顶栏玻璃浮在其上（项目下拉/重命名/收藏/全屏/保存状态原样保留）。中心点语义不变：chromeHeight 只量底部 dock。
