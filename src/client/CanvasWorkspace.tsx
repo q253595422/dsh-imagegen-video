@@ -9,8 +9,8 @@ import { useCallback, useEffect, useMemo, useRef, useState, type ChangeEvent, ty
 import { createPortal } from 'react-dom'
 import {
   Bold, BookOpen, ChevronDown, Copy, Download, Eraser, Expand, FileText as FileTextIcon, Film, FolderX, Hand, Image as ImageIcon,
-  GitBranch, Keyboard, Layers, Map as MapIcon, Maximize, Maximize2, MousePointer2, Palette, Pencil, Plus, Redo2, Scissors, SendHorizonal, Sparkles, Star,
-  Shrink, SquareDashedMousePointer, Trash2, Type, Undo2, Upload, Wand2, Wallpaper, X,
+  GitBranch, Keyboard, Layers, Magnet, Map as MapIcon, Maximize, Maximize2, MousePointer2, Palette, Pencil, Plus, Redo2, Scissors, SendHorizonal, Share2, Sparkles, Star,
+  Shrink, SquareDashedMousePointer, Trash2, Type, Undo2, Upload, Video, Wand2, Wallpaper, X,
 } from 'lucide-react'
 import type { CanvasAnnotation, CanvasAssetRef, CanvasConnection, CanvasDocument, CanvasFileKind, CanvasLayerInfo, CanvasLayerPlanItem, CanvasNode, CanvasRect, CanvasStoryboard, CanvasVideoRef, CanvasSkillConfigApplyResult, CanvasSkillConfigField, CanvasSkillConfigSaveResult, CanvasSkillConfigStep, CanvasSkillConfigView, CanvasSkillDescriptor, CanvasSkillLibrary, CanvasSkillOutput, CanvasSkillRunRequest, CanvasSkillTask, CanvasSketchStroke, GenerateRequest, GenerationTask, HistoryEntry, VideoGenerateRequest, VideoTaskSummary, VideoMode, VideoResolution } from '../protocol.ts'
 import { describeVideoModel, durationsOf } from '../video-model-catalog.ts'
@@ -696,7 +696,7 @@ function rasterizeSketch(strokes: CanvasSketchStroke[], boardWidth: number, boar
   return { dataUrl: canvas.toDataURL('image/png'), width: canvas.width, height: canvas.height }
 }
 
-type ToolbarIconName = 'new' | 'select' | 'pan' | 'image' | 'text' | 'file' | 'sketch' | 'eraser' | 'trash' | 'undo' | 'redo' | 'fit' | 'minimap' | 'background' | 'template' | 'download' | 'duplicate' | 'sparkle' | 'send' | 'close' | 'deleteProject' | 'annotate' | 'removeBg' | 'layers' | 'bold' | 'color' | 'skill' | 'upload' | 'expand' | 'favorite' | 'favoriteFilled' | 'help' | 'workflow' | 'timeline' | 'fullscreen' | 'exitFullscreen'
+type ToolbarIconName = 'new' | 'select' | 'pan' | 'image' | 'text' | 'file' | 'sketch' | 'eraser' | 'trash' | 'undo' | 'redo' | 'fit' | 'minimap' | 'background' | 'template' | 'download' | 'duplicate' | 'sparkle' | 'send' | 'close' | 'deleteProject' | 'annotate' | 'removeBg' | 'layers' | 'bold' | 'color' | 'skill' | 'upload' | 'expand' | 'favorite' | 'favoriteFilled' | 'help' | 'workflow' | 'timeline' | 'fullscreen' | 'exitFullscreen' | 'video' | 'snap' | 'connections'
 
 /** Lucide icons (stroke matches the DSH line style); one shared component so
  *  every dock/toolbar icon comes from the same well-drawn set. */
@@ -744,6 +744,10 @@ function ToolbarIcon({ name, size = 16 }: { name: ToolbarIconName; size?: number
     case 'timeline': return <Film {...common} />
     case 'fullscreen': return <Expand {...common} />
     case 'exitFullscreen': return <Shrink {...common} />
+    // 空态快捷卡与左下工具排：视频节点入口、网格吸附、连线显隐。
+    case 'video': return <Video {...common} />
+    case 'snap': return <Magnet {...common} />
+    case 'connections': return <Share2 {...common} />
   }
 }
 
@@ -1638,6 +1642,8 @@ function IconButton(props: {
   name: ToolbarIconName
   label: string
   active?: boolean
+  /** Toggle semantics: unlike `active` (visual only), this exposes state to AT. */
+  pressed?: boolean
   disabled?: boolean
   size?: number
   onClick?: (event: React.MouseEvent<HTMLButtonElement>) => void
@@ -1648,6 +1654,7 @@ function IconButton(props: {
     type="button"
     className={css.iconButton}
     data-active={props.active ? '' : undefined}
+    aria-pressed={props.pressed}
     aria-label={props.label}
     title={props.label}
     disabled={props.disabled}
@@ -1823,7 +1830,7 @@ export function CanvasWorkspace(props: CanvasWorkspaceProps): React.JSX.Element 
     if (outer === null || dock === null) return
     if (typeof window.requestAnimationFrame !== 'function') return
     const clockNow = (): number => (typeof performance !== 'undefined' ? performance.now() : Date.now())
-    const BASE = 34
+    const BASE = 40
     const MAGNIFIED = 50
     const DISTANCE = 150
     const REST_HEIGHT = 42
@@ -5195,7 +5202,9 @@ export function CanvasWorkspace(props: CanvasWorkspaceProps): React.JSX.Element 
       if (activePointersRef.current.size > 2) return
     }
     // pan/zoom（滚轮/拖拽）由 react-flow 的 d3-zoom 接管；这里只保留选择工具下的框选。
-    const isBackground = closestOf(target, '[data-node-id],[data-connection-hit]') === null
+    // no-zoom 面（空态快捷卡等可点控件）不算空白：否则框选会 preventDefault +
+    // 抓取指针，把控件的 click 抢走（真机实测卡片点不动）。
+    const isBackground = closestOf(target, '[data-node-id],[data-connection-hit],[data-canvas-no-zoom]') === null
     if (event.button === 0 && isBackground && tool === 'select' && event.pointerType !== 'touch') {
       event.preventDefault()
       event.currentTarget.setPointerCapture(event.pointerId)
@@ -6623,6 +6632,25 @@ export function CanvasWorkspace(props: CanvasWorkspaceProps): React.JSX.Element 
     ? <div className={css.emptyHint} data-canvas-no-zoom="">
         <strong>{tt('canvas.emptyTitle')}</strong>
         <span>{tt('canvas.emptyHint')}</span>
+        {/* LibTV 空态：一排快捷卡，点一下=现有 add 动作落在画布中心。
+            不造新入口：视频走现有 video picker，其余走现有创建函数。 */}
+        <div className={css.quickRow} role="group" aria-label={tt('canvas.quickStart')}>
+          <button type="button" className={css.quickCard} data-quick-card="image" onClick={() => placeNewNode(createImageNode({ assetId: '', url: '', mime: 'image/png', bytes: 0, width: 1, height: 1, origin: 'upload' }))}>
+            <span className={css.quickIcon}><ToolbarIcon name="image" size={18} /></span>{tt('canvas.quickImage')}
+          </button>
+          <button type="button" className={css.quickCard} data-quick-card="video" onClick={() => setVideoPickerOpen(true)}>
+            <span className={css.quickIcon}><ToolbarIcon name="video" size={18} /></span>{tt('canvas.quickVideo')}
+          </button>
+          <button type="button" className={css.quickCard} data-quick-card="text" onClick={() => placeNewNode(createTextNode())}>
+            <span className={css.quickIcon}><ToolbarIcon name="text" size={18} /></span>{tt('canvas.quickText')}
+          </button>
+          <button type="button" className={css.quickCard} data-quick-card="storyboard" onClick={() => placeNewNode(createStoryboardNode())}>
+            <span className={css.quickIcon}><ToolbarIcon name="layers" size={18} /></span>{tt('canvas.quickStoryboard')}
+          </button>
+          <button type="button" className={css.quickCard} data-quick-card="file" onClick={() => placeNewNode(createEmptyFileNode())}>
+            <span className={css.quickIcon}><ToolbarIcon name="file" size={18} /></span>{tt('canvas.quickFile')}
+          </button>
+        </div>
       </div>
     : null
 
@@ -6809,6 +6837,10 @@ export function CanvasWorkspace(props: CanvasWorkspaceProps): React.JSX.Element 
         <div className={css.zoomDock}>
           <IconButton name="minimap" label={minimapOpen ? tt('canvas.minimapClose') : tt('canvas.minimapOpen')} active={minimapOpen} onClick={() => setMinimapOpen(previous => !previous)} />
           <IconButton name="fit" label={tt('canvas.fitView')} onClick={fitView} />
+          {/* LibTV 式左下工具排：吸附与连线显隐从缩放菜单里铺平出来，
+              状态一眼可见（aria-pressed + 高亮），不用先开菜单找。 */}
+          <IconButton name="connections" label={tt('canvas.showConnections')} pressed={!connectionsHidden} active={!connectionsHidden} onClick={() => setConnectionsHidden(hidden => !hidden)} />
+          <IconButton name="snap" label={tt('canvas.snapAlign')} pressed={snapEnabled} active={snapEnabled} onClick={() => { snapEnabledRef.current = !snapEnabledRef.current; setSnapEnabled(snapEnabledRef.current) }} />
           <button
             type="button"
             className={css.zoomValue}
@@ -6831,21 +6863,6 @@ export function CanvasWorkspace(props: CanvasWorkspaceProps): React.JSX.Element 
                 onClick={() => { setZoomAtCenter(scale); setZoomMenuOpen(false) }}
               >{scale * 100}%</button>
             ))}
-            <span className={css.zoomMenuDivider} aria-hidden="true" />
-            <button
-              type="button"
-              role="menuitemcheckbox"
-              aria-checked={snapEnabled}
-              data-active={snapEnabled ? '' : undefined}
-              onClick={() => { snapEnabledRef.current = !snapEnabledRef.current; setSnapEnabled(snapEnabledRef.current) }}
-            >{tt('canvas.snapAlign')}</button>
-            <button
-              type="button"
-              role="menuitemcheckbox"
-              aria-checked={!connectionsHidden}
-              data-active={!connectionsHidden ? '' : undefined}
-              onClick={() => setConnectionsHidden(hidden => !hidden)}
-            >{tt('canvas.showConnections')}</button>
             <span className={css.zoomMenuDivider} aria-hidden="true" />
             <form
               className={css.zoomCustom}
@@ -6901,6 +6918,7 @@ export function CanvasWorkspace(props: CanvasWorkspaceProps): React.JSX.Element 
         <div className={css.dockItem} data-dock-item="" data-label={tt('canvas.storyboardNode')}>
           <IconButton name="layers" size={18} label={tt('canvas.storyboardNode')} onClick={() => placeNewNode(createStoryboardNode())} />
         </div>
+        <span className={css.dockDivider} aria-hidden="true" />
         <div className={css.dockItem} data-dock-item="" data-label={tt('canvas.templateLibrary')}>
           <IconButton name="template" size={18} label={tt('canvas.templateLibrary')} active={libraryOpen} onClick={() => setLibraryOpen(previous => !previous)} />
         </div>
@@ -6945,6 +6963,7 @@ export function CanvasWorkspace(props: CanvasWorkspaceProps): React.JSX.Element 
             onMouseLeave={scheduleMenuClose}
           />
         </div>
+        <span className={css.dockDivider} aria-hidden="true" />
         <div className={css.dockItem} data-dock-item="" data-label={tt('canvas.shortcuts.button')}>
           <IconButton name="help" size={18} label={tt('canvas.shortcuts.button')} active={shortcutHelpOpen} onClick={() => setShortcutHelpOpen(open => !open)} />
         </div>

@@ -163,6 +163,38 @@ const CASES = [
     expect: /result image prompt line preserves user newlines/,
   },
   {
+    // LibTV 式空态快捷卡：把空态条件改成永假，画布无节点时不再渲染五卡，
+    // smoke 的空态驱动检查必须变红。
+    name: 'the empty canvas loses its quick-start cards',
+    runner: 'smoke',
+    file: 'src/client/CanvasWorkspace.tsx',
+    from: 'const emptyState = document !== null && document.nodes.length === 0',
+    to: 'const emptyState = document !== null && document.nodes.length === -1',
+    // 空态不渲染时 waitForSelector 先抛 "selector did not render: …"，
+    // 断言消息在其后；两种输出都认。
+    expect: /data-quick-card|empty canvas shows the five quick-start cards/,
+  },
+  {
+    // 框选把 no-zoom 面当空白：pointerdown preventDefault+指针捕获抢走卡片
+    // click。把守卫改回旧选择器，smoke 的源码不变式必须变红。
+    name: 'the marquee swallows quick-card clicks',
+    runner: 'smoke',
+    file: 'src/client/CanvasWorkspace.tsx',
+    from: "const isBackground = closestOf(target, '[data-node-id],[data-connection-hit],[data-canvas-no-zoom]') === null",
+    to: "const isBackground = closestOf(target, '[data-node-id],[data-connection-hit]') === null",
+    expect: /marquee must ignore no-zoom surfaces/,
+  },
+  {
+    // 去掉外壳的 pointer-events:auto：react-flow wrapper 的 none 继承下来，
+    // 卡片本体收不到真指针。契约的 PE 不变式必须变红。
+    name: 'node cards stop receiving real pointers',
+    runner: 'contracts',
+    file: 'src/client/canvas-workspace.module.css',
+    from: 'pointerdown，真用户拖不动节点（交互子元素各自 stopPropagation，不受影响）。 */\n  pointer-events: auto;',
+    to: 'pointerdown，真用户拖不动节点（交互子元素各自 stopPropagation，不受影响）。 */',
+    expect: /pointer-events:auto|drag dead/,
+  },
+  {
     // The overlay one: the host counts dragenter/dragleave on document and only
     // resets on a drop that reaches it, so one stopPropagation() leaves the
     // "drop files here" overlay stuck on screen. Re-adding it is the defect.

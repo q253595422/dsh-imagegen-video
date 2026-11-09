@@ -98,14 +98,27 @@
 /* ------------------------------------------------------------- top bar */
 
 .topBar {
+  /* LibTV 式悬浮细栏：不占布局高度，画布铺满整个区域，顶栏玻璃浮在其上。
+     中心点语义不受影响——chromeHeight 只量底部 dock（见 CanvasWorkspace）。 */
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
   display: flex;
   align-items: center;
   gap: 8px;
   padding: 8px 12px;
   border-bottom: 1px solid var(--dsw-alias-border-l1);
-  flex: none;
   z-index: var(--z-topbar);
-  background: var(--dsw-alias-bg-layer-1);
+  background: color-mix(in srgb, var(--dsw-alias-bg-layer-1) 78%, transparent);
+  backdrop-filter: blur(10px);
+}
+
+/* 窄面板：顶栏内容换行而不是横向溢出（#30 手机端契约）。 */
+@media (max-width: 760px) {
+  .topBar { flex-wrap: wrap; row-gap: 4px; }
+  .projectSelect { max-width: 120px; }
+  .titleButton { max-width: 120px; }
 }
 
 .projectSelect {
@@ -353,6 +366,10 @@
  */
 .node {
   position: absolute;
+  /* react-flow 在 nodesDraggable/Selectable/Connectable 全 false 时给 wrapper
+     设 pointer-events:none 且可继承——外壳不恢复 auto 的话卡片本体收不到
+     pointerdown，真用户拖不动节点（交互子元素各自 stopPropagation，不受影响）。 */
+  pointer-events: auto;
   display: flex;
   flex-direction: column;
   border-radius: var(--dsw-radius-lg);
@@ -985,7 +1002,7 @@
   justify-content: center;
   align-items: flex-end;
   gap: 6px;
-  /* Never wider than the canvas it sits on: 17 tiles at 34px are ~710px, which
+  /* Never wider than the canvas it sits on: 17 tiles at 40px are ~820px, which
    * a three-column studio at 560px cannot hold. Wrapping is the fallback; the
    * row grows upward from the bottom edge, and the canvas measures its real top
    * (see the `chromeHeight` effect in CanvasWorkspace). */
@@ -1003,8 +1020,8 @@
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  width: 34px;
-  height: 34px;
+  width: 40px;
+  height: 40px;
   border-radius: var(--dsw-radius-md);
   cursor: pointer;
 }
@@ -1424,6 +1441,43 @@
 }
 
 .emptyHint span { font-size: 12px; max-width: 320px; line-height: 1.6; }
+
+/* LibTV 空态快捷卡：一排五张，点一下=现有 add 动作。emptyHint 整体
+   pointer-events:none（不挡画布手势），卡片行单独恢复可点。 */
+.quickRow {
+  pointer-events: auto;
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 12px;
+  margin-top: 14px;
+}
+
+.quickCard {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 12px 20px;
+  border-radius: var(--dsw-radius-lg);
+  border: 1px solid var(--dsw-alias-border-l1);
+  background: var(--dsw-alias-bg-layer-1);
+  color: var(--dsw-alias-label-primary);
+  font-size: 13px;
+  cursor: pointer;
+}
+
+.quickCard:hover { border-color: var(--canvas-node-hover-edge); background: var(--dsw-alias-interactive-bg-hover); }
+.quickCard:focus-visible { outline: 2px solid var(--dsw-alias-brand-primary); outline-offset: 2px; }
+
+.quickIcon {
+  display: grid;
+  place-items: center;
+  width: 32px;
+  height: 32px;
+  border-radius: var(--dsw-radius-md);
+  background: color-mix(in srgb, var(--dsw-alias-label-primary) 8%, transparent);
+  color: var(--dsw-alias-label-secondary);
+}
 
 /* ------------------------------------------------------------ zoom dock */
 

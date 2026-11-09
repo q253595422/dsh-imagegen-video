@@ -2383,6 +2383,11 @@ if (canvasFill === null || nodeFill === null) {
 if (nodeBorder !== null && nodeBorder === canvasFill) {
   nodeProblems.push(`\`.node\`'s border is the canvas fill (${nodeBorder})`)
 }
+// react-flow 在三个开关全 false 时给 wrapper 设 pointer-events:none 且可继承；
+// 外壳不恢复 auto，真指针就落不到卡片本体（拖拽死掉，jsdom dispatch 测不出）。
+if (nodeBlock === null || !/pointer-events:\s*auto;/.test(nodeBlock)) {
+  nodeProblems.push('`.node` must restore pointer-events:auto or real pointers never reach the card body (drag dead)')
+}
 // The resting values are variables now, so the literal string comparison above
 // can no longer see them. The two assignments are the whole light-theme
 // contract: `--canvas-node-surface` MUST be the canvas token and

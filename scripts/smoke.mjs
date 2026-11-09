@@ -8081,7 +8081,7 @@ await check('E1 client apply mounts the sidebar entry and studio (jsdom)', async
     // Regression for the runaway Dock magnification (#27): a browser can give
     // requestAnimationFrame a timestamp older than performance.now(), which
     // used to produce a negative frame delta. Drive that exact case through the
-    // mounted toolbar and require every tile to stay within its 34-50px range.
+    // mounted toolbar and require every tile to stay within its 40-50px range.
     const dockToolbar = view.querySelector('[data-canvas-workspace] [role="toolbar"]')
     assert.ok(dockToolbar !== null, 'canvas dock toolbar is mounted')
     // Let the dock's initial spring settle before replacing RAF so the stale
@@ -8101,12 +8101,41 @@ await check('E1 client apply mounts the sidebar entry and studio (jsdom)', async
     const dockSizes = [...dockToolbar.querySelectorAll('[data-dock-item]')].map(item => Number.parseFloat(item.style.width))
     assert.ok(dockSizes.length > 0, 'dock tiles are present')
     assert.ok(
-      dockSizes.every(size => Number.isFinite(size) && size >= 34 && size <= 50),
+      dockSizes.every(size => Number.isFinite(size) && size >= 40 && size <= 50),
       `dock tiles stay bounded after a stale frame timestamp: ${dockSizes.join(',')}`,
     )
     dockToolbar.dispatchEvent(new jsdomWindow.MouseEvent('pointerleave', { bubbles: true }))
     drainDockFrames(12)
     jsdomWindow.requestAnimationFrame = originalRequestAnimationFrame
+
+    // LibTV 式空态：无节点的画布居中一排快捷卡，点卡=现有 add 动作。
+    // 构造空文档：暂抽节点/连线，切走再切回强迫重读；完事原样恢复，
+    // 后面的画布断言仍跑在原 fixture 上。
+    const emptySavedNodes = canvasDocument.nodes.slice()
+    const emptySavedNodes2 = canvasDocument2.nodes.slice()
+    const emptySavedConnections = canvasDocument.connections.slice()
+    canvasDocument.nodes.length = 0
+    canvasDocument2.nodes.length = 0
+    canvasDocument.connections.length = 0
+    await switchProject('Second canvas')
+    await waitForSelector(view, '[data-canvas-workspace] [data-quick-card]')
+    const quickCards = [...view.querySelectorAll('[data-canvas-workspace] [data-quick-card]')]
+    assert.equal(quickCards.length, 5, 'empty canvas shows the five quick-start cards')
+    quickCards.find(card => card.getAttribute('data-quick-card') === 'text').click()
+    assert.ok(await waitUntil(() => view.querySelector('[data-canvas-workspace] [data-node-id]') !== null), 'clicking a quick card creates a node')
+    assert.ok(await waitUntil(() => view.querySelector('[data-canvas-workspace] [data-quick-card]') === null), 'quick cards leave once the canvas has a node')
+    // 真机陷阱的源码不变式：框选分支必须排除 no-zoom 面，否则 pointerdown
+    // 会 preventDefault+setPointerCapture 抢走卡片的 click（jsdom 不模拟该默认行为）。
+    assert.match(
+      readFileSync(new URL('../src/client/CanvasWorkspace.tsx', import.meta.url), 'utf8'),
+      /const isBackground = closestOf\(target, '\[data-node-id\],\[data-connection-hit\],\[data-canvas-no-zoom\]'\) === null/,
+      'marquee must ignore no-zoom surfaces so quick cards receive clicks',
+    )
+    canvasDocument.nodes.push(...emptySavedNodes)
+    canvasDocument2.nodes.push(...emptySavedNodes2)
+    canvasDocument.connections.push(...emptySavedConnections)
+    await switchProject('Smoke canvas')
+    await waitForSelector(view, '[data-canvas-workspace] [data-node-id="node-image"]')
 
     // The workflow runner lives in the dock: one press runs the selected
     // nodes' downstream chain. It must be rendered, reachable by its label,

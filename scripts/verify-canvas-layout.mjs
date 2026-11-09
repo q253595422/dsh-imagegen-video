@@ -50,8 +50,8 @@ const DOCK_TILES = [
   'select', 'pan', 'image', 'text', 'sketch', 'file', 'config', 'storyboard', 'template',
   'skill', 'workflow', 'timeline', 'background', 'help', 'undo', 'redo', 'trash',
 ]
-/** Divider positions in that list (the component groups tools / view / undo). */
-const DIVIDERS_AT = new Set([2, 10, 14])
+/** Divider positions in that list (LibTV 式分组：工具 / 建节点 / 库 / 运行 / 撤销 / 删除). */
+const DIVIDERS_AT = new Set([2, 8, 10, 13, 16])
 
 // ------------------------------------------------- fixture vs. real component
 // Validation runs on the fixture MARKUP below, not on a hand-kept list: a list
@@ -80,6 +80,7 @@ ${css}
       <div class="chromeSide">
         <aside class="minimap" id="minimap"><div class="minimapCanvas"><div class="minimapViewport" style="left:12px;top:14px;width:120px;height:70px"></div></div></aside>
         <div class="zoomDock" id="zoomDock">
+          <button class="iconButton"></button><button class="iconButton"></button>
           <button class="iconButton"></button><button class="iconButton"></button>
           <button class="zoomValue">100%</button>
         </div>
