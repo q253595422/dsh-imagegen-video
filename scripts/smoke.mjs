@@ -19,6 +19,9 @@ import { chmodSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync 
 import { promises as fsPromises } from 'node:fs'
 import { homedir, tmpdir } from 'node:os'
 import { isAbsolute, join, resolve } from 'node:path'
+// 画布源码可能分布在 CanvasWorkspace.tsx 与 canvas/ 下的模块中：扫描一律走
+// 这个聚合读取，重构搬文件时断言才不会静静失配。
+import { canvasSourceText } from './lib/canvas-source.mjs'
 
 const root = new URL('../', import.meta.url)
 const results = []
@@ -8140,7 +8143,7 @@ await check('E1 client apply mounts the sidebar entry and studio (jsdom)', async
     // 真机陷阱的源码不变式：框选分支必须排除 no-zoom 面，否则 pointerdown
     // 会 preventDefault+setPointerCapture 抢走卡片的 click（jsdom 不模拟该默认行为）。
     assert.match(
-      readFileSync(new URL('../src/client/CanvasWorkspace.tsx', import.meta.url), 'utf8'),
+      canvasSourceText(),
       /const isBackground = closestOf\(target, '\[data-node-id\],\[data-connection-hit\],\[data-canvas-no-zoom\]'\) === null/,
       'marquee must ignore no-zoom surfaces so quick cards receive clicks',
     )
@@ -8973,7 +8976,7 @@ await check('E1 client apply mounts the sidebar entry and studio (jsdom)', async
     const overlayHost = view.querySelector('[data-canvas-workspace] [data-canvas-overlay-host]')
     assert.ok(overlayHost !== null, 'the canvas owns an overlay host')
     assert.equal(overlayHost.closest('[data-canvas-workspace]') !== null, true, 'the overlay host is inside the canvas root')
-    const canvasSource = readFileSync(new URL('../src/client/CanvasWorkspace.tsx', import.meta.url), 'utf8')
+    const canvasSource = canvasSourceText()
     const portalTargets = canvasSource.match(/<\/>, props\.container \?\? globalThis\.document\.body\)/g) ?? []
     assert.equal(portalTargets.length, 4, 'every canvas menu/dialog accepts a container instead of hard-coding <body>')
     assert.equal(
@@ -9026,7 +9029,7 @@ await check('E1 client apply mounts the sidebar entry and studio (jsdom)', async
     // clears anything -- a false green that negative verification caught.
     // Re-picking the same file cannot be reproduced in jsdom at all, so the
     // honest check is the invariant that the handler clears the field.
-    const pickerSource = readFileSync(new URL('../src/client/CanvasWorkspace.tsx', import.meta.url), 'utf8')
+    const pickerSource = canvasSourceText()
     const pickerInputBlock = pickerSource.match(/onChange=\{event => \{[\s\S]{0,400}?uploadFiles\(files\)\s*\}\}/)?.[0] ?? ''
     assert.ok(pickerInputBlock !== '', 'the picker file input handler is findable')
     assert.match(
@@ -9041,7 +9044,7 @@ await check('E1 client apply mounts the sidebar entry and studio (jsdom)', async
     // A real drop is not reproducible in jsdom, so the honest check is the
     // invariant: the caps are applied BEFORE any reader runs, and the reads are
     // sequential.
-    const dropSource = readFileSync(new URL('../src/client/CanvasWorkspace.tsx', import.meta.url), 'utf8')
+    const dropSource = canvasSourceText()
     const dropBlock = dropSource.match(/const onDrop = useCallback\([\s\S]{0,3000}?\[addAssets, api, screenToWorld, uploadCanvasFile\]\)/)?.[0] ?? ''
     assert.ok(dropBlock !== '', 'the canvas drop handler is findable')
     assert.match(

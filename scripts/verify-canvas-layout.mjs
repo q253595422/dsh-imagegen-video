@@ -28,12 +28,13 @@ import { readFileSync } from 'node:fs'
 import { createServer } from 'node:http'
 import { findChrome, launchChrome, openPage, skipWithoutChrome } from './lib/headless-chrome.mjs'
 import { assertFixtureClasses } from './lib/fixture-classes.mjs'
+import { canvasSourceText } from './lib/canvas-source.mjs'
 
 const CHROME = findChrome()
 if (CHROME === null) skipWithoutChrome('the canvas chrome layout guard did NOT run.')
 
 const css = readFileSync(new URL('../src/client/canvas-workspace.module.css', import.meta.url), 'utf8')
-const componentSource = readFileSync(new URL('../src/client/CanvasWorkspace.tsx', import.meta.url), 'utf8')
+const componentSource = canvasSourceText()
 
 /**
  * Panel widths to measure.

@@ -286,4 +286,147 @@ assert.deepEqual(planWorkflow([], nodes, edges), { layers: [], cycle: [] }, '无
   assert.equal(seen[seen.length - 1].done, result.done, '最后一次进度的 done 应与结果一致')
 }
 
+// ------------------------------------------------------- 续跑与强制重跑
+
+// 复用集里的节点不提交，直接算有结论；其余照常跑。
+{
+  const ran = []
+  const result = await runWorkflow({
+    roots: ['a'],
+    nodeIds: ['a', 'b'],
+    edges: [{ fromNodeId: 'a', toNodeId: 'b' }],
+    reuse: ['a'],
+    run: async nodeId => { ran.push(nodeId); return 'done' },
+  })
+  assert.deepEqual(ran, ['b'], '复用的节点不该再提交一次')
+  assert.equal(result.done, 2, '复用节点也算这次有结论')
+  assert.equal(result.status, 'completed', '全部有结论时应报完成')
+}
+
+// 复用的节点不该阻断自己的下游：产物还在，下游拿得到输入。
+{
+  const ran = []
+  await runWorkflow({
+    roots: ['a'],
+    nodeIds: ['a', 'b', 'c'],
+    edges: [{ fromNodeId: 'a', toNodeId: 'b' }, { fromNodeId: 'b', toNodeId: 'c' }],
+    reuse: ['a', 'b'],
+    run: async nodeId => { ran.push(nodeId); return 'done' },
+  })
+  assert.deepEqual(ran, ['c'], '中间节点被复用后，整条下游链只该提交最后一个')
+}
+
+// 强制重跑只覆盖它自己和下游，上游不动。
+{
+  const calls = []
+  await runWorkflow({
+    roots: ['a'],
+    nodeIds: ['a', 'b', 'c'],
+    edges: [{ fromNodeId: 'a', toNodeId: 'b' }, { fromNodeId: 'b', toNodeId: 'c' }],
+    rerun: ['b'],
+    run: async (nodeId, context) => { calls.push([nodeId, context.force]); return 'done' },
+  })
+  assert.deepEqual(calls, [['a', false], ['b', true], ['c', true]], '重跑应带上下游闭包，上游保持普通提交')
+}
+
+// 重跑优先于复用：同一个节点既在 reuse 又在 rerun 下游里时，必须重跑。
+{
+  const calls = []
+  await runWorkflow({
+    roots: ['a'],
+    nodeIds: ['a', 'b', 'c'],
+    edges: [{ fromNodeId: 'a', toNodeId: 'b' }, { fromNodeId: 'b', toNodeId: 'c' }],
+    reuse: ['a', 'b', 'c'],
+    rerun: ['b'],
+    run: async (nodeId, context) => { calls.push([nodeId, context.force]); return 'done' },
+  })
+  assert.deepEqual(calls, [['b', true], ['c', true]], '重跑的节点及其下游不能被复用跳掉；a 仍复用')
+}
+
+// 不存在的重跑起点不该制造额外重跑。
+{
+  const calls = []
+  await runWorkflow({
+    roots: ['a'],
+    nodeIds: ['a'],
+    edges: [],
+    rerun: ['missing'],
+    run: async (nodeId, context) => { calls.push([nodeId, context.force]); return 'done' },
+  })
+  assert.deepEqual(calls, [['a', false]], '图外的重跑起点应被忽略')
+}
+
+// ------------------------------------------------------------- 并发上限
+
+// maxParallel = 1：同层严格串行，同时在飞的永远只有 1 个。
+{
+  let inFlight = 0
+  let peak = 0
+  const order = []
+  await runWorkflow({
+    roots: ['a', 'b', 'c'],
+    nodeIds: ['a', 'b', 'c'],
+    edges: [],
+    maxParallel: 1,
+    run: async nodeId => {
+      inFlight += 1
+      peak = Math.max(peak, inFlight)
+      order.push(nodeId)
+      await new Promise(resolve => setTimeout(resolve, 5))
+      inFlight -= 1
+      return 'done'
+    },
+  })
+  assert.equal(peak, 1, 'maxParallel=1 时不该有两个节点同时在飞')
+  assert.deepEqual(order, ['a', 'b', 'c'], '串行时按画布顺序提交')
+}
+
+// 默认（不限）时同层仍然并发，保持旧行为。
+{
+  let inFlight = 0
+  let peak = 0
+  await runWorkflow({
+    roots: ['a', 'b', 'c'],
+    nodeIds: ['a', 'b', 'c'],
+    edges: [],
+    run: async () => {
+      inFlight += 1
+      peak = Math.max(peak, inFlight)
+      await new Promise(resolve => setTimeout(resolve, 5))
+      inFlight -= 1
+      return 'done'
+    },
+  })
+  assert.ok(peak >= 2, `不设上限时同层应并发提交，实测峰值 ${peak}`)
+}
+
+// 限流不得改变结论：一个节点失败仍然只停自己的下游。
+{
+  const ran = []
+  const result = await runWorkflow({
+    roots: ['a', 'b'],
+    nodeIds: ['a', 'a2', 'b', 'b2'],
+    edges: [{ fromNodeId: 'a', toNodeId: 'a2' }, { fromNodeId: 'b', toNodeId: 'b2' }],
+    maxParallel: 1,
+    run: async nodeId => {
+      ran.push(nodeId)
+      return nodeId === 'a' ? 'failed' : 'done'
+    },
+  })
+  assert.deepEqual(ran, ['a', 'b', 'b2'], '限流后失败语义不变：a2 被挡住，另一条链照常')
+  assert.equal(result.status, 'partial', '独立分支跑完了，仍应报 partial')
+}
+
+// 结果顺序与输入一一对应：限流不是把结果推翻重排。
+{
+  const result = await runWorkflow({
+    roots: ['a', 'b'],
+    nodeIds: ['a', 'b'],
+    edges: [],
+    maxParallel: 1,
+    run: async nodeId => nodeId === 'a' ? 'failed' : 'done',
+  })
+  assert.deepEqual(result.failedNodeIds, ['a'], '限流下失败节点仍然准确')
+}
+
 console.log('workflow: ok')
