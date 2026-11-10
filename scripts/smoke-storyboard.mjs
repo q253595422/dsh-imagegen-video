@@ -331,8 +331,8 @@ await check('P7 a carry re-run invalidates every downstream clip, after a succes
   assert.equal(afterUnrun.shots[1].id, 's2', 'the list is not reordered or shortened')
 
   // Wiring: `submitShot` is what invalidates, on the success path only.
-  const { readFileSync } = await import('node:fs')
-  const source = readFileSync(new URL('../src/client/CanvasWorkspace.tsx', import.meta.url), 'utf8')
+  const { canvasSourceText } = await import('./lib/canvas-source.mjs')
+  const source = canvasSourceText()
   const from = source.indexOf('const submitShot = useCallback')
   assert.ok(from > 0, 'submitShot exists')
   const body = source.slice(from, source.indexOf('const runStoryboard = useCallback'))

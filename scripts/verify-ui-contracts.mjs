@@ -26,6 +26,7 @@
 
 import { readFileSync, existsSync, readdirSync, mkdirSync, rmSync } from 'node:fs'
 import { readSourceText } from './lib/source-text.mjs'
+import { canvasSourceText } from './lib/canvas-source.mjs'
 import { tmpdir } from 'node:os'
 import { spawnSync } from 'node:child_process'
 import { join } from 'node:path'
@@ -113,7 +114,7 @@ console.log('flow adapter: nodes / connections / viewport round-trip lossless')
 // a detached pane); without the guard that NaN reaches document.viewport and
 // every later coordinate math inherits it. No browser here reproduces a NaN
 // viewport, so the guard is checked as the source invariant it is.
-const workspaceText = readSourceText(new URL('../src/client/CanvasWorkspace.tsx', import.meta.url))
+const workspaceText = canvasSourceText()
 const viewportHandler = workspaceText.match(/const handleViewportChange = useCallback\(\(viewport: Viewport\): void => \{[\s\S]{0,500}?\}, \[setViewport\]\)/)
 if (viewportHandler === null || !/Number\.isFinite\(viewport\.x\)[\s\S]*?Number\.isFinite\(viewport\.y\)[\s\S]*?Number\.isFinite\(viewport\.zoom\)/.test(viewportHandler[0])) {
   console.error('\nFAIL: the viewport write-back lost its finite guard.')
@@ -130,7 +131,9 @@ const clientDir = new URL('../src/client/', import.meta.url)
 // a Windows checkout is CRLF and the cross-line patterns here are written with
 // `\n`. Normalising at the read is what makes a newly added pattern correct by
 // default, instead of leaving each one to remember `\r?`.
-const read = name => readSourceText(new URL(name, clientDir))
+// CanvasWorkspace.tsx 正在被拆成 canvas/ 下的模块，这两条断言问的是「这段代码
+// 还在不在」，不是「它是否恰好在那个文件里」——所以走聚合读取，搬迁不用改测试。
+const read = name => name === 'CanvasWorkspace.tsx' ? canvasSourceText() : readSourceText(new URL(name, clientDir))
 
 // --------------------------------------------------------------- 3. stacking
 // Pure source invariant: every layer must read a scale variable, and the scale
