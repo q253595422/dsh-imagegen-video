@@ -53,6 +53,18 @@ export function OutfitReferencePicker({ kind, api = outfitReferenceApi, onSelect
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
   const [selection, setSelection] = useState<{ item: OutfitReference; viewId?: string; useDepth: boolean } | null>(null)
+  /* Mobile back gesture (no extra button): on a phone the stacked detail pane
+   * covers most of the dialog once an item is picked, so tapping the
+   * still-visible upper level — title, search/filters, status bar — is the
+   * natural way back to the grid; clearing the selection collapses the pane
+   * (the CSS then lets the grid fill the dialog again). On the desktop
+   * two-column layout the pane sits beside the grid, so header interactions
+   * must NOT clear the selection — the handler no-ops above 680px. This is a
+   * viewport query, not a theme read; it follows the optional-chaining form
+   * the contract expects (see CanvasBackgrounds' reduced-motion checks). */
+  const dismissSelectionOnUpperLevel = (): void => {
+    if (globalThis.matchMedia?.('(max-width: 680px)').matches === true) setSelection(null)
+  }
   const [preview, setPreview] = useState<{ selection: NonNullable<typeof selection>; reference: OutfitReference } | null>(null)
   const [previewLoading, setPreviewLoading] = useState(false)
   const [previewError, setPreviewError] = useState('')
@@ -200,11 +212,11 @@ export function OutfitReferencePicker({ kind, api = outfitReferenceApi, onSelect
     onCancel={event => { event.preventDefault(); onClose() }}
     onClick={event => { if (event.target === dialog.current) onClose() }}>
     <div className={css.panel}>
-      <header className={css.header}>
+      <header className={css.header} onClick={dismissSelectionOnUpperLevel}>
         <div><h2>选择{TITLES[kind]}</h2><p>选中后保存到本机，再交给当前图像模型作为参考。</p></div>
         <button className={css.close} type="button" onClick={onClose} aria-label="关闭素材选择器">×</button>
       </header>
-      <div className={css.toolbar}>
+      <div className={css.toolbar} onClick={dismissSelectionOnUpperLevel}>
         <label className={css.search}>搜索名称或标签
           <input ref={queryInput} type="search" value={input} placeholder={`搜索${TITLES[kind]}…`} onChange={event => setInput(event.target.value)} />
         </label>
@@ -231,7 +243,7 @@ export function OutfitReferencePicker({ kind, api = outfitReferenceApi, onSelect
         </label> : null}
         <label className={css.check}><input type="checkbox" checked={includeSensitive} onChange={event => { setIncludeSensitive(event.target.checked); setOffset(0) }} />显示敏感素材（18+）</label>
       </div>
-      <div className={css.statusBar}>
+      <div className={css.statusBar} onClick={dismissSelectionOnUpperLevel}>
         <span role="status">{loading ? '正在加载图库…' : error ? '加载失败' : `${listing?.total ?? 0} 条素材 · 第 ${currentPage} 页${pageCount ? ` / ${pageCount} 页` : ''}`}</span>
         <button type="button" disabled={loading} onClick={() => setRefresh(value => value + 1)}>更新索引</button>
         <span className={css.revision}>{listing?.revision ? `数据版本 ${listing.revision.slice(0, 10)}` : ''}</span>
