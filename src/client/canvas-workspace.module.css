@@ -3912,3 +3912,24 @@
     max-width: none;
   }
 }
+
+/* dsh-imagegen-mobile-6 (phone dock): 17 tiles wrap into three rows on a
+ * ~400px viewport, and together with the zoom row they cover roughly the
+ * lower half of the canvas. On a phone the dock becomes a single row that
+ * scrolls horizontally in group order (tools first); tiles keep their 40px
+ * touch target and hover magnification still works. Desktop (>760px) keeps
+ * the wrapping fallback and the centered layout untouched. The spring engine
+ * only writes min-height (42–79px) on .dockOuter, which a ~47px single row
+ * satisfies, and chromeHeight is measured from the real .dock box, so the
+ * canvas reclaims the reclaimed rows automatically. */
+@media (max-width: 760px) {
+  .dock {
+    flex-wrap: nowrap;
+    justify-content: flex-start;
+    overflow-x: auto;
+    overflow-y: hidden;
+    scrollbar-width: none;
+  }
+  .dock::-webkit-scrollbar { display: none; }
+  .dockItem, .dockDivider { flex: none; }
+}

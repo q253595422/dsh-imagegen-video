@@ -108,3 +108,16 @@
   .panel { height: auto; min-height: 0; }
   .content { flex: none; height: min(290px, 46dvh); min-height: 240px; }
 }
+
+/* dsh-imagegen-mobile-8 (phone picker placeholder): in the ≤680px stacked
+ * layout the detail pane shows only the “点选左侧素材…” placeholder until an
+ * item is picked, yet its grid row still reserves minmax(160px, .9fr) — near
+ * half the dialog as dead blank. While nothing is selected (the detail pane
+ * contains only that placeholder, no preview image) collapse the pane
+ * entirely and let the grid fill the content area; once an item is picked the
+ * pane reappears below the grid as before. The desktop two-column layout and
+ * its placeholder are untouched. */
+@media (max-width: 680px) {
+  .detail:has(> .notice) { display: none; }
+  .content:has(.detail > .notice) { grid-template-rows: minmax(160px, 1fr); }
+}
