@@ -4552,3 +4552,23 @@ a.galleryCardAction {
   html[data-dsh-imagegen-active] div:has(> [data-slot='shell.leading']) { z-index: var(--z-shell-seat); }
   html[data-dsh-imagegen-active] .panel { padding-top: 46px; }
 }
+
+/* dsh-imagegen-mobile-9 (canvas fills the studio): the ≤760px studio is the
+ * scrollport and the canvas/ppt generation block was sized height:auto with a
+ * 560px floor, so on an ~874px phone the canvas stopped ~180px short of the
+ * panel bottom and that strip stayed dead blank below the dock. These two
+ * workspaces never need the studio to scroll: let the generation block take
+ * exactly the remaining height so the canvas viewport runs to the bottom edge
+ * and grows with the screen. Every other workspace keeps the scrolling
+ * behavior, and >760px keeps the desktop height:100% rule untouched. */
+@media (max-width: 760px) {
+  .generation[data-workspace='canvas'],
+  .generation[data-workspace='ppt'] {
+    flex: 1 1 auto;
+    min-height: 0;
+  }
+  .studio:has(> .generation[data-workspace='canvas']),
+  .studio:has(> .generation[data-workspace='ppt']) {
+    overflow-y: hidden;
+  }
+}
