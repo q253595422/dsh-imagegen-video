@@ -66,23 +66,25 @@ export function canvasSourceText() {
  * 「改得到」的范围会不一致。
  */
 export function canvasSourceFiles() {
-  const files = ['CanvasWorkspace.tsx']
-  const walk = (relativeDir) => {
-    let entries = []
-    try {
-      entries = readdirSync(join(CLIENT_DIR, relativeDir), { withFileTypes: true })
-    } catch {
-      // 目录还不存在（拆分刚开始时）：只扫主文件，行为与改造前一致。
-      return
-    }
-    for (const entry of entries.sort((a, b) => a.name.localeCompare(b.name))) {
-      const relative = `${relativeDir}/${entry.name}`
-      if (entry.isDirectory()) walk(relative)
-      else if (/\.(ts|tsx)$/.test(entry.name)) files.push(relative)
-    }
+  let names = []
+  try {
+    // `recursive` 是 Node 内置的（20.1 起稳定；engines 与 CI 都在 20 以上）。
+    // 它**不**保证顺序：内部只是把每一层 `readdir` 的结果拼起来，顺序来自
+    // 文件系统本身（ext4 上取决于目录 hash，同一份代码在两台机器上可能不同）。
+    // 所以显式 sort，保证 `canvasSourceText()` 的拼接顺序、以及反向验证
+    // `locate()` 的命中顺序在不同机器上一致。
+    names = readdirSync(CANVAS_DIR, { recursive: true, encoding: 'utf8' }).sort()
+  } catch {
+    // 目录还不存在（拆分刚开始时）：只扫主文件，行为与改造前一致。
+    return ['CanvasWorkspace.tsx']
   }
-  walk('canvas')
-  return files
+  // 内置递归只返回路径，不区分文件与目录；用扩展名筛出源文件即可，因为
+  // 这里还叫 ts/tsx 的条目必定是文件。分隔符统一成 `/`：Windows 上返回的是
+  // 反斜杠，而这份清单同时被当作 `src/client/` 下的相对路径来拼。
+  return [
+    'CanvasWorkspace.tsx',
+    ...names.filter(name => /\.(ts|tsx)$/.test(name)).map(name => `canvas/${name.replaceAll('\\', '/')}`),
+  ]
 }
 
 /**
