@@ -29,6 +29,10 @@ export const SKETCH_NODE_SIZE = { width: 300, height: 396 }
 export const SKETCH_EXPORT_WIDTH = 1024
 export const SKETCH_COLORS = ['#1f2328', '#e03131', '#1971c2', '#2f9e44', '#f59f00', '#9c36b5', '#0ca678', '#f06595']
 export const SKETCH_WIDTHS = [3, 6, 12]
+/** 取色点按钮的直径，与 SKETCH_WIDTHS 一一对应。 */
+export const SKETCH_WIDTH_DOTS = [5, 8, 12]
+/** 橡皮擦的命中半径（世界像素），除以画板缩放后使用。 */
+export const SKETCH_ERASER_RADIUS = 16
 
 /**
  * Caps for a canvas drop of images.
