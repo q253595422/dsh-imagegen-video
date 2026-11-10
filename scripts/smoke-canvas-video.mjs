@@ -1709,8 +1709,18 @@ await check('D1-D3 a clip run tells the panel to refresh the clip list, a text r
     await waitUntil(() => (canvasSaves.at(-1)?.nodes ?? []).some(node => node.id === stitchedId), 12_000),
     'D1: the stitch run applied its clip to the canvas',
   )
+  // Read EVERY save, not just the last one. A save is asynchronous, so "the
+  // latest document already has the node" does not mean the sequence has
+  // settled: the write that still lands may be the duplicate we are looking
+  // for, and sampling `at(-1)` right after `waitUntil` returns catches the
+  // canvas mid-flight. The invariant is about the whole sequence -- a
+  // re-applied run leaves two nodes under one id in a document it saves, and
+  // no document in the sequence may ever carry that. Checking all of them is
+  // strictly stronger than checking the newest, and timing-independent.
+  const duplicateSaves = canvasSaves.filter(save =>
+    (save?.nodes ?? []).filter(node => node.id === stitchedId).length > 1)
   assert.equal(
-    (canvasSaves.at(-1)?.nodes ?? []).filter(node => node.id === stitchedId).length, 1,
+    duplicateSaves.length, 0,
     'D1: the clip run applied exactly once -- one node, not a re-applied duplicate',
   )
   assert.ok(

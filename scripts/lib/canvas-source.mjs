@@ -46,19 +46,43 @@ function readIfPresent(path) {
  * 而产生一个本来不存在的匹配。
  */
 export function canvasSourceText() {
-  const parts = [readIfPresent(join(CLIENT_DIR, 'CanvasWorkspace.tsx'))]
-  let names = []
-  try {
-    names = readdirSync(CANVAS_DIR).filter(name => /\.(ts|tsx)$/.test(name)).sort()
-  } catch {
-    // 目录还不存在（拆分刚开始时）：只扫主文件，行为与改造前一致。
-    names = []
-  }
-  for (const name of names) {
-    parts.push(`\n// ---- src/client/canvas/${name} ----\n`)
-    parts.push(readIfPresent(join(CANVAS_DIR, name)))
+  const parts = []
+  for (const relative of canvasSourceFiles()) {
+    parts.push(`\n// ---- src/client/${relative} ----\n`)
+    parts.push(readIfPresent(join(CLIENT_DIR, relative)))
   }
   return parts.join('\n')
+}
+
+/**
+ * 画布相关的源文件清单，相对于 `src/client/`，主文件在前。
+ *
+ * 递归：`canvas/` 下现在只有一层，但组件本体再拆下去就会出现子目录。一个
+ * 只认一层的扫描会在那次拆分里悄悄少读几个文件——而少了文件的表现是断言
+ * 匹配不上，看起来和「代码被删了」一模一样。
+ *
+ * 导出这份清单是为了让反向验证的 `patch()` 也能按「画布源码组」定位锚点
+ * 而不是钉死在某一个文件上。两处必须用同一份清单，否则「读得到」与
+ * 「改得到」的范围会不一致。
+ */
+export function canvasSourceFiles() {
+  const files = ['CanvasWorkspace.tsx']
+  const walk = (relativeDir) => {
+    let entries = []
+    try {
+      entries = readdirSync(join(CLIENT_DIR, relativeDir), { withFileTypes: true })
+    } catch {
+      // 目录还不存在（拆分刚开始时）：只扫主文件，行为与改造前一致。
+      return
+    }
+    for (const entry of entries.sort((a, b) => a.name.localeCompare(b.name))) {
+      const relative = `${relativeDir}/${entry.name}`
+      if (entry.isDirectory()) walk(relative)
+      else if (/\.(ts|tsx)$/.test(entry.name)) files.push(relative)
+    }
+  }
+  walk('canvas')
+  return files
 }
 
 /**

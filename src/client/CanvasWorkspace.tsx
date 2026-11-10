@@ -50,6 +50,8 @@ import { COMPOSE_SKILL_ID, composeGlyphs, PolishMenu, SkillConfigForm, SkillConf
 import { StoryboardBody } from './canvas/storyboard-board.tsx'
 import { ImagePicker, readImageSize, SketchBoard } from './canvas/sketch-and-picker.tsx'
 import { RUN_NODE_SIZE, runRectOf, SkillRunCard, type SkillRunTrace } from './canvas/run-card.tsx'
+import { CanvasErrorToast, CanvasNoticeToast, CanvasVideoPreviewOverlay, CanvasWorkflowProgressBar } from './canvas/overlays.tsx'
+import { BackgroundDockMenu, ImageDockMenu, NodeAddMenu } from './canvas/dock-menus.tsx'
 import {
   annotationAnchor, assetOf, assetToDataUrl, attachedCards, bezierPath, clamp01, clampScale, cloneNodesWithCards, freeColumnX, imageDataUrl, isAnnotationCard, isSketchNode, layerKindLabel, liveAnnotations, newId, nodeAnchor, nodeMetadata, nodeSizeFromRatio, nodesBounds, normalizeConfigNodeSizes, pruneAnnotations, removeNodesAndCards, resizedRect, sizeForAsset, textStyleOf, usableAsset, videoOf,
 } from './canvas/node-model.ts'
@@ -5646,20 +5648,16 @@ export function CanvasWorkspace(props: CanvasWorkspaceProps): React.JSX.Element 
     </div>
     </div>
 
-    {imageMenu !== null ? <div
-      className={css.backgroundMenu}
-      style={{ left: imageMenu.x, top: imageMenu.y - 10 }}
-      data-canvas-no-zoom=""
-      role="menu"
-      onMouseEnter={clearMenuCloseTimer}
-      onMouseLeave={scheduleMenuClose}
-    >
-      <button type="button" role="menuitem" onClick={() => { imageFileRef.current?.click(); setImageMenu(null) }}>{tt('canvas.imageMenuUpload')}</button>
-      <button type="button" role="menuitem" onClick={() => { setPickerTab('gallery'); setPickerOpen(true); setImageMenu(null) }}>{tt('canvas.imageMenuAssets')}</button>
-      <button type="button" role="menuitem" onClick={() => { setPickerTab('history'); setPickerOpen(true); setImageMenu(null) }}>{tt('canvas.imageMenuHistory')}</button>
-      <button type="button" role="menuitem" onClick={() => { setPickerTab('generate'); setPickerOpen(true); setImageMenu(null) }}>{tt('canvas.imageMenuGenerate')}</button>
-      <button type="button" role="menuitem" data-image-menu-video="" onClick={() => { setPickerOpen(false); setImageMenu(null); setVideoPickerOpen(true) }}>{tt('canvas.addVideo')}</button>
-    </div> : null}
+    {imageMenu !== null ? <ImageDockMenu
+      anchor={imageMenu}
+      onEnter={clearMenuCloseTimer}
+      onLeave={scheduleMenuClose}
+      onUpload={() => { imageFileRef.current?.click(); setImageMenu(null) }}
+      onOpenGallery={() => { setPickerTab('gallery'); setPickerOpen(true); setImageMenu(null) }}
+      onOpenHistory={() => { setPickerTab('history'); setPickerOpen(true); setImageMenu(null) }}
+      onOpenGenerate={() => { setPickerTab('generate'); setPickerOpen(true); setImageMenu(null) }}
+      onAddVideo={() => { setPickerOpen(false); setImageMenu(null); setVideoPickerOpen(true) }}
+    /> : null}
     <input
       ref={imageFileRef}
       type="file"
@@ -5743,60 +5741,44 @@ export function CanvasWorkspace(props: CanvasWorkspaceProps): React.JSX.Element 
       onClose={() => setPolishNode(null)}
       container={overlayHostRef.current}
     /> : null}
-    {backgroundMenu !== null ? <div
-      className={css.backgroundMenu}
-      style={{ left: backgroundMenu.x, top: backgroundMenu.y - 10 }}
-      data-canvas-no-zoom=""
-      role="menu"
-      onMouseEnter={clearMenuCloseTimer}
-      onMouseLeave={scheduleMenuClose}
-    >
-      <button type="button" role="menuitem" data-active={backgroundMode === 'blank' ? '' : undefined} onClick={() => setBackgroundMode('blank')}>{tt('canvas.backgroundBlank')}</button>
-      <span className={css.backgroundMenuDivider} />
-      {([
-        ['dots', tt('canvas.backgroundDots')],
-        ['lines', tt('canvas.backgroundLines')],
-        ['waves', tt('canvas.backgroundWaves')],
-        ['shapeGrid', tt('canvas.backgroundShapeGrid')],
-        ['dotField', tt('canvas.backgroundDotField')],
-        ['dotGrid', tt('canvas.backgroundDotGrid')],
-        ['floatingLines', tt('canvas.backgroundFloatingLines')],
-        ['flow', tt('canvas.backgroundFlow')],
-        ['liquid', tt('canvas.backgroundLiquid')],
-        ['faultyTerminal', tt('canvas.backgroundFaultyTerminal')],
-        ['silk', tt('canvas.backgroundSilk')],
-        ['galaxy', tt('canvas.backgroundGalaxy')],
-      ] as const).map(([mode, label]) => <button key={mode} type="button" role="menuitem" data-active={backgroundMode === mode ? '' : undefined} onClick={() => setBackgroundMode(mode)}>{label}</button>)}
-      <span className={css.backgroundMenuDivider} />
-      <button type="button" role="menuitem" data-active={backgroundMode === 'image' ? '' : undefined} onClick={() => backgroundFileRef.current?.click()}>{tt('canvas.backgroundUpload')}</button>
-      {backgroundMode === 'image' && document?.backgroundImage ? <button type="button" role="menuitem" onClick={removeBackgroundImage}>{tt('canvas.backgroundRemove')}</button> : null}
-      <input
-        ref={backgroundFileRef}
-        type="file"
-        accept="image/png,image/jpeg,image/webp,image/gif"
-        hidden
-        onChange={event => {
-          const file = event.target.files?.[0]
-          if (file !== undefined) void uploadBackgroundImage(file)
-          event.target.value = ''
-        }}
-      />
-    </div> : null}
+    {backgroundMenu !== null ? <BackgroundDockMenu
+      anchor={backgroundMenu}
+      mode={backgroundMode}
+      hasBackgroundImage={Boolean(document?.backgroundImage)}
+      onEnter={clearMenuCloseTimer}
+      onLeave={scheduleMenuClose}
+      onPickMode={mode => setBackgroundMode(mode)}
+      onUpload={() => { backgroundFileRef.current?.click() }}
+      onRemoveImage={removeBackgroundImage}
+    /> : null}
+    {/* 背景图上传用：菜单只发「用户点了上传」的信号，输入框留在画布这里。
+        与图片上传那个同理——同一份 ref 还被别处（菜单外）触发。 */}
+    <input
+      ref={backgroundFileRef}
+      type="file"
+      accept="image/png,image/jpeg,image/webp,image/gif"
+      hidden
+      onChange={event => {
+        const file = event.target.files?.[0]
+        if (file !== undefined) void uploadBackgroundImage(file)
+        event.target.value = ''
+      }}
+    />
 
-    {nodeAddMenu !== null ? <div
-      className={css.contextMenu}
-      style={{ left: nodeAddMenu.screen.x + 12, top: nodeAddMenu.screen.y, transform: 'translateY(-50%)' }}
-      data-canvas-no-zoom=""
-      role="menu"
-      onMouseEnter={clearNodeAddMenuTimer}
-      onMouseLeave={scheduleNodeAddMenuClose}
-    >
-      <button type="button" role="menuitem" onClick={() => { addConnectedNode(nodeAddMenu.nodeId, position => createTextNode(position)); setNodeAddMenu(null) }}><ToolbarIcon name="text" size={16} />{tt('canvas.addTextNode')}</button>
-      <button type="button" role="menuitem" onClick={() => { addConnectedNode(nodeAddMenu.nodeId, position => createSketchNode(position)); setNodeAddMenu(null) }}><ToolbarIcon name="sketch" size={16} />{tt('canvas.addSketchNode')}</button>
-      <button type="button" role="menuitem" onClick={() => { addConnectedNode(nodeAddMenu.nodeId, position => createStoryboardNode(position)); setNodeAddMenu(null) }}><ToolbarIcon name="layers" size={16} />{tt('canvas.storyboardNode')}</button>
-      <button type="button" role="menuitem" onClick={() => { addConnectedNode(nodeAddMenu.nodeId, position => createImageNode({ assetId: '', url: '', mime: 'image/png', bytes: 0, width: 1, height: 1, origin: 'upload' }, position)); setNodeAddMenu(null) }}><ToolbarIcon name="image" size={16} />{tt('canvas.addImageNode')}</button>
-      {nodeAddMenu.nodeType !== 'config' ? <button type="button" role="menuitem" onClick={() => { addConnectedNode(nodeAddMenu.nodeId, position => createConfigNode(position)); setNodeAddMenu(null) }}><ToolbarIcon name="sparkle" size={16} />{tt('canvas.addConfigNode')}</button> : null}
-    </div> : null}
+    {nodeAddMenu !== null ? <NodeAddMenu
+      anchor={nodeAddMenu.screen}
+      sourceNodeType={nodeAddMenu.nodeType}
+      onEnter={clearNodeAddMenuTimer}
+      onLeave={scheduleNodeAddMenuClose}
+      onAdd={kind => {
+        addConnectedNode(nodeAddMenu.nodeId, position => kind === 'text' ? createTextNode(position)
+          : kind === 'sketch' ? createSketchNode(position)
+            : kind === 'storyboard' ? createStoryboardNode(position)
+              : kind === 'config' ? createConfigNode(position)
+                : createImageNode({ assetId: '', url: '', mime: 'image/png', bytes: 0, width: 1, height: 1, origin: 'upload' }, position))
+        setNodeAddMenu(null)
+      }}
+    /> : null}
 
     {renderComposer()}
     {renderContextMenu()}
@@ -5807,34 +5789,11 @@ export function CanvasWorkspace(props: CanvasWorkspaceProps): React.JSX.Element 
       title={filePreviewNode.node.title}
       onClose={() => setFilePreviewNodeId(null)}
     /> : null}
-    {videoPreviewNode !== undefined ? <div
-      className={css.videoPreview}
-      data-canvas-no-zoom=""
-      data-video-preview=""
-      role="dialog"
-      aria-label={tt('canvas.videoPreview')}
-      onClick={() => { setVideoPreviewNodeId(null) }}
-    >
-      <video
-        className={css.videoPreviewPlayer}
-        controls
-        autoPlay
-        preload="metadata"
-        src={videoPreviewNode.clip.url}
-        onClick={event => event.stopPropagation()}
-        // Same reason as the node's own player: the clip is served by reference
-        // and the store deletes evicted files, so the full-screen view can be
-        // opened onto a clip that is already gone. Marking the node keeps the
-        // two views consistent — closing the overlay shows the node saying so.
-        onError={() => setBrokenVideoIds(previous => previous.has(videoPreviewNode.node.id) ? previous : new Set(previous).add(videoPreviewNode.node.id))}
-      />
-      <button
-        type="button"
-        className={css.videoPreviewClose}
-        aria-label={tt('canvas.videoPreviewClose')}
-        onClick={() => { setVideoPreviewNodeId(null) }}
-      >×</button>
-    </div> : null}
+    {videoPreviewNode !== undefined ? <CanvasVideoPreviewOverlay
+      preview={videoPreviewNode}
+      onClose={() => { setVideoPreviewNodeId(null) }}
+      onClipBroken={nodeId => setBrokenVideoIds(previous => previous.has(nodeId) ? previous : new Set(previous).add(nodeId))}
+    /> : null}
     {libraryOpen ? <TemplateLibrary api={api} container={overlayHostRef.current} onClose={() => setLibraryOpen(false)} onUse={prompt => { applyTemplate(prompt); setLibraryOpen(false) }} /> : null}
     {skillLibraryOpen ? <SkillLibraryDialog
       library={skillLibrary}
@@ -5852,23 +5811,13 @@ export function CanvasWorkspace(props: CanvasWorkspaceProps): React.JSX.Element 
       container={overlayHostRef.current}
     /> : null}
 
-    {error !== null ? <div className={css.errorToast} role="status" data-canvas-no-zoom="">
-      <span>{error}</span>
-      {errorAction !== null && errorAction.forError === error ? <button type="button" className={css.errorToastAction} onClick={() => { errorAction.run(); setErrorAction(null); setError(null) }}>{errorAction.label}</button> : null}
-      <button type="button" aria-label={tt('canvas.dismiss')} onClick={() => { setError(null); setErrorAction(null) }}><ToolbarIcon name="close" /></button>
-    </div> : null}
-    {notice !== null ? <div className={css.errorToast} data-variant="notice" role="status" data-canvas-no-zoom=""><span>{notice}</span><button type="button" aria-label={tt('canvas.dismiss')} onClick={() => setNotice(null)}><ToolbarIcon name="close" /></button></div> : null}
-    {/* 运行中的进度：用户要能看到「跑到第几层、还剩多少」，而不是一个转圈。 */}
-    {workflowProgress !== null ? <div className={css.workflowBar} data-workflow-progress="" role="status" data-canvas-no-zoom="">
-      <span className={css.nodeSpinner} aria-hidden="true" />
-      <span>{tt('canvas.workflow.progress', {
-        layer: Math.min(workflowProgress.layer + 1, workflowProgress.total),
-        total: workflowProgress.total,
-        done: workflowProgress.done,
-        count: workflowProgress.count,
-      })}</span>
-      <button type="button" onClick={cancelWorkflow}>{tt('canvas.workflow.stop')}</button>
-    </div> : null}
+    {error !== null ? <CanvasErrorToast
+      error={error}
+      action={errorAction}
+      onDismiss={() => { setError(null); setErrorAction(null) }}
+    /> : null}
+    {notice !== null ? <CanvasNoticeToast notice={notice} onDismiss={() => setNotice(null)} /> : null}
+    {workflowProgress !== null ? <CanvasWorkflowProgressBar progress={workflowProgress} onCancel={cancelWorkflow} /> : null}
     {/* 时间线：排序/裁剪/转场都在这里改，提交时把整条时间线交给既有拼接链路。 */}
     {timelineOpen ? <TimelinePanel
       clips={timelineClips}

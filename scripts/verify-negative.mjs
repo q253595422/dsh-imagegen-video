@@ -20,6 +20,7 @@ import { execFileSync } from 'node:child_process'
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
+import { canvasSourceFiles } from './lib/canvas-source.mjs'
 
 const SRC = dirname(dirname(fileURLToPath(import.meta.url)))
 // Per-process, because a FIXED name is shared state: two runs (a leftover one
@@ -113,9 +114,33 @@ function build () {
   execFileSync('pnpm', ['build'], { cwd: COPY, encoding: 'utf8', stdio: 'ignore' })
 }
 
+/**
+ * 画布源码组的「虚拟路径」。
+ *
+ * 用它的用例想说的是「这段代码还在画布源码里」，不是「这段代码还恰好在
+ * CanvasWorkspace.tsx 的第 N 行」。写死具体文件的用例在每次搬模块时都会
+ * 悄悄失效——`patch()` 只会在真正跑到那一条时报 anchor not found，而没跑到
+ * 的时候就一声不响，安全网静悄悄少了一层。定位交给 `canvasSourceFiles()`，
+ * 与断言侧的聚合读取用同一份清单。
+ */
+const CANVAS_GROUP = 'src/client/canvas'
+
+/** 把锚点定位到真正含有它的那个文件；划定了组就只在组内找。 */
+function locate (relative, anchor) {
+  const candidates = relative === CANVAS_GROUP
+    ? canvasSourceFiles().map(file => join('src/client', file))
+    : [relative]
+  for (const candidate of candidates) {
+    const path = join(COPY, candidate)
+    if (!existsSync(path)) continue
+    if (readFileSync(path, 'utf8').includes(anchor)) return path
+  }
+  // 组内找不到就退回第一个候选，让 patch 打出带文件名的 anchor not found：
+  // 报「锚点不在了」比报「某个虚拟路径不存在」更接近事实。
+  return join(COPY, candidates[0])
+}
+
 function patch (relative, from, to) {
-  const path = join(COPY, relative)
-  let before = readFileSync(path, 'utf8')
   // `from`/`to` may be parallel arrays: some defects are not one edit. Swapping
   // two rungs, for instance, has to move their declarations AND their doc-table
   // rows, or the table check fires first and the case never reaches the guard
@@ -124,10 +149,14 @@ function patch (relative, from, to) {
   const tos = Array.isArray(to) ? to : [to]
   if (froms.length !== tos.length) throw new Error(`from/to length mismatch in ${relative}`)
   for (let index = 0; index < froms.length; index += 1) {
+    // 每一条锚点各自定位：同一用例的 from 与 to 是对应的，但不同条目可能
+    // 落在组内不同文件里（比如一条改组件、一条改搬出去的辅助函数）。
+    const path = locate(relative, froms[index])
+    let before = readFileSync(path, 'utf8')
     if (!before.includes(froms[index])) throw new Error(`anchor not found in ${relative}: ${froms[index].slice(0, 70)}`)
     before = before.replace(froms[index], tos[index])
+    writeFileSync(path, before)
   }
-  writeFileSync(path, before)
 }
 
 /** Build a `from '<specifier>'` fragment at runtime.
@@ -167,7 +196,7 @@ const CASES = [
     // smoke 的空态驱动检查必须变红。
     name: 'the empty canvas loses its quick-start cards',
     runner: 'smoke',
-    file: 'src/client/CanvasWorkspace.tsx',
+    file: 'src/client/canvas',
     from: 'const emptyState = document !== null && document.nodes.length === 0',
     to: 'const emptyState = document !== null && document.nodes.length === -1',
     // 空态不渲染时 waitForSelector 先抛 "selector did not render: …"，
@@ -179,7 +208,7 @@ const CASES = [
     // click。把守卫改回旧选择器，smoke 的源码不变式必须变红。
     name: 'the marquee swallows quick-card clicks',
     runner: 'smoke',
-    file: 'src/client/CanvasWorkspace.tsx',
+    file: 'src/client/canvas',
     from: "const isBackground = closestOf(target, '[data-node-id],[data-connection-hit],[data-canvas-no-zoom]') === null",
     to: "const isBackground = closestOf(target, '[data-node-id],[data-connection-hit]') === null",
     expect: /marquee must ignore no-zoom surfaces/,
@@ -281,6 +310,20 @@ const CASES = [
     to: "    const target = entries.find(entry => entry.id === id)\n    if (target !== undefined && isLiveEntry(target)) target.deletedAt = Date.now()\n    if (target !== undefined) await removeEntryFiles(target)\n    await writeIndex(entries)\n    return entries.map(toWire)",
     expect: /soft delete keeps the clip bytes/,
   },
+  {
+    // D1's invariant is "a run's nodes enter the document ONCE".
+    name: 'a landed skill run puts its nodes on the canvas twice',
+    runner: 'canvas-video',
+    file: 'src/client/canvas',
+    // The applier is the one place a run's nodes enter the document. Appending
+    // the batch twice is exactly the user-visible failure D1 guards: two nodes
+    // under one id. (Dropping the run-map cleanup would also duplicate, but it
+    // duplicates on EVERY poll tick, so the suite wedges long before the D1
+    // assertion and the case proves nothing about this check.)
+    from: "        ...nodes,\n      ],\n      connections: [",
+    to: "        ...nodes,\n        ...nodes,\n      ],\n      connections: [",
+    expect: /D1: the clip run applied exactly once/,
+  },
   // --------------------------------------------- the jsdom teardown ordering
   {
     // The bug this round was about, restored verbatim: `ReferenceError: window
@@ -365,7 +408,7 @@ const CASES = [
     // to the list" is gone — the check must say so by name.
     name: 'the ? key stops opening the shortcut legend',
     runner: 'smoke',
-    file: 'src/client/CanvasWorkspace.tsx',
+    file: 'src/client/canvas',
     from: "      } else if (event.key === '?' || (event.key === 'F1')) {",
     to: "      } else if (event.key === 'F1' && shortcutHelpOpen) {",
     expect: /\? opens the legend too|\? is claimed by the legend/,
@@ -376,7 +419,7 @@ const CASES = [
     // collapses to a bare verb.
     name: 'the dock stops naming the key on its own controls',
     runner: 'smoke',
-    file: 'src/client/CanvasWorkspace.tsx',
+    file: 'src/client/canvas',
     from: "  const keys = shortcutKeysFor(key)\n  return keys === '' ? text : `${text} (${keys})`",
     to: "  const keys = ''\n  return keys === '' ? text : `${text} (${keys})`",
     expect: /the undo control names its key/,
@@ -666,7 +709,7 @@ const CASES = [
   {
     name: 'the drawAnnotation caller forgets the canvas root',
     runner: 'contracts',
-    file: 'src/client/CanvasWorkspace.tsx',
+    file: 'src/client/canvas',
     from: 'drawAnnotation(raster, boxes.map((box, index) => ({ rect: box.rect, index })), rootRef.current)',
     to: 'drawAnnotation(raster, boxes.map((box, index) => ({ rect: box.rect, index })))',
     expect: /does not pass the canvas root/,
@@ -793,7 +836,7 @@ const CASES = [
     // into document.viewport, and every coordinate after that inherits it.
     name: 'the viewport write-back accepts non-finite geometry',
     runner: 'contracts',
-    file: 'src/client/CanvasWorkspace.tsx',
+    file: 'src/client/canvas',
     from: '    if (!Number.isFinite(viewport.x) || !Number.isFinite(viewport.y) || !Number.isFinite(viewport.zoom)) return\n',
     to: '',
     expect: /viewport write-back lost its finite guard/,
@@ -899,7 +942,7 @@ const CASES = [
     // about the check.)
     name: 'the overlay stops being outside the viewport',
     runner: 'smoke',
-    file: 'src/client/CanvasWorkspace.tsx',
+    file: 'src/client/canvas',
     from: "    return <div className={css.composer} data-canvas-no-zoom=\"\" style={{ left: clampedX - 280, top }}>",
     to: "    return <div className={`${css.composer} ${css.viewport}`} data-canvas-no-zoom=\"\" style={{ left: clampedX - 280, top }}>",
     expect: /composer sits outside the viewport/,
@@ -907,7 +950,7 @@ const CASES = [
   {
     name: 'touch pinch is gone again',
     runner: 'smoke',
-    file: 'src/client/CanvasWorkspace.tsx',
+    file: 'src/client/canvas',
     from: "    if (event.pointerType === 'touch') {\n      activePointersRef.current.set(event.pointerId, { x: event.clientX, y: event.clientY })",
     to: '    if (false) {\n      activePointersRef.current.set(event.pointerId, { x: event.clientX, y: event.clientY })',
     expect: /two touch pointers moving apart zoom in/,
@@ -915,7 +958,7 @@ const CASES = [
   {
     name: 'Space eats a focused button again',
     runner: 'smoke',
-    file: 'src/client/CanvasWorkspace.tsx',
+    file: 'src/client/canvas',
     from: "      if (event.code === 'Space' && !isEditingTarget(event.target) && !isActivatableTarget(event.target)) {",
     to: "      if (event.code === 'Space' && !isEditingTarget(event.target)) {",
     expect: /Space on a focused button/,
@@ -923,7 +966,7 @@ const CASES = [
   {
     name: 'Esc no longer closes the in-canvas video preview',
     runner: 'smoke',
-    file: 'src/client/CanvasWorkspace.tsx',
+    file: 'src/client/canvas',
     from: '        if (videoPreviewNodeId !== null) { setVideoPreviewNodeId(null); return }\n',
     to: '',
     expect: /Escape closes the in-canvas video preview/,
@@ -931,7 +974,7 @@ const CASES = [
   {
     name: 'the image picker keeps its stale file value',
     runner: 'smoke',
-    file: 'src/client/CanvasWorkspace.tsx',
+    file: 'src/client/canvas',
     from: "        event.target.value = ''\n        if (files.length > 0) uploadFiles(files)",
     to: '        if (files.length > 0) uploadFiles(files)',
     expect: /clears its file input/,
@@ -1256,7 +1299,7 @@ const CASES = [
     // 这是整个功能最容易�半截的那种错。
     name: 'pinning an identity never reaches the saved document',
     runner: 'smoke',
-    file: 'src/client/CanvasWorkspace.tsx',
+    file: 'src/client/canvas',
     from: '        patchNode(castNode.id, { cast: member })',
     to: '        void castNode',
     expect: /the pin reaches the saved document|the node shows it is pinned/,
@@ -1268,7 +1311,7 @@ const CASES = [
     // 退出，而 Esc 会继续往下走清掉选区——面板后面的东西被改掉了，面板还在。
     name: 'Escape no longer closes the timeline editor',
     runner: 'smoke',
-    file: 'src/client/CanvasWorkspace.tsx',
+    file: 'src/client/canvas',
     from: '        if (timelineOpen) { setTimelineOpen(false); return }\n',
     to: '',
     expect: /Escape closes the timeline editor|the timeline entry opens the editor/,
@@ -1414,7 +1457,7 @@ const CASES = [
     // Removing the caps restores exactly that path.
     name: 'a canvas drop reads every image at once with no caps',
     runner: 'smoke',
-    file: 'src/client/CanvasWorkspace.tsx',
+    file: 'src/client/canvas',
     from: '    const oversized = allImages.filter(file => file.size > DROP_IMAGE_MAX_BYTES)\n    const withinSize = allImages.filter(file => file.size <= DROP_IMAGE_MAX_BYTES)\n    const images = withinSize.slice(0, DROP_IMAGE_MAX_COUNT)',
     to: '    const oversized = []\n    const withinSize = allImages\n    const images = allImages',
     expect: /dropped image over the size cap|drop is capped to a maximum|read sequentially/,
