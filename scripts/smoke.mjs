@@ -44,6 +44,26 @@ const packageJson = JSON.parse(readFileSync(new URL('package.json', root), 'utf8
 const LATE_SETTLE_MS = 600_000
 
 /**
+ * Default per-check deadline: a HANG guard, not a performance budget.
+ *
+ * WHY this is not 60s any more: the jsdom checks (E1 first among them) mount the
+ * real client bundle under a stubbed canvas and DOM, then drive it through React
+ * effects. On an idle machine that takes tens of seconds; on a loaded one (this
+ * repo's suites are routinely run beside a build) it crossed 60s, and a check
+ * that was about to pass got recorded as `FAIL ... timed out`. The verdict then
+ * says nothing about the code: the same tree passes and fails on consecutive
+ * runs. A green suite you cannot trust costs more than a slow one.
+ *
+ * The guard's job is to name a check that never settles -- a mock upstream that
+ * accepts the socket and never answers. Three minutes still catches that; sixty
+ * seconds caught it and a slow machine too.
+ *
+ * Override with `SMOKE_CHECK_TIMEOUT_MS` when a deliberately tiny budget is
+ * wanted (a hang bisect, or CI pinning the number).
+ */
+const CHECK_TIMEOUT_MS = Number(process.env.SMOKE_CHECK_TIMEOUT_MS ?? '') || 180_000
+
+/**
  * Await `promise` for at most `ms` and report how it ended rather than throwing:
  * `{ settled: false }` when the wait ran out, else `{ settled: true, error }`
  * where `error` is `undefined` on success and the rejection reason on failure.
@@ -61,7 +81,7 @@ function settleWithin(promise, ms) {
   ])
 }
 
-async function check(name, fn, timeoutMs = 60_000) {
+async function check(name, fn, timeoutMs = CHECK_TIMEOUT_MS) {
   // Progress goes to stderr so a hung check is identifiable from the log alone.
   process.stderr.write(`... ${name}\n`)
   const startedAt = Date.now()
@@ -75,6 +95,10 @@ async function check(name, fn, timeoutMs = 60_000) {
   // the real first failure was invisible. A check that overruns and then fails
   // at 8749 of 8907 lines looks exactly like a check that hangs.
   const ran = Promise.resolve().then(fn)
+  // Set only when this check is actually recorded as a failure. The deadline
+  // used to set it up front, which made a slow-but-correct check poison the
+  // process exit code even after the verdict below said it passed.
+  let declaredFailed = false
   try {
     await Promise.race([
       ran,
@@ -84,25 +108,32 @@ async function check(name, fn, timeoutMs = 60_000) {
     ])
     results.push(`PASS  ${name}`)
   } catch (error) {
-    process.exitCode = 1
-    const declared = `FAIL  ${name}: ${error.message}`
     if (!error.message.startsWith('timed out after ')) {
-      results.push(declared)
+      results.push(`FAIL  ${name}: ${error.message}`)
+      declaredFailed = true
       return
     }
     clearTimeout(timer)
     const spent = () => `${((Date.now() - startedAt) / 1000).toFixed(1)}s`
+    // The deadline is a HANG guard. Overrunning it means "slower than budgeted",
+    // which is not a fact about the code -- so the real verdict is whatever the
+    // check finally does. Only a check that never settles, or that fails after
+    // the deadline, is a failure; a slow one that then passes is a pass that
+    // says how slow it was.
     const late = await settleWithin(ran, LATE_SETTLE_MS)
     if (!late.settled) {
-      results.push(`${declared}; the assertions past the deadline were still running at ${spent()} and stay unverified`)
+      results.push(`FAIL  ${name}: timed out after ${timeoutMs}ms; still running at ${spent()}, the assertions past the deadline stay unverified`)
+      declaredFailed = true
     } else if (late.error === undefined) {
-      results.push(`${declared}; every assertion past the deadline passed by ${spent()}`)
+      results.push(`PASS  ${name} (slow: overran ${timeoutMs}ms, settled at ${spent()})`)
     } else {
       const message = late.error instanceof Error ? late.error.message : String(late.error)
-      results.push(`${declared}; a later assertion failed: ${message}`)
+      results.push(`FAIL  ${name}: ${message}`)
+      declaredFailed = true
     }
   } finally {
     clearTimeout(timer)
+    if (declaredFailed) process.exitCode = 1
   }
 }
 
