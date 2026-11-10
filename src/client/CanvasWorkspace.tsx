@@ -43,34 +43,11 @@ import { CanvasFlowProvider, canvasNodeTypes, useCanvasFlow, type CanvasFlowCont
 import { nodesToFlow, connectionsToEdges, edgeToConnection, viewportToFlow, viewportFromFlow, type CanvasFlowNode } from './canvas-flow-adapter.ts'
 import { onTablistKeyDown, tabIndexFor } from './tablist.ts'
 import css from './canvas-workspace.module.css'
+import { CONFIG_NODE_SIZE, DROP_IMAGE_MAX_BYTES, FILE_NODE_SIZE, GRID_SIZE, IMAGE_NODE_SIZE, LEGACY_CONFIG_NODE_SIZE, MAX_SCALE, MIN_SCALE, PICKER_TABS, SKETCH_COLORS, SKETCH_EXPORT_WIDTH, SKETCH_NODE_SIZE, SKETCH_WIDTHS, STORYBOARD_NODE_SIZE, TEXT_NODE_SIZE } from './canvas/constants.ts'
 
 type CanvasTool = 'select' | 'pan'
 type BackgroundMode = CanvasDocument['background']
 
-/** The image picker's tab order, in one place: the render maps it, the arrows index it. */
-const PICKER_TABS = ['upload', 'history', 'gallery', 'generate'] as const
-
-const MIN_SCALE = 0.05
-// 800% 上限：缩放菜单的最高预设（LibTV 同款），滚轮/捏合同样到此为止。
-const MAX_SCALE = 8
-const GRID_SIZE = 48
-const IMAGE_NODE_SIZE = { width: 240, height: 240 }
-const TEXT_NODE_SIZE = { width: 280, height: 150 }
-/** File nodes mirror the host runner's footprint so produced files land in a
- *  column that matches hand-made ones. */
-const FILE_NODE_SIZE = { width: 300, height: 170 }
-const CONFIG_NODE_SIZE = { width: 320, height: 190 }
-const LEGACY_CONFIG_NODE_SIZE = { width: 240, height: 96 }
-/** Tall enough to show four shot rows without scrolling the node itself: the
- *  rows are the point of the node, and a board that hides its own list would
- *  make the user resize it before they could use it. */
-const STORYBOARD_NODE_SIZE = { width: 380, height: 420 }
-/** Sketch boards keep a fixed frame (header + square-ish board + two tool rows)
- *  so the normalized strokes always map onto the same rect. */
-const SKETCH_NODE_SIZE = { width: 300, height: 396 }
-const SKETCH_EXPORT_WIDTH = 1024
-const SKETCH_COLORS = ['#1f2328', '#e03131', '#1971c2', '#2f9e44', '#f59f00', '#9c36b5', '#0ca678', '#f06595']
-const SKETCH_WIDTHS = [3, 6, 12]
 const SKETCH_WIDTH_DOTS = [5, 8, 12]
 const SKETCH_ERASER_RADIUS = 16
 const HISTORY_LIMIT = 60
@@ -773,7 +750,6 @@ const MAX_UPLOAD_BYTES = 50 * 1024 * 1024
  * drop paths already (ecommerce: 10 MB / 4 files; file nodes: 50 MB) — the
  * canvas was the one entry that had neither.
  */
-const DROP_IMAGE_MAX_BYTES = 20 * 1024 * 1024
 /** Per-drop cap; anything beyond is reported, not silently discarded. */
 const DROP_IMAGE_MAX_COUNT = 20
 
