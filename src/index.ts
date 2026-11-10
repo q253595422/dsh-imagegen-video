@@ -309,6 +309,7 @@ function mimeOfPath(filePath: string): string {
 }
 import { ImageGenerationRuntime, type ChannelsView, type HostChatSeam, type RuntimeChannel } from './generation-runtime.ts'
 import { createHostChatSeam, type HostAgentPresets, type HostAgentsService, type HostDefaultModel } from './host-chat.ts'
+import { registerAgentCanvasTools } from './agent-canvas-tools.ts'
 import { registerAgentImageTools } from './agent-image-tools.ts'
 import { registerAgentVideoTools } from './agent-video-tools.ts'
 import { registerEditImageCommand } from './edit-image-command.ts'
@@ -354,6 +355,7 @@ export { createHostChatSeam } from './host-chat.ts'
 export { runCodeRender, codeRenderPlan, probeCodeRender, validateCodeInput, type CodeRenderInput, type CodeRenderOutcome, type CodeChatCompleter } from './code-render-runtime.ts'
 export { renderCode, dimensionsFor, locateFfmpeg, extractRenderSource, looksLikeCode, CodeRenderError, MAX_CODE_CHARS, DEFAULT_RENDER_TIMEOUT_MS, type CodeRenderKind, type CodeRenderRequest, type CodeRenderResult } from './code-render.ts'
 export { codeRenderSystemPrompt, codeRenderUserPrompt, readGeneratedCode, fallbackRendererSource, type CodeBrief, type CodeTarget } from './code-prompt.ts'
+export { registerAgentCanvasTools } from './agent-canvas-tools.ts'
 export { registerAgentImageTools, resolveAgentImageModel } from './agent-image-tools.ts'
 export { registerAgentVideoTools, resolveAgentVideoModel, AGENT_VIDEO_TOOL_NAMES } from './agent-video-tools.ts'
 export { latestSessionImage, registerEditImageCommand } from './edit-image-command.ts'
@@ -1225,6 +1227,10 @@ export function apply(ctx: Context, config?: Config): (() => void) | void {
       // so a task started by an Agent and one started in the panel are visible
       // to each other and to the same persisted history.
       const disposeVideoTools = registerAgentVideoTools(tctx, runtime, resolveVideoToolConfig)
+      // Canvas tools are structure-only: they lay out nodes and wires, never a
+      // render. Generation stays behind the user's run button (see the module
+      // header for why that is a product decision, not an omission).
+      const disposeCanvasTools = registerAgentCanvasTools(tctx, resolveVideoToolConfig)
       const disposeCommand = registerEditImageCommand(tctx, runtime, resolveAgentConfig, {
         get: sessionId => pendingConversationImages.get(sessionId),
         consume: (sessionId, ref) => {
@@ -1233,6 +1239,7 @@ export function apply(ctx: Context, config?: Config): (() => void) | void {
       })
       return () => {
         disposeCommand()
+        disposeCanvasTools()
         disposeVideoTools()
         disposeTools()
       }
