@@ -45,6 +45,7 @@ import { onTablistKeyDown, tabIndexFor } from './tablist.ts'
 import css from './canvas-workspace.module.css'
 import { drawSketchStroke, rasterizeSketch } from './canvas/sketch-raster.ts'
 import { coveredNodes, SNAP_SCREEN_PX, snapOffset, type OverlapPair, type Point } from './canvas/geometry.ts'
+import { ComposerSelect, IconButton, labelWithKeys, ToolbarIcon, type ToolbarIconName } from './canvas/dock-controls.tsx'
 import { CONFIG_NODE_SIZE, DROP_IMAGE_MAX_BYTES, FILE_NODE_SIZE, GRID_SIZE, IMAGE_NODE_SIZE, LEGACY_CONFIG_NODE_SIZE, MAX_SCALE, MIN_SCALE, PICKER_TABS, SKETCH_COLORS, SKETCH_EXPORT_WIDTH, SKETCH_NODE_SIZE, SKETCH_WIDTHS, STORYBOARD_NODE_SIZE, TEXT_NODE_SIZE } from './canvas/constants.ts'
 
 type CanvasTool = 'select' | 'pan'
@@ -555,60 +556,6 @@ function textStyleOf(node: CanvasNode): { fontSize: number; color?: string; font
 }
 
 
-type ToolbarIconName = 'new' | 'select' | 'pan' | 'image' | 'text' | 'file' | 'sketch' | 'eraser' | 'trash' | 'undo' | 'redo' | 'fit' | 'minimap' | 'background' | 'template' | 'download' | 'duplicate' | 'sparkle' | 'send' | 'close' | 'deleteProject' | 'annotate' | 'removeBg' | 'layers' | 'bold' | 'color' | 'skill' | 'upload' | 'expand' | 'favorite' | 'favoriteFilled' | 'help' | 'workflow' | 'timeline' | 'fullscreen' | 'exitFullscreen' | 'video' | 'snap' | 'connections'
-
-/** Lucide icons (stroke matches the DSH line style); one shared component so
- *  every dock/toolbar icon comes from the same well-drawn set. */
-function ToolbarIcon({ name, size = 16 }: { name: ToolbarIconName; size?: number }): React.JSX.Element {
-  const common = { size, strokeWidth: 1.6, 'aria-hidden': true as const }
-  switch (name) {
-    case 'new': return <Plus {...common} />
-    case 'select': return <MousePointer2 {...common} />
-    case 'pan': return <Hand {...common} />
-    case 'image': return <ImageIcon {...common} />
-    case 'text': return <Type {...common} />
-    case 'file': return <FileTextIcon {...common} />
-    case 'sketch': return <Pencil {...common} />
-    case 'eraser': return <Eraser {...common} />
-    case 'trash': return <Trash2 {...common} />
-    case 'undo': return <Undo2 {...common} />
-    case 'redo': return <Redo2 {...common} />
-    case 'fit': return <Maximize {...common} />
-    case 'minimap': return <MapIcon {...common} />
-    case 'background': return <Wallpaper {...common} />
-    case 'template': return <BookOpen {...common} />
-    case 'download': return <Download {...common} />
-    case 'duplicate': return <Copy {...common} />
-    case 'sparkle': return <Sparkles {...common} />
-    case 'send': return <SendHorizonal {...common} />
-    case 'close': return <X {...common} />
-    case 'deleteProject': return <FolderX {...common} />
-    case 'annotate': return <SquareDashedMousePointer {...common} />
-    case 'removeBg': return <Scissors {...common} />
-    case 'layers': return <Layers {...common} />
-    case 'bold': return <Bold {...common} />
-    case 'color': return <Palette {...common} />
-    case 'skill': return <Wand2 {...common} />
-    case 'upload': return <Upload {...common} />
-    case 'expand': return <Maximize2 {...common} />
-    case 'favorite': return <Star {...common} />
-    case 'favoriteFilled': return <Star {...common} fill="currentColor" />
-    // A keyboard, not a question mark: the button opens a key list, and
-    // "help" as a bare `?` reads as unknown/unimplemented in a dock that is
-    // otherwise all verbs.
-    case 'help': return <Keyboard {...common} />
-    // 一条连线分叉成三支：这是「整张图按依赖跑」这个动作最短的形状。
-    case 'workflow': return <GitBranch {...common} />
-    // 几段胶片并排：时间线是「把已成片的几段排成一条」这个动作。
-    case 'timeline': return <Film {...common} />
-    case 'fullscreen': return <Expand {...common} />
-    case 'exitFullscreen': return <Shrink {...common} />
-    // 空态快捷卡与左下工具排：视频节点入口、网格吸附、连线显隐。
-    case 'video': return <Video {...common} />
-    case 'snap': return <Magnet {...common} />
-    case 'connections': return <Share2 {...common} />
-  }
-}
 
 /** Extensions the file picker refuses before a byte leaves the browser; the
  *  host refuses them again, so this is only a fast, friendly guard. */
@@ -645,11 +592,6 @@ const DROP_IMAGE_MAX_COUNT = 20
  * @param key - the action's translation key.
  * @returns the label for `aria-label` / `title`.
  */
-function labelWithKeys(key: ImageGenKey): string {
-  const text = tt(key)
-  const keys = shortcutKeysFor(key)
-  return keys === '' ? text : `${text} (${keys})`
-}
 
 /**
  * Modal picker for the canvas skill catalog. Built-in actions come first, then
@@ -1496,54 +1438,6 @@ function SkillRunCard(props: {
 }
 
 
-function IconButton(props: {
-  name: ToolbarIconName
-  label: string
-  active?: boolean
-  /** Toggle semantics: unlike `active` (visual only), this exposes state to AT. */
-  pressed?: boolean
-  disabled?: boolean
-  size?: number
-  onClick?: (event: React.MouseEvent<HTMLButtonElement>) => void
-  onMouseEnter?: (event: React.MouseEvent<HTMLButtonElement>) => void
-  onMouseLeave?: () => void
-}): React.JSX.Element {
-  return <button
-    type="button"
-    className={css.iconButton}
-    data-active={props.active ? '' : undefined}
-    aria-pressed={props.pressed}
-    aria-label={props.label}
-    title={props.label}
-    disabled={props.disabled}
-    onClick={props.onClick}
-    onMouseEnter={props.onMouseEnter}
-    onMouseLeave={props.onMouseLeave}
-  ><ToolbarIcon name={props.name} size={props.size} /></button>
-}
-
-/** Styled dropdown standing in for a native <select> so the composer and the
- *  picker match the canvas visual language instead of the OS popup. The menu
- *  portals to <body>: ancestors styled with backdrop-filter (the composer's
- *  glass panel) become containing blocks for position:fixed, which used to
- *  push the menu off-screen by re-anchoring its viewport coordinates. */
-function ComposerSelect(props: {
-  value: string
-  options: Array<{ value: string; label: string }>
-  ariaLabel: string
-  /** 'toolbar' renders the compact variant used by node hover toolbars. */
-  variant?: 'composer' | 'toolbar'
-  onChange: (value: string) => void
-}): React.JSX.Element {
-  return <Select
-    value={props.value}
-    options={props.options}
-    aria-label={props.ariaLabel}
-    variant={props.variant ?? 'composer'}
-    onPointerDown={event => { event.stopPropagation() }}
-    onChange={props.onChange}
-  />
-}
 
 export function CanvasWorkspace(props: CanvasWorkspaceProps): React.JSX.Element {
   const { api, modelGroups, defaultChannelId, connected, connectedChannelIds, promptReady = connected, history, gallery, tasks, videoGroups, videoTasks, importRequest, onImportRequestHandled, onClipStored, onOpenSettings, active } = props
