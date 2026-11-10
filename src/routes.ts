@@ -336,6 +336,39 @@ async function readJsonBody(req: IncomingMessage, maxBytes = MAX_JSON_BODY_BYTES
   }
 }
 
+/**
+ * Read a JSON request body while keeping *why* it was refused.
+ *
+ * `readJsonBody` answers `undefined` for both "too large" and "not JSON", which
+ * is fine for the settings routes (both mean "the client sent something broken")
+ * but wrong for the canvas import route: a user whose file is a truncated 2 KB
+ * fragment would be told it exceeded a 256 MB limit, and go looking for the
+ * wrong problem. This variant names the two cases separately.
+ */
+async function readJsonBodyExact(
+  req: IncomingMessage,
+  maxBytes: number,
+): Promise<{ body: Record<string, unknown> } | { error: 'too-large' | 'malformed' }> {
+  const chunks: Buffer[] = []
+  let size = 0
+  for await (const chunk of req) {
+    const buffer = chunk as Buffer
+    size += buffer.length
+    // Stop reading as soon as the cap is crossed: the point of the cap is to
+    // keep a hostile body out of memory, so draining it first would defeat it.
+    if (size > maxBytes) return { error: 'too-large' }
+    chunks.push(buffer)
+  }
+  let parsed: unknown
+  try {
+    parsed = JSON.parse(Buffer.concat(chunks).toString('utf8'))
+  } catch {
+    return { error: 'malformed' }
+  }
+  if (typeof parsed !== 'object' || parsed === null) return { error: 'malformed' }
+  return { body: parsed as Record<string, unknown> }
+}
+
 /** Read a raw request body (the canvas file upload path; no base64 inflation). */
 async function readRawBody(req: IncomingMessage, maxBytes: number): Promise<Buffer | undefined> {
   const chunks: Buffer[] = []
@@ -2009,15 +2042,25 @@ export function makeRoutes(deps: ImageGenRoutesDeps): WebRoute[] {
           writeJson(res, 200, { ok: false, code: 'canvas-import-unsupported', message: '当前画布后端不支持导入' })
           return
         }
-        const body = await readJsonBody(req, MAX_CANVAS_BUNDLE_BODY_BYTES)
-        if (body === undefined) {
-          writeJson(res, 200, {
-            ok: false,
-            code: 'bundle-too-large',
-            message: `画布文件超过 ${Math.round(MAX_CANVAS_BUNDLE_BYTES / (1024 * 1024))}MB 上限，无法导入`,
-          })
+        const read = await readJsonBodyExact(req, MAX_CANVAS_BUNDLE_BODY_BYTES)
+        if ('error' in read) {
+          // Two different repairs: one is "the file is too big", the other is
+          // "this file is not a canvas bundle at all". Telling them apart keeps
+          // the user from hunting for a size problem that does not exist.
+          writeJson(res, 200, read.error === 'too-large'
+            ? {
+                ok: false,
+                code: 'bundle-too-large',
+                message: `画布文件超过 ${Math.round(MAX_CANVAS_BUNDLE_BYTES / (1024 * 1024))}MB 上限，无法导入`,
+              }
+            : {
+                ok: false,
+                code: 'bundle-malformed',
+                message: '这个文件不是有效的画布文件（JSON 读不出来），请确认导出的是完整的 .json 文件',
+              })
           return
         }
+        const body = read.body
         const parsed = parseCanvasBundle(body?.bundle)
         if (!parsed.ok) { writeJson(res, 200, { ok: false, code: parsed.code, message: parsed.message }); return }
         try {
