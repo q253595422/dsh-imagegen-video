@@ -855,6 +855,58 @@ export class CanvasStore {
     await fs.writeFile(targetPath, found.data)
   }
 
+  /**
+   * Write the assets of an imported bundle back under their own
+   * content-addressed names.
+   *
+   * Names are content hashes, so re-importing a canvas this machine already
+   * holds writes nothing new and the existing files are simply reused. Only a
+   * name this store's own `ASSET_FILE_NAME` accepts is ever touched — a bundle
+   * is untrusted input and must not be able to steer a write outside the asset
+   * directory.
+   */
+  async putBundleAssets(assets: readonly { assetId: string; data: Uint8Array }[]): Promise<void> {
+    return serialize(async () => {
+      await this.ensure()
+      for (const asset of assets) {
+        if (!ASSET_FILE_NAME.test(asset.assetId)) throw new Error(`素材名不合法：${asset.assetId}`)
+        const target = path.join(this.assetsDir(), asset.assetId)
+        try { await fs.access(target); continue } catch { /* not on disk yet */ }
+        await fs.writeFile(target, asset.data)
+      }
+    })
+  }
+
+  /**
+   * Create a NEW canvas from an imported document.
+   *
+   * Always a new id, never the incoming one: an import must not be able to
+   * overwrite a canvas that already exists on this machine, and the importing
+   * user may well be the person who exported it. Node and connection ids are
+   * kept as they are — they are only meaningful inside their own document, and
+   * rewriting them would break every `fromNodeId`/`toNodeId` and every
+   * storyboard shot's `nodeId` for no gain.
+   */
+  async importDocument(input: {
+    title: string
+    document: CanvasDocument
+    assets: readonly { assetId: string; data: Uint8Array }[]
+  }): Promise<CanvasDocument> {
+    await this.putBundleAssets(input.assets)
+    const created = await this.create(input.title)
+    // The imported revision is the exporting machine's number; `save` only
+    // compares against a revision when a caller passes one, and this is a new
+    // page, so folding it into the created one keeps the first bump at 1.
+    const saved = await this.save({
+      ...input.document,
+      id: created.id,
+      title: created.title,
+      revision: created.revision,
+      createdAt: created.createdAt,
+    })
+    return saved
+  }
+
   private summaryOf(document: CanvasDocument, favorite = false): CanvasSummary {
     return {
       id: document.id,

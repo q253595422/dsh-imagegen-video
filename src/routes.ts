@@ -39,6 +39,7 @@ import { allSignals, clearSignals, listSignals, promptBucketOf, recordSignal } f
 import { buildReport, DEFAULT_WINDOW_DAYS } from './signal-report.ts'
 import { extractProductLink } from './link-extract.ts'
 import { MODEL_API, AGENT_IMAGE_API, CANVAS_API, CANVAS_SKILL_API, CODE_RENDER_API, CONVERSATION_IMAGE_API, DATA_FOLDER_API, DEFAULT_TEMPLATE_SOURCE_ID, DIAGNOSTICS_API, GALLERY_API, GENERATE_API, HISTORY_API, IMAGEGEN_SETTINGS_NAMESPACE, IMAGE_MODEL_API, LISTING_COPY_API, PRESETS_API, PROMPT_ENHANCE_API, SETTINGS_API, SIGNALS_API, STORAGE_API, SUBSCRIPTION_API, SUBSCRIPTION_PROVIDERS, TASK_API, TEMPLATE_FAVORITES_API, TEMPLATES_API, UPDATE_API, USAGE_API, VIDEO_API, isChannelProtocolPreference, isTemplateSourceId, type CanvasAssetRef, type CanvasDocument, type VideoDirectorPlan, type CanvasSkillCatalog, type CanvasSkillConfigApplyRequest, type CanvasSkillConfigApplyResult, type CanvasSkillConfigSaveRequest, type CanvasSkillConfigSaveResult, type CanvasSkillInstallRequest, type CanvasSkillInstallResult, type CanvasSkillLibrary, type CanvasSkillRemoveResult, type CanvasSkillRunRequest, type CanvasSkillTask, type ListingCopyRequest, type PptRunRequest, type PptRuntimeStatus, type GeneratedImage, type GenerateRequest, type HistoryEntry, type HistoryEntryInput, type ModelMapping, type PresetProviderView, type TemplateFavorite, type TemplateListResult, type TemplateRefreshResult, type TemplateSample, type CanvasVideoTaskMeta, type VideoGenerateRequest, type VideoHistoryEntry } from './protocol.ts'
+import { buildCanvasBundle, CANVAS_BUNDLE_API, MAX_CANVAS_BUNDLE_BYTES, parseCanvasBundle } from './canvas-bundle.ts'
 import { probeCodeRender } from './code-render-runtime.ts'
 import { makeOutfitRoutes } from './outfit-reference-routes.ts'
 
@@ -47,6 +48,16 @@ const MAX_JSON_BODY_BYTES = 24 * 1024 * 1024
 
 /** Cap on history append bodies (base64 result images can be much larger). */
 const MAX_HISTORY_BODY_BYTES = 64 * 1024 * 1024
+
+/**
+ * Cap on one canvas bundle request body.
+ *
+ * Larger than the decoded ceiling because every asset travels base64 (4 bytes
+ * of JSON per 3 raw), and the JSON envelope adds a little on top. Bounding the
+ * BODY matters for a different reason than bounding the decoded size: the body
+ * cap is what stops a hostile request from being read into memory at all.
+ */
+const MAX_CANVAS_BUNDLE_BODY_BYTES = Math.ceil(MAX_CANVAS_BUNDLE_BYTES / 3) * 4 + 1024 * 1024
 
 /** Image types the asset route always serves inline (they cannot execute). */
 const CANVAS_INLINE_IMAGE_MIME = /^image\/(png|jpeg|webp|gif|bmp)$/
@@ -263,6 +274,14 @@ export interface CanvasBackend {
   readAsset: (file: string) => Promise<Awaited<ReturnType<CanvasStore['readAsset']>>>
   /** File assets (the canvas file node). Optional so older test backends work. */
   putFile?: (input: CanvasFileInput) => Promise<Awaited<ReturnType<CanvasStore['putFile']>>>
+  /** Bundle import: write assets under their own names, then create a new page.
+   *  Optional so a backend written before canvas export/import existed keeps
+   *  compiling; the routes answer `unsupported` instead of failing obscurely. */
+  importDocument?: (input: {
+    title: string
+    document: CanvasDocument
+    assets: readonly { assetId: string; data: Uint8Array }[]
+  }) => Promise<CanvasDocument>
   /** Batch asset read, used by skill runs. Optional for the same reason. */
   readAssets?: (refs: readonly CanvasAssetRef[]) => Promise<Map<string, { data: Buffer; mime: string }>>
   /** Copy one asset to a real path for a heavy skill run. */
@@ -1947,6 +1966,68 @@ export function makeRoutes(deps: ImageGenRoutesDeps): WebRoute[] {
         }
         try { writeJson(res, 200, { ok: true, projects: await canvas.setFavorite(id, favorite) }) }
         catch (error) { writeJson(res, 200, { ok: false, code: 'canvas-favorite-failed', message: messageOf(error) }) }
+      },
+    },
+    // ------------------------------------------------- canvas bundle export
+    // Self-contained: the document PLUS the bytes of every asset it references,
+    // because a document alone opens as a canvas full of broken pictures on
+    // another machine. Clips are the documented exception — they are referenced,
+    // never copied (docs/parity-contract.md §1.7) — and the bundle says so in
+    // `unresolved` rather than dropping the nodes' references silently.
+    {
+      kind: 'exact',
+      path: CANVAS_BUNDLE_API.export,
+      handler: async (req, res) => {
+        if (!guard(req, res, 'POST')) return
+        const body = await readJsonBody(req)
+        const id = typeof body?.id === 'string' ? body.id.trim() : ''
+        if (id === '') { writeJson(res, 200, { ok: false, code: 'bad-request', message: 'canvas id is required' }); return }
+        try {
+          const document = await canvas.read(id)
+          if (document === undefined) { writeJson(res, 200, { ok: false, code: 'not-found', message: '画布不存在' }); return }
+          const bundle = await buildCanvasBundle({
+            document,
+            readAsset: async assetId => {
+              const found = await canvas.readAsset(assetId)
+              return found === undefined ? undefined : { data: found.data, mime: found.mime }
+            },
+          })
+          writeJson(res, 200, { ok: true, bundle })
+        } catch (error) { writeJson(res, 200, { ok: false, code: 'canvas-bundle-failed', message: messageOf(error) }) }
+      },
+    },
+    // ------------------------------------------------- canvas bundle import
+    // Always creates a new canvas under a new id. An import must not be able to
+    // overwrite a canvas that already exists here — the importer may well be the
+    // person who exported it.
+    {
+      kind: 'exact',
+      path: CANVAS_BUNDLE_API.import,
+      handler: async (req, res) => {
+        if (!guard(req, res, 'POST')) return
+        if (canvas.importDocument === undefined) {
+          writeJson(res, 200, { ok: false, code: 'canvas-import-unsupported', message: '当前画布后端不支持导入' })
+          return
+        }
+        const body = await readJsonBody(req, MAX_CANVAS_BUNDLE_BODY_BYTES)
+        if (body === undefined) {
+          writeJson(res, 200, {
+            ok: false,
+            code: 'bundle-too-large',
+            message: `画布文件超过 ${Math.round(MAX_CANVAS_BUNDLE_BYTES / (1024 * 1024))}MB 上限，无法导入`,
+          })
+          return
+        }
+        const parsed = parseCanvasBundle(body?.bundle)
+        if (!parsed.ok) { writeJson(res, 200, { ok: false, code: parsed.code, message: parsed.message }); return }
+        try {
+          const document = await canvas.importDocument({
+            title: parsed.plan.title,
+            document: parsed.plan.document,
+            assets: parsed.plan.assets,
+          })
+          writeJson(res, 200, { ok: true, document, unresolved: parsed.plan.unresolved })
+        } catch (error) { writeJson(res, 200, { ok: false, code: 'canvas-import-failed', message: messageOf(error) }) }
       },
     },
     // ------------------------------------------------ canvas asset upload
