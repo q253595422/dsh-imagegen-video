@@ -83,41 +83,28 @@ import { tmpdir } from 'node:os'
 import { join, basename } from 'node:path'
 import assert from 'node:assert/strict'
 import { spawnSync } from 'node:child_process'
+import { createCheckHarness } from './lib/check-harness.mjs'
 
 const results = []
-/** Run one check; async-aware and sequential so nothing races the fake. */
-async function check(name, fn, timeoutMs = 60_000) {
-  // Progress goes to stderr so a hung check is identifiable from the log alone.
-  process.stderr.write(`... ${name}\n`)
-  let timer
-  try {
-    await Promise.race([
-      fn(),
-      new Promise((_resolve, reject) => {
-        timer = setTimeout(() => reject(new Error(`timed out after ${timeoutMs}ms`)), timeoutMs)
-      }),
-    ])
-    results.push(`PASS  ${name}`)
-  } catch (error) {
-    if (error instanceof SkipSignal) {
-      // A loud skip: a machine without ffmpeg must not look like a broken feature.
-      results.push(`SKIP  ${name}: ${error.message}`)
-      process.stderr.write(`\n!!! SKIP ${name}: ${error.message}\n!!! (this is not a failure; the offline checks above still ran)\n\n`)
-      return
-    }
-    results.push(`FAIL  ${name}: ${error.message}`)
-    process.exitCode = 1
-  } finally {
-    clearTimeout(timer)
-  }
-}
-
 /** Thrown by skip() so the check is recorded as SKIP, never as PASS or FAIL. */
 class SkipSignal extends Error {}
 
 function skip(why) {
   throw new SkipSignal(why)
 }
+
+// 超时是「挂死守卫」不是性能预算：慢但最终通过的检查记 PASS，不判死。
+// 实现只有一份（scripts/lib/check-harness.mjs），六个套件共用。
+// isSkip 必须传：这台机器没有 ffmpeg 时检查要记 SKIP 而不是 FAIL，
+// 而且 SKIP 的判定在超时处理之前，不能被误当成挂死。
+const check = createCheckHarness({
+  results,
+  isSkip: error => error instanceof SkipSignal,
+  // A loud skip: a machine without ffmpeg must not look like a broken feature.
+  onSkip: (name, error) => {
+    process.stderr.write(`\n!!! SKIP ${name}: ${error.message}\n!!! (this is not a failure; the offline checks above still ran)\n\n`)
+  },
+})
 
 const root = mkdtempSync(join(tmpdir(), 'gal-compose-'))
 process.env.DSH_HOME = root

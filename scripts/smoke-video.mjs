@@ -20,32 +20,14 @@ import assert from 'node:assert/strict'
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
+import { createCheckHarness } from './lib/check-harness.mjs'
 
 const root = new URL('../', import.meta.url)
 const results = []
-/**
- * Run one check under a hard per-check deadline. Video polling needs real
- * waits, but nothing here should ever block for minutes, so a stalled check is
- * itself a failure rather than something that hangs the suite.
- */
-async function check(name, fn, timeoutMs = 60_000) {
-  process.stderr.write(`... ${name}\n`)
-  let timer
-  try {
-    await Promise.race([
-      fn(),
-      new Promise((_resolve, reject) => {
-        timer = setTimeout(() => reject(new Error(`timed out after ${timeoutMs}ms`)), timeoutMs)
-      }),
-    ])
-    results.push(`PASS  ${name}`)
-  } catch (error) {
-    results.push(`FAIL  ${name}: ${error.message}`)
-    process.exitCode = 1
-  } finally {
-    clearTimeout(timer)
-  }
-}
+// 超时是「挂死守卫」不是性能预算：慢但最终通过的检查记 PASS，不判死。
+// 实现只有一份（scripts/lib/check-harness.mjs），六个套件共用，
+// 免得同一条缺陷在每份副本里各长一遍。
+const check = createCheckHarness({ results })
 
 // The smallest valid-looking MP4 head; only the byte count and MIME matter here.
 const MP4 = Buffer.from('00000018667479706d7034320000000069736f6d6d703431', 'hex')

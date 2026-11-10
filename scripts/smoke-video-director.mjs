@@ -26,29 +26,19 @@ import assert from 'node:assert/strict'
 import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
+import { createCheckHarness } from './lib/check-harness.mjs'
 
 const root = new URL('../', import.meta.url)
 const results = []
 
-/** Run one check under a hard deadline (a hung planner is a failure). */
-async function check(name, fn, timeoutMs = 60_000) {
-  process.stderr.write(`... ${name}\n`)
-  let timer
-  try {
-    await Promise.race([
-      fn(),
-      new Promise((_resolve, reject) => {
-        timer = setTimeout(() => reject(new Error(`timed out after ${timeoutMs}ms`)), timeoutMs)
-      }),
-    ])
-    results.push(`PASS  ${name}`)
-  } catch (error) {
-    results.push(`FAIL  ${name}: ${error?.stack ?? error?.message ?? error}`)
-    process.exitCode = 1
-  } finally {
-    clearTimeout(timer)
-  }
-}
+/** Run one check; sequential so nothing races the servers. */
+// 超时是「挂死守卫」不是性能预算：慢但最终通过的检查记 PASS，不判死。
+// 实现只有一份（scripts/lib/check-harness.mjs）。formatError 保留栈，
+// 这一套的失败是引擎行为，堆栈比一行 message 能定位。
+const check = createCheckHarness({
+  results,
+  formatError: error => error?.stack ?? error?.message ?? error,
+})
 
 /** The smallest valid-looking MP4 head; only the byte count and MIME matter. */
 const MP4 = Buffer.from('00000018667479706d7034320000000069736f6d6d703431', 'hex')

@@ -38,6 +38,7 @@ import { mkdtempSync, writeFileSync, rmSync, existsSync, mkdirSync, readFileSync
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import assert from 'node:assert/strict'
+import { createCheckHarness } from './lib/check-harness.mjs'
 
 const results = []
 
@@ -59,26 +60,9 @@ const collectedConsole = new (await import('jsdom')).VirtualConsole()
 collectedConsole.on('jsdomError', (error) => { domErrors.push(error) })
 
 /** Run one check; async-aware and sequential so nothing races the servers. */
-async function check(name, fn, timeoutMs = 60_000) {
-  // Progress goes to stderr so a hung check is identifiable from the log alone
-  // (the suite drives a real React tree in jsdom, which can stall on a poll).
-  process.stderr.write(`... ${name}\n`)
-  let timer
-  try {
-    await Promise.race([
-      fn(),
-      new Promise((_resolve, reject) => {
-        timer = setTimeout(() => reject(new Error(`timed out after ${timeoutMs}ms`)), timeoutMs)
-      }),
-    ])
-    results.push(`PASS  ${name}`)
-  } catch (error) {
-    results.push(`FAIL  ${name}: ${error.message}`)
-    process.exitCode = 1
-  } finally {
-    clearTimeout(timer)
-  }
-}
+// 超时是「挂死守卫」不是性能预算：慢但最终通过的检查记 PASS，不判死。
+// 实现只有一份（scripts/lib/check-harness.mjs），六个套件共用。
+const check = createCheckHarness({ results })
 
 const root = mkdtempSync(join(tmpdir(), 'gal-video-'))
 process.env.DSH_HOME = root
@@ -547,16 +531,26 @@ await check('W1-W3 a finished studio clip lands a referenced node and states are
     }
     if (path.endsWith('/canvas/skills/run')) {
       const payload = JSON.parse(init.body)
-      skillRunRequests.push(payload)
       // The id NAMES the skill, so the task route below can answer both kinds of
       // run this suite drives -- a stitch and a polish -- without inferring it
       // from a poll counter. The first stitch keeps its historical id so the
       // earlier checks read the same task they always did.
       const polishing = payload.skillId === 'polish.text'
+      // Recorded ON the request it belongs to. A check that wants the node this
+      // run will produce cannot hardcode the ordinal: `length` counts polish
+      // runs too, so which `task-compose-N` a stitch receives depends on how
+      // many runs the earlier checks happened to start. Reading it back off the
+      // request is the only timing-independent way to name the node.
+      //
+      // Pushed BEFORE the id is computed -- the object is in the array by
+      // reference, so assigning afterwards is still visible to the caller, and
+      // `length` keeps its original meaning (the first stitch is `-1`, not `-0`).
+      skillRunRequests.push(payload)
+      payload.taskId = polishing ? 'task-polish-1' : `task-compose-${skillRunRequests.length}`
       return json({
         ok: true,
         task: {
-          id: polishing ? 'task-polish-1' : `task-compose-${skillRunRequests.length}`,
+          id: payload.taskId,
           canvasId: payload.canvasId, skillId: payload.skillId,
           label: polishing ? '润色文本' : '拼接视频', tier: polishing ? 'light' : 'local',
           status: 'queued', stage: '排队中', phase: 'queued',
@@ -1638,7 +1632,7 @@ await check('C8-C9 uneven-height clips keep their reading order in the badges an
 await check('D1-D3 a clip run tells the panel to refresh the clip list, a text run does not', async () => {
   const {
     jsdomWindow, jsdomDocument, view, waitUntil, waitForSelector, pointerDown,
-    nodeById, canvasSaves, requestPaths, openComposeMenu,
+    nodeById, canvasSaves, requestPaths, openComposeMenu, skillRunRequests,
   } = shared
 
   const historyReads = () => requestPaths.filter(path => path.endsWith('/video/history/list')).length
@@ -1704,7 +1698,24 @@ await check('D1-D3 a clip run tells the panel to refresh the clip list, a text r
   // "At least once" is the contract; that the run APPLIED once (rather than
   // being re-applied by a racing poll tick) is pinned on the document instead,
   // where a double apply would put two nodes under one id.
-  const stitchedId = 'node-composed-task-compose-2'
+  //
+  // The id is DERIVED from the run this check just started, never hardcoded.
+  // The fixture numbers runs `task-compose-${skillRunRequests.length}` and only
+  // the first one keeps the historical `node-composed`; which ordinal THIS run
+  // gets depends on how many stitch runs the earlier checks started. A literal
+  // 'node-composed-task-compose-2' therefore names a node that may not exist --
+  // the duplicate scan below then finds nothing and the count it compares is 1
+  // rather than 0, which is exactly how this case reported HARNESS BROKEN.
+  const runRequest = skillRunRequests.at(-1)
+  assert.ok(runRequest !== undefined, 'D1: the stitch run reached the fixture')
+  // This check starts the only stitch since the menu was opened, so the newest
+  // request IS this one -- but say so out loud. If an earlier check ever leaves
+  // a run in flight, taking `at(-1)` blindly would name another run's node and
+  // the duplicate scan below would measure nothing.
+  assert.equal(runRequest.skillId, 'compose.videos', 'D1: the newest run is this stitch')
+  const stitchedId = runRequest.taskId === 'task-compose-1'
+    ? 'node-composed'
+    : `node-composed-${runRequest.taskId}`
   assert.ok(
     await waitUntil(() => (canvasSaves.at(-1)?.nodes ?? []).some(node => node.id === stitchedId), 12_000),
     'D1: the stitch run applied its clip to the canvas',

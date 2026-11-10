@@ -25,6 +25,7 @@ import { existsSync, readFileSync, rmSync, statSync } from 'node:fs'
 import { mkdtempSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
+import { createCheckHarness } from './lib/check-harness.mjs'
 
 // The data root is resolved when the host module loads, and it reads DSH_HOME
 // at that moment. Set it BEFORE the dynamic import so the suite never touches
@@ -38,42 +39,27 @@ const results = []
 // on ':' truncates them and the summary names the wrong thing.
 const skippedNames = []
 
-/** Run one check under a hard deadline (a hung render is a failure). */
-async function check(name, fn, timeoutMs = 180_000) {
-  process.stderr.write(`... ${name}\n`)
-  let timer
-  try {
-    await Promise.race([
-      fn(),
-      new Promise((_resolve, reject) => {
-        timer = setTimeout(() => reject(new Error(`timed out after ${timeoutMs}ms`)), timeoutMs)
-      }),
-    ])
-    results.push(`PASS  ${name}`)
-  } catch (error) {
-    if (error instanceof SkipSignal) {
-      // A skip is recorded as SKIP, never as PASS. The three guards that used
-      // to `return` early here all sit on external tools, and a `return` looks
-      // exactly like success to this function — which is how C5 and C7 reported
-      // "pass" on machines where they never executed a line of the render.
-      results.push(`SKIP  ${name}: ${error.message}`)
-      skippedNames.push(name)
-      process.stderr.write(`\n!!! SKIP ${name}: ${error.message}\n!!! (not a failure; the checks above still ran)\n\n`)
-      return
-    }
-    results.push(`FAIL  ${name}: ${error?.stack ?? error?.message ?? error}`)
-    process.exitCode = 1
-  } finally {
-    clearTimeout(timer)
-  }
-}
-
 /** Thrown by skip() so the check is recorded as SKIP, never as PASS or FAIL. */
 class SkipSignal extends Error {}
 
 function skip(why) {
   throw new SkipSignal(why)
 }
+
+// 超时是「挂死守卫」不是性能预算：慢但最终通过的检查记 PASS，不判死。
+// 实现只有一份（scripts/lib/check-harness.mjs）。isSkip 保住 SKIP 语义：
+// 三个靠外部工具的守卫以前用 `return` 早退，而那在本函数里看着和成功一模一样，
+// C5 和 C7 就是这么在一台从未执行到渲染的机器上报出 PASS 的。
+// formatError 保留栈：这一套失败时定位要的是堆栈，不是一行 message。
+const check = createCheckHarness({
+  results,
+  isSkip: error => error instanceof SkipSignal,
+  onSkip: (name, error) => {
+    skippedNames.push(name)
+    process.stderr.write(`\n!!! SKIP ${name}: ${error.message}\n!!! (not a failure; the checks above still ran)\n\n`)
+  },
+  formatError: error => error?.stack ?? error?.message ?? error,
+})
 
 /** Absolute path to ffprobe, or undefined when this machine has none. */
 function locateFfprobe() {

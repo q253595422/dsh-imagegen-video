@@ -49,6 +49,7 @@
 
 import { readFileSync } from 'node:fs'
 import assert from 'node:assert/strict'
+import { createCheckHarness } from './lib/check-harness.mjs'
 
 const results = []
 
@@ -66,26 +67,9 @@ const domErrors = []
 const collectedConsole = new (await import('jsdom')).VirtualConsole()
 collectedConsole.on('jsdomError', (error) => { domErrors.push(error) })
 /** Run one check; sequential so nothing races the shared React tree. */
-async function check(name, fn, timeoutMs = 30_000) {
-  // Progress goes to stderr so a hung check is identifiable from the log alone
-  // (this suite drives a real React tree in jsdom, which can stall on a poll).
-  process.stderr.write(`... ${name}\n`)
-  let timer
-  try {
-    await Promise.race([
-      fn(),
-      new Promise((_resolve, reject) => {
-        timer = setTimeout(() => reject(new Error(`timed out after ${timeoutMs}ms`)), timeoutMs)
-      }),
-    ])
-    results.push(`PASS  ${name}`)
-  } catch (error) {
-    results.push(`FAIL  ${name}: ${error.message}`)
-    process.exitCode = 1
-  } finally {
-    clearTimeout(timer)
-  }
-}
+// 超时是「挂死守卫」不是性能预算：慢但最终通过的检查记 PASS，不判死。
+// 实现只有一份（scripts/lib/check-harness.mjs），六个套件共用。
+const check = createCheckHarness({ results })
 
 // --------------------------------------------------------------- fixtures
 

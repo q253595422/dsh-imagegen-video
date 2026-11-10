@@ -22,120 +22,25 @@ import { isAbsolute, join, resolve } from 'node:path'
 // 画布源码可能分布在 CanvasWorkspace.tsx 与 canvas/ 下的模块中：扫描一律走
 // 这个聚合读取，重构搬文件时断言才不会静静失配。
 import { canvasSourceText } from './lib/canvas-source.mjs'
+import { createCheckHarness } from './lib/check-harness.mjs'
 
 const root = new URL('../', import.meta.url)
 const results = []
 const packageJson = JSON.parse(readFileSync(new URL('package.json', root), 'utf8'))
 /**
- * Run one check under a hard per-check deadline; async-aware and sequential so
- * nothing races the servers.
+ * Per-check hang guard. The implementation is `scripts/lib/check-harness.mjs`,
+ * shared with smoke-video, smoke-canvas-video, smoke-video-picker, smoke-compose,
+ * smoke-code-render and smoke-video-director.
  *
- * WHY the deadline: a check that never settles — a mock upstream that accepts
- * the socket and never answers, a React effect that stops flushing under jsdom
- * — would otherwise hang the whole suite with no line naming it, so the run
- * looks like a job that never finished instead of a failing check. The sibling
- * suites (smoke-video, smoke-canvas-video, smoke-video-picker, smoke-compose)
- * all bound each check the same way; this one used to be the exception.
+ * The deadline is a HANG guard, not a performance budget: a check that overruns
+ * but eventually passes is a PASS that says how slow it was, and only a check
+ * that never settles -- or that fails after the deadline -- is a failure.
  *
- * The deadline only decides when a check is DECLARED failed — it never changes
- * what any check asserts.
+ * WHY shared: each suite used to carry its own copy of that logic, so the same
+ * defect lived in six places and a seventh copy would have inherited it by
+ * example. The verdict rules are pinned by `scripts/verify-check-harness.mjs`.
  */
-/** How long a check that already blew its deadline is still watched for a verdict. */
-const LATE_SETTLE_MS = 600_000
-
-/**
- * Default per-check deadline: a HANG guard, not a performance budget.
- *
- * WHY this is not 60s any more: the jsdom checks (E1 first among them) mount the
- * real client bundle under a stubbed canvas and DOM, then drive it through React
- * effects. On an idle machine that takes tens of seconds; on a loaded one (this
- * repo's suites are routinely run beside a build) it crossed 60s, and a check
- * that was about to pass got recorded as `FAIL ... timed out`. The verdict then
- * says nothing about the code: the same tree passes and fails on consecutive
- * runs. A green suite you cannot trust costs more than a slow one.
- *
- * The guard's job is to name a check that never settles -- a mock upstream that
- * accepts the socket and never answers. Three minutes still catches that; sixty
- * seconds caught it and a slow machine too.
- *
- * Override with `SMOKE_CHECK_TIMEOUT_MS` when a deliberately tiny budget is
- * wanted (a hang bisect, or CI pinning the number).
- */
-const CHECK_TIMEOUT_MS = Number(process.env.SMOKE_CHECK_TIMEOUT_MS ?? '') || 180_000
-
-/**
- * Await `promise` for at most `ms` and report how it ended rather than throwing:
- * `{ settled: false }` when the wait ran out, else `{ settled: true, error }`
- * where `error` is `undefined` on success and the rejection reason on failure.
- * A handler is attached before the wait, so a rejection landing after it is
- * already handled instead of becoming an unhandled rejection that kills the run.
- */
-function settleWithin(promise, ms) {
-  return Promise.race([
-    promise.then(() => ({ settled: true, error: undefined }), error => ({ settled: true, error })),
-    new Promise(resolve => {
-      const guard = setTimeout(() => resolve({ settled: false, error: undefined }), ms)
-      // Merely watching a slow check must not keep the process alive.
-      guard.unref?.()
-    }),
-  ])
-}
-
-async function check(name, fn, timeoutMs = CHECK_TIMEOUT_MS) {
-  // Progress goes to stderr so a hung check is identifiable from the log alone.
-  process.stderr.write(`... ${name}\n`)
-  const startedAt = Date.now()
-  let timer
-  // Started exactly once: the timeout path watches this same promise, because
-  // calling `fn()` again there would run the whole check a second time.
-  //
-  // WHY the timeout path keeps watching at all: `Promise.race` used to let
-  // `check()` return while `fn()` ran on, so every assertion past a deadline
-  // that FAILED was recorded as nothing at all -- the log said "timed out" and
-  // the real first failure was invisible. A check that overruns and then fails
-  // at 8749 of 8907 lines looks exactly like a check that hangs.
-  const ran = Promise.resolve().then(fn)
-  // Set only when this check is actually recorded as a failure. The deadline
-  // used to set it up front, which made a slow-but-correct check poison the
-  // process exit code even after the verdict below said it passed.
-  let declaredFailed = false
-  try {
-    await Promise.race([
-      ran,
-      new Promise((_resolve, reject) => {
-        timer = setTimeout(() => reject(new Error(`timed out after ${timeoutMs}ms`)), timeoutMs)
-      }),
-    ])
-    results.push(`PASS  ${name}`)
-  } catch (error) {
-    if (!error.message.startsWith('timed out after ')) {
-      results.push(`FAIL  ${name}: ${error.message}`)
-      declaredFailed = true
-      return
-    }
-    clearTimeout(timer)
-    const spent = () => `${((Date.now() - startedAt) / 1000).toFixed(1)}s`
-    // The deadline is a HANG guard. Overrunning it means "slower than budgeted",
-    // which is not a fact about the code -- so the real verdict is whatever the
-    // check finally does. Only a check that never settles, or that fails after
-    // the deadline, is a failure; a slow one that then passes is a pass that
-    // says how slow it was.
-    const late = await settleWithin(ran, LATE_SETTLE_MS)
-    if (!late.settled) {
-      results.push(`FAIL  ${name}: timed out after ${timeoutMs}ms; still running at ${spent()}, the assertions past the deadline stay unverified`)
-      declaredFailed = true
-    } else if (late.error === undefined) {
-      results.push(`PASS  ${name} (slow: overran ${timeoutMs}ms, settled at ${spent()})`)
-    } else {
-      const message = late.error instanceof Error ? late.error.message : String(late.error)
-      results.push(`FAIL  ${name}: ${message}`)
-      declaredFailed = true
-    }
-  } finally {
-    clearTimeout(timer)
-    if (declaredFailed) process.exitCode = 1
-  }
-}
+const check = createCheckHarness({ results })
 
 /** Wait for React/jsdom state to settle without relying on a fixed delay. */
 async function waitForSelector(root, selector, timeout = 1200) {
@@ -7237,7 +7142,17 @@ await check('E1 client apply mounts the sidebar entry and studio (jsdom)', async
     // declared -- so it brings its own.
     const waitFor = async (predicate, timeout = 2500) => {
       const deadline = Date.now() + timeout
-      while (!predicate() && Date.now() < deadline) await new Promise(resolve => setTimeout(resolve, 25))
+      // Poll budget as well as a deadline, for the reason the file-level
+      // `waitUntil` documents: under load the first 25ms timer fires seconds
+      // late, so a pure deadline can expire having granted a single retry. That
+      // is how E1 reported `add-to-canvas persists the canvas` on a tree that
+      // was about to save (a 650ms debounce plus a late timer).
+      const minPolls = Math.max(1, Math.ceil(timeout / 25))
+      let polls = 0
+      while (!predicate() && (polls < minPolls || Date.now() < deadline)) {
+        await new Promise(resolve => setTimeout(resolve, 25))
+        polls++
+      }
       return predicate()
     }
     // A favorited clip has NO images (the host stores it by reference), so the
@@ -7887,7 +7802,14 @@ await check('E1 client apply mounts the sidebar entry and studio (jsdom)', async
 
     const waitUntil = async (predicate, timeout = 2500) => {
       const deadline = Date.now() + timeout
-      while (!predicate() && Date.now() < deadline) await new Promise(resolve => setTimeout(resolve, 25))
+      // Same poll-budget rule as `waitFor` above: a late timer must not consume
+      // the whole budget without the predicate ever running.
+      const minPolls = Math.max(1, Math.ceil(timeout / 25))
+      let polls = 0
+      while (!predicate() && (polls < minPolls || Date.now() < deadline)) {
+        await new Promise(resolve => setTimeout(resolve, 25))
+        polls++
+      }
       return predicate()
     }
 
@@ -7903,11 +7825,22 @@ await check('E1 client apply mounts the sidebar entry and studio (jsdom)', async
       trigger.dispatchEvent(new jsdomWindow.MouseEvent('click', { bubbles: true }))
       const wanted = label.toLowerCase()
       const deadline = Date.now() + 1500
+      // Poll budget as well as a deadline, and query the DOM BEFORE deciding the
+      // wait is over. `while (option === undefined && Date.now() < deadline)`
+      // checks the clock first, so a menu that renders during the last (possibly
+      // late) timer is never looked at: the loop exits and the assertion below
+      // prints the very option it says is missing. Measured: E1 failed once with
+      // "the project menu offers smoke: [\"Smoke canvas...\"]".
+      const minPolls = Math.max(1, Math.ceil(1500 / 20))
+      let polls = 0
       let option
-      while (option === undefined && Date.now() < deadline) {
+      for (;;) {
         option = [...jsdomDocument.querySelectorAll('[data-option-index]')]
           .find(button => (button.textContent ?? '').trim().toLowerCase().startsWith(wanted))
-        if (option === undefined) await new Promise(resolve => setTimeout(resolve, 20))
+        if (option !== undefined) break
+        polls += 1
+        if (polls >= minPolls && Date.now() >= deadline) break
+        await new Promise(resolve => setTimeout(resolve, 20))
       }
       assert.ok(option !== undefined, `the project menu offers ${label}: ${JSON.stringify([...jsdomDocument.querySelectorAll('[data-option-index]')].map(button => button.textContent))}`)
       option.dispatchEvent(new jsdomWindow.MouseEvent('click', { bubbles: true }))
@@ -9382,8 +9315,9 @@ await check('E1 client apply mounts the sidebar entry and studio (jsdom)', async
     else globalThis.document = previousDocument
   }
 // react-flow 把客户端 bundle 撑大不少：jsdom 里挂载它并驱动整个画布段，
-// 在带负载的机器上会超过默认 60s（实测 92s 且全部断言通过）。放宽的是挂载
-// 预算，不是断言——断言一条没动。
+// 在带负载的机器上会超过默认预算（实测 92s 且全部断言通过；当时默认还是
+// 60s）。放宽的是挂载预算，不是断言——断言一条没动。挂死守卫仍然在：
+// 它现在默认 180s，且超时后按最终结果判定，慢但通过不再被记成失败。
 }, 120_000)
 
 await new Promise(resolve => upstream.close(resolve))
