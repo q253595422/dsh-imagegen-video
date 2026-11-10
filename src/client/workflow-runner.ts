@@ -22,6 +22,12 @@ export type NodeOutcome =
   /** 失败了；它自己的下游就此停下，别的分支照常。 */
   | 'failed'
 
+/** 传给 `run` 的每次调用上下文。 */
+export interface RunContext {
+  /** 这次是强制重跑：调用方不要复用已有结果。 */
+  force: boolean
+}
+
 /** 执行器看到的一步进度，用来更新界面上的运行卡片。 */
 export interface WorkflowProgress {
   /** 已跑到第几层（从 0 开始）。 */
@@ -46,12 +52,39 @@ export interface WorkflowRunOptions {
   /**
    * 跑一个节点。实现方负责「提交 + 等到终态」，执行器串行/并行地调它。
    * 抛异常等价于返回 `'failed'`。
+   *
+   * `context.force` 为真表示这次是**强制重跑**（见 `rerun`）：调用方该跳过
+   * 自己的结果复用，重新提交。省略这个参数的对象字面量实现照样能用。
    */
-  run: (nodeId: string) => Promise<NodeOutcome>
+  run: (nodeId: string, context: RunContext) => Promise<NodeOutcome>
   /** 每一步的进度回调；省略即不关心。 */
   onProgress?: (progress: WorkflowProgress) => void
   /** 用户中断。执行器在层与层之间检查它，不打断已经在跑的节点。 */
   signal?: AbortSignal
+  /**
+   * 新一轮里可以直接复用的节点：不调用 `run`，按 `cached` 计。
+   *
+   * 典型来源是上一轮的 `done` / `cached` 结论——续跑时它们已经有产物了，
+   * 再提交一次既慢又费钱。落在 `rerun` 下游闭包里的节点优先按强制重跑处理，
+   * 复用让位。
+   */
+  reuse?: readonly string[]
+  /**
+   * 必须重跑的节点：这些节点**以及它们的下游**会以 `context.force = true`
+   * 提交，且不会被 `reuse` 跳过。
+   *
+   * 为什么要带上下游：改了上游的输入，下游拿到的是旧产物，复用它们等于把
+   * 一次修改报成「没变化」。
+   */
+  rerun?: readonly string[]
+  /**
+   * 层内并发上限。默认不限（跟以前一样整层一起提交）。
+   *
+   * 层内本来就是并行提交的，真正的排队由生成队列决定；这里给的是「我想
+   * 少触发几次上游」时的闸门，比如整层二十个图节点、只想同时发三个。
+   * 小于 1 或非整数按 1 处理。
+   */
+  maxParallel?: number
 }
 
 export interface WorkflowRunResult {
@@ -74,6 +107,34 @@ export interface WorkflowRunResult {
   done: number
   /** 环上的节点；只有 status 为 `cycle` 时非空。 */
   cycle: string[]
+}
+
+/**
+ * 并发上限版的 `Promise.allSettled`：结果顺序与输入一一对应。
+ *
+ * 自己写而不是引依赖：这里需要的语义很窄——按序取任务、最多 `width` 个在飞、
+ * 失败不打断其余。`width` 不小于任务数时，行为与一次性全提交完全一致。
+ */
+async function settleLimited<T>(
+  tasks: readonly (() => Promise<T>)[],
+  width: number,
+): Promise<PromiseSettledResult<T>[]> {
+  const results: PromiseSettledResult<T>[] = new Array(tasks.length)
+  let next = 0
+  const worker = async (): Promise<void> => {
+    while (true) {
+      const at = next
+      next += 1
+      if (at >= tasks.length) return
+      try {
+        results[at] = { status: 'fulfilled', value: await tasks[at]!() }
+      } catch (reason) {
+        results[at] = { status: 'rejected', reason }
+      }
+    }
+  }
+  await Promise.all(Array.from({ length: Math.min(width, tasks.length) }, worker))
+  return results
 }
 
 /**
@@ -102,6 +163,16 @@ export async function runWorkflow(options: WorkflowRunOptions): Promise<Workflow
   const total = plan.layers.length
   const count = members.length
   let done = 0
+  // 复用集与强制重跑集：前者不提交，后者带 force 提交。重跑的中下游闭包
+  // 在同一张 members 上算，图外的起点不产生影响。
+  const reuse = new Set(options.reuse ?? [])
+  const forced = new Set<string>()
+  for (const root of options.rerun ?? []) {
+    for (const id of downstreamClosure([root], members, options.edges)) forced.add(id)
+  }
+  /** 这一轮真正要提交的节点；复用的节点直接算有结论。 */
+  const isReused = (nodeId: string): boolean => reuse.has(nodeId) && !forced.has(nodeId)
+  const width = Math.max(1, Math.floor(options.maxParallel ?? Infinity) || 1)
   /** 被上游失败挡住、永远不会提交的节点。 */
   const blocked = new Set<string>()
   /** 真的跑出结果的节点；用来区分「独立分支完成了」和「只是失败节点的上游跑过了」。 */
@@ -113,12 +184,25 @@ export async function runWorkflow(options: WorkflowRunOptions): Promise<Workflow
       return { status: 'cancelled', failedNodeIds: failed.map(item => item.nodeId), blocked: [...blocked], done, cycle: [] }
     }
     const layer = plan.layers[index]!
-    const runnable = layer.filter(nodeId => !blocked.has(nodeId))
+    // 被上游挡住的先剔除；没被挡住又在复用集里的，直接记 cached，不提交。
+    const pending = layer.filter(nodeId => !blocked.has(nodeId))
+    const runnable: string[] = []
+    for (const nodeId of pending) {
+      if (!isReused(nodeId)) {
+        runnable.push(nodeId)
+        continue
+      }
+      done += 1
+      produced.add(nodeId)
+    }
     options.onProgress?.({ layer: index, total, running: runnable, done, count })
 
     // 用 allSettled 而不是 all：同层里一个节点失败，其余节点也已经提交出去
     // （生成一旦发出就收不回），要等它们收齐才能统计这一层真正完成了什么。
-    const outcomes = await Promise.allSettled(runnable.map(async nodeId => await options.run(nodeId)))
+    const outcomes = await settleLimited(
+      runnable.map(nodeId => async () => await options.run(nodeId, { force: forced.has(nodeId) })),
+      width,
+    )
     // 同层的其他节点不可能是它的下游（层内互不依赖），所以挡住的范围只落在
     // 后面的层。闭包是传递的，下游的下游一并挡住。
     const blockDownstreamOf = (nodeId: string): void => {
