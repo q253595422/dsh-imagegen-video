@@ -59,9 +59,11 @@ export function OutfitReferencePicker({ kind, api = outfitReferenceApi, onSelect
    * natural way back to the grid; clearing the selection collapses the pane
    * (the CSS then lets the grid fill the dialog again). On the desktop
    * two-column layout the pane sits beside the grid, so header interactions
-   * must NOT clear the selection — the handler no-ops above 680px. */
+   * must NOT clear the selection — the handler no-ops above 680px. This is a
+   * viewport query, not a theme read; it follows the optional-chaining form
+   * the contract expects (see CanvasBackgrounds' reduced-motion checks). */
   const dismissSelectionOnUpperLevel = (): void => {
-    if (typeof window.matchMedia === 'function' && window.matchMedia('(max-width: 680px)').matches) setSelection(null)
+    if (globalThis.matchMedia?.('(max-width: 680px)').matches === true) setSelection(null)
   }
   const [preview, setPreview] = useState<{ selection: NonNullable<typeof selection>; reference: OutfitReference } | null>(null)
   const [previewLoading, setPreviewLoading] = useState(false)
