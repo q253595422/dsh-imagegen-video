@@ -111,37 +111,45 @@
 
 /* dsh-imagegen-mobile-8 (phone picker placeholder): in the ≤680px stacked
  * layout the detail pane shows only the “点选左侧素材…” placeholder until an
- * item is picked, yet its grid row still reserves minmax(160px, .9fr) — near
- * half the dialog as dead blank. While nothing is selected (the detail pane
- * contains only that placeholder, no preview image) collapse the pane
+ * item is picked, yet its grid row still reserved minmax(160px, .9fr) — near
+ * half the dialog as dead blank. While nothing is picked, collapse the pane
  * entirely and let the grid fill the content area; once an item is picked the
  * pane reappears below the grid as before. The desktop two-column layout and
- * its placeholder are untouched. */
+ * its placeholder are untouched.
+ *
+ * Keyed on `data-picker-detail` / `data-picker-state` (set in the component)
+ * rather than `:has(> .notice)`: see §4.3 of docs/native-ui-contract.md — a
+ * subtree-inference rule is unparseable in jsdom, so it would silently sit
+ * outside every test. */
 @media (max-width: 680px) {
-  .detail:has(> .notice) { display: none; }
-  .content:has(.detail > .notice) { grid-template-rows: minmax(160px, 1fr); }
+  .detail[data-picker-detail='empty'] { display: none; }
+  .content[data-picker-state='empty'] { grid-template-rows: minmax(160px, 1fr); }
 }
 
 /* dsh-imagegen-mobile-10 (selected detail dominates): once an item is picked,
  * the stacked ≤680px layout gave the detail row minmax(160px, .9fr) and its
  * meta text ate that height first — the garment preview rendered as a ~64px
- * thumbnail under a wall of text. Flip the emphasis after selection: the grid
- * collapses to a switching strip, the detail pane takes the stage, and the
- * preview figure (plus the 服装视角 switch) moves above the text with a much
- * taller image; the text lines clamp to one line each so the picture, not the
- * metadata, owns the pane. Desktop two-column layout is untouched. */
+ * thumbnail under a wall of text. Flip the emphasis while the preview image is
+ * on screen: the grid collapses to a switching strip, the detail pane takes the
+ * stage, and the preview figure (plus the 服装视角 switch) moves above the text
+ * with a much taller image; the text lines clamp to one line each so the
+ * picture, not the metadata, owns the pane. While the preview is still being
+ * fetched (or failed) the rows keep the plain picked split, so the detail never
+ * promises a picture it does not have. Desktop two-column layout is untouched.
+ *
+ * `data-picker-state` is set by the component — see the same note above. */
 @media (max-width: 680px) {
-  .content:has(.detail img) { grid-template-rows: minmax(64px, .24fr) minmax(0, 1.76fr); }
-  .detail:has(img) { padding: 12px; gap: 6px; }
-  .detail:has(img) .preview { order: -2; min-height: 0; }
-  .detail:has(img) .viewSelect { order: -1; }
-  .detail:has(img) .preview img { max-height: 56vh; }
+  .content[data-picker-state='preview'] { grid-template-rows: minmax(64px, .24fr) minmax(0, 1.76fr); }
+  .content[data-picker-state='preview'] .detail { padding: 12px; gap: 6px; }
+  .content[data-picker-state='preview'] .detail .preview { order: -2; min-height: 0; }
+  .content[data-picker-state='preview'] .detail .viewSelect { order: -1; }
+  .content[data-picker-state='preview'] .detail .preview img { max-height: 56vh; }
   /* The cached-original note is redundant with the footer button on a phone;
    * dropping it gives the picture another full line of height. */
-  .detail:has(img) .preview figcaption { display: none; }
-  .detail:has(img) h3,
-  .detail:has(img) .meta,
-  .detail:has(img) .tags {
+  .content[data-picker-state='preview'] .detail .preview figcaption { display: none; }
+  .content[data-picker-state='preview'] .detail h3,
+  .content[data-picker-state='preview'] .detail .meta,
+  .content[data-picker-state='preview'] .detail .tags {
     white-space: nowrap;
     overflow: hidden;
     text-overflow: ellipsis;

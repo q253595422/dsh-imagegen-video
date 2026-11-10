@@ -45,6 +45,27 @@ for (const needle of ["tt('outfit.sourceLibrary')", "tt('outfit.sourceAi')", "tt
 }
 require_(/setPicker\('portrait'\)/.test(workspace), '工作台没有指向人物图库的选择按钮')
 
+// 手机端版式（≤680px 的行分割、空详情收起）认的是选择器自己输出的状态属性。
+// 断言成对检查：属性由组件写出，且样式表只按属性取值——改成 `:has()` 推导子树
+// 就会在 jsdom 里整体失效（docs/native-ui-contract.md §4.3），这两条必须同时绿。
+const pickerCss = read('src/client/outfit-reference-picker.module.css')
+require_(
+  /const pickerState: 'empty' \| 'selected' \| 'preview' = selection === null \? 'empty' :/.test(picker),
+  '选择器没有按选中/预览状态算出一个三态值',
+)
+require_(picker.includes('data-picker-state={pickerState}'), '选择器没有把三态值写到 data-picker-state')
+require_(
+  picker.includes("data-picker-detail={pickerState === 'empty' ? 'empty' : 'selected'}"),
+  '选择器没有把空/已选写到 data-picker-detail',
+)
+for (const state of ["[data-picker-state='empty']", "[data-picker-state='preview']", "[data-picker-detail='empty']"]) {
+  require_(pickerCss.includes(state), `选择器样式表没有按 ${state} 取样式`)
+}
+require_(
+  !/\.(content|detail):has\(/.test(pickerCss),
+  '选择器样式表又改回用 :has() 推导子树状态（jsdom 无法解析，规则会落在测试之外）',
+)
+
 if (failures.length > 0) {
   for (const label of failures) console.error(`FAIL ${label}`)
   process.exit(1)

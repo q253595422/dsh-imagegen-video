@@ -140,6 +140,10 @@ export function OutfitReferencePicker({ kind, api = outfitReferenceApi, onSelect
   }, [api, selection])
 
   const readyPreview = preview?.selection === selection ? preview.reference : null
+  /* One value drives both markers so the stylesheet cannot drift from what is
+   * actually on screen: 'preview' means the figure is rendered, not merely that
+   * an item is picked. */
+  const pickerState: 'empty' | 'selected' | 'preview' = selection === null ? 'empty' : readyPreview !== null && !previewLoading && !previewError && !previewImageFailed ? 'preview' : 'selected'
   const choose = (): void => {
     if (!readyPreview || previewLoading || importing || !alive.current) return
     alive.current = false
@@ -267,7 +271,13 @@ export function OutfitReferencePicker({ kind, api = outfitReferenceApi, onSelect
         <input ref={modelInput} hidden type="file" accept="image/png,image/jpeg,image/webp,image/gif" onChange={event => { void pickModelFile(event.target.files?.[0]); event.target.value = '' }} />
         {modelMessage ? <span role="alert" className={css.modelRowError}>{modelMessage}</span> : null}
       </div> : null}
-      <div className={css.content}>
+      {/* The stacked ≤680px layout keys its row split off the picker's own state
+       * (nothing picked / a picked item without its preview yet / preview in
+       * hand). Marked here as data attributes and read by the stylesheet, per
+       * docs/native-ui-contract.md §4.3: a `:has()` that infers the same thing
+       * from the subtree is invisible to jsdom, so the rule would sit outside
+       * every test. Desktop reads neither attribute. */}
+      <div className={css.content} data-picker-state={pickerState}>
         <section className={css.browser} aria-label={`${TITLES[kind]}列表`}>
           {error ? <div className={css.notice} role="alert">{error}<button type="button" onClick={() => setReload(value => value + 1)}>重试加载</button></div> : null}
           {loading ? <p className={css.notice} role="status">正在获取素材索引…</p> : null}
@@ -289,7 +299,7 @@ export function OutfitReferencePicker({ kind, api = outfitReferenceApi, onSelect
             <button type="button" disabled={offset + PAGE_SIZE >= (listing?.total ?? 0)} onClick={() => setOffset(value => value + PAGE_SIZE)}>下一页</button>
           </nav> : null}
         </section>
-        <aside className={css.detail} aria-label="素材详情与预览">
+        <aside className={css.detail} aria-label="素材详情与预览" data-picker-detail={pickerState === 'empty' ? 'empty' : 'selected'}>
           {selection ? <>
             <h3>{selection.item.title}</h3>
             <p className={css.meta}>{selection.item.category}{selection.item.angle ? ` · ${selection.item.angle}` : ''}</p>

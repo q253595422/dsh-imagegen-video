@@ -3564,7 +3564,15 @@ export function ImageGenPanel(props: {
         </span>
       </header>
 
-      <div className={css.studio}>
+      {/* `data-studio-workspace` lets the stylesheet key the ≤760px
+       * non-scrolling split on the canvas/ppt workspaces without a `:has()`
+       * that infers it from this subtree (docs/native-ui-contract.md §4.3 —
+       * jsdom cannot parse such a rule, so it would sit outside every test).
+       * Deliberately not `data-workspace`: outfit-workspace.module.css evicts
+       * every sibling of `[data-workspace='outfit']`, which would hide the
+       * generation column below it. Only the two values it needs are emitted,
+       * so the other workspaces keep the attribute off entirely. */}
+      <div className={css.studio} data-studio-workspace={workspace === 'canvas' || workspace === 'ppt' ? workspace : undefined}>
         {/* ------------------------------- left history + generation workspace */}
         <div className={css.generation} data-workspace={workspace} data-empty-result-host={isVideo ? 'true' : undefined}>
           {/* ------------------------------------------------ config sidebar */}

@@ -4560,15 +4560,22 @@ a.galleryCardAction {
  * workspaces never need the studio to scroll: let the generation block take
  * exactly the remaining height so the canvas viewport runs to the bottom edge
  * and grows with the screen. Every other workspace keeps the scrolling
- * behavior, and >760px keeps the desktop height:100% rule untouched. */
+ * behavior, and >760px keeps the desktop height:100% rule untouched.
+ *
+ * `data-studio-workspace` is emitted by ImageGenPanel on the `.studio` itself
+ * (see its note there). Not `:has(> .generation[…])`, per §4.3 of
+ * docs/native-ui-contract.md; and deliberately NOT a `data-workspace` attribute
+ * — `outfit-workspace.module.css` owns `[data-workspace='outfit'] > :not(…)`
+ * to evict sibling surfaces, so a `.studio` carrying that attribute would have
+ * its whole `.generation` hidden. */
 @media (max-width: 760px) {
   .generation[data-workspace='canvas'],
   .generation[data-workspace='ppt'] {
     flex: 1 1 auto;
     min-height: 0;
   }
-  .studio:has(> .generation[data-workspace='canvas']),
-  .studio:has(> .generation[data-workspace='ppt']) {
+  .studio[data-studio-workspace='canvas'],
+  .studio[data-studio-workspace='ppt'] {
     overflow-y: hidden;
   }
 }
