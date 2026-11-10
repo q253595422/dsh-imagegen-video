@@ -58,6 +58,38 @@ if (notesProblem !== null) {
  */
 const toPosix = value => value.split(sep).join('/')
 
+/**
+ * `lib/<chunk>.js` -> the source entry the build emits it from.
+ *
+ * Read out of `tsdown.config.ts` rather than repeated here: a hardcoded copy
+ * would drift the first time an entry is renamed, and the guard would then
+ * report a REAL missing file as "not in the repository" — or worse, stop
+ * reporting a genuinely missing one. Both configs are scanned because the Node
+ * half and the client half are two separate build passes in that file.
+ *
+ * Parsed, not imported: this file runs on a bare checkout where the build has
+ * not happened (that is the whole point of the guard).
+ */
+const BUILT_ENTRIES = (() => {
+  const entries = {}
+  let config
+  try {
+    config = readFileSync(join(ROOT, 'tsdown.config.ts'), 'utf8')
+  } catch {
+    return entries
+  }
+  // `entry: { index: 'src/index.ts', 'locale-tables': 'src/locale-tables.ts' }`
+  // and `entry: { client: 'src/client/index.ts' }` — both spellings appear.
+  for (const match of config.matchAll(/entry:\s*\{([^}]*)\}/g)) {
+    for (const pair of match[1].matchAll(/'([^']+)'\s*:\s*'([^']+)'|(\w+)\s*:\s*'([^']+)'/g)) {
+      const name = pair[1] ?? pair[3]
+      const source = pair[2] ?? pair[4]
+      entries[name] = source
+    }
+  }
+  return entries
+})()
+
 function git (...args) {
   return execFileSync('git', args, {
     cwd: ROOT, encoding: 'utf8', maxBuffer: 32 * 1024 * 1024, stdio: ['ignore', 'pipe', 'pipe'],
@@ -109,6 +141,20 @@ function candidates (from, specifier) {
     list.push(`${stem}.ts`, `${stem}.tsx`, `${stem}.mjs`)
   } else if (!/\.(?:mjs|ts|tsx)$/.test(base)) {
     list.push(`${base}.ts`, `${base}.tsx`, `${base}.mjs`, join(base, 'index.ts'))
+  }
+  // `lib/` is BUILD OUTPUT and is gitignored on purpose (`/lib/`), so an import
+  // of `../lib/index.js` can never resolve to a tracked file -- yet it is
+  // perfectly correct: that is what the package ships, and three suites drive
+  // it on purpose (a smoke test against the built artifact, not the source).
+  //
+  // Resolve it to the SOURCE the build emits it from, which IS tracked. The
+  // mapping is read from `tsdown.config.ts` entry names below; without this the
+  // guard reports "lib/index.js is not in the repository" on every clean
+  // checkout, and a guard that is always red is a guard somebody deletes.
+  const built = /^lib\/(.+)\.js$/.exec(toPosix(relative(ROOT, base)))
+  if (built !== null) {
+    const entry = BUILT_ENTRIES[built[1]]
+    if (entry !== undefined) list.push(join(ROOT, entry))
   }
   return list
 }
