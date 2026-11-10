@@ -43,6 +43,7 @@ import { CanvasFlowProvider, canvasNodeTypes, useCanvasFlow, type CanvasFlowCont
 import { nodesToFlow, connectionsToEdges, edgeToConnection, viewportToFlow, viewportFromFlow, type CanvasFlowNode } from './canvas-flow-adapter.ts'
 import { onTablistKeyDown, tabIndexFor } from './tablist.ts'
 import css from './canvas-workspace.module.css'
+import { drawSketchStroke, rasterizeSketch } from './canvas/sketch-raster.ts'
 import { CONFIG_NODE_SIZE, DROP_IMAGE_MAX_BYTES, FILE_NODE_SIZE, GRID_SIZE, IMAGE_NODE_SIZE, LEGACY_CONFIG_NODE_SIZE, MAX_SCALE, MIN_SCALE, PICKER_TABS, SKETCH_COLORS, SKETCH_EXPORT_WIDTH, SKETCH_NODE_SIZE, SKETCH_WIDTHS, STORYBOARD_NODE_SIZE, TEXT_NODE_SIZE } from './canvas/constants.ts'
 
 type CanvasTool = 'select' | 'pan'
@@ -631,47 +632,6 @@ function textStyleOf(node: CanvasNode): { fontSize: number; color?: string; font
   }
 }
 
-/** Draw one normalized stroke onto a 2d context already sized to the board. */
-function drawSketchStroke(ctx: CanvasRenderingContext2D, stroke: CanvasSketchStroke, boardWidth: number, boardHeight: number): void {
-  ctx.strokeStyle = stroke.color
-  ctx.fillStyle = stroke.color
-  ctx.lineWidth = stroke.width
-  ctx.lineCap = 'round'
-  ctx.lineJoin = 'round'
-  const points = stroke.points
-  if (points.length === 0) return
-  if (points.length === 1) {
-    const only = points[0]!
-    ctx.beginPath()
-    ctx.arc(only.x * boardWidth, only.y * boardHeight, stroke.width / 2, 0, Math.PI * 2)
-    ctx.fill()
-    return
-  }
-  ctx.beginPath()
-  points.forEach((point, index) => {
-    const x = point.x * boardWidth
-    const y = point.y * boardHeight
-    if (index === 0) ctx.moveTo(x, y)
-    else ctx.lineTo(x, y)
-  })
-  ctx.stroke()
-}
-
-/** Flatten strokes onto an opaque white PNG sized for gpt-image edits (the
- *  models treat the sketch as a plain reference image). */
-function rasterizeSketch(strokes: CanvasSketchStroke[], boardWidth: number, boardHeight: number): { dataUrl: string; width: number; height: number } {
-  const scale = SKETCH_EXPORT_WIDTH / Math.max(1, boardWidth)
-  const canvas = globalThis.document.createElement('canvas')
-  canvas.width = Math.max(1, Math.round(boardWidth * scale))
-  canvas.height = Math.max(1, Math.round(boardHeight * scale))
-  const ctx = canvas.getContext('2d')
-  if (ctx === null) throw new Error('canvas 2d context unavailable')
-  ctx.fillStyle = '#ffffff'
-  ctx.fillRect(0, 0, canvas.width, canvas.height)
-  ctx.scale(scale, scale)
-  for (const stroke of strokes) drawSketchStroke(ctx, stroke, boardWidth, boardHeight)
-  return { dataUrl: canvas.toDataURL('image/png'), width: canvas.width, height: canvas.height }
-}
 
 type ToolbarIconName = 'new' | 'select' | 'pan' | 'image' | 'text' | 'file' | 'sketch' | 'eraser' | 'trash' | 'undo' | 'redo' | 'fit' | 'minimap' | 'background' | 'template' | 'download' | 'duplicate' | 'sparkle' | 'send' | 'close' | 'deleteProject' | 'annotate' | 'removeBg' | 'layers' | 'bold' | 'color' | 'skill' | 'upload' | 'expand' | 'favorite' | 'favoriteFilled' | 'help' | 'workflow' | 'timeline' | 'fullscreen' | 'exitFullscreen' | 'video' | 'snap' | 'connections'
 
