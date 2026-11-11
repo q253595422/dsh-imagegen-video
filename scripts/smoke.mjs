@@ -9015,15 +9015,25 @@ await check('E1 client apply mounts the sidebar entry and studio (jsdom)', async
         await waitForSelector(view, '[data-node-id="node-annotation-card"]')
         const cardBody = view.querySelector('[data-node-id="node-annotation-card"]')
         assert.ok(cardBody.querySelector('textarea') !== null, 'the card is on screen as a text node')
-        // 比较布尔值，而不是把元素交给 assert.equal。
+        // 比较布尔值，不是把元素交给 assert.equal。这是实测过的，不是风格偏好：
         //
-        // 这条断言在变异核验时连续四次以退出码 137（SIGKILL）结束，日志停在
-        // E1 标题，一行 FAIL 都没有；改成布尔比较后同一个变异立刻报出可读的
-        // FAIL。为什么元素入参必然被杀，我没能复现出根因（用 12000 节点、
-        // 4MB 的 JSDOM 直接测 assert.equal(元素, null)，失败消息只有 50 字符，
-        // 并没有展开文档树），所以这里不写猜测的机制。能确定的是：在这种
-        // 断言上，布尔比较观测到了真实失败，元素入参观测到的是进程被杀。
-        // 断言看不出真假比断言写错更麻烦，就按能读到结果的那种写。
+        // 在 E1 里对真实画布元素执行 assert.equal(元素, null)（必然失败），
+        // 进程以退出码 137 结束，连 catch 都进不去——把整个调用包进 try/catch
+        // 并在里面打印，一行都没输出。同一个位置换成
+        // assert.ok(元素 === null, ...)，立刻得到正常的 FAIL 行。
+        //
+        // 已经排除的解释：不是 JS 堆耗尽（--max-old-space-size=1200 仍然复现，
+        // 而 JS 堆真爆掉会是 V8 自己 abort，不是 SIGKILL）；不是 util.inspect
+        // 本身贵（对同一个真实元素实测 2ms、4549 字符）；不是错误对象被长期
+        // 持有（保留 40 个各带元素的错误对象，进程正常退出）。
+        //
+        // 注意这台机器的 swap 当时只剩 472MB，所以「机器内存紧张」确实会让
+        // 结果更难分辨；但同一时刻的布尔版本能正常跑完，说明那一次不是单纯的
+        // 内存不够。
+        //
+        // 没查到底的是 assert 内部在失败路径上的哪一步——进程在 catch 之前
+        // 就没了。既然布尔比较稳定产出可读失败，就按这个写；真正的问题是
+        // 「断言失败得能被读出来」。
         assert.ok(
           cardBody.querySelector('[class*="handleLeft"]') === null,
           'an annotation card has no incoming handle — it is not wired into the graph',
