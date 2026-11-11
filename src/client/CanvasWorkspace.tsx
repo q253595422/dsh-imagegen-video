@@ -51,6 +51,8 @@ import { StoryboardBody } from './canvas/storyboard-board.tsx'
 import { CanvasMinimap } from './canvas/minimap.tsx'
 import { ConnectionLayer } from './canvas/connection-layer.tsx'
 import { NodeBody, type NodeBodyActions, type NodeBodyState } from './canvas/node-body.tsx'
+import { CanvasComposer, type ComposerActions, type ComposerState } from './canvas/composer.tsx'
+import { CanvasContextMenu, type CanvasContextMenuActions, type CanvasContextMenuState } from './canvas/context-menu.tsx'
 import { ImagePicker, readImageSize, SketchBoard } from './canvas/sketch-and-picker.tsx'
 import { RUN_NODE_SIZE, runRectOf, SkillRunCard, type SkillRunTrace } from './canvas/run-card.tsx'
 import { CanvasErrorToast, CanvasNoticeToast, CanvasVideoPreviewOverlay, CanvasWorkflowProgressBar } from './canvas/overlays.tsx'
@@ -4481,6 +4483,79 @@ export function CanvasWorkspace(props: CanvasWorkspaceProps): React.JSX.Element 
   const renderNodeBody = (node: CanvasNode): React.JSX.Element =>
     <NodeBody node={node} S={nodeBodyState} A={nodeBodyActions} />
 
+  // 输入条与右键菜单：与 NodeBody 同法，用 useMemo 固定 S/A——摊平的话每次
+  // 渲染都会重建几十个箭头函数，这些 props 会被下游整体当成新值。
+  const composerState: ComposerState = useMemo(() => ({
+    canvasDocument: document,
+    viewportSize, viewportRef,
+    modelGroups, videoGroups,
+    composerVisible, composerTarget, composerKind, composerPrompt, composerRenderer,
+    composerBusy, composerReferenceCount, composerTextCount, composerAnnotationTexts,
+    composerChannelConnected, composerChannelId, composerModel,
+    composerVideoChannelId, composerVideoModel, composerVideoConnected, composerVideoMode,
+    composerAspect, composerAspectOptions, composerSeconds, composerDurationOptions,
+    composerResolution, composerResolutionOptions, composerSize, composerQuality, composerCount,
+    composerProbeWarning, composerVideoCatalog, videoModelCount,
+  }), [
+    document, viewportSize, viewportRef, modelGroups, videoGroups,
+    composerVisible, composerTarget, composerKind, composerPrompt, composerRenderer,
+    composerBusy, composerReferenceCount, composerTextCount, composerAnnotationTexts,
+    composerChannelConnected, composerChannelId, composerModel,
+    composerVideoChannelId, composerVideoModel, composerVideoConnected, composerVideoMode,
+    composerAspect, composerAspectOptions, composerSeconds, composerDurationOptions,
+    composerResolution, composerResolutionOptions, composerSize, composerQuality, composerCount,
+    composerProbeWarning, composerVideoCatalog, videoModelCount,
+  ])
+
+  const composerActions: ComposerActions = useMemo(() => ({
+    submitComposer, submitVideoComposer,
+    setComposerPrompt, setComposerKind, setComposerRenderer,
+    setComposerChannelId, setComposerModel,
+    setComposerVideoChannelId, setComposerVideoModel, setComposerVideoMode,
+    setComposerAspect, setComposerSeconds, setComposerResolution,
+    setComposerSize, setComposerQuality, setComposerCount,
+  }), [
+    submitComposer, submitVideoComposer,
+    setComposerPrompt, setComposerKind, setComposerRenderer,
+    setComposerChannelId, setComposerModel,
+    setComposerVideoChannelId, setComposerVideoModel, setComposerVideoMode,
+    setComposerAspect, setComposerSeconds, setComposerResolution,
+    setComposerSize, setComposerQuality, setComposerCount,
+  ])
+
+  const renderComposer = (): ReactNode =>
+    <CanvasComposer S={composerState} A={composerActions} />
+
+  const contextMenuState: CanvasContextMenuState = useMemo(() => ({
+    canvasDocument: document,
+    contextMenu, createMenu, nodeById, fileUploadRef,
+    assetOf, videoOf, nodeMetadata, isAnnotationCard,
+    createTextNode, createSketchNode, createStoryboardNode,
+    createImageNode, createEmptyFileNode, createConfigNode,
+  }), [
+    document, contextMenu, createMenu, nodeById, fileUploadRef,
+    assetOf, videoOf, nodeMetadata, isAnnotationCard,
+    createTextNode, createSketchNode, createStoryboardNode,
+    createImageNode, createEmptyFileNode, createConfigNode,
+  ])
+
+  const contextMenuActions: CanvasContextMenuActions = useMemo(() => ({
+    setContextMenu, setCreateMenu, setFileTargetNodeId, setPickerOpen, setSelectedConnectionId,
+    setVideoPreviewNodeId, setPosterTarget, setCastTarget, setPolishNode, setNotice,
+    openImageNode, openFileNode, openSkillMenu,
+    downloadNode, downloadFileNode, downloadVideoNode, continueFromClip,
+    duplicateNode, deleteNode, patchNode, placeNewNode, pasteClipboard, fitView, mutate,
+  }), [
+    setContextMenu, setCreateMenu, setFileTargetNodeId, setPickerOpen, setSelectedConnectionId,
+    setVideoPreviewNodeId, setPosterTarget, setCastTarget, setPolishNode, setNotice,
+    openImageNode, openFileNode, openSkillMenu,
+    downloadNode, downloadFileNode, downloadVideoNode, continueFromClip,
+    duplicateNode, deleteNode, patchNode, placeNewNode, pasteClipboard, fitView, mutate,
+  ])
+
+  const renderContextMenu = (): ReactNode =>
+    <CanvasContextMenu S={contextMenuState} A={contextMenuActions} />
+
   // ------------------------------------------------------ react-flow 受控视图
   // document 是唯一真源；flow 节点/边/视口都由它派生，变更回写 document。
   // screenToWorld/canvasCenter/fitView 仍读写 document.viewport（经 onViewportChange
@@ -4583,165 +4658,7 @@ export function CanvasWorkspace(props: CanvasWorkspaceProps): React.JSX.Element 
     </svg>
   }
 
-  const renderComposer = (): ReactNode => {
-    if (!composerVisible || document === null || composerTarget === null) return null
-    const linkedCount = composerReferenceCount + composerTextCount
-    const k = document.viewport.k
-    const topOffset = viewportRef.current?.offsetTop ?? 0
-    const centerX = topOffset * 0 + document.viewport.x + (composerTarget.x + composerTarget.width / 2) * k
-    const clampedX = Math.min(Math.max(centerX, 292), Math.max(292, viewportSize.width - 292))
-    const belowY = topOffset + document.viewport.y + (composerTarget.y + composerTarget.height) * k + 14
-    const top = belowY > viewportSize.height + topOffset - 170
-      ? Math.max(64, topOffset + document.viewport.y + composerTarget.y * k - 158)
-      : belowY
-    return <div className={css.composer} data-canvas-no-zoom="" style={{ left: clampedX - 280, top }}>
-      <textarea
-        className={css.composerPrompt}
-        value={composerPrompt}
-        placeholder={tt(composerKind === 'video' ? 'canvas.videoComposerPlaceholder' : 'canvas.composerPlaceholder')}
-        rows={1}
-        onPointerDown={event => event.stopPropagation()}
-        onChange={event => setComposerPrompt(event.target.value)}
-        onKeyDown={event => {
-          if (event.key === 'Enter' && !event.shiftKey) {
-            event.preventDefault()
-            // Enter submits whichever path the toggle is on.
-            if (composerKind === 'video') void submitVideoComposer(composerTarget)
-            else void submitComposer(composerTarget)
-          }
-        }}
-      />
-      {linkedCount > 0 ? <div className={css.composerMeta}>
-        <span className={css.composerChip}>{tt('canvas.composerLinked', { count: linkedCount })}</span>
-      </div> : null}
-      <div className={css.composerControls}>
-        {/* The kind toggle normally needs a video catalog to be useful. The code
-            path does not, so it stays reachable whenever that path is selected. */}
-        {videoModelCount > 0 || composerRenderer === 'code' ? <div className={css.composerKind} role="group" aria-label={tt('canvas.videoKind')}>
-          <button type="button" data-active={composerKind === 'image' ? '' : undefined} onClick={() => { setComposerKind('image') }}>{tt('canvas.kindImage')}</button>
-          <button type="button" data-active={composerKind === 'video' ? '' : undefined} onClick={() => { setComposerKind('video') }}>{tt('canvas.kindVideo')}</button>
-        </div> : null}
-        {/* Per-task renderer choice. Kept in the ordinary composer row (not a
-            separate dialog or a global setting) so one canvas can run both
-            paths side by side, task by task. */}
-        <ComposerSelect
-          ariaLabel={tt('canvas.rendererLabel')}
-          value={composerRenderer}
-          options={[
-            { value: 'model', label: tt('canvas.rendererModel') },
-            { value: 'code', label: tt('canvas.rendererCode') },
-          ]}
-          onChange={value => setComposerRenderer(value === 'code' ? 'code' : 'model')}
-        />
-        {composerKind === 'video' ? <>
-          {/* With the code path there is no provider to pick: the host's own
-              conversation model writes the drawing code. */}
-          {composerRenderer === 'model' ? <ModelPicker
-            groups={videoGroups ?? []}
-            value={{ channelId: composerVideoChannelId, model: composerVideoModel }}
-            variant="composer"
-            channelLabel={tt('model.channel')}
-            modelLabel={tt('video.model')}
-            channelPlaceholder={tt('model.channelPlaceholder')}
-            emptyLabel={tt('canvas.videoNoModel')}
-            ariaLabel={tt('video.model')}
-            onChange={choice => { setComposerVideoChannelId(choice.channelId); setComposerVideoModel(choice.model) }}
-          /> : null}
-          <ComposerSelect
-            ariaLabel={tt('canvas.videoModeLabel')}
-            value={composerVideoMode}
-            options={(['auto', 'text', 'image', 'keyframe'] as const).map(item => ({ value: item, label: tt(`canvas.videoMode${item === 'auto' ? 'Auto' : item === 'text' ? 'Text' : item === 'image' ? 'Image' : 'Keyframe'}` as ImageGenKey) }))}
-            onChange={value => setComposerVideoMode(value as 'auto' | VideoMode)}
-          />
-          <ComposerSelect
-            ariaLabel={tt('canvas.videoAspect')}
-            value={composerAspect}
-            options={composerAspectOptions.map(item => ({ value: item, label: composerVideoCatalog.aspectLabels?.[item] ?? item }))}
-            onChange={setComposerAspect}
-          />
-          <ComposerSelect
-            ariaLabel={tt('canvas.videoSeconds')}
-            value={String(composerSeconds)}
-            options={composerDurationOptions.map(item => ({ value: String(item), label: tt('canvas.videoDuration', { seconds: item }) }))}
-            onChange={value => setComposerSeconds(Number(value))}
-          />
-          <ComposerSelect
-            ariaLabel={tt('canvas.videoResolution')}
-            value={composerResolution}
-            options={composerResolutionOptions.map(item => ({ value: item, label: item }))}
-            onChange={value => setComposerResolution(value as VideoResolution)}
-          />
-        </> : composerRenderer === 'model' ? <ModelPicker
-          groups={modelGroups}
-          value={{ channelId: composerChannelId, model: composerModel }}
-          variant="composer"
-          channelLabel={tt('model.channel')}
-          modelLabel={tt('model.label')}
-          channelPlaceholder={tt('model.channelPlaceholder')}
-          emptyLabel={tt('canvas.modelPlaceholder')}
-          ariaLabel={tt('canvas.model')}
-          onChange={choice => { setComposerChannelId(choice.channelId); setComposerModel(choice.model) }}
-        /> : null}
-        {composerKind === 'image' ? <>
-        <ComposerSelect
-          ariaLabel={tt('canvas.size')}
-          value={composerSize}
-          options={[
-            { value: 'auto', label: tt('canvas.sizeAuto') },
-            { value: '1:1', label: '1:1' },
-            { value: '3:4', label: '3:4' },
-            { value: '16:9', label: '16:9' },
-            { value: '9:16', label: '9:16' },
-          ]}
-          onChange={setComposerSize}
-        />
-        <ComposerSelect
-          ariaLabel={tt('canvas.quality')}
-          value={composerQuality}
-          options={[
-            { value: 'auto', label: tt('canvas.qualityAuto') },
-            { value: '1k', label: '1K' },
-            { value: '2k', label: '2K' },
-            { value: '4k', label: '4K' },
-          ]}
-          onChange={setComposerQuality}
-        />
-        {/* The code path renders one still per run (one chat answer, one
-            drawing source), so a count above one would create placeholders
-            that never fill. */}
-        {composerRenderer === 'model' ? <ComposerSelect
-          ariaLabel={tt('canvas.count')}
-          value={String(composerCount)}
-          options={[1, 2, 3, 4].map(item => ({ value: String(item), label: tt('canvas.countUnit', { count: item }) }))}
-          onChange={value => setComposerCount(Number(value))}
-        /> : null}
-        </> : null}
-        <button
-          type="button"
-          className={css.composerSend}
-          aria-label={tt(composerKind === 'video' ? 'canvas.videoGenerate' : 'canvas.generate')}
-          title={tt(composerKind === 'video' ? 'canvas.videoGenerate' : 'canvas.generate')}
-          disabled={composerBusy
-            || (composerKind === 'video'
-              ? (composerRenderer === 'model' && (!composerVideoConnected || composerVideoModel === '')) || composerPrompt.trim() === ''
-              : (composerRenderer === 'model' && !composerChannelConnected)
-                || (composerPrompt.trim() === '' && composerTextCount === 0 && composerAnnotationTexts.length === 0))}
-          onClick={() => {
-            if (composerKind === 'video') void submitVideoComposer(composerTarget)
-            else void submitComposer(composerTarget)
-          }}
-        >{composerBusy ? <span className={css.nodeSpinner} aria-hidden="true" /> : <ToolbarIcon name="send" />}</button>
-      </div>
-      {/* A missing ffmpeg is the one failure the user can fix before paying
-          for a chat call: say it here, with the fix, instead of at render time. */}
-      {composerRenderer === 'code' && composerProbeWarning !== undefined
-        ? <div className={css.composerMeta}><span className={css.composerHint} data-renderer-warning="">{composerProbeWarning}</span></div>
-        : null}
-      {composerRenderer === 'code'
-        ? <div className={css.composerMeta}><span className={css.composerHint}>{tt('canvas.rendererHint')}</span></div>
-        : null}
-    </div>
-  }
+  // ---- renderComposer 已搬出：见 canvas/composer.tsx / canvas/context-menu.tsx
 
   const renderMinimap = (): React.JSX.Element | null => {
     if (document === null || viewportSize.width === 0) return null
@@ -4754,75 +4671,7 @@ export function CanvasWorkspace(props: CanvasWorkspaceProps): React.JSX.Element 
     />
   }
 
-  const renderContextMenu = (): ReactNode => {
-    if (contextMenu !== null) {
-      const close = (): void => setContextMenu(null)
-      const items: Array<{ label: string; action: () => void; danger?: boolean; icon: ToolbarIconName }> = []
-      if (contextMenu.type === 'node') {
-        const node = nodeById.get(contextMenu.nodeId)
-        if (node !== undefined && node.type === 'image' && (assetOf(node)?.url.length ?? 0) > 0) {
-          items.push({ label: tt('canvas.preview.expand'), icon: 'expand', action: () => openImageNode(node) })
-          items.push({ label: tt('poster.title'), icon: 'text', action: () => { if (document !== null) setPosterTarget({ canvasId: document.id, nodeId: node.id }) } })
-          items.push({ label: tt('canvas.download'), icon: 'download', action: () => downloadNode(node) })
-          // 身份锚定：同一张图定一次，之后每次生成自动带着它。
-          items.push({
-            label: nodeMetadata(node).cast === undefined ? tt('canvas.cast.pin') : tt('canvas.cast.unpin'),
-            icon: 'favorite',
-            action: nodeMetadata(node).cast === undefined
-              ? () => { setCastTarget(node.id) }
-              : () => { patchNode(node.id, { cast: undefined }); setNotice(tt('canvas.cast.unpinned')) },
-          })
-        }
-        if (node !== undefined && node.type === 'file' && (assetOf(node)?.url.length ?? 0) > 0) {
-          items.push({ label: tt('canvas.skills.fileDownload'), icon: 'download', action: () => downloadFileNode(node) })
-          items.push({ label: tt('canvas.preview.expand'), icon: 'expand', action: () => openFileNode(node) })
-        }
-        if (node !== undefined && node.type === 'video' && (videoOf(node)?.url ?? '') !== '') {
-          items.push({ label: tt('canvas.videoPreview'), icon: 'expand', action: () => { setVideoPreviewNodeId(node.id) } })
-          items.push({ label: tt('canvas.videoDownload'), icon: 'download', action: () => { downloadVideoNode(node) } })
-          items.push({ label: tt('canvas.storyboard.grabLastFrame'), icon: 'layers', action: () => { void continueFromClip(node) } })
-        }
-        if (node !== undefined && node.type !== 'config') {
-          items.push({ label: tt('canvas.skills.button'), icon: 'skill', action: () => openSkillMenu(node, { x: contextMenu.screen.x, y: contextMenu.screen.y }) })
-        }
-        if (node !== undefined && node.type === 'text' && !isAnnotationCard(node)) {
-          items.push({ label: tt('canvas.polish.button'), icon: 'sparkle', action: () => setPolishNode({ screen: { x: contextMenu.screen.x, y: contextMenu.screen.y }, nodeId: node.id }) })
-        }
-        if (node === undefined || !isAnnotationCard(node)) items.push({ label: tt('canvas.duplicate'), icon: 'duplicate', action: () => duplicateNode(contextMenu.nodeId) })
-        items.push({ label: tt('canvas.delete'), icon: 'trash', action: () => deleteNode(contextMenu.nodeId), danger: true })
-      } else if (contextMenu.type === 'connection') {
-        items.push({
-          label: tt('canvas.deleteConnection'), icon: 'close', danger: true,
-          action: () => {
-            mutate(previous => ({ ...previous, connections: previous.connections.filter(connection => connection.id !== contextMenu.connectionId) }))
-            setSelectedConnectionId(null)
-          },
-        })
-      } else {
-        items.push({ label: tt('canvas.addImage'), icon: 'image', action: () => setPickerOpen(true) })
-        items.push({ label: tt('canvas.addTextNode'), icon: 'text', action: () => placeNewNode(createTextNode(contextMenu.world)) })
-        items.push({ label: tt('canvas.addSketchNode'), icon: 'sketch', action: () => placeNewNode(createSketchNode(contextMenu.world)) })
-        items.push({ label: tt('canvas.storyboardNode'), icon: 'layers', action: () => placeNewNode(createStoryboardNode(contextMenu.world)) })
-        items.push({ label: tt('canvas.paste'), icon: 'duplicate', action: () => pasteClipboard(contextMenu.world) })
-        items.push({ label: tt('canvas.fitView'), icon: 'fit', action: fitView })
-      }
-      return <div className={css.contextMenu} style={{ left: contextMenu.screen.x, top: contextMenu.screen.y }} data-canvas-no-zoom="" role="menu">
-        {items.map(item => <button key={item.label} type="button" role="menuitem" data-danger={item.danger ? '' : undefined} onClick={() => { item.action(); close() }}><ToolbarIcon name={item.icon} />{item.label}</button>)}
-      </div>
-    }
-    if (createMenu !== null) {
-      return <div className={css.contextMenu} style={{ left: createMenu.screen.x, top: createMenu.screen.y }} data-canvas-no-zoom="" role="menu">
-        <button type="button" role="menuitem" onClick={() => { placeNewNode(createTextNode(createMenu.world)); setCreateMenu(null) }}><ToolbarIcon name="text" size={16} />{tt('canvas.addTextNode')}</button>
-        <button type="button" role="menuitem" onClick={() => { placeNewNode(createSketchNode(createMenu.world)); setCreateMenu(null) }}><ToolbarIcon name="sketch" size={16} />{tt('canvas.addSketchNode')}</button>
-        <button type="button" role="menuitem" data-add-storyboard="" onClick={() => { placeNewNode(createStoryboardNode(createMenu.world)); setCreateMenu(null) }}><ToolbarIcon name="layers" size={16} />{tt('canvas.storyboardNode')}</button>
-        <button type="button" role="menuitem" onClick={() => { placeNewNode(createImageNode({ assetId: '', url: '', mime: 'image/png', bytes: 0, width: 1, height: 1, origin: 'upload' }, createMenu.world)); setCreateMenu(null) }}><ToolbarIcon name="image" size={16} />{tt('canvas.addImageNode')}</button>
-        <button type="button" role="menuitem" onClick={() => { placeNewNode(createEmptyFileNode(createMenu.world)); setFileTargetNodeId(null); setCreateMenu(null) }}><ToolbarIcon name="file" size={16} />{tt('canvas.skills.addFileNode')}</button>
-        <button type="button" role="menuitem" onClick={() => { setFileTargetNodeId(null); fileUploadRef.current?.click(); setCreateMenu(null) }}><ToolbarIcon name="upload" size={16} />{tt('canvas.skills.fileMenuUpload')}</button>
-        <button type="button" role="menuitem" onClick={() => { placeNewNode(createConfigNode(createMenu.world)); setCreateMenu(null) }}><ToolbarIcon name="sparkle" size={16} />{tt('canvas.addConfigNode')}</button>
-      </div>
-    }
-    return null
-  }
+  // ---- renderContextMenu 已搬出：见 canvas/composer.tsx / canvas/context-menu.tsx
 
   const emptyState = document !== null && document.nodes.length === 0
     ? <div className={css.emptyHint} data-canvas-no-zoom="">

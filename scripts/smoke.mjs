@@ -8895,11 +8895,59 @@ await check('E1 client apply mounts the sidebar entry and studio (jsdom)', async
     // structure is what makes this check able to fail -- a behaviour-only
     // assertion passes whether or not the guard exists, which is how an
     // earlier version of this check turned out to be vacuous.
+    // 选中一个**普通**节点时，输入条必须不出现：输入条只挂在「唯一选中的
+    // config 节点」上，否则它挂在哪、提交给谁都没有定义。
+    //
+    // 注意这条守卫的是「挂错节点」这类回归，不是 `composerTarget === null` 那句
+    // 提前返回——`composerVisible` 本身就是 `composerTarget !== null`，把第三个
+    // 条件删掉照样不渲染，变异不会红。真正会红的是输入条挂到非 config 节点上。
+    const plainNode = view.querySelector('[data-node-id="node-pdf"]')
+    assert.ok(plainNode !== null, 'a non-config node is on the canvas')
+    plainNode.dispatchEvent(new jsdomWindow.MouseEvent('pointerdown', { bubbles: true, clientX: 5, clientY: 5, button: 0 }))
+    await new Promise(resolve => setTimeout(resolve, 60))
+    assert.ok(
+      view.querySelector('[data-canvas-no-zoom][class*="composer"]') === null,
+      'selecting a non-config node shows no composer (there is no target to submit to)',
+    )
+
     const configNode = view.querySelector('[data-node-id="node-config"]')
     configNode.dispatchEvent(new jsdomWindow.MouseEvent('pointerdown', { bubbles: true, clientX: 5, clientY: 5, button: 0 }))
     await new Promise(resolve => setTimeout(resolve, 60))
     const composerRoot = view.querySelector('[data-canvas-no-zoom][class*="composer"]')
     assert.ok(composerRoot !== null, 'the composer is on screen before the overlay pointerdown check')
+
+    // 发送按钮的禁用条件是输入条唯一的「提交前检查」：空提示词、没连上渠道、
+    // 视频没选模型时都不许提交，否则用户会付一次注定失败的调用。这段条件在
+    // 5452 行的主文件里从未被任何断言碰到过——把它整段删掉，全套仍然是绿的。
+    {
+      // 选择器必须精确到这个按钮：输入条里还有渲染方式、模型、尺寸这些下拉
+      // 触发键，`button[aria-label]` 匹配到的是它们，断言会静默地测错控件。
+      const sendButton = composerRoot.querySelector('button[class*="composerSend"]')
+      assert.ok(sendButton !== null, 'the composer has a send button')
+      const promptBox = composerRoot.querySelector('textarea')
+      assert.ok(promptBox !== null, 'the composer has a prompt box')
+      // 先清空提示词：没有正文、没有引用、没有标注文本时，提交必须被挡住。
+      const setValue = Object.getOwnPropertyDescriptor(jsdomWindow.HTMLTextAreaElement.prototype, 'value')?.set
+      assert.ok(typeof setValue === 'function', 'the textarea value setter is reachable in jsdom')
+      setValue.call(promptBox, '')
+      promptBox.dispatchEvent(new jsdomWindow.Event('input', { bubbles: true }))
+      await new Promise(resolve => setTimeout(resolve, 60))
+      assert.equal(
+        sendButton.disabled,
+        true,
+        'an empty prompt leaves the send button disabled (the run would be rejected)',
+      )
+      // 反过来：填入正文后必须变回可点，否则输入条形同虚设。
+      setValue.call(promptBox, '一只猫')
+      promptBox.dispatchEvent(new jsdomWindow.Event('input', { bubbles: true }))
+      await new Promise(resolve => setTimeout(resolve, 60))
+      assert.equal(sendButton.disabled, false, 'typing a prompt re-enables the send button')
+      // 收尾：把提示词清回空，别把内容漏给后面的断言。
+      setValue.call(promptBox, '')
+      promptBox.dispatchEvent(new jsdomWindow.Event('input', { bubbles: true }))
+      await new Promise(resolve => setTimeout(resolve, 60))
+    }
+
     // `=== null` rather than assert.equal: on failure assert.equal runs
     // util.inspect over the actual value, and inspecting a jsdom element walks
     // its React fiber (circular, unbounded) until the process is OOM-killed --
