@@ -296,6 +296,36 @@ const CASES = [
     to: `  "version": "${bumped(SRC_VERSION, 1)}",`,
     expect: new RegExp(`version ${bumped(SRC_VERSION, 1).replace(/\./g, '\\.')} has no release notes`),
   },
+  {
+    // The `lib/` mapping exists so the guard stops reporting BUILD OUTPUT as
+    // uncommitted. Deleting just the resolution reproduces the state every
+    // clean clone was in before it: `../lib/index.js` names a gitignored
+    // artifact, nothing in the candidate set is tracked, and the guard calls a
+    // correct import missing. Without this case the mapping could quietly
+    // disappear and nothing would notice until somebody ran `pnpm test` on a
+    // fresh checkout -- which is exactly the bug the mapping fixed.
+    name: 'a guard forgets that lib/ is build output',
+    runner: 'tracked',
+    file: 'scripts/verify-tracked.mjs',
+    from: `    if (entry !== undefined) list.push(join(ROOT, entry))`,
+    to: '',
+    expect: /smoke-canvas-agent\.mjs imports \.\.\/lib\/index\.js/,
+  },
+  {
+    // The other direction, and the dangerous one. A guard that never reports
+    // anything passes every "is it still green" check while protecting nothing
+    // -- so this mutates the mapping into "accept ANY lib/ specifier" and
+    // requires that a source entry which is genuinely gone is still caught.
+    // The mutation keeps `entry` consulted (an unknown chunk still falls
+    // through to the real candidates), so only the resolution of a KNOWN entry
+    // is corrupted -- the narrowest change that makes the guard too permissive.
+    name: 'a guard accepts a lib/ import whose source entry is gone',
+    runner: 'tracked',
+    file: 'scripts/verify-tracked.mjs',
+    from: `    if (entry !== undefined) list.push(join(ROOT, entry))`,
+    to: `    if (entry !== undefined) list.push(join(ROOT, 'src/__absent__' + entry))`,
+    expect: /smoke-canvas-agent\.mjs imports \.\.\/lib\/index\.js/,
+  },
   // --------------------------------------------------- the gallery trash window
   {
     // A hard delete is the regression this round removed: the entry leaves the

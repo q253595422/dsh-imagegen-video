@@ -185,7 +185,17 @@ await check('C1 the dock menu offers 添加视频 and the picker opens with thre
 
   const waitUntil = async (predicate, timeout = 4000) => {
     const deadline = Date.now() + timeout
-    while (!predicate() && Date.now() < deadline) await new Promise(resolve => setTimeout(resolve, 25))
+    // Budgeted in polls as well as wall-clock: under load the first 25ms timer
+    // can fire seconds late, so a pure deadline expires having granted almost no
+    // retries and reports a render missing that the next tick would have made.
+    // Measured here: C6's upload path (file -> asset -> node -> dialog close)
+    // missed a 6s wall-clock window on a loaded machine and passed on re-run.
+    const minPolls = Math.max(1, Math.ceil(timeout / 25))
+    let polls = 0
+    while (!predicate() && (polls < minPolls || Date.now() < deadline)) {
+      await new Promise(resolve => setTimeout(resolve, 25))
+      polls++
+    }
     return predicate()
   }
   const waitForSelector = async (scope, selector, timeout = 4000) => {

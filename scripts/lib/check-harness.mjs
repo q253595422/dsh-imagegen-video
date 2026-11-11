@@ -148,3 +148,83 @@ export function createCheckHarness ({ results, isSkip, onSkip, formatError = mes
     }
   }
 }
+
+/**
+ * Assert this module's own verdict rules, using the real `createCheckHarness`.
+ *
+ * WHY this lives here and not only in `verify-check-harness.mjs`: that suite is
+ * the readable specification and can be run on its own, but `pnpm test` does not
+ * invoke it, so on its own it protects nothing. Calling this from the first
+ * suite that uses the harness puts the rules inside the gate without touching
+ * `package.json` (which release.yml publishes on).
+ *
+ * Throws on the first violation. Callers decide whether that is fatal (the
+ * suites) or a case result (the spec script).
+ */
+export async function assertRules (assert) {
+  const hold = process.stderr.write
+  process.stderr.write = () => true // verdict probing writes progress lines
+  /** Run one probe check and report how it was recorded. */
+  const probe = async (fn, timeoutMs, options = {}) => {
+    const sink = []
+    const run = createCheckHarness({ results: sink, ...options })
+    const before = process.exitCode
+    process.exitCode = undefined
+    let exitCode
+    try {
+      await run('probe', fn, timeoutMs)
+      // Read INSIDE the try: restoring `before` first would make every
+      // "must not poison the exit code" assertion measure nothing.
+      exitCode = process.exitCode
+    } finally {
+      process.exitCode = before
+    }
+    return { line: sink[0] ?? '', exitCode }
+  }
+  try {
+    const fast = await probe(async () => {}, 1000)
+    assert.ok(fast.line.startsWith('PASS'), `a fast pass must be a PASS, got: ${fast.line}`)
+    assert.ok(!fast.line.includes('slow:'), `a fast pass must not be annotated: ${fast.line}`)
+    assert.notEqual(fast.exitCode, 1, 'a passing check must not set the exit code')
+
+    // The defect this module exists for: overrunning the budget is not a
+    // verdict. A slow check that then PASSES is a pass that says how slow.
+    const slow = await probe(async () => {
+      await new Promise(resolve => setTimeout(resolve, 60))
+    }, 10)
+    assert.ok(slow.line.startsWith('PASS') && slow.line.includes('slow:'),
+      `a slow pass must be a PASS annotated slow, got: ${slow.line}`)
+    assert.notEqual(slow.exitCode, 1, 'a slow pass must not poison the exit code')
+
+    // ... and one that overruns and then FAILS reports its real message, not a
+    // bare "timed out" that hides the first failing assertion.
+    const late = await probe(async () => {
+      await new Promise(resolve => setTimeout(resolve, 60))
+      throw new Error('the real assertion broke')
+    }, 10)
+    assert.ok(late.line.startsWith('FAIL') && late.line.includes('the real assertion broke'),
+      `a late failure must carry its real message, got: ${late.line}`)
+    assert.equal(late.exitCode, 1, 'a real failure must set the exit code')
+
+    // Timeout detection is by TYPE, not message text: an assertion that happens
+    // to say "timed out after" must stay an ordinary failure, never be
+    // downgraded to a slow pass.
+    const mimic = await probe(async () => {
+      throw new Error('timed out after 5ms, says the assertion')
+    }, 1000)
+    assert.ok(mimic.line.startsWith('FAIL') && !mimic.line.includes('slow:'),
+      `a message that mimics a timeout must stay a plain FAIL, got: ${mimic.line}`)
+    assert.equal(mimic.exitCode, 1, 'a mimicking failure must still set the exit code')
+
+    // A skip is neither a pass nor a failure, and must survive the deadline
+    // path -- otherwise a suite with no ffmpeg would report a hung check.
+    class SkipSignal extends Error {}
+    const skipped = await probe(async () => { throw new SkipSignal('no ffmpeg here') }, 1000, {
+      isSkip: error => error instanceof SkipSignal,
+    })
+    assert.ok(skipped.line.startsWith('SKIP'), `a skip must be a SKIP, got: ${skipped.line}`)
+    assert.notEqual(skipped.exitCode, 1, 'a skip must not be a failure')
+  } finally {
+    process.stderr.write = hold
+  }
+}

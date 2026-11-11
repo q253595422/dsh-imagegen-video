@@ -22,7 +22,7 @@ import { isAbsolute, join, resolve } from 'node:path'
 // 画布源码可能分布在 CanvasWorkspace.tsx 与 canvas/ 下的模块中：扫描一律走
 // 这个聚合读取，重构搬文件时断言才不会静静失配。
 import { canvasSourceText } from './lib/canvas-source.mjs'
-import { createCheckHarness } from './lib/check-harness.mjs'
+import { assertRules, createCheckHarness } from './lib/check-harness.mjs'
 
 const root = new URL('../', import.meta.url)
 const results = []
@@ -38,24 +38,51 @@ const packageJson = JSON.parse(readFileSync(new URL('package.json', root), 'utf8
  *
  * WHY shared: each suite used to carry its own copy of that logic, so the same
  * defect lived in six places and a seventh copy would have inherited it by
- * example. The verdict rules are pinned by `scripts/verify-check-harness.mjs`.
+ * example. The verdict rules are pinned by `scripts/verify-check-harness.mjs`,
+ * which `pnpm test` does not invoke -- so the rules are ALSO asserted below,
+ * before the first real check. This suite is the right place for that: it is
+ * the first thing `pnpm test` runs that uses the harness, and a harness that
+ * has drifted from its rules would otherwise be discovered by the one thing it
+ * gets wrong (a slow-but-correct check recorded as a failure) rather than here.
  */
 const check = createCheckHarness({ results })
 
-/** Wait for React/jsdom state to settle without relying on a fixed delay. */
+// Put the harness rules inside the gate. `scripts/verify-check-harness.mjs` is
+// the readable specification, but `pnpm test` does not invoke it, so on its own
+// it protects nothing; this suite is the first thing in `pnpm test` that uses
+// the harness, which makes it the cheapest place to notice a drifted verdict.
+// Throwing here is deliberate: a harness that records a correct-but-slow check
+// as broken makes every suite below it lie.
+await assertRules(assert)
+
+/** Wait for React/jsdom state to settle without relying on a fixed delay.
+ *
+ *  Budgeted in polls as well as wall-clock, for the same measured reason
+ *  `waitUntil` below documents: under load the first 25ms timer can fire
+ *  seconds late, so a pure deadline expires having granted very few retries and
+ *  reports "did not render" for a node the next tick would have produced. The
+ *  E1 jsdom checks hit exactly that -- the same tree passed and failed on
+ *  consecutive runs, naming different selectors each time. */
 async function waitForSelector(root, selector, timeout = 1200) {
   const deadline = Date.now() + timeout
-  while (root.querySelector(selector) === null && Date.now() < deadline) {
+  const minPolls = Math.max(1, Math.ceil(timeout / 25))
+  let polls = 0
+  while (root.querySelector(selector) === null && (polls < minPolls || Date.now() < deadline)) {
     await new Promise(resolve => setTimeout(resolve, 25))
+    polls++
   }
   assert.ok(root.querySelector(selector) !== null, `selector did not render: ${selector}`)
 }
 
-/** Wait for async fixture data to reach the rendered list, not just its host. */
+/** Wait for async fixture data to reach the rendered list, not just its host.
+ *  Same poll budget as `waitForSelector`, same measured reason. */
 async function waitForSelectorCount(root, selector, count, timeout = 1200) {
   const deadline = Date.now() + timeout
-  while (root.querySelectorAll(selector).length < count && Date.now() < deadline) {
+  const minPolls = Math.max(1, Math.ceil(timeout / 25))
+  let polls = 0
+  while (root.querySelectorAll(selector).length < count && (polls < minPolls || Date.now() < deadline)) {
     await new Promise(resolve => setTimeout(resolve, 25))
+    polls++
   }
   assert.ok(root.querySelectorAll(selector).length >= count, `expected ${count} matches: ${selector}`)
 }
@@ -6973,7 +7000,11 @@ await check('E1 client apply mounts the sidebar entry and studio (jsdom)', async
     const assetFile = new jsdomWindow.File(['cup'], 'cup.png', { type: 'image/png' })
     Object.defineProperty(ecommerceUploadInput, 'files', { value: { 0: assetFile, length: 1 }, configurable: true })
     ecommerceUploadInput.dispatchEvent(new jsdomWindow.Event('change', { bubbles: true }))
-    await new Promise(resolve => setTimeout(resolve, 50))
+    // Poll, do not sleep a fixed 50ms then look once: the chip appears when the
+    // upload's reader resolves, which under load lands well past any fixed
+    // delay -- and the bare assertion after it then reports the chip missing on
+    // a run where the very next tick rendered it.
+    await waitForSelector(view, '[data-ecommerce-asset]')
     assert.ok(view.querySelector('[data-ecommerce-asset]') !== null, 'uploaded product asset renders as a chip')
     const refToggle = [...view.querySelectorAll('button')].find(button => button.textContent?.includes('参考图设置'))
     assert.ok(refToggle !== undefined, 'reference-role settings toggle is rendered')
@@ -7714,6 +7745,21 @@ await check('E1 client apply mounts the sidebar entry and studio (jsdom)', async
 
     // Ecommerce submission flow: with the channel key set, confirming the plan
     // fans out one queued task per planned image carrying the set metadata.
+    //
+    // A local predicate helper, named apart from `waitUntil` on purpose: this
+    // scope declares its OWN `waitUntil` further down (the canvas F8/F9 block),
+    // so calling that name up here is a temporal-dead-zone ReferenceError, not a
+    // fallback to the file-level helper. Same reason `waitPpt` exists above.
+    const waitEcommerce = async (predicate, timeout = 10_000) => {
+      const deadline = Date.now() + timeout
+      const minPolls = Math.max(1, Math.ceil(timeout / 25))
+      let polls = 0
+      while (!predicate() && (polls < minPolls || Date.now() < deadline)) {
+        await new Promise(resolve => setTimeout(resolve, 25))
+        polls++
+      }
+      return predicate()
+    }
     const ecommerceTabAgain = [...view.querySelectorAll('[role="tablist"] button')].find(button => button.textContent?.includes('电商模式'))
     assert.ok(ecommerceTabAgain !== undefined, 'ecommerce switch still present for submission flow')
     ecommerceTabAgain.click()
@@ -7730,7 +7776,15 @@ await check('E1 client apply mounts the sidebar entry and studio (jsdom)', async
     const confirmSet = [...view.querySelectorAll('button')].find(button => button.textContent?.includes('确认生成整套图片'))
     assert.ok(confirmSet !== undefined, 'ecommerce confirm action is rendered')
     confirmSet.click()
-    await new Promise(resolve => setTimeout(resolve, 3500))
+    // The six slots submit one after another (each anchored on the previous
+    // result), so this is not a 3.5-second wait -- on a loaded machine the chain
+    // reaches it well past that, and every assertion below then fails on data
+    // that was still arriving. Wait for the observable end of the chain (all six
+    // submissions in) with a budget that is about the machine, not the step.
+    assert.ok(
+      await waitEcommerce(() => ecommerceSubmissions.length === 6, 30_000),
+      'the anchor chain submitted all six slots',
+    )
     assert.equal(ecommerceSubmissions.length, 6, 'anchor chain submits the main image first, then the remaining slots')
     assert.ok(ecommerceSubmissions.every(payload => payload.workflow === 'ecommerce' && typeof payload.projectId === 'string' && payload.projectId !== ''), 'submissions carry the ecommerce workflow and project id')
     assert.ok(ecommerceSubmissions.every(payload => typeof payload.slotLabel === 'string' && payload.slotLabel !== '' && typeof payload.slotKey === 'string' && payload.slotKey !== ''), 'submissions carry slot metadata')
@@ -7748,7 +7802,14 @@ await check('E1 client apply mounts the sidebar entry and studio (jsdom)', async
     assert.ok(ecommerceSubmissions.every(payload => payload.projectName === '测试保温杯'), 'submissions carry the product name snapshot')
     const ecommerceResults = view.querySelector('[data-ecommerce-results]')
     assert.ok(ecommerceResults !== null, 'product set results section is rendered')
-    assert.ok(ecommerceResults.textContent?.includes('1/6'), 'results header reports task progress')
+    // Progress is reported as soon as a slot finishes, so `1/6` is the FIRST
+    // state, not a stable one -- waiting for the whole chain to finish (above)
+    // can leave it already at 2/6 or beyond. Assert the shape the header is
+    // meant to carry: a finished-out-of-total count on the six slots.
+    assert.ok(
+      await waitEcommerce(() => /\d+\/6/.test(view.querySelector('[data-ecommerce-results]')?.textContent ?? '')),
+      'results header reports task progress',
+    )
     const mainGroup = ecommerceResults.querySelector('[data-ecommerce-group="主图"]')
     assert.ok(mainGroup !== null, 'results are grouped by slot label')
     assert.ok(mainGroup.querySelector('img') !== null, 'completed slot renders its image')
@@ -7765,10 +7826,12 @@ await check('E1 client apply mounts the sidebar entry and studio (jsdom)', async
       .find(button => button.textContent?.includes('历史保温杯'))
     assert.ok(ecommerceHistoryRow !== undefined, 'ecommerce history rows collapse into one project entry')
     ecommerceHistoryRow.click()
-    await new Promise(resolve => setTimeout(resolve, 100))
+    assert.ok(
+      await waitEcommerce(() => (view.querySelector('[data-ecommerce-results]')?.textContent ?? '').includes('2/2')),
+      'restored results report history progress',
+    )
     const restoredResults = view.querySelector('[data-ecommerce-results]')
     assert.ok(restoredResults !== null, 'restored project keeps the ecommerce canvas')
-    assert.ok(restoredResults.textContent?.includes('2/2'), 'restored results report history progress')
     assert.ok(restoredResults.querySelector('[data-ecommerce-group="卖点图"] img') !== null, 'restored groups render stored images')
 
     // The clear path: resetting the key stages an explicit clear and must
@@ -7867,7 +7930,16 @@ await check('E1 client apply mounts the sidebar entry and studio (jsdom)', async
       await waitUntil(() => canvasSaves.some(saved => saved.id === 'canvas-two' && saved.title === 'second edited')),
       'the pending edit was flushed before the canvas was replaced',
     )
-    assert.ok(await waitUntil(() => view.querySelector('[data-node-id="node-image"]') !== null), 'the fixture canvas is back on screen')
+    // A longer budget than the 1200ms default, deliberately: this is not one
+    // selector appearing but a whole canvas being torn down and re-mounted after
+    // a project switch, and it is reached only after the save-flush wait above
+    // has already spent part of its own budget. Measured as the last flake in
+    // this check once the two selector waits were fixed -- the tree was correct
+    // and the node simply had not re-mounted yet.
+    assert.ok(
+      await waitUntil(() => view.querySelector('[data-node-id="node-image"]') !== null, 8000),
+      'the fixture canvas is back on screen',
+    )
 
     // F8: an answer that arrives after the user left belongs to a canvas that is
     // no longer on screen. Letting it through put the previous canvas back —
@@ -7876,13 +7948,27 @@ await check('E1 client apply mounts the sidebar entry and studio (jsdom)', async
     await renameCanvas('smoke edited')
     assert.ok(await waitUntil(() => heldSaves.length === 1, 3000), 'the first canvas save is in flight')
     await switchProject('second')
-    assert.ok(await waitUntil(() => view.querySelector('[data-node-id="node-second"]') !== null), 'the switch landed while that answer was still parked')
+    assert.ok(await waitUntil(() => view.querySelector('[data-node-id="node-second"]') !== null, 8000), 'the switch landed while that answer was still parked')
     heldSaves.splice(0).forEach(resolve => resolve())
+    // The assertion below is a NEGATIVE one ("the left canvas does not come
+    // back"), so getting here too early is not a flake -- it is a false pass.
+    // Waiting a fixed 200ms and then looking once proves nothing when the
+    // switch has not landed yet: `node-image` is absent because the canvas has
+    // not been replaced, not because a late answer was discarded. Wait for the
+    // switch to actually land first, and only then give the parked answer time
+    // to arrive and be rejected.
+    assert.ok(
+      await waitUntil(() => view.querySelector('[data-node-id="node-second"]') !== null, 8000),
+      'F8: the switch landed before the late answer was released',
+    )
     await new Promise(resolve => setTimeout(resolve, 200))
     assert.ok(view.querySelector('[data-node-id="node-second"]') !== null, 'a late answer for the canvas the user left is discarded')
     assert.equal(view.querySelector('[data-node-id="node-image"]'), null, 'the left canvas does not come back on screen')
     await switchProject('smoke')
-    assert.ok(await waitUntil(() => view.querySelector('[data-node-id="node-image"]') !== null), 'the fixture canvas is restored for the checks that follow')
+    assert.ok(
+      await waitUntil(() => view.querySelector('[data-node-id="node-image"]') !== null, 8000),
+      'the fixture canvas is restored for the checks that follow',
+    )
 
     // ------------------------------------- canvas shortcuts yield when hidden
     // The panel is hidden by a STYLESHEET RULE, not by unmounting: the React
