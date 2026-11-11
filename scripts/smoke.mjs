@@ -8998,6 +8998,38 @@ await check('E1 client apply mounts the sidebar entry and studio (jsdom)', async
         )
       }
 
+      // (f) 标注卡不接图：它挂在图片节点的 metadata 上，只用来写那一个框的
+      //     提示词，不进图。所以连接桩必须不出现——如果它有了桩，用户就能把
+      //     提示词卡当节点拖进工作流，而生成步骤根本不读这条边。
+      //
+      //     两个桩由 `S.isAnnotationCard(node) ? null : ...` 一处挡掉，缺了那个
+      //     分支卡片上就会多出两个能拉的圆点。
+      {
+        canvasDocument.nodes = [...canvasDocument.nodes, {
+          id: 'node-annotation-card', type: 'text', title: '标注提示词', x: 0, y: 2400, width: 240, height: 120,
+          metadata: { text: '', fontSize: 13, annotation: { sourceNodeId: 'node-image', rect: { x: 0.1, y: 0.1, width: 0.3, height: 0.3 } } },
+        }]
+        ecommerceSwitch.click()
+        await new Promise(resolve => setTimeout(resolve, 60))
+        canvasSwitch.click()
+        await waitForSelector(view, '[data-node-id="node-annotation-card"]')
+        const cardBody = view.querySelector('[data-node-id="node-annotation-card"]')
+        assert.ok(cardBody.querySelector('textarea') !== null, 'the card is on screen as a text node')
+        // 注意这里比较的是布尔值，**不能**把元素本身交给 assert.equal：
+        // 失败时 assert 会用 util.inspect 展开实参，而 jsdom 元素会顺着
+        // _ownerDocument 把整棵文档树走一遍，进程直接被 OOM 杀掉（退出码
+        // 137、没有 FAIL 行）。那样这条断言看起来「跑了」，其实什么都没报。
+        assert.ok(
+          cardBody.querySelector('[class*="handleLeft"]') === null,
+          'an annotation card has no incoming handle — it is not wired into the graph',
+        )
+        assert.ok(
+          cardBody.querySelector('[class*="handleRight"]') === null,
+          'an annotation card has no outgoing handle either',
+        )
+        canvasDocument.nodes = canvasDocument.nodes.filter(entry => entry.id !== 'node-annotation-card')
+      }
+
       // 出错态不是只要「有个按钮」——它得把宿主给的原因原样显示出来，重试按钮
       // 必须在。这两点分开断，免得只画了个空壳也算通过。
       canvasDocument.nodes = [...canvasDocument.nodes,
