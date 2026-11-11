@@ -48,6 +48,7 @@ import { coveredNodes, SNAP_SCREEN_PX, snapOffset, type OverlapPair, type Point 
 import { ComposerSelect, IconButton, labelWithKeys, ToolbarIcon, type ToolbarIconName } from './canvas/dock-controls.tsx'
 import { COMPOSE_SKILL_ID, composeGlyphs, PolishMenu, SkillConfigForm, SkillConfirmDialog, SkillLibraryDialog, SkillPicker, tierLabel } from './canvas/skill-dialogs.tsx'
 import { StoryboardBody } from './canvas/storyboard-board.tsx'
+import { CanvasMinimap } from './canvas/minimap.tsx'
 import { ImagePicker, readImageSize, SketchBoard } from './canvas/sketch-and-picker.tsx'
 import { RUN_NODE_SIZE, runRectOf, SkillRunCard, type SkillRunTrace } from './canvas/run-card.tsx'
 import { CanvasErrorToast, CanvasNoticeToast, CanvasVideoPreviewOverlay, CanvasWorkflowProgressBar } from './canvas/overlays.tsx'
@@ -5186,43 +5187,13 @@ export function CanvasWorkspace(props: CanvasWorkspaceProps): React.JSX.Element 
 
   const renderMinimap = (): React.JSX.Element | null => {
     if (document === null || viewportSize.width === 0) return null
-    const width = 220
-    const height = 150
-    const nodes = document.nodes
-    let worldBounds = { x: -600, y: -600, w: 1200, h: 1200 }
-    let scale = Math.min(width / worldBounds.w, height / worldBounds.h)
-    let offset = { x: (width - worldBounds.w * scale) / 2, y: (height - worldBounds.h * scale) / 2 }
-    if (nodes.length > 0) {
-      const content = nodesBounds(nodes)
-      worldBounds = { x: content.minX - 500, y: content.minY - 500, w: content.maxX - content.minX + 1000, h: content.maxY - content.minY + 1000 }
-      scale = Math.min(width / worldBounds.w, height / worldBounds.h)
-      offset = { x: (width - worldBounds.w * scale) / 2, y: (height - worldBounds.h * scale) / 2 }
-    }
-    const toMap = (worldX: number, worldY: number): Point => ({ x: (worldX - worldBounds.x) * scale + offset.x, y: (worldY - worldBounds.y) * scale + offset.y })
-    const toWorld = (mapX: number, mapY: number): Point => ({ x: (mapX - offset.x) / scale + worldBounds.x, y: (mapY - offset.y) / scale + worldBounds.y })
-    const viewportRect = (() => {
-      const vx = -document.viewport.x / document.viewport.k
-      const vy = -document.viewport.y / document.viewport.k
-      const p1 = toMap(vx, vy)
-      const p2 = toMap(vx + viewportSize.width / document.viewport.k, vy + viewportSize.height / document.viewport.k)
-      return { x: p1.x, y: p1.y, w: Math.max(p2.x - p1.x, 4), h: Math.max(p2.y - p1.y, 4) }
-    })()
-    const jump = (event: ReactPointerEvent<HTMLDivElement>): void => {
-      const bounds = event.currentTarget.getBoundingClientRect()
-      const world = toWorld(event.clientX - bounds.left, event.clientY - bounds.top)
-      setViewport({ k: document.viewport.k, x: viewportSize.width / 2 - world.x * document.viewport.k, y: viewportSize.height / 2 - world.y * document.viewport.k })
-    }
-    return <aside className={css.minimap} data-canvas-no-zoom="" aria-label={tt('canvas.minimap')}>
-      <div className={css.minimapCanvas} onPointerDown={event => { event.preventDefault(); event.currentTarget.setPointerCapture(event.pointerId); jump(event) }}
-        onPointerMove={event => { if (event.buttons === 1) jump(event) }}>
-        {nodes.map(node => {
-          const position = toMap(node.x, node.y)
-          return <div key={node.id} className={`${css.minimapNode} ${node.type === 'image' ? css.minimapImage : css.minimapText} ${selectedIds.has(node.id) ? css.minimapSelected : ''}`}
-            style={{ left: position.x, top: position.y, width: Math.max(node.width * scale, 2), height: Math.max(node.height * scale, 2) }} />
-        })}
-        <div className={css.minimapViewport} style={{ left: viewportRect.x, top: viewportRect.y, width: viewportRect.w, height: viewportRect.h }} />
-      </div>
-    </aside>
+    return <CanvasMinimap
+      nodes={document.nodes}
+      viewport={document.viewport}
+      size={viewportSize}
+      selectedIds={selectedIds}
+      onViewport={setViewport}
+    />
   }
 
   const renderContextMenu = (): ReactNode => {
