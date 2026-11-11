@@ -48,3 +48,15 @@ export const SKETCH_ERASER_RADIUS = 16
 export const DROP_IMAGE_MAX_BYTES = 20 * 1024 * 1024
 /** Per-drop cap; anything beyond is reported, not silently discarded. */
 export const DROP_IMAGE_MAX_COUNT = 20
+
+/**
+ * 世界坐标的绘制留白（给连线层、标注引线层那两张铺满世界的 SVG 用）。
+ *
+ * 节点的世界坐标可能为负，所以这两层把原点平移到 `(WORLD_PAD, WORLD_PAD)`，
+ * SVG 自身再向左上偏移同样的量。12000 是「比任何画布内容都大」的经验值——它
+ * 同时决定 SVG 的宽高，因此不能随内容增长，否则频繁改尺寸会让整层重排。
+ *
+ * 两层必须用同一个值：各写一份的话，只要有人改了一边，引线和连线就会错开，
+ * 而错位在视觉上很难归因到常量。
+ */
+export const WORLD_PAD = 12000

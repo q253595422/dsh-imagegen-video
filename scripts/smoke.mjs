@@ -7862,6 +7862,13 @@ await check('E1 client apply mounts the sidebar entry and studio (jsdom)', async
     canvasSwitch.click()
     await waitForSelector(view, '[data-node-id="node-image"]')
     assert.ok(view.querySelector('[data-node-id="node-image"]') !== null, 'image node rendered from the fixture')
+    // 连线层从 CanvasWorkspace 搬到了 canvas/connection-layer.tsx。上面种下的
+    // edge-fixture 是唯一的连线，它必须真的画出那条可点的命中线——否则节点还
+    // 在、边却没了，而画布上「少一根线」很难被看出是回归。
+    assert.ok(
+      view.querySelector('[data-connection-hit="edge-fixture"]') !== null,
+      'the fixture connection is drawn by the connection layer',
+    )
 
     const waitUntil = async (predicate, timeout = 2500) => {
       const deadline = Date.now() + timeout

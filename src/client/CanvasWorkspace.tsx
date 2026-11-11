@@ -49,6 +49,7 @@ import { ComposerSelect, IconButton, labelWithKeys, ToolbarIcon, type ToolbarIco
 import { COMPOSE_SKILL_ID, composeGlyphs, PolishMenu, SkillConfigForm, SkillConfirmDialog, SkillLibraryDialog, SkillPicker, tierLabel } from './canvas/skill-dialogs.tsx'
 import { StoryboardBody } from './canvas/storyboard-board.tsx'
 import { CanvasMinimap } from './canvas/minimap.tsx'
+import { ConnectionLayer } from './canvas/connection-layer.tsx'
 import { ImagePicker, readImageSize, SketchBoard } from './canvas/sketch-and-picker.tsx'
 import { RUN_NODE_SIZE, runRectOf, SkillRunCard, type SkillRunTrace } from './canvas/run-card.tsx'
 import { CanvasErrorToast, CanvasNoticeToast, CanvasVideoPreviewOverlay, CanvasWorkflowProgressBar } from './canvas/overlays.tsx'
@@ -56,13 +57,12 @@ import { BackgroundDockMenu, ImageDockMenu, NodeAddMenu } from './canvas/dock-me
 import {
   annotationAnchor, assetOf, assetToDataUrl, attachedCards, bezierPath, clamp01, clampScale, cloneNodesWithCards, freeColumnX, imageDataUrl, isAnnotationCard, isSketchNode, layerKindLabel, liveAnnotations, newId, nodeAnchor, nodeMetadata, nodeSizeFromRatio, nodesBounds, normalizeConfigNodeSizes, pruneAnnotations, removeNodesAndCards, resizedRect, sizeForAsset, textStyleOf, usableAsset, videoOf,
 } from './canvas/node-model.ts'
-import { CONFIG_NODE_SIZE, DROP_IMAGE_MAX_BYTES, SKETCH_ERASER_RADIUS, SKETCH_WIDTH_DOTS, FILE_NODE_SIZE, GRID_SIZE, IMAGE_NODE_SIZE, LEGACY_CONFIG_NODE_SIZE, MAX_SCALE, MIN_SCALE, PICKER_TABS, SKETCH_COLORS, SKETCH_EXPORT_WIDTH, SKETCH_NODE_SIZE, SKETCH_WIDTHS, STORYBOARD_NODE_SIZE, TEXT_NODE_SIZE } from './canvas/constants.ts'
+import { CONFIG_NODE_SIZE, DROP_IMAGE_MAX_BYTES, WORLD_PAD, SKETCH_ERASER_RADIUS, SKETCH_WIDTH_DOTS, FILE_NODE_SIZE, GRID_SIZE, IMAGE_NODE_SIZE, LEGACY_CONFIG_NODE_SIZE, MAX_SCALE, MIN_SCALE, PICKER_TABS, SKETCH_COLORS, SKETCH_EXPORT_WIDTH, SKETCH_NODE_SIZE, SKETCH_WIDTHS, STORYBOARD_NODE_SIZE, TEXT_NODE_SIZE } from './canvas/constants.ts'
 
 type CanvasTool = 'select' | 'pan'
 type BackgroundMode = CanvasDocument['background']
 
 const HISTORY_LIMIT = 60
-const WORLD_PAD = 12000
 /**
  * How long to wait before the autosave retries after a rejected write.
  *
@@ -4900,104 +4900,6 @@ export function CanvasWorkspace(props: CanvasWorkspaceProps): React.JSX.Element 
     setSelectedIds(new Set()); setSelectedConnectionId(null)
   }, [])
 
-  const renderConnections = (): React.JSX.Element => {
-    // Legacy canvases wired annotation cards into the graph; those edges are
-    // implicit now (the card is attached to its image), so they are not drawn.
-    // 隐藏连线只藏持久边；connecting 预览与技能运行边仍画——正在进行的
-    // 动作不能因为视图开关而消失。
-    const visible = connectionsHidden ? [] : (document?.connections ?? []).filter(connection => {
-      const from = nodeById.get(connection.fromNodeId)
-      const to = nodeById.get(connection.toNodeId)
-      if (from === undefined || to === undefined) return false
-      return !isAnnotationCard(from) && !isAnnotationCard(to)
-    })
-    const gradientOf = (connection: CanvasConnection): React.JSX.Element => {
-      const from = nodeById.get(connection.fromNodeId)!
-      const to = nodeById.get(connection.toNodeId)!
-      const start = nodeAnchor(from, 'right')
-      const end = nodeAnchor(to, 'left')
-      return <linearGradient
-        key={connection.id}
-        id={`conn-g-${connection.id}`}
-        gradientUnits="userSpaceOnUse"
-        x1={start.x} y1={start.y} x2={end.x} y2={end.y}
-      >
-        <stop offset="0" stopColor="var(--dsw-alias-brand-primary)" stopOpacity="0.08" />
-        <stop offset="0.7" stopColor="var(--dsw-alias-brand-primary)" stopOpacity="0.4" />
-        <stop offset="1" stopColor="var(--dsw-alias-brand-primary)" stopOpacity="0.85" />
-      </linearGradient>
-    }
-    return <svg
-      className={css.connectionLayer}
-      width={WORLD_PAD * 2}
-      height={WORLD_PAD * 2}
-      style={{ left: -WORLD_PAD, top: -WORLD_PAD }}
-      aria-hidden="true"
-    >
-      <defs>
-        <marker id="conn-arrow" viewBox="0 0 10 10" refX="8.5" refY="5" markerWidth="7.5" markerHeight="7.5" orient="auto-start-reverse">
-          <path d="M 0 1.6 L 8.4 5 L 0 8.4 Z" fill="color-mix(in srgb, var(--dsw-alias-brand-primary) 62%, transparent)" />
-        </marker>
-        <marker id="conn-arrow-active" viewBox="0 0 10 10" refX="8.5" refY="5" markerWidth="7.5" markerHeight="7.5" orient="auto-start-reverse">
-          <path d="M 0 1.6 L 8.4 5 L 0 8.4 Z" fill="var(--dsw-alias-brand-primary)" />
-        </marker>
-        {visible.map(gradientOf)}
-      </defs>
-      <g transform={`translate(${WORLD_PAD},${WORLD_PAD})`}>
-        {visible.map(connection => {
-          const from = nodeById.get(connection.fromNodeId)!
-          const to = nodeById.get(connection.toNodeId)!
-          const path = bezierPath(nodeAnchor(from, 'right'), nodeAnchor(to, 'left'))
-          const active = connection.id === selectedConnectionId
-          return <g key={connection.id}>
-            <path
-              data-connection-hit={connection.id}
-              d={path}
-              stroke="transparent"
-              strokeWidth={16}
-              fill="none"
-              style={{ cursor: 'pointer', pointerEvents: 'stroke' }}
-              onPointerDown={event => { event.stopPropagation(); handleConnectionSelect(connection.id) }}
-              onContextMenu={event => {
-                event.preventDefault(); event.stopPropagation()
-                handleConnectionSelect(connection.id)
-                setContextMenu({ type: 'connection', screen: { x: event.clientX, y: event.clientY }, connectionId: connection.id })
-              }}
-            />
-            <path
-              d={path}
-              stroke={`url(#conn-g-${connection.id})`}
-              className={css.connectionPath}
-              markerEnd={active ? 'url(#conn-arrow-active)' : 'url(#conn-arrow)'}
-            />
-            {/* A soft light band glides along the path (source -> target). */}
-            <path d={path} className={`${css.connectionFlow} ${active ? css.connectionFlowActive : ''}`} />
-          </g>
-        })}
-        {connecting !== null ? (() => {
-          const node = nodeById.get(connecting.nodeId)
-          if (node === undefined) return null
-          const mouse = connecting.targetId !== undefined && connecting.targetId !== null && nodeById.has(connecting.targetId)
-            ? nodeAnchor(nodeById.get(connecting.targetId)!, connecting.handleType === 'source' ? 'left' : 'right')
-            : connecting.mouse
-          const path = connecting.handleType === 'source'
-            ? bezierPath(nodeAnchor(node, 'right'), mouse)
-            : bezierPath(mouse, nodeAnchor(node, 'left'))
-          return <path d={path} className={css.connectionPreview} />
-        })() : null}
-        {/* Live skill runs: an animated edge grows out of the source node into
-            the ephemeral run card (removed once outputs take over). */}
-        {Object.entries(skillRuns).map(([taskId, trace]) => {
-          const from = nodeById.get(trace.nodeId)
-          if (from === undefined || trace.status === 'pending') return null
-          const start = nodeAnchor(from, 'right')
-          const end = { x: trace.rect.x, y: trace.rect.y + trace.rect.height / 2 }
-          return <path key={`skill-run-${taskId}`} d={bezierPath(start, end)} className={css.skillRunEdge} />
-        })}
-      </g>
-    </svg>
-  }
-
   /** Leader lines from each annotation box to the prompt card hanging off it.
    *  Rendered in its own layer above the nodes so the line is visible where it
    *  leaves the box, instead of disappearing under the picture. */
@@ -5439,7 +5341,16 @@ export function CanvasWorkspace(props: CanvasWorkspaceProps): React.JSX.Element 
         </div>
       ) : null}
       <div className={css.world} style={{ transform: `translate(${document?.viewport.x ?? 0}px, ${document?.viewport.y ?? 0}px) scale(${document?.viewport.k ?? 1})`, pointerEvents: 'none' }}>
-        <div style={{ pointerEvents: 'auto' }}>{renderConnections()}</div>
+        <div style={{ pointerEvents: 'auto' }}><ConnectionLayer
+          connections={document?.connections ?? null}
+          nodeById={nodeById}
+          hidden={connectionsHidden}
+          selectedConnectionId={selectedConnectionId}
+          draft={connecting}
+          skillRuns={skillRuns}
+          onSelect={handleConnectionSelect}
+          onContextMenu={(connectionId, screen) => setContextMenu({ type: 'connection', screen, connectionId })}
+        /></div>
         {Object.entries(skillRuns).map(([taskId, trace]) => <div key={taskId} style={{ pointerEvents: 'auto' }}><SkillRunCard
           taskId={taskId}
           trace={trace}
