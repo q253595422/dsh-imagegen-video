@@ -2238,9 +2238,9 @@ await check('E7 a video node whose clip is gone says so, and can be reloaded', a
   const node = nodeById('node-clip-prompted')
   const player = node.querySelector('[data-video-body] video')
   assert.ok(player !== null, 'E7: the clip node renders a player to begin with')
-  assert.equal(
-    node.querySelector('[data-video-missing]'), null,
-    'E7: a healthy clip does NOT show the missing state',
+  assert.ok(
+    node.querySelector('[data-video-missing]') === null,
+    `E7: a healthy clip does NOT show the missing state (found: ${node.querySelector('[data-video-missing]')?.textContent?.slice(0, 40)})`,
   )
 
   player.dispatchEvent(new jsdomWindow.Event('error', { bubbles: false }))

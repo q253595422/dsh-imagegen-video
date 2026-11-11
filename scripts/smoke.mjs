@@ -5444,7 +5444,13 @@ await check('D3 sidebar entry mounts inside desktop and unknown sidebar shells, 
   calls.length = 0
   tabOf('image').dispatchEvent(new jsdomWindow.KeyboardEvent('keydown', { key: 'ArrowLeft', bubbles: true }))
   assert.equal(calls.join(','), 'close', 'ArrowLeft on the open image tab returns to the conversation')
-  assert.equal(jsdomDocument.activeElement, tabOf('session'), 'the arrow key moves focus with the selection')
+  // 比较布尔值而不是把元素交给 assert.equal：失败路径上后者会让进程在没有
+  // 任何 FAIL 行的情况下死掉（退出码 137），原因未查到底，实测记录见 E1 段
+  // 「标注卡无连接桩」用例上方那条注释。布尔版本稳定产出可读失败。
+  assert.ok(
+    jsdomDocument.activeElement === tabOf('session'),
+    `the arrow key moves focus with the selection (focus: ${jsdomDocument.activeElement?.getAttribute?.('data-dsh-imagegen-tab') ?? jsdomDocument.activeElement?.tagName ?? 'none'})`,
+  )
   panelOpen = false
   notify()
   assert.equal(tabOf('session').getAttribute('tabindex'), '0', 'the newly selected tab becomes the Tab stop')
@@ -5452,13 +5458,19 @@ await check('D3 sidebar entry mounts inside desktop and unknown sidebar shells, 
 
   tabOf('session').dispatchEvent(new jsdomWindow.KeyboardEvent('keydown', { key: 'End', bubbles: true }))
   assert.equal(calls.join(','), 'close,open', 'End jumps to the last tab')
-  assert.equal(jsdomDocument.activeElement, tabOf('image'))
+  assert.ok(
+    jsdomDocument.activeElement === tabOf('image'),
+    `End puts focus on the last tab (focus: ${jsdomDocument.activeElement?.getAttribute?.('data-dsh-imagegen-tab') ?? jsdomDocument.activeElement?.tagName ?? 'none'})`,
+  )
   panelOpen = true
   notify()
 
   tabOf('image').dispatchEvent(new jsdomWindow.KeyboardEvent('keydown', { key: 'ArrowRight', bubbles: true }))
   assert.equal(calls.join(','), 'close,open,close', 'ArrowRight wraps around to the first tab')
-  assert.equal(jsdomDocument.activeElement, tabOf('session'))
+  assert.ok(
+    jsdomDocument.activeElement === tabOf('session'),
+    `ArrowRight wraps focus back to the first tab (focus: ${jsdomDocument.activeElement?.getAttribute?.('data-dsh-imagegen-tab') ?? jsdomDocument.activeElement?.tagName ?? 'none'})`,
+  )
 
   // A key the contract does not claim must not steal the press.
   const ignored = new jsdomWindow.KeyboardEvent('keydown', { key: 'ArrowUp', bubbles: true, cancelable: true })
@@ -6869,7 +6881,10 @@ await check('E1 client apply mounts the sidebar entry and studio (jsdom)', async
     historyFilterMenu.dispatchEvent(new jsdomWindow.KeyboardEvent('keydown', { key: 'Escape', bubbles: true }))
     await new Promise(resolve => setTimeout(resolve, 20))
     assert.equal(jsdomDocument.querySelector('[data-dsh-select-menu]') === null, true, 'Escape closes the menu')
-    assert.equal(jsdomDocument.activeElement, historyFilter, 'closing the menu restores keyboard focus')
+    assert.ok(
+      jsdomDocument.activeElement === historyFilter,
+      `closing the menu restores keyboard focus (focus: ${jsdomDocument.activeElement?.getAttribute?.('aria-label') ?? jsdomDocument.activeElement?.tagName ?? 'none'})`,
+    )
     assert.ok(historyFilter.textContent.includes('全部模型'), 'canceling preserves the current filter')
     const chatToggle = view.querySelector('button[data-open]')
     assert.ok(chatToggle !== null, 'chat toggle rendered in the panel header')
@@ -7970,7 +7985,10 @@ await check('E1 client apply mounts the sidebar entry and studio (jsdom)', async
     )
     await new Promise(resolve => setTimeout(resolve, 200))
     assert.ok(view.querySelector('[data-node-id="node-second"]') !== null, 'a late answer for the canvas the user left is discarded')
-    assert.equal(view.querySelector('[data-node-id="node-image"]'), null, 'the left canvas does not come back on screen')
+    assert.ok(
+      view.querySelector('[data-node-id="node-image"]') === null,
+      `the left canvas does not come back on screen (on screen: ${[...view.querySelectorAll('[data-node-id]')].map(entry => entry.getAttribute('data-node-id')).join(', ') || 'no nodes'})`,
+    )
     await switchProject('smoke')
     assert.ok(
       await waitUntil(() => view.querySelector('[data-node-id="node-image"]') !== null, 8000),
@@ -8048,7 +8066,10 @@ await check('E1 client apply mounts the sidebar entry and studio (jsdom)', async
     assert.ok(dismiss !== undefined, 'the toast can be dismissed')
     dismiss.click()
     await new Promise(resolve => setTimeout(resolve, 50))
-    assert.equal(view.querySelector('[class*="errorToast"]'), null, 'the toast is gone after dismissing')
+    assert.ok(
+      view.querySelector('[class*="errorToast"]') === null,
+      `the toast is gone after dismissing (found: ${view.querySelector('[class*="errorToast"]')?.textContent?.slice(0, 60)})`,
+    )
     // And the failure is not permanent: the retry actually writes.
     failSaveBudget = 0
     const attemptsBeforeRetry = failedSaveAttempts
