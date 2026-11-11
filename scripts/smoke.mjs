@@ -9015,10 +9015,15 @@ await check('E1 client apply mounts the sidebar entry and studio (jsdom)', async
         await waitForSelector(view, '[data-node-id="node-annotation-card"]')
         const cardBody = view.querySelector('[data-node-id="node-annotation-card"]')
         assert.ok(cardBody.querySelector('textarea') !== null, 'the card is on screen as a text node')
-        // 注意这里比较的是布尔值，**不能**把元素本身交给 assert.equal：
-        // 失败时 assert 会用 util.inspect 展开实参，而 jsdom 元素会顺着
-        // _ownerDocument 把整棵文档树走一遍，进程直接被 OOM 杀掉（退出码
-        // 137、没有 FAIL 行）。那样这条断言看起来「跑了」，其实什么都没报。
+        // 比较布尔值，而不是把元素交给 assert.equal。
+        //
+        // 这条断言在变异核验时连续四次以退出码 137（SIGKILL）结束，日志停在
+        // E1 标题，一行 FAIL 都没有；改成布尔比较后同一个变异立刻报出可读的
+        // FAIL。为什么元素入参必然被杀，我没能复现出根因（用 12000 节点、
+        // 4MB 的 JSDOM 直接测 assert.equal(元素, null)，失败消息只有 50 字符，
+        // 并没有展开文档树），所以这里不写猜测的机制。能确定的是：在这种
+        // 断言上，布尔比较观测到了真实失败，元素入参观测到的是进程被杀。
+        // 断言看不出真假比断言写错更麻烦，就按能读到结果的那种写。
         assert.ok(
           cardBody.querySelector('[class*="handleLeft"]') === null,
           'an annotation card has no incoming handle — it is not wired into the graph',
