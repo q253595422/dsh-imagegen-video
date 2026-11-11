@@ -58,6 +58,38 @@ jobs:
       - name: Test suites
         run: pnpm test
 
+      # Guards that are correct but were in no gate: each one was written for a
+      # specific defect, passed when run by hand, and ran nowhere. They live
+      # here rather than in `pnpm test` because that script is a literal command
+      # chain in package.json, and editing package.json on a branch push fires
+      # release.yml, which would replace the assets of an already-published
+      # version. CI is not in release.yml's `paths`, so these run on every push
+      # without touching what v1.27.0 means.
+      #
+      # `scripts/verify-script-entries.mjs` is the guard for this class of
+      # defect: it fails when a script is in no gate and not declared manual, so
+      # the next orphan is caught instead of discovered. It goes last so its
+      # own finding is not buried, and it is written to pass only when every
+      # file above is genuinely reachable.
+      - name: Guards that were not in the test chain
+        run: |
+          set -euo pipefail
+          # Reads src/client/canvas/geometry.ts directly, no build needed.
+          node scripts/smoke-canvas-geometry.mjs
+          # Source-text guard for the outfit task-queue contract.
+          node scripts/verify-outfit-task-gate.mjs
+          # Pins the verdict rules of the shared check executor.
+          node scripts/verify-check-harness.mjs
+          # These three load the BUILT lib/ (built in the step above).
+          node scripts/smoke-canvas-bundle.mjs
+          node scripts/smoke-canvas-agent.mjs
+          node scripts/smoke-listing-copy.mjs
+          # node:test file, so it needs --test; a bare `node` run would import
+          # the module and assert nothing.
+          node --test scripts/conversation-sync.test.mjs
+          # Last: every script must be reachable or declared manual.
+          node scripts/verify-script-entries.mjs
+
       # The built output is what ships (`files` includes lib/, and main/exports
       # point into it), so the tarball is assembled and inspected here. This is
       # the check that would have caught the demo videos riding along in docs/,
