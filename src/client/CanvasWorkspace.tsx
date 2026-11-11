@@ -10,7 +10,7 @@ import { createPortal } from 'react-dom'
 import {
   Bold, BookOpen, ChevronDown, Copy, Download, Eraser, Expand, FileText as FileTextIcon, Film, FolderX, Hand, Image as ImageIcon,
   GitBranch, Keyboard, Layers, Magnet, Map as MapIcon, Maximize, Maximize2, MousePointer2, Palette, Pencil, Plus, Redo2, Scissors, SendHorizonal, Share2, Sparkles, Star,
-  Shrink, SquareDashedMousePointer, Trash2, Type, Undo2, Upload, Video, Wand2, Wallpaper, X,
+  Shrink, SquareDashedMousePointer, Trash2, Type, Undo2, Upload, Video, Wand2, Wallpaper,
 } from 'lucide-react'
 import type { CanvasAnnotation, CanvasAssetRef, CanvasConnection, CanvasDocument, CanvasFileKind, CanvasLayerInfo, CanvasLayerPlanItem, CanvasNode, CanvasRect, CanvasStoryboard, CanvasVideoRef, CanvasSkillConfigApplyResult, CanvasSkillConfigField, CanvasSkillConfigSaveResult, CanvasSkillConfigStep, CanvasSkillConfigView, CanvasSkillDescriptor, CanvasSkillLibrary, CanvasSkillOutput, CanvasSkillRunRequest, CanvasSkillTask, CanvasSketchStroke, GenerateRequest, GenerationTask, HistoryEntry, VideoGenerateRequest, VideoTaskSummary, VideoMode, VideoResolution } from '../protocol.ts'
 import { describeVideoModel, durationsOf } from '../video-model-catalog.ts'
@@ -50,6 +50,7 @@ import { COMPOSE_SKILL_ID, composeGlyphs, PolishMenu, SkillConfigForm, SkillConf
 import { StoryboardBody } from './canvas/storyboard-board.tsx'
 import { CanvasMinimap } from './canvas/minimap.tsx'
 import { ConnectionLayer } from './canvas/connection-layer.tsx'
+import { NodeBody, type NodeBodyActions, type NodeBodyState } from './canvas/node-body.tsx'
 import { ImagePicker, readImageSize, SketchBoard } from './canvas/sketch-and-picker.tsx'
 import { RUN_NODE_SIZE, runRectOf, SkillRunCard, type SkillRunTrace } from './canvas/run-card.tsx'
 import { CanvasErrorToast, CanvasNoticeToast, CanvasVideoPreviewOverlay, CanvasWorkflowProgressBar } from './canvas/overlays.tsx'
@@ -4445,385 +4446,40 @@ export function CanvasWorkspace(props: CanvasWorkspaceProps): React.JSX.Element 
     setSelectedConnectionId(null)
   }
 
-  const renderNodeBody = (node: CanvasNode): React.JSX.Element => {
-    const metadata = nodeMetadata(node)
-    const isSelected = selectedIds.has(node.id)
-    const isRelated = relatedIds.has(node.id)
-    const asset = assetOf(node)
-    // Image and video nodes both run asynchronously, so both have a generating
-    // and an error state. Keeping these image-only was a real bug, not a
-    // style slip: a video placeholder fell through to the "no clip yet" branch
-    // and painted 生成失败 on its first frame while it was still rendering.
-    const isGenerating = (node.type === 'image' || node.type === 'video') && metadata.status === 'generating'
-    const isError = (node.type === 'image' || node.type === 'video') && metadata.status === 'error'
-    const isConnectTarget = connecting?.targetId === node.id
-    /** 被完全盖住的那一方（或盖住别人的那一方）：拖动中出现，松手后保留。 */
-    const isOverlapping = liveOverlap !== null && liveOverlap.ids.has(node.id)
-    /** 只有被盖住的那个才挂徽标——盖住别人的那个本身看得见，不需要解释。 */
-    const coverNote = liveOverlap !== null && liveOverlap.coveredId === node.id ? liveOverlap : null
-    const hasImage = asset !== undefined && asset.url !== ''
-    const isConfig = node.type === 'config'
-    const isFile = node.type === 'file'
-    const isVideo = node.type === 'video'
-    const isStoryboard = node.type === 'storyboard'
-    const video = videoOf(node)
-    const hasVideo = video !== undefined && video.url !== ''
-    const isSketch = isSketchNode(node)
-    const fileKind = isFile ? (metadata.fileKind ?? fileKindOfAsset(asset ?? { assetId: '', url: '', mime: 'application/octet-stream', bytes: 0, width: 0, height: 0, origin: 'upload' })) : 'other'
-    const hasFile = isFile && asset !== undefined && asset.url !== ''
-    /** Only config nodes are excluded: every content node can feed a skill. */
-    const skillable = !isConfig
-    const skillRun = Object.entries(skillRuns).find(([, entry]) => entry.nodeId === node.id)
-    /**
-     * Compose order badge. Only while this canvas really offers a stitch (two
-     * or more selected clips): a lone number on one clip would claim an order
-     * that has no second segment to be relative to. The digit is the index in
-     * `composeIds` — the very same canvas-ordered list that becomes
-     * `request.nodeIds` — so a numbered node is a node the file will carry.
-     */
-    const composeIndex = composeIds.length >= 2 ? composeIds.indexOf(node.id) : -1
-    const isTextual = node.type === 'text' || isConfig
-    const isTextNode = node.type === 'text'
-    const annotating = annotateNodeId === node.id && hasImage && !isSketch
-    const busyLabel = busyNodes[node.id]
-    const annotations = node.type === 'image' ? liveAnnotations(node, document?.nodes ?? []) : []
-    const draftRect = annotationDraft !== null && annotationDraft.nodeId === node.id ? annotationDraft.rect : null
-    const boxStyle = (rect: CanvasRect): CSSProperties => ({
-      left: `${rect.x * 100}%`,
-      top: `${rect.y * 100}%`,
-      width: `${rect.width * 100}%`,
-      height: `${rect.height * 100}%`,
-    })
-    return <>
-      <div className={css.nodeGlow} aria-hidden="true" />
-      {coverNote !== null
-        ? <span
-            className={css.overlapBadge}
-            data-node-covered={node.id}
-            role="status"
-            aria-label={`${tt('canvas.overlapBadge', { title: coverNote.coverTitle })}。${tt('canvas.overlapHint')}`}
-          >
-            {tt('canvas.overlapBadge', { title: coverNote.coverTitle })}
-          </span>
-        : null}
-      {composeIndex >= 0
-        ? <span className={css.composeBadge} data-compose-badge={String(composeIndex + 1)} aria-hidden="true">
-            {tt('canvas.composeBadge', { index: composeIndex + 1 })}
-          </span>
-        : null}
-      {isVideo ? <header className={css.nodeHeader}>
-        <span className={css.nodeTitle}>{node.title}</span>
-        {metadata.videoMode !== undefined ? <span className={css.nodeTag}>{tt(`video.mode.${metadata.videoMode}` as ImageGenKey)}</span> : null}
-      </header> : null}
-      {node.type === 'image' && metadata.cast !== undefined ? <span className={css.castBadge} data-cast-badge="">
-        {tt('canvas.cast.badge', {
-          role: tt(ROLE_LABELS[metadata.cast.role]),
-          name: (metadata.cast.name ?? '').trim() !== '' ? metadata.cast.name! : node.title,
-        })}
-      </span> : null}
-      {isStoryboard ? (() => {
-        const board = storyboardOf(node)
-        const progress = storyboardProgress(board, document?.nodes ?? [])
-        return <header className={css.nodeHeader}>
-          <span className={css.nodeTitle}>{node.title}</span>
-          <span className={css.nodeTag} data-storyboard-count="">{tt('canvas.storyboard.shotCount', { count: progress.total })}</span>
-          {progress.generating > 0 ? <span className={css.nodeTag} data-storyboard-running="">{tt('canvas.storyboard.running', { count: progress.generating })}</span> : null}
-        </header>
-      })() : null}
-      {isTextual || isSketch ? <header className={css.nodeHeader}>
-        <span className={css.nodeTitle}>{node.title}</span>
-        {metadata.annotation !== undefined ? <span className={css.nodeTag}>{tt('canvas.annotationTag')}</span> : null}
-        {metadata.layer !== undefined ? <span className={css.nodeTag}>{layerKindLabel(metadata.layer.kind)}</span> : null}
-        {isTextNode && !isAnnotationCard(node) ? <div className={css.textTools} onPointerDown={event => event.stopPropagation()}>
-          <button
-            type="button"
-            className={css.textTool}
-            aria-label={tt('canvas.fontSmaller')}
-            title={tt('canvas.fontSmaller')}
-            onClick={() => patchNode(node.id, { fontSize: Math.max(8, (metadata.fontSize ?? 13) - 2) })}
-          >A-</button>
-          <span className={css.textToolValue}>{Math.round(metadata.fontSize ?? 13)}</span>
-          <button
-            type="button"
-            className={css.textTool}
-            aria-label={tt('canvas.fontLarger')}
-            title={tt('canvas.fontLarger')}
-            onClick={() => patchNode(node.id, { fontSize: Math.min(96, (metadata.fontSize ?? 13) + 2) })}
-          >A+</button>
-          <button
-            type="button"
-            className={css.textTool}
-            data-active={(metadata.bold ?? false) ? '' : undefined}
-            aria-label={tt('canvas.bold')}
-            title={tt('canvas.bold')}
-            onClick={() => patchNode(node.id, { bold: metadata.bold !== true })}
-          ><ToolbarIcon name="bold" size={13} /></button>
-          <button
-            type="button"
-            className={css.textTool}
-            data-active={colorPickerNodeId === node.id ? '' : undefined}
-            aria-label={tt('canvas.textColor')}
-            title={tt('canvas.textColor')}
-            onClick={() => setColorPickerNodeId(colorPickerNodeId === node.id ? null : node.id)}
-          ><span className={css.colorDot} style={{ background: metadata.color ?? 'currentColor' }} /></button>
-        </div> : null}
-      </header> : null}
-      {isTextNode && !isAnnotationCard(node) && colorPickerNodeId === node.id ? <div className={css.colorRow} onPointerDown={event => event.stopPropagation()}>
-        {TEXT_COLORS.map(color => <button
-          key={color === '' ? 'default' : color}
-          type="button"
-          className={css.colorSwatch}
-          data-active={(metadata.color ?? '') === color ? '' : undefined}
-          style={color === '' ? undefined : { background: color }}
-          title={color === '' ? tt('canvas.colorDefault') : color}
-          aria-label={color === '' ? tt('canvas.colorDefault') : color}
-          onClick={() => { patchNode(node.id, { color: color === '' ? undefined : color }); setColorPickerNodeId(null) }}
-        >{color === '' ? <X size={11} strokeWidth={2.4} aria-hidden="true" /> : null}</button>)}
-      </div> : null}
-      {isConfig ? <div className={css.configLinks} data-config-links={node.id}>
-        <span className={css.composerChip}>{tt('canvas.composerLinked', { count: (document?.connections ?? []).filter(connection => connection.toNodeId === node.id).length })}</span>
-      </div> : null}
-      {isConfig
-        ? <p className={css.configHint}>{tt('canvas.configHint')}</p>
-        : isTextual
-        ? <textarea
-            className={css.textArea}
-            style={textStyleOf(node)}
-            value={metadata.text ?? ''}
-            placeholder={metadata.annotation !== undefined ? tt('canvas.annotationPlaceholder') : tt('canvas.textPlaceholder')}
-            onPointerDown={event => event.stopPropagation()}
-            onChange={event => patchNode(node.id, { text: event.target.value })}
-          />
-        : isSketch
-        ? <SketchBoard
-            api={api}
-            node={node}
-            zoom={document?.viewport.k ?? 1}
-            strokes={metadata.sketch?.strokes ?? []}
-            onStrokesChange={strokes => patchSketchStrokes(node.id, strokes)}
-            onAssetChange={asset => patchSketchAsset(node.id, asset)}
-          />
-        : isStoryboard
-        ? <StoryboardBody
-            node={node}
-            nodes={document?.nodes ?? []}
-            busy={busyLabel !== undefined}
-            onChange={next => patchNode(node.id, { storyboard: next })}
-            onRun={() => { void runStoryboard(node) }}
-            onRunShot={index => { void submitShot(node, index) }}
-            onPreview={nodeId => setVideoPreviewNodeId(nodeId)}
-            onStitch={ids => startStoryboardStitch(ids)}
-          />
-        : isVideo
-        ? <div className={css.fileBody} data-video-body="">
-            {hasVideo
-              ? brokenVideoIds.has(node.id)
-                ? <div className={css.nodeStateError} data-video-missing="">
-                    <span>{tt('canvas.videoMissing')}</span>
-                    <span>{tt('canvas.videoMissingHint')}</span>
-                    <button
-                      type="button"
-                      onClick={() => clearBrokenVideo(node.id)}
-                    >{tt('canvas.videoReload')}</button>
-                    <button type="button" onClick={() => deleteNode(node.id)}>{tt('canvas.delete')}</button>
-                  </div>
-                : <video
-                    className={css.fileVideo}
-                    controls
-                    preload="metadata"
-                    // The clip is served from the video store with Range support,
-                    // so pointing the element straight at that route lets the user
-                    // seek without any asset copy inside the canvas.
-                    src={video.url}
-                    onPointerDown={event => event.stopPropagation()}
-                    onError={() => setBrokenVideoIds(previous => previous.has(node.id) ? previous : new Set(previous).add(node.id))}
-                  />
-              : isGenerating || metadata.status === 'idle'
-                ? <div className={css.nodeState} data-video-generating=""><span className={css.nodeSpinner} aria-hidden="true" /><span>{tt('canvas.videoGeneratingNode')}</span></div>
-                : isError
-                  ? <div className={css.nodeStateError} data-video-error="">{metadata.error ?? tt('canvas.generateFailed')}{metadata.renderer === 'code' ? <span className={css.nodeStateHint}>{tt('canvas.rendererFailedHint')}</span> : null}<button type="button" onClick={() => { void retryVideoGeneration(node) }}>{tt('canvas.retry')}</button></div>
-                  : <div className={css.nodeState} data-video-empty=""><span>{tt('canvas.videoEmptyNode')}</span></div>}
-          </div>
-        : isFile
-        ? hasFile
-          ? <CanvasFileBody
-              api={api}
-              asset={asset}
-              fileKind={fileKind}
-              title={node.title}
-              hint={tt('canvas.preview.doubleClick')}
-              onExpand={() => { setFilePreviewNodeId(node.id) }}
-            />
-          : <div className={css.fileBody}>
-              <button
-                type="button"
-                className={css.nodeEmpty}
-                onClick={() => { setFileTargetNodeId(node.id); fileUploadRef.current?.click() }}
-              ><ToolbarIcon name="upload" /><span>{tt('canvas.skills.emptyFileNode')}</span></button>
-            </div>
-        : <div className={css.nodeBody}>
-            {isGenerating
-              ? <div className={css.nodeState}><span className={css.nodeSpinner} aria-hidden="true" /><span>{tt('canvas.generatingNode')}</span></div>
-              : isError
-                ? <div className={css.nodeStateError}>{metadata.error ?? tt('canvas.generateFailed')}{metadata.renderer === 'code' ? <span className={css.nodeStateHint}>{tt('canvas.rendererFailedHint')}</span> : null}<button type="button" onClick={() => { void retryGeneration(node) }}>{tt('canvas.retry')}</button></div>
-                : hasImage
-                  ? <img src={asset.url} alt={node.title} title={tt('canvas.preview.doubleClick')} draggable={false} onDragStart={event => event.preventDefault()} />
-                  : <button type="button" className={css.nodeEmpty} onClick={() => imageFileRef.current?.click()}><ToolbarIcon name="image" /><span>{tt('canvas.emptyImageNode')}</span></button>}
-            {hasImage && annotations.length > 0 ? <div className={css.annotationLayer} aria-hidden="true">
-              {annotations.map((annotation, index) => <div key={annotation.id} className={css.annotationBox} style={boxStyle(annotation)}>
-                <span className={css.annotationBadge}>{index + 1}</span>
-              </div>)}
-            </div> : null}
-            {annotating ? <div
-              className={css.annotationLayer}
-              data-active=""
-              title={tt('canvas.annotationDrawHint')}
-              onPointerDown={event => beginAnnotationDrag(event, node)}
-              onPointerMove={moveAnnotationDrag}
-              onPointerUp={event => endAnnotationDrag(event, node)}
-              onPointerCancel={() => { annotationDragRef.current = null; setAnnotationDraft(null) }}
-            >
-              {annotations.map((annotation, index) => <div key={annotation.id} className={css.annotationBox} style={boxStyle(annotation)}>
-                <span className={css.annotationBadge}>{index + 1}</span>
-              </div>)}
-              {draftRect !== null ? <div className={`${css.annotationBox} ${css.annotationDraft}`} style={boxStyle(draftRect)} /> : null}
-            </div> : null}
-            {busyLabel !== undefined ? <div className={css.nodeBusy}><span className={css.nodeSpinner} aria-hidden="true" /><span>{busyLabel}</span></div> : null}
-          </div>}
-      {node.type === 'image' && !isSketch && hasImage ? <div className={css.imageFooter} data-image-footer="">
-        <span className={css.imageFooterLabel}>
-          {metadata.layer !== undefined
-            ? `${layerKindLabel(metadata.layer.kind)} · ${metadata.layer.label}`
-            : metadata.model !== undefined && metadata.model !== ''
-              ? metadata.model
-              : asset.origin === 'gallery' || asset.origin === 'history'
-                ? (asset.origin === 'gallery' ? tt('canvas.fromGallery') : tt('canvas.fromHistory'))
-                : ''}
-        </span>
-        {asset.width > 1 ? <span className={css.imageFooterSize}>{asset.width}×{asset.height}</span> : null}
-      </div> : null}
-      {isVideo ? <div className={css.imageFooter} data-video-footer="">
-        <span className={css.imageFooterLabel}>
-          {hasVideo
-            ? `${metadata.model ?? tt('canvas.videoSourceBadge')}${metadata.videoMode === undefined ? '' : ` · ${tt(`video.mode.${metadata.videoMode}` as ImageGenKey)}`}`
-            : tt('canvas.videoEmptyNode')}
-        </span>
-        {hasVideo && metadata.seconds !== undefined
-          ? <span className={css.imageFooterSize}>{tt('canvas.videoDuration', { seconds: metadata.seconds })}</span>
-          : null}
-      </div> : null}
-      {isFile ? <div className={css.imageFooter} data-file-footer="">
-        <span className={css.imageFooterLabel}>
-          {hasFile
-            ? `${asset.name !== undefined && asset.name !== '' ? asset.name : fileKindLabel(fileKind)}${metadata.skill !== undefined ? ` · ${tt('canvas.skills.sourceBadge')}` : ''}`
-            : fileKindLabel(fileKind)}
-        </span>
-        {hasFile && asset.bytes > 0 ? <span className={css.imageFooterSize}>{fileSizeLabel(asset.bytes)}</span> : null}
-      </div> : null}
-      {isSelected && !isSketch
-        ? (['nw', 'ne', 'sw', 'se'] as const).map(corner => <div
-            key={corner}
-            className={css.resizeHandle}
-            data-corner={corner}
-            onPointerDown={event => handleResizeStart(event, node, corner)}
-            title={tt('canvas.resizeHint')}
-          />)
-        : null}
-      {isAnnotationCard(node)
-        ? null
-        : <>
-            <div className={`${css.handle} ${css.handleLeft}`} title={tt('canvas.connectHint')} onPointerDown={event => handleConnectStart(event, node.id, 'target')} />
-            <div
-              className={`${css.handle} ${css.handleRight}`}
-              title={tt('canvas.connectAddHint')}
-              onPointerDown={event => handleConnectStart(event, node.id, 'source')}
-              onMouseEnter={() => { window.setTimeout(() => { if (connectRef.current === null) openNodeAddMenu(node) }, 120) }}
-              onMouseLeave={scheduleNodeAddMenuClose}
-            />
-          </>}
-      <div className={`${css.hoverToolbar} ${node.type === 'image' && hasImage ? css.hoverToolbarBottom : ''}`} data-toolbar={node.type === 'image' && hasImage ? 'bottom' : 'top'} onPointerDown={event => event.stopPropagation()}>
-        {isVideo && hasVideo ? <>
-          <ModelPicker
-            groups={videoGroups ?? []}
-            value={resolveModelChoice(videoGroups ?? [], { channelId: metadata.channelId, model: metadata.model }, defaultChannelId)}
-            variant="toolbar"
-            channelLabel={tt('model.channel')}
-            modelLabel={tt('video.model')}
-            channelPlaceholder={tt('model.channelPlaceholder')}
-            emptyLabel={tt('canvas.videoNoModel')}
-            ariaLabel={tt('canvas.videoNodeModel')}
-            disabled={busyLabel !== undefined}
-            onChange={choice => patchNode(node.id, {
-              model: choice.model === '' ? undefined : choice.model,
-              channelId: choice.channelId === '' ? undefined : choice.channelId,
-            })}
-          />
-          <IconButton
-            name="redo"
-            label={tt('canvas.videoRegenerate')}
-            disabled={busyLabel !== undefined || (metadata.prompt ?? '') === ''}
-            onClick={() => { void retryVideoGeneration(node) }}
-          />
-          <span className={css.toolbarDivider} aria-hidden="true" />
-          <IconButton name="download" label={tt('canvas.videoDownload')} onClick={() => downloadVideoNode(node)} />
-          <IconButton name="sparkle" label={tt('canvas.videoGrabFrame')} disabled={busyLabel !== undefined} onClick={() => { void grabVideoFrame(node) }} />
-          <IconButton name="layers" label={tt('canvas.storyboard.grabLastFrame')} disabled={busyLabel !== undefined} onClick={() => { void continueFromClip(node) }} />
-          <IconButton name="favorite" label={tt('canvas.videoFavorite')} disabled={busyLabel !== undefined || video.entryId === undefined} onClick={() => { favoriteVideoNode(node) }} />
-          <IconButton name="expand" label={tt('canvas.videoPreview')} onClick={() => { setVideoPreviewNodeId(node.id) }} />
-        </> : null}
-        {node.type === 'image' && hasImage ? <>
-          <IconButton name="annotate" label={tt('canvas.annotate')} active={annotating} onClick={() => toggleAnnotate(node)} />
-          <IconButton name="removeBg" label={tt('canvas.removeBackground')} disabled={busyLabel !== undefined} onClick={() => { void removeNodeBackground(node) }} />
-          <IconButton name="text" label={tt('poster.title')} disabled={busyLabel !== undefined} onClick={() => { if (document !== null) setPosterTarget({ canvasId: document.id, nodeId: node.id }) }} />
-          <IconButton name="layers" label={tt('canvas.splitLayers')} disabled={busyLabel !== undefined} onClick={() => { void splitLayers(node) }} />
-          <span className={css.toolbarDivider} aria-hidden="true" />
-          <ModelPicker
-            groups={modelGroups}
-            value={resolveModelChoice(modelGroups, { channelId: metadata.channelId, model: metadata.model }, defaultChannelId)}
-            variant="toolbar"
-            channelLabel={tt('model.channel')}
-            modelLabel={tt('model.label')}
-            channelPlaceholder={tt('model.channelPlaceholder')}
-            emptyLabel={tt('canvas.modelPlaceholder')}
-            ariaLabel={tt('canvas.nodeModel')}
-            disabled={busyLabel !== undefined}
-            onChange={choice => patchNode(node.id, {
-              model: choice.model === '' ? undefined : choice.model,
-              channelId: choice.channelId === '' ? undefined : choice.channelId,
-            })}
-          />
-          <span className={css.toolbarDivider} aria-hidden="true" />
-          <IconButton name="expand" label={tt('canvas.preview.expand')} onClick={() => { openImageNode(node) }} />
-          <IconButton name="download" label={tt('canvas.download')} onClick={() => downloadNode(node)} />
-        </> : null}
-        {skillable ? <>
-          <IconButton
-            name="skill"
-            label={tt('canvas.skills.button')}
-            active={skillRun !== undefined}
-            onClick={event => openSkillMenu(node, { x: event.clientX, y: event.clientY + 10 })}
-          />
-          {isTextNode && !isAnnotationCard(node) ? <IconButton
-            name="sparkle"
-            label={tt('canvas.polish.button')}
-            disabled={polishBusy === node.id}
-            onClick={event => {
-              event.stopPropagation()
-              setPolishNode({ screen: { x: event.clientX, y: event.clientY + 10 }, nodeId: node.id })
-            }}
-          /> : null}
-          <span className={css.toolbarDivider} aria-hidden="true" />
-        </> : null}
-        {isFile && hasFile ? <>
-          <IconButton name="download" label={tt('canvas.skills.fileDownload')} onClick={() => downloadFileNode(node)} />
-          <IconButton name="expand" label={tt('canvas.preview.expand')} onClick={() => openFileNode(node)} />
-          <span className={css.toolbarDivider} aria-hidden="true" />
-        </> : null}
-        {isAnnotationCard(node) ? null : <IconButton name="duplicate" label={tt('canvas.duplicate')} onClick={() => duplicateNode(node.id)} />}
-        <IconButton name="trash" label={tt('canvas.delete')} onClick={() => deleteNode(node.id)} />
-      </div>
-    </>
-  }
+  const nodeBodyState: NodeBodyState = useMemo(() => ({
+    canvasDocument: document,
+    selectedIds, relatedIds, connecting, liveOverlap, skillRuns, composeIds,
+    annotateNodeId, busyNodes, annotationDraft, annotationDragRef,
+    colorPickerNodeId, brokenVideoIds, polishBusy,
+    api, modelGroups, videoGroups, defaultChannelId,
+    fileUploadRef, imageFileRef, connectRef,
+    IconButton, ToolbarIcon, ModelPicker, SketchBoard, StoryboardBody, CanvasFileBody,
+    ROLE_LABELS, TEXT_COLORS,
+    nodeMetadata, assetOf, videoOf, isSketchNode, isAnnotationCard, layerKindLabel,
+    liveAnnotations, fileKindOfAsset, fileKindLabel, fileSizeLabel,
+    storyboardOf, storyboardProgress, resolveModelChoice, textStyleOf,
+  }), [document, selectedIds, relatedIds, connecting, liveOverlap, skillRuns, composeIds,
+    annotateNodeId, busyNodes, annotationDraft, colorPickerNodeId, brokenVideoIds, polishBusy,
+    api, modelGroups, videoGroups, defaultChannelId])
+
+  const nodeBodyActions: NodeBodyActions = useMemo(() => ({
+    patchNode, deleteNode, duplicateNode, downloadNode, downloadFileNode, downloadVideoNode,
+    openImageNode, openFileNode, openSkillMenu, openNodeAddMenu, scheduleNodeAddMenuClose,
+    handleConnectStart, handleResizeStart, beginAnnotationDrag, moveAnnotationDrag, endAnnotationDrag,
+    toggleAnnotate, removeNodeBackground, splitLayers, retryGeneration, retryVideoGeneration,
+    grabVideoFrame, continueFromClip, favoriteVideoNode, runStoryboard, submitShot,
+    startStoryboardStitch, clearBrokenVideo, patchSketchStrokes, patchSketchAsset,
+    setColorPickerNodeId, setVideoPreviewNodeId, setFilePreviewNodeId, setFileTargetNodeId,
+    setPosterTarget, setPolishNode, setBrokenVideoIds, setAnnotationDraft,
+  }), [patchNode, deleteNode, duplicateNode, downloadNode, downloadFileNode, downloadVideoNode,
+    openImageNode, openFileNode, openSkillMenu, openNodeAddMenu, scheduleNodeAddMenuClose,
+    handleConnectStart, handleResizeStart, beginAnnotationDrag, moveAnnotationDrag, endAnnotationDrag,
+    toggleAnnotate, removeNodeBackground, splitLayers, retryGeneration, retryVideoGeneration,
+    grabVideoFrame, continueFromClip, favoriteVideoNode, runStoryboard, submitShot,
+    startStoryboardStitch, clearBrokenVideo, patchSketchStrokes, patchSketchAsset])
+
+  const renderNodeBody = (node: CanvasNode): React.JSX.Element =>
+    <NodeBody node={node} S={nodeBodyState} A={nodeBodyActions} />
 
   // ------------------------------------------------------ react-flow 受控视图
   // document 是唯一真源；flow 节点/边/视口都由它派生，变更回写 document。

@@ -8814,6 +8814,72 @@ await check('E1 client apply mounts the sidebar entry and studio (jsdom)', async
     view.querySelector('[role="dialog"] [title="关闭预览"]').dispatchEvent(new jsdomWindow.MouseEvent('click', { bubbles: true }))
     assert.ok(await waitUntil(() => view.querySelector('[role="dialog"]') === null), 'the close button dismisses the reader')
 
+    // --- 节点的四种「还没内容 / 正在做 / 做砸了」状态 ---
+    //
+    // 这些分支在 renderNodeBody 里各占一段 JSX，之前一条断言都没有：图片的空态、
+    // 生成中、出错重试，文件空态，视频空态。它们是节点刚建出来就一定经过的形态，
+    // 坏了用户第一时间就会看到，却只能靠肉眼发现。搬到 canvas/node-body.tsx 之后
+    // 更需要钉住——搬动是不该改行为的，这些断言就是那句话的证据。
+    //
+    // 用「换 fixture 再切走切回」让画布重读文档：节点状态是 document 的纯函数，
+    // 直接改 fixture 不会触发重渲染。
+    {
+      const probeNodeState = async (node, selector, label) => {
+        canvasDocument.nodes = [...canvasDocument.nodes, node]
+        ecommerceSwitch.click()
+        await new Promise(resolve => setTimeout(resolve, 60))
+        canvasSwitch.click()
+        await waitForSelector(view, `[data-node-id="${node.id}"]`)
+        const el = view.querySelector(`[data-node-id="${node.id}"]`)
+        assert.ok(el !== null, `${label}: node is on the canvas`)
+        assert.ok(await waitUntil(() => view.querySelector(`[data-node-id="${node.id}"] ${selector}`) !== null),
+          `${label}: expected ${selector} inside the node body`)
+        canvasDocument.nodes = canvasDocument.nodes.filter(entry => entry.id !== node.id)
+      }
+
+      await probeNodeState(
+        { id: 'node-image-empty', type: 'image', title: '空图片', x: 0, y: 1560, width: 240, height: 240, metadata: { status: 'idle' } },
+        '[data-node-body="image"] button', 'image empty state',
+      )
+      await probeNodeState(
+        { id: 'node-image-busy', type: 'image', title: '生成中图片', x: 300, y: 1560, width: 240, height: 240, metadata: { status: 'generating' } },
+        'span[aria-hidden="true"]', 'image generating state',
+      )
+      await probeNodeState(
+        { id: 'node-image-error', type: 'image', title: '出错图片', x: 600, y: 1560, width: 240, height: 240, metadata: { status: 'error', error: '模型返回了 500' } },
+        'button', 'image error state',
+      )
+      await probeNodeState(
+        { id: 'node-file-empty', type: 'file', title: '空文件', x: 900, y: 1560, width: 300, height: 170, metadata: { status: 'idle', fileKind: 'text' } },
+        'button', 'file empty state',
+      )
+      // 视频的 idle 显示的是「生成中」而不是「空」——`isGenerating || status ===
+      // 'idle'` 是原有写法，照实钉住，别顺手改成看起来更合理的那种。
+      await probeNodeState(
+        { id: 'node-video-idle', type: 'video', title: '待生成视频', x: 1300, y: 1560, width: 300, height: 200, metadata: { status: 'idle' } },
+        '[data-video-generating]', 'video idle reads as generating',
+      )
+
+      // 出错态不是只要「有个按钮」——它得把宿主给的原因原样显示出来，重试按钮
+      // 必须在。这两点分开断，免得只画了个空壳也算通过。
+      canvasDocument.nodes = [...canvasDocument.nodes,
+        { id: 'node-image-error2', type: 'image', title: '出错图片2', x: 1600, y: 1560, width: 240, height: 240, metadata: { status: 'error', error: '模型返回了 500' } }]
+      ecommerceSwitch.click()
+      await new Promise(resolve => setTimeout(resolve, 60))
+      canvasSwitch.click()
+      await waitForSelector(view, '[data-node-id="node-image-error2"]')
+      const errBody = view.querySelector('[data-node-id="node-image-error2"]')
+      assert.ok(errBody.textContent.includes('模型返回了 500'), 'image error state shows the reason the host gave')
+      assert.ok(errBody.querySelector('button') !== null, 'image error state offers a retry button')
+      canvasDocument.nodes = canvasDocument.nodes.filter(entry => entry.id !== 'node-image-error2')
+
+      // 收尾：切走再切回，让画布回到探针之前的 fixture。
+      ecommerceSwitch.click()
+      await new Promise(resolve => setTimeout(resolve, 60))
+      canvasSwitch.click()
+      await waitForSelector(view, '[data-node-id="node-pdf"]')
+    }
+
     // ------------------------------------------- canvas interaction defects
     // Every check below pins a defect that was confirmed by the UI sweep and
     // is NOT visible in the rendered output -- the failure mode is a control
