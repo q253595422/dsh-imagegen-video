@@ -8860,6 +8860,144 @@ await check('E1 client apply mounts the sidebar entry and studio (jsdom)', async
         '[data-video-generating]', 'video idle reads as generating',
       )
 
+      // ---- 节点体里剩下的几段分支，此前一条断言都没有 ----
+      //
+      // 这些都是「节点建出来就一定经过」或「按钮就在那儿」的形态，坏了只能靠
+      // 肉眼发现。逐条钉住，并说明各自守的是什么。
+
+      // (a) 配置节点的「已连线数」小条。数字来自把 connections 过一遍 toNodeId，
+      //     写错方向（看 fromNodeId）会显示成 0——只是个小数字，肉眼看不出来。
+      //
+      //     所以**必须断数字**：第一版只断言「这条存在」，把 toNodeId 改成
+      //     fromNodeId 后仍然是绿的。这里给它接一条真实的入边，要求读到 1。
+      {
+        canvasDocument.nodes = [...canvasDocument.nodes, {
+          id: 'node-config-links', type: 'config', title: '连线配置', x: 0, y: 1900, width: 320, height: 190,
+          metadata: { status: 'idle' },
+        }]
+        // 只加一条**入边**，不加出边。这一点很关键：第一版同时加了「一进一出」，
+        // 两条边在 fromNodeId/toNodeId 两个方向上的数量相等，把方向改反后计数
+        // 仍然读作 1，变异就抓不住。入边 1、出边 0 才能真正区分方向。
+        canvasDocument.connections = [
+          ...canvasDocument.connections,
+          { id: 'edge-into-config', fromNodeId: 'node-image', toNodeId: 'node-config-links' },
+        ]
+        ecommerceSwitch.click()
+        await new Promise(resolve => setTimeout(resolve, 60))
+        canvasSwitch.click()
+        await waitForSelector(view, '[data-node-id="node-config-links"]')
+        const linksStrip = view.querySelector('[data-node-id="node-config-links"] [data-config-links]')
+        assert.ok(linksStrip !== null, 'the config node shows its linked-count strip')
+        assert.ok(
+          await waitUntil(() => /\b1\b/.test(linksStrip.textContent ?? '')),
+          `the strip counts only the INCOMING edge (got "${linksStrip.textContent ?? ''}")`,
+        )
+        canvasDocument.nodes = canvasDocument.nodes.filter(entry => entry.id !== 'node-config-links')
+        canvasDocument.connections = canvasDocument.connections.filter(entry => entry.id !== 'edge-into-config')
+      }
+
+      // (b) 文本节点自带的 textarea：它和 composer 的输入框是两回事，值来自
+      //     metadata.text。这里连值一起断——只断「有个 textarea」的话，把 value
+      //     绑成空字符串照样通过，用户看到的才是真回归。
+      {
+        canvasDocument.nodes = [...canvasDocument.nodes, {
+          id: 'node-text-own', type: 'text', title: '自己的文本', x: 0, y: 2150, width: 280, height: 150,
+          metadata: { text: '节点自己的正文' },
+        }]
+        ecommerceSwitch.click()
+        await new Promise(resolve => setTimeout(resolve, 60))
+        canvasSwitch.click()
+        await waitForSelector(view, '[data-node-id="node-text-own"]')
+        const ownBody = view.querySelector('[data-node-id="node-text-own"]')
+        const ownArea = ownBody.querySelector('textarea')
+        assert.ok(ownArea !== null, 'a text node renders its own editable textarea')
+        assert.equal(ownArea.value, '节点自己的正文', 'the textarea shows the node metadata text, not an empty box')
+        canvasDocument.nodes = canvasDocument.nodes.filter(entry => entry.id !== 'node-text-own')
+      }
+
+      // (c) 视频节点的两种工具栏位置。图片节点带图时工具栏沉到下方（上面已有
+      //     一条断言），其余一律在上方——这里补的正是「上方」那一半。
+      {
+        canvasDocument.nodes = [...canvasDocument.nodes, {
+          id: 'node-toolbar-top', type: 'video', title: '工具栏在上', x: 400, y: 2150, width: 300, height: 200,
+          metadata: { status: 'idle' },
+        }]
+        ecommerceSwitch.click()
+        await new Promise(resolve => setTimeout(resolve, 60))
+        canvasSwitch.click()
+        await waitForSelector(view, '[data-node-id="node-toolbar-top"]')
+        const topToolbar = view.querySelector('[data-node-id="node-toolbar-top"] [data-toolbar]')
+        assert.ok(topToolbar !== null, 'a non-image node has a toolbar')
+        assert.equal(topToolbar.getAttribute('data-toolbar'), 'top', 'without an image the toolbar sits above the frame')
+        canvasDocument.nodes = canvasDocument.nodes.filter(entry => entry.id !== 'node-toolbar-top')
+      }
+
+      // (d) 连接桩：左桩拉入（target）、右桩拉出（source）。两个桩是画布上连线
+      //     的唯一入口，缺一个就只能靠拖到节点上，而拖拽本身很难在 jsdom 里复现。
+      //     类名带哈希，用 class 前缀匹配。
+      {
+        canvasDocument.nodes = [...canvasDocument.nodes, {
+          id: 'node-handles', type: 'image', title: '接线桩', x: 800, y: 2150, width: 240, height: 240,
+          metadata: { status: 'idle' },
+        }]
+        ecommerceSwitch.click()
+        await new Promise(resolve => setTimeout(resolve, 60))
+        canvasSwitch.click()
+        await waitForSelector(view, '[data-node-id="node-handles"]')
+        const handleBody = view.querySelector('[data-node-id="node-handles"]')
+        const left = handleBody.querySelector('[class*="handleLeft"]')
+        const right = handleBody.querySelector('[class*="handleRight"]')
+        assert.ok(left !== null, 'the node offers a left (incoming) connect handle')
+        assert.ok(right !== null, 'the node offers a right (outgoing) connect handle')
+        // 两桩的 title 文案不同：一个是「连到这里」，一个是「从这里连出」。
+        // 断文案而不是只断存在，是因为两桩对调后节点照样有两个桩。
+        assert.notEqual(
+          left.getAttribute('title'),
+          right.getAttribute('title'),
+          'the two handles describe opposite directions, not the same hint twice',
+        )
+        canvasDocument.nodes = canvasDocument.nodes.filter(entry => entry.id !== 'node-handles')
+      }
+
+      // (e) 分镜节点的「运行中」标签。只有在某个镜头指向的视频节点处于
+      //     generating（既没有 url、status 也不是 error）时才出现。
+      //     这是用户唯一能看出「分镜正在跑第几镜」的地方。
+      {
+        canvasDocument.nodes = [...canvasDocument.nodes,
+          {
+            id: 'node-board-running', type: 'storyboard', title: '运行中的分镜', x: 1200, y: 2150, width: 380, height: 420,
+            metadata: {
+              status: 'idle',
+              storyboard: {
+                shots: [{ id: 'shot-1', prompt: '镜头一', seconds: 5, nodeId: 'node-board-shot' }],
+                aspectRatio: '16:9', resolution: '720P', continuity: 'cut',
+              },
+            },
+          },
+          // 该镜头指向的视频节点：无 url、无 error → shotState 判为 generating。
+          {
+            id: 'node-board-shot', type: 'video', title: '镜头一', x: 1700, y: 2150, width: 300, height: 200,
+            metadata: { status: 'generating' },
+          },
+        ]
+        ecommerceSwitch.click()
+        await new Promise(resolve => setTimeout(resolve, 60))
+        canvasSwitch.click()
+        await waitForSelector(view, '[data-node-id="node-board-running"]')
+        const boardHeader = view.querySelector('[data-node-id="node-board-running"]')
+        assert.ok(
+          await waitUntil(() => boardHeader.querySelector('[data-storyboard-running]') !== null),
+          'a board with a shot still rendering shows its running tag',
+        )
+        assert.ok(
+          boardHeader.querySelector('[data-storyboard-count]') !== null,
+          'the board also shows the total shot count next to it',
+        )
+        canvasDocument.nodes = canvasDocument.nodes.filter(
+          entry => entry.id !== 'node-board-running' && entry.id !== 'node-board-shot',
+        )
+      }
+
       // 出错态不是只要「有个按钮」——它得把宿主给的原因原样显示出来，重试按钮
       // 必须在。这两点分开断，免得只画了个空壳也算通过。
       canvasDocument.nodes = [...canvasDocument.nodes,
