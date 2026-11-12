@@ -5,6 +5,20 @@ Attribution for third-party code is in [NOTICE](./NOTICE).
 
 ## Releases
 
+### 1.28.0 — 插件拆成 13 个可独立装卸的组件；画布整图导出/导入；Agent 读写画布结构
+
+- **宿主侧从一个组件拆成 13 个**：1 个共享核心（`imagegen`：设置、渠道、队列、订阅、更新、浏览器工作台）+ 12 个独立 feature 组件（image / video / canvas / gallery / templates / skills / ppt / ecommerce / outfit / prompt / storage / diagnostics）。每个都有自己的 exports 子路径、多语言文件与注册行，可单独 mount 与 unload；路由归属由一处判定函数决定，未知端点留在核心；移除核心连带挂起依赖者。这是生命周期边界不是权限边界——浏览器侧仍是一个共享工作台，已提交的上游任务不会因卸载而取消。老安装需重新加载新版包并重组 bundle 才能看到这 13 行。
+- **画布整图导出/导入（宿主路由）**：一个 JSON 文件搬走整张画布，v2 文档 + 引用素材字节内联 base64，不引入 zip 依赖；导入永远新建（新 id、节点 id 保留），绝不覆盖已有画布；拿不到字节的引用逐条进 `unresolved` 并带 nodeId，不静默丢弃；上限 256MB，超限 / 坏 base64 / 路径穿越 / 文档版本过高在写入前逐个拒绝。**界面还没有入口**，本版只交付两条路由与全部校验。
+- **Agent 画布工具（八个）**：`list_canvases`、`read_canvas`、`create_canvas`、`add_canvas_node`、`update_canvas_node`、`remove_canvas_node`、`connect_canvas_nodes`、`disconnect_canvas_nodes`。**没有任何 run/generate 类工具，并被套件钉成断言**（扫描工具名与 schema，加一个生成工具立刻变红）——生成要用户自己按运行键。写操作走 `CanvasStore.save(document, revision)` 同一把乐观锁，冲突时返回可操作说明；`read_canvas` 附带结构提示（无下游连接的节点、孤立节点）。
+- **工作流执行器三项加法能力**：续跑（上一轮已有结论的节点按 `cached` 计，画布一直在用）、强制重跑（指定节点及其下游闭包以 force 提交，优先于续跑）、层内并发上限（默认不限，保持旧行为）。后两项**尚无界面开关**。
+- **手机端第三轮（#33）**：画布 dock 改单排横向滑动、画布铺满面板；素材选择器未点选时详情栏收起、点选后大图为主；点标题/筛选/状态栏回列表的返回手势；搜索框字号 16px 修掉 iOS 整页放大；服饰说明两行截断。
+- **修复：切走画布丢弃在途技能运行。** `seedSkillRuns` 整体重建运行表，只留「属于该画布且非挂起」，在跑的 run 与已挂起待落地的输出一起被丢，而轮询跳过挂起项——那是它唯一一份拷贝。
+- **修复：技能挂起输出 effect 按 id 集合触发。** 依赖数组原先读 `length`，一次提交里删一条又新增一条时长度不变，effect 不重跑，新条目永不落地。
+- **修复：技能轮询防重入。** host 慢时上一次 tick 仍在 await，下一次就起来读同一份 ref、重复请求并重复弹通知。
+- **修复：画布导入失败区分「文件太大」与「不是画布文件」。** 新增 `readJsonBodyExact`，超限返 `too-large`（读到上限就停）、解析失败返 `malformed`，分别给 `bundle-too-large` / `bundle-malformed`；以前一个被截断的 2KB 文件会被报成超过 256MB。
+- 删掉无人读取的 `flowEdges` 派生与其专属 helper（连线真正由 connection-layer 按 `document.connections` 绘制，同一套过滤规则此前已漂移过一次）。
+- **仓库侧**：补 `SECURITY.md`、Dependabot 配置、三个工作流 action 全部固定到 40 位 SHA（第三方收录扫描 77/100 过 75 分门槛）；release 加闸门——版本已发布且 tag 指向别的提交时直接失败并说明怎么 bump，另补 release 侧的无头浏览器安装；CI 里四个浏览器守卫不再「找不到浏览器就退出 0」；反向验证可并排跑（14 组 `--jobs 3` 全过，`contracts` 单组 577s 占串行 93%）。
+- 测试：新增 `smoke-components`（12 个组件各自挂载/卸载/重挂、根组合全端点、video 工具单独卸载、移除核心连带挂起）、`smoke-canvas-bundle`（14 项）、`smoke-canvas-agent`（10 项，三条反向验证）；`smoke-workflow` 补 12 条、三条反向验证。**未验证项**：画布导出/导入、Agent 画布工具、工作流 rerun/maxParallel 均无界面入口，只有路由与工具层被覆盖。
 ### 1.27.0 — 千问生图 API；大图预览可按住拖动（一并发布 1.25.0 / 1.26.0）
 
 - **v1.24.0 之后的第一个发布版本。** 1.25.0（react-flow 画布引擎）与 1.26.0（画布布局对齐 LibTV）此前只推了代码、没有 tag 与 Release，它们的改动随本版一起发出，条目保留在下面各自的小节里。
