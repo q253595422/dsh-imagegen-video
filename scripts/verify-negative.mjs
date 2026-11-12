@@ -1247,8 +1247,12 @@ const CASES = [
     name: 'the published archive carries the README screenshots again',
     runner: 'pack',
     file: 'package.json',
-    from: '  "files": [\n    "lib",\n    "src/templates",\n    "cordis.patch.yml",\n    "docs/releases",',
-    to: '  "files": [\n    "lib",\n    "src/templates",\n    "cordis.patch.yml",\n    "docs/images",\n    "docs/releases",',
+    // Anchored on ONE line, not on its neighbours: the `files` array grew a
+    // "locale" entry between "lib" and "src/templates", and every case written
+    // against that adjacency silently stopped applying (HARNESS BROKEN) even
+    // though the rule it guards was unchanged.
+    from: '    "docs/releases",',
+    to: '    "docs/images",\n    "docs/releases",',
     expect: /docs\/images\/ -- README screenshots/,
   },
   {
@@ -1264,8 +1268,10 @@ const CASES = [
     name: 'the archive declares a client half it does not contain',
     runner: 'pack',
     file: 'package.json',
-    from: '  "files": [\n    "lib",\n    "src/templates",\n    "cordis.patch.yml",\n    "docs/releases",',
-    to: '  "files": [\n    "src/templates",\n    "cordis.patch.yml",\n    "docs/releases",',
+    // Same single-line anchor: removing the "lib" entry is the defect, and it
+    // must not depend on which entries happen to surround it.
+    from: '  "files": [\n    "lib",\n',
+    to: '  "files": [\n',
     expect: /exports\["\.\/client"\] -> lib\/client\.js \(not in the archive\)/,
   },
   {
@@ -1301,8 +1307,10 @@ const CASES = [
     name: 'the archive stops carrying the release notes it declares',
     runner: 'pack',
     file: 'package.json',
-    from: '  "files": [\n    "lib",\n    "src/templates",\n    "cordis.patch.yml",\n    "docs/releases",',
-    to: '  "files": [\n    "lib",\n    "src/templates",\n    "cordis.patch.yml",',
+    // Single-line anchor, same reason as the two above: the neighbouring
+    // entries moved and this case silently stopped applying.
+    from: '    "docs/releases",',
+    to: '    "docs/releases-removed",',
     expect: new RegExp(`does not contain docs\\/releases\\/v${SRC_VERSION.replace(/\./g, '\\.')}\\.md`),
   },
   {

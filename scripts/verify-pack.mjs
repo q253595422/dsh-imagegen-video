@@ -229,7 +229,27 @@ const packedManifest = JSON.parse(
 )
 const unresolved = declaredEntryPoints(packedManifest)
   .map(([label, target]) => [label, target.replace(/^\.\//, '')])
-  .filter(([, target]) => !entries.has(`package/${target}`))
+  // A `./locale/*.json` export names a PATTERN, not a file: the manifest is
+  // telling npm "whatever is in locale/ is addressable", and the wildcard is
+  // resolved by the resolver at import time. Comparing it to the archive's file
+  // list verbatim can never match, so every wildcard export reported "not in
+  // the archive" even when all 26 locale files were packed -- which is what a
+  // real CI run did. Expand the pattern against the archive first; a pattern
+  // that expands to NOTHING is still a real failure (that is the case this
+  // check exists for: an export pointing at a directory `files` no longer
+  // ships), so the emptiness test moves to the expanded result.
+  .flatMap(([label, target]) => {
+    if (!target.includes('*')) return [[label, target, entries.has(`package/${target}`)]]
+    const pattern = new RegExp(`^package/${target
+      .split('*')
+      .map(part => part.replace(/[.+?^${}()|[\]\\]/g, '\\$&'))
+      .join('[^/]*')}$`)
+    const matches = [...entries].filter(entry => pattern.test(entry))
+    // One representative is enough: all matches are inside the pattern.
+    return matches.length > 0 ? [] : [[label, target, false]]
+  })
+  .filter(([, , found]) => !found)
+  .map(([label, target]) => [label, target])
 if (unresolved.length > 0) {
   fail([
     '',
