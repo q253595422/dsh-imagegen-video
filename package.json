@@ -3,10 +3,10 @@
   "description": "AI image and video generation for the DSH web GUI: multi-channel text/image-to-image and text/image-to-video, infinite canvas workflows, gallery, prompt templates, canvas skills, and Agent tools.",
   "version": "1.28.0",
   "type": "module",
-  "main": "lib/index.js",
+  "main": "index.js",
   "exports": {
     "./locale/*.json": "./locale/*.json",
-    ".": "./lib/index.js",
+    ".": "./index.js",
     "./client": "./lib/client.js",
     "./locale-tables": "./lib/locale-tables.js",
     "./image": "./lib/components/image.js",
@@ -114,6 +114,7 @@
     "typescript": "~5.7.2"
   },
   "files": [
+    "index.js",
     "lib",
     "locale",
     "src/templates",

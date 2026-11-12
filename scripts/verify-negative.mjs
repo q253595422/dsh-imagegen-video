@@ -1256,23 +1256,44 @@ const CASES = [
     expect: /docs\/images\/ -- README screenshots/,
   },
   {
-    // `files` decides what gets packed; `exports` decides what the host and the
-    // browser will load. Nothing used to compare the two, so a `files` edit that
-    // drops a half of the plugin -- or an `exports` edit pointing at a renamed
-    // file -- produced an archive that installed cleanly, booted cleanly, and
-    // then did absolutely nothing, with no error anywhere.
+    // The archive ships a manifest promising two halves: `main` (the host half)
+    // and `exports["./client"]` (what the browser fetches). Nothing used to
+    // compare the promise against the packed file list, so an `exports` edit
+    // aimed at a renamed file produced an archive that installed cleanly,
+    // booted cleanly, and then 404ed the panel with no error anywhere.
     //
-    // Dropping "lib" from `files` is the shape that hurts most: the host half is
-    // `main: lib/index.js` and the browser half is `exports["./client"]`, so the
-    // archive ships a manifest promising two files and contains neither.
+    // Mutated on the `exports` side, not by dropping "lib" from `files` -- see
+    // the case below for why that mutation can no longer reach this check.
     name: 'the archive declares a client half it does not contain',
     runner: 'pack',
     file: 'package.json',
-    // Same single-line anchor: removing the "lib" entry is the defect, and it
-    // must not depend on which entries happen to surround it.
-    from: '  "files": [\n    "lib",\n',
-    to: '  "files": [\n',
-    expect: /exports\["\.\/client"\] -> lib\/client\.js \(not in the archive\)/,
+    // Anchored on the whole line, so the case does not depend on which entry
+    // happens to follow it.
+    from: '    "./client": "./lib/client.js",\n',
+    to: '    "./client": "./lib/client-browser.js",\n',
+    expect: /exports\["\.\/client"\] -> lib\/client-browser\.js \(not in the archive\)/,
+  },
+  {
+    // The other direction, and the reason the case above is no longer written
+    // this way: npm and pnpm ALWAYS pack the file named by `main`, even when
+    // `files` omits it. While `main` was `lib/index.js`, dropping "lib" from
+    // `files` still shipped that one file, so the archive's declared entry
+    // points were checked next and the missing browser half was reported.
+    //
+    // `main` now points at the committed `index.js` re-export (so a source-only
+    // tree has a runtime entry at all), which means the automatic inclusion no
+    // longer covers `lib/index.js`. Dropping "lib" is therefore caught EARLIER,
+    // by the required-entries check -- this case pins that ordering, because a
+    // reordering that let the archive ship with no built code would make the
+    // plugin install and do nothing.
+    name: 'the archive drops the built code that the entry re-exports',
+    runner: 'pack',
+    file: 'package.json',
+    // Single-line anchor: removing the "lib" entry is the defect, and it must
+    // not depend on which entries happen to surround it.
+    from: '    "lib",\n',
+    to: '',
+    expect: /the published archive is missing entries the runtime needs:[\s\S]*package\/lib\/index\.js/,
   },
   {
     // v1.8.0 shipped without `docs/releases/v1.8.0.md`, and the fallback in

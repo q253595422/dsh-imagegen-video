@@ -18,6 +18,14 @@ The bundle declares 13 Cordis loader entries: a shared core and twelve independe
 | imagegen-storage | Object storage and automatic upload hook |
 | imagegen-diagnostics | Diagnostics and feedback signals |
 
+## Package entry points
+
+`main` and `exports["."]` point at the committed `index.js` at the package root, not at `lib/index.js`.
+
+`lib/` is build output and is not in the repository, so a manifest aimed straight at it declares a runtime entry that does not exist until somebody runs `pnpm build`. Tooling that inspects the repository without building it -- package registries that check the declared entry exports `apply(ctx)`, for one -- reads the file the manifest names and finds nothing there. `index.js` is a two-line re-export of `lib/index.js` (`export *` plus an explicit `apply`), committed so the declaration always resolves, and `files` ships both it and `lib/`.
+
+`scripts/verify-pack.mjs` closes the other end of that: the packed manifest is read back out of the archive and every entry point it declares, `main` included, must be a real file inside the tarball. A `files` edit that drops either half therefore fails locally, before anything is published.
+
 ## Lifecycle
 
 The core provides route definitions and runtime mounting hooks. Each feature registers its assigned routes, tools, commands and background hooks on its own context. Disabling a feature removes these registrations; removing the core suspends all dependent features. Shared queues and persisted data remain owned by the core. Disabling a feature does not cancel already submitted upstream jobs or delete records.
