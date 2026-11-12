@@ -43,6 +43,17 @@ const VERBOSE = process.argv.includes('--verbose')
 const MANUAL = {
   'studio-preview-shot.mjs':
     'produces a screenshot for a human to look at; it has no verdict to assert',
+  // These four were previously counted as gated only because their command
+  // existed in `package.json`. None of them runs in any workflow, and none
+  // should: three have side effects (network, rewriting files) and the fourth
+  // needs a tool the repository does not depend on. Naming them here is the
+  // honest record of "a person runs this, on purpose".
+  'fetch-templates.mjs':
+    'refreshes the bundled prompt-template snapshots from the network; run by hand when those sources change',
+  'upstream-sync.mjs':
+    'checks the upstream project and writes a port plan; the README calls it a manual command, and it must never decide a push',
+  'ppt-browser-test.mjs':
+    'needs Playwright, which this repository does not depend on; its own header says it is deliberately outside `pnpm test`',
 }
 
 /* ------------------------------------------------------------ reachability */
@@ -59,6 +70,59 @@ function invocationsIn(text) {
 /** Every command string a package.json script would run. */
 function packageCommands(pkg) {
   return Object.entries(pkg.scripts ?? {}).map(([name, command]) => ({ name, command }))
+}
+
+/**
+ * The `package.json` scripts that actually run inside a gate.
+ *
+ * WHY this is not "all of them": a script is an entry point, not a gate. Until
+ * this distinction existed, defining `"test:ppt-browser": "node scripts/…"` was
+ * enough to make that file count as reachable — even though no workflow invoked
+ * it and no other script chained to it. `ppt-browser-test.mjs` says in its own
+ * header that it is "deliberately NOT part of `pnpm test`", and it needs
+ * Playwright, which this repository does not depend on; it was a hand-run entry
+ * wearing a gate's badge. A guard that cannot tell those apart reports "every
+ * script is reachable" over a set that is partly fiction.
+ *
+ * A script counts when a workflow runs it (`pnpm test`) or when another script
+ * that counts invokes it (`test:components` is only reached through nothing —
+ * see below — so it must name its own gate to qualify).
+ *
+ * @param {ReturnType<typeof packageCommands>} scripts
+ * @param {readonly string[]} workflowTexts - raw YAML of every workflow.
+ */
+function gatedPackageScripts(scripts, workflowTexts) {
+  const byName = new Map(scripts.map(entry => [entry.name, entry.command]))
+  const gated = new Set()
+  const queue = []
+  // Seeds: a script whose name a workflow reaches for with `pnpm <name>` or
+  // `pnpm run <name>`, PLUS the suites that are a documented full run even
+  // though no workflow schedules them. `test:negative` is the latter: 137
+  // reverse-verification cases that a person runs, that the README lists, and
+  // that `verify-negative-anchors` keeps honest. Leaving it out would report
+  // `verify-negative.mjs` as orphaned, which is untrue and would push someone
+  // to add it to CI under a name that does not work there.
+  const MANUALLY_GATED_SUITES = ['test:negative']
+  for (const text of workflowTexts) {
+    for (const match of text.matchAll(/\bpnpm(?:[ \t]+run)?[ \t]+([\w:@./-]+)/g)) {
+      const name = match[1]
+      if (byName.has(name)) queue.push(name)
+    }
+  }
+  for (const name of MANUALLY_GATED_SUITES) {
+    if (byName.has(name)) queue.push(name)
+  }
+  // Transitive: `test` chains `pnpm build`; anything it names is gated too.
+  while (queue.length > 0) {
+    const name = queue.pop()
+    if (gated.has(name)) continue
+    gated.add(name)
+    const command = byName.get(name) ?? ''
+    for (const match of command.matchAll(/\bpnpm(?:[ \t]+run)?[ \t]+([\w:@./-]+)/g)) {
+      if (byName.has(match[1])) queue.push(match[1])
+    }
+  }
+  return scripts.filter(entry => gated.has(entry.name))
 }
 
 /**
@@ -120,7 +184,18 @@ function main() {
     reached.get(file).add(where)
   }
 
-  for (const { name, command } of packageCommands(pkg)) {
+  const workflowTexts = []
+  {
+    const dir = join(ROOT, '.github', 'workflows')
+    if (existsSync(dir)) {
+      for (const file of readdirSync(dir)) {
+        if (!/\.ya?ml$/.test(file)) continue
+        workflowTexts.push(readFileSync(join(dir, file), 'utf8'))
+      }
+    }
+  }
+
+  for (const { name, command } of gatedPackageScripts(packageCommands(pkg), workflowTexts)) {
     for (const file of invocationsIn(command)) record(file, `package.json → ${name}`)
   }
   for (const { name, command } of workflowCommands()) {
