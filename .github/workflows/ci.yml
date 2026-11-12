@@ -28,7 +28,7 @@ jobs:
         with:
           version: 12.11.2
 
-      - uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           # 24 for the same reason release.yml uses it: the OIDC-capable npm CLI
           # that trusted publishing needs requires node ^24.15.0, and CI has to
