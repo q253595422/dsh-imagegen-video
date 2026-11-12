@@ -1780,8 +1780,18 @@ export function CanvasWorkspace(props: CanvasWorkspaceProps): React.JSX.Element 
   /** A run that finished while another canvas was open lands as soon as its
    *  own canvas is shown again. */
   const pendingSkillOutputs = Object.entries(skillRuns).filter(([, trace]) => trace.status === 'pending' && trace.canvasId === document?.id)
+  // Keyed by WHICH runs are pending, not how many. The poll tick skips
+  // `status === 'pending'` outright, so this effect is the only thing that ever
+  // applies a held back output; if it does not re-run, that output never lands
+  // and its card stays on the canvas forever. The count is not enough because
+  // React batches: when one held output is deleted here and another run turns
+  // pending in the same commit, the length is 1 before and 1 after, the deps
+  // compare equal, and the newcomer is never applied. Joining the ids tells
+  // those two situations apart while staying a primitive; the sort keeps the
+  // key stable against entry order.
+  const pendingSkillOutputKey = pendingSkillOutputs.map(([taskId]) => taskId).sort().join(',')
   useEffect(() => {
-    if (pendingSkillOutputs.length === 0) return
+    if (pendingSkillOutputKey === '') return
     for (const [taskId, trace] of pendingSkillOutputs) {
       if (trace.output !== undefined) {
         const added = applySkillOutput({ skillId: trace.skillId, label: trace.label, output: trace.output } as CanvasSkillTask, trace.ids)
@@ -1790,7 +1800,7 @@ export function CanvasWorkspace(props: CanvasWorkspaceProps): React.JSX.Element 
       setSkillRuns(previous => { const next = { ...previous }; delete next[taskId]; return next })
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [pendingSkillOutputs.length, document?.id, applySkillOutput])
+  }, [pendingSkillOutputKey, document?.id, applySkillOutput])
 
   /** Reopen recovery: a canvas with live host-side runs rebuilds its run cards
    *  (page reload or canvas switch loses the browser-side traces). */
