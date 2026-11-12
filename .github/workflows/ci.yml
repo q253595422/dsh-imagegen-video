@@ -55,6 +55,27 @@ jobs:
       - name: Install ffmpeg
         run: sudo apt-get update && sudo apt-get install -y ffmpeg
 
+      # Four guards (ui-contracts, video-layout, canvas-layout, frame-grab) need
+      # a headless browser. Until this step existed they found none on the
+      # runner, printed "SKIP: ... did NOT run", and exited 0 -- so CI judged
+      # them green while the whole UI contract layer went unchecked. Measured in
+      # run 43166516751: `UI CONTRACTS VERIFIED` does not appear in the log.
+      #
+      # chrome-headless-shell rather than the image's Chrome: it is the build
+      # these guards were written against (no --headless flag needed), it is a
+      # smaller download, and pinning it means the check does not change
+      # behaviour when a runner image updates its browser. The version tracks
+      # the npm package `@puppeteer/browsers` that installs it.
+      - name: Install chrome-headless-shell
+        run: |
+          set -euo pipefail
+          npx --yes @puppeteer/browsers install chrome-headless-shell@stable \
+            --path "$HOME/.cache/chrome-headless"
+          SHELL_BIN=$(find "$HOME/.cache/chrome-headless" -name 'chrome-headless-shell' -type f | head -1)
+          test -n "$SHELL_BIN"
+          echo "CHROME_HEADLESS_SHELL=$SHELL_BIN" >> "$GITHUB_ENV"
+          "$SHELL_BIN" --version
+
       - name: Test suites
         run: pnpm test
 

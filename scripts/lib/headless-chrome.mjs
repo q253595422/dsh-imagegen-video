@@ -23,6 +23,34 @@ import { tmpdir } from 'node:os'
 import { basename, join } from 'node:path'
 
 /**
+ * Resolve a bare command name the way the shell would, using only the PATH in
+ * the environment handed in.
+ *
+ * WHY not `which`: that spawns a process and consults the *current* PATH, which
+ * is neither the environment this function was given nor available on every
+ * Windows machine. Splitting PATH here keeps `findChrome()` pure and testable.
+ *
+ * @param {string} name - e.g. `google-chrome`.
+ * @param {NodeJS.ProcessEnv} env - environment whose PATH is searched.
+ * @returns {string | null} the first executable match, or null.
+ */
+function resolveOnPath (name, env) {
+  const raw = env.PATH ?? env.Path ?? ''
+  if (raw === '') return null
+  const extensions = process.platform === 'win32'
+    ? (env.PATHEXT ?? '.EXE;.CMD;.BAT').split(';')
+    : ['']
+  for (const directory of raw.split(process.platform === 'win32' ? ';' : ':')) {
+    if (directory === '') continue
+    for (const extension of extensions) {
+      const candidate = join(directory, name + extension)
+      if (existsSync(candidate)) return candidate
+    }
+  }
+  return null
+}
+
+/**
  * Find a Chromium binary, honouring the same two knobs every guard documents:
  * the first CLI argument and `CHROME_HEADLESS_SHELL`.
  * @param {readonly string[]} [argv] - process.argv-like list.
@@ -42,6 +70,23 @@ export function findChrome (argv = process.argv, env = process.env) {
     '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome',
     '/Applications/Chromium.app/Contents/MacOS/Chromium',
     ...globSync(`${env.HOME ?? ''}/.cache/puppeteer/**/chrome-headless-shell`).sort().reverse(),
+    // Linux. Without these every browser guard skipped on CI, which is Ubuntu
+    // -- and a skip exits 0, so four guards sat green while never running:
+    //   SKIP: no headless Chromium found -- the UI contract guards did NOT run.
+    // Found in a real CI log (run 43166516751). The runner image ships Chrome
+    // and Chromium, but not where the macOS-centric list looked, so a fixed
+    // path list alone is still a guess: `resolveOnPath` asks the system what
+    // the command actually resolves to, which survives an image move.
+    ...globSync('/opt/google/chrome/chrome').sort().reverse(),
+    '/usr/bin/google-chrome',
+    '/usr/bin/google-chrome-stable',
+    '/usr/bin/chromium',
+    '/usr/bin/chromium-browser',
+    '/snap/bin/chromium',
+    ...['google-chrome', 'google-chrome-stable', 'chromium', 'chromium-browser']
+      .map(name => resolveOnPath(name, env))
+      .filter(path => path !== null),
+
     // Windows. Without these the browser guards skipped on every Windows
     // machine -- and a skip is not a pass, but it also never fails, so the
     // contracts simply never ran there. Installed browsers come first because
@@ -77,18 +122,42 @@ const WINDOWS_CHROME_PATHS = [
 ]
 
 /**
- * Print the loud skip block and exit 0 when no browser exists.
- * A missing tool is not a failing contract; a silent pass is.
+ * Print the loud skip block and exit 0 when no browser exists — EXCEPT in CI,
+ * where it exits 1 instead.
+ *
+ * WHY the exception: a skip is right on a developer machine (no browser, the
+ * contract is not wrong) but it is a hole in CI. These guards sat green on every
+ * push for as long as they existed, printing "SKIP: ... the UI contract guards
+ * did NOT run" into a log nobody read, because CI only judges the exit code
+ * (measured: run 43166516751, `UI CONTRACTS VERIFIED` absent from the log). The
+ * fix that found the Linux binary is in `findChrome`; this is the guard that
+ * stops the hole reopening the next time a runner image moves the browser.
+ *
+ * `GITHUB_ACTIONS` is what separates "a run whose colour people trust" from "a
+ * run on someone's machine". `CI` alone is too broad: this developer shell has
+ * `CI=1` set for unrelated tooling, and failing a local run that simply lacks a
+ * browser would train people to export CHROME_HEADLESS_SHELL to a dummy path.
+ * The gap being closed is specifically a green CI run that proved nothing, so
+ * the check keys on the CI that gates pushes.
+ *
  * @param {string} noBrowserMessage - what these particular guards cover.
  * @returns {never}
  */
 export function skipWithoutChrome (noBrowserMessage) {
+  const inCi = (process.env.GITHUB_ACTIONS ?? '') === 'true'
   console.error('\n' + '='.repeat(72))
-  console.error(`SKIP: no headless Chromium found -- ${noBrowserMessage}`)
-  console.error('This is a MISSING TOOL, not a regression. Install chrome-headless-shell,')
-  console.error('or point CHROME_HEADLESS_SHELL at a Chromium binary, to gate on these.')
+  console.error(`${inCi ? 'FAIL' : 'SKIP'}: no headless Chromium found -- ${noBrowserMessage}`)
+  console.error(inCi
+    ? 'CI has no browser, so these guards cannot be skipped without leaving a hole:'
+    : 'This is a MISSING TOOL, not a regression. Install chrome-headless-shell,')
+  console.error(inCi
+    ? 'a green run would mean the contracts were never checked. Install a browser'
+    : 'or point CHROME_HEADLESS_SHELL at a Chromium binary, to gate on these.')
+  console.error(inCi
+    ? 'in CI (or set CHROME_HEADLESS_SHELL) instead of accepting this skip.'
+    : '')
   console.error('='.repeat(72) + '\n')
-  process.exit(0)
+  process.exit(inCi ? 1 : 0)
 }
 
 /**

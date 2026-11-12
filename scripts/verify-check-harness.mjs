@@ -56,6 +56,38 @@ case_('a harness that treats the deadline as a verdict fails those rules', async
   assert.ok(threw, '把超时当结论之后，自检竟然还是绿的 —— 这套规则没有保护作用')
 })
 
+case_('a missing browser is a skip locally but a failure in CI', async () => {
+  // The hole this closes: four browser guards printed "SKIP: ... did NOT run",
+  // exited 0, and CI judged them green -- so the whole UI contract layer was
+  // never checked on any push (measured: run 43166516751). A skip is honest on a
+  // machine that has no browser; in CI it is a green light for nothing.
+  //
+  // Run as a real child process, because the verdict IS the exit code. Asserting
+  // on the printed text would pass even if the process still exited 0.
+  const { spawnSync } = await import('node:child_process')
+  const chrome = join(here, 'lib/headless-chrome.mjs')
+  const child = `
+    import { skipWithoutChrome } from ${JSON.stringify(pathToFileURL(chrome).href)}
+    skipWithoutChrome('the UI contract guards did NOT run.')
+  `
+  const probe = mkdtempSync(join(tmpdir(), 'skip-verdict-'))
+  const probePath = join(probe, 'probe.mjs')
+  writeFileSync(probePath, child)
+
+  const inCi = spawnSync(process.execPath, [probePath], {
+    env: { ...process.env, GITHUB_ACTIONS: 'true' },
+    encoding: 'utf8',
+  })
+  assert.equal(inCi.status, 1, `CI 里缺浏览器必须失败，实际退出码 ${inCi.status} —— 这层守卫在 CI 上等于没跑`)
+  assert.match(inCi.stderr, /did NOT run/, '失败信息要说明是哪一层没跑')
+
+  const locally = spawnSync(process.execPath, [probePath], {
+    env: { ...process.env, GITHUB_ACTIONS: '', CI: '' },
+    encoding: 'utf8',
+  })
+  assert.equal(locally.status, 0, '本机没有浏览器时应当明确跳过并返回 0，而不是把开发者的机器判红')
+})
+
 let bad = 0
 for (const [name, fn] of cases) {
   try {

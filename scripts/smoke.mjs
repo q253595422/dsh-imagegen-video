@@ -9627,8 +9627,13 @@ await check('E1 client apply mounts the sidebar entry and studio (jsdom)', async
     assert.ok(replicaInput !== null, 'the replica reference input is rendered')
     Object.defineProperty(replicaInput, 'files', { value: [new jsdomWindow.File([new Uint8Array([0x89, 0x50, 0x4e, 0x47])], 'shot.png', { type: 'image/png' })], configurable: true })
     replicaInput.dispatchEvent(new jsdomWindow.Event('change', { bubbles: true }))
-    await new Promise(resolve => setTimeout(resolve, 90))
-    assert.match(capacityBlock.textContent ?? '', /1 张全部会发送/, `a picked reference states how many are sent: ${capacityBlock.textContent}`)
+    // The pick is asynchronous (FileReader + a serial add queue + a React
+    // render). A fixed sleep races it under load — the same late-timer failure
+    // the `waitFor` helper documents — so poll for the counting sentence.
+    assert.ok(
+      await waitFor(() => /1 张全部会发送/.test(capacityBlock.textContent ?? '')),
+      `a picked reference states how many are sent: ${capacityBlock.textContent}`,
+    )
     // A long image render must live in the host queue. The old synchronous
     // /generate call could finish host-side after its client connection died:
     // history then contained the image, but this result pane stayed empty until
