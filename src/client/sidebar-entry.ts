@@ -408,6 +408,24 @@ function makeTab(
 }
 
 /**
+ * Close the shell's mobile drawer after a tab activation.
+ *
+ * DSH renders the sidebar as an off-canvas drawer on narrow viewports. The
+ * switcher lives inside that drawer, so switching to the image studio would
+ * leave the drawer covering the studio the user just asked for (the same for
+ * switching back to the conversation). Only an OPEN drawer is touched: in the
+ * desktop layout there is no `data-sidebar-drawer` frame and the sidebar
+ * stays exactly where it was.
+ */
+function closeSidebarDrawer(): void {
+  const frame = document.querySelector<HTMLElement>('[data-sidebar-drawer="true"]')
+  if (frame === null || frame.hasAttribute('data-sidebar-collapsed')) return
+  const toggle = frame.querySelector<HTMLButtonElement>('[data-sidebar-toggle]')
+    ?? sidebarToggleButton(frame)
+  toggle?.click()
+}
+
+/**
  * Build the two-tab switcher. Detached from any seat: the caller decides where
  * it goes, so both the preferred seat and the fallback below share one builder.
  */
@@ -428,8 +446,8 @@ function createTabs(
   // One `activate` per tab, shared by the click and the arrow key that lands on
   // it: two lambdas meaning the same thing is how a keyboard path drifts away
   // from the mouse path it is supposed to mirror.
-  const activateSession = (): void => { controller.close() }
-  const activateImage = (): void => { controller.open() }
+  const activateSession = (): void => { controller.close(); closeSidebarDrawer() }
+  const activateImage = (): void => { controller.open(); closeSidebarDrawer() }
 
   const sessionTab = makeTab(sessionLabel, sessionTooltip, SESSION_ICON, activateSession)
   const imageTab = makeTab(imageLabel, imageTooltip, IMAGE_ICON, activateImage)

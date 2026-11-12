@@ -5603,10 +5603,12 @@ await check('D3b sidebar entry mounts above the shell action when the workspace 
     // column and the workspace seat. The old root resolution returned the
     // scrolling grid, so the switcher became one 4x8px grid cell (invisible,
     // #35) and a hovered workspace row's per-workspace action could steal it.
+    + '<div data-sidebar-drawer="true">'
     + '<div class="shellRoot" style="display:flex;flex-direction:column">'
     + '<div class="logoRow"><span class="brandMark"><span data-slot="sidebar.brand.mark" style="display: contents"></span></span>'
     + '<span class="brandName"><span data-slot="sidebar.brand.name" style="display: contents"></span></span></div>'
     + '<button class="newSession" aria-label="New session">New session</button>'
+    + '<button data-sidebar-toggle aria-label="收起侧边栏">toggle</button>'
     + '<div class="scrollRegion">'
     + '<div class="scrollArea" style="display:grid">'
     + '<nav class="panelList"><button>Plugins</button></nav>'
@@ -5617,6 +5619,7 @@ await check('D3b sidebar entry mounts above the shell action when the workspace 
     + '</div>'
     + '<div class="footArea"><div data-slot="sidebar.footer.action" style="display: contents"></div>'
     + '<div data-slot="sidebar.settings" style="display: contents"></div></div>'
+    + '</div>'
     + '</div>'
     + '</body></html>',
     { pretendToBeVisual: true },
@@ -5674,6 +5677,8 @@ await check('D3b sidebar entry mounts above the shell action when the workspace 
   }
 
   assert.equal(findSidebarRoot()?.className, 'shellRoot', 'the shell column, not the scroll viewport, is the root')
+  let drawerToggleClicks = 0
+  jsdomDocument.querySelector('[data-sidebar-toggle]').addEventListener('click', () => { drawerToggleClicks += 1 })
   const dispose = mount(controller, '会话', '回到当前对话', '生图', '打开生图工作室')
   const tabs = jsdomDocument.querySelector('[data-dsh-imagegen-session-tabs]')
   const newSession = jsdomDocument.querySelector('.newSession')
@@ -5702,6 +5707,10 @@ await check('D3b sidebar entry mounts above the shell action when the workspace 
   assert.equal(scrollRegion.hasAttribute('data-dsh-imagegen-sidebar-block'), true, 'the wrapper carrying the region is spared')
   assert.equal(panelList.hasAttribute('data-dsh-imagegen-sidebar-hide'), true, 'the panel nav beside the region is marked for hiding')
   assert.equal(jsdomDocument.querySelector('.regionArea').getAttribute('data-dsh-imagegen-sidebar-region'), '')
+  tabs.querySelector('[data-dsh-imagegen-tab="image"]').dispatchEvent(new jsdomWindow.MouseEvent('click', { bubbles: true }))
+  assert.equal(drawerToggleClicks, 1, 'choosing the image tab closes the mobile drawer so the studio is visible')
+  tabs.querySelector('[data-dsh-imagegen-tab="session"]').dispatchEvent(new jsdomWindow.MouseEvent('click', { bubbles: true }))
+  assert.equal(drawerToggleClicks, 2, 'choosing the session tab closes it too')
   dispose()
   assert.equal(jsdomDocument.querySelector('[data-dsh-imagegen-session-tabs]'), null)
   assert.equal(scrollRegion.hasAttribute('data-dsh-imagegen-sidebar-block'), false)
