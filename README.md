@@ -433,9 +433,22 @@ node scripts/verify-negative-parallel.mjs --only smoke,pack
 
 它从 `test:negative` 里读组名，启动前先 `pnpm build` 把工作树钉住（有别的进程
 持有 `.build-lock` 时拒绝启动）。一组失败不会中断其余组，最后统一报。
+
 **注意瓶颈不在调度**：`contracts` 与 `smoke` 这类组内部是逐条用例跑的，单组就是
 大半的墙钟；并发只能把「各组之和」压到「最慢那一组」，要再快得让每条用例只跑
 它针对的那条检查。
+
+`smoke` 组（37 条）实测**整组跑不完**：单独一条 1 分 47 秒，乘 37 约 66 分钟，
+但整组实际跑过 2 小时仍未结束，撞上任何执行时限都会被砍在中途——砍掉后日志只
+有开头，等于整组白跑。多出来的时间不是套件，是每条用例先把整棵树复制一份再注入
+缺陷。整组跑不通时按名字分批，加第二参数过滤：
+
+```bash
+node scripts/verify-negative.mjs smoke "quick-start cards"   # 只跑命中的那条
+```
+
+实测分批：9 条 14 分 12 秒、8 条 11 分 39 秒、11 条 15 分 07 秒，合计比整组快且
+每批都有完整结论。
 
 时间线与身份锚定各有自己的纯函数套件，可以单独跑：
 `pnpm run test:timeline`、`pnpm run test:cast`、`pnpm run test:timeline-compose`
