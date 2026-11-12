@@ -5594,6 +5594,121 @@ await check('D3 sidebar entry mounts inside desktop and unknown sidebar shells, 
   jsdomWindow.setTimeout = realSetTimeout
 })
 
+// ------------------------------- D3b sidebar entry in the 0.2.2 nested shell
+await check('D3b sidebar entry mounts above the shell action when the workspace seat is nested in a scroll container (#35)', async () => {
+  const { JSDOM } = await import('jsdom')
+  const dom = new JSDOM(
+    '<!doctype html><html lang="zh-CN"><head></head><body>'
+    // DSH 0.2.2-rc.2 inserted `scrollRegion > scrollArea` between the sidebar
+    // column and the workspace seat. The old root resolution returned the
+    // scrolling grid, so the switcher became one 4x8px grid cell (invisible,
+    // #35) and a hovered workspace row's per-workspace action could steal it.
+    + '<div class="shellRoot" style="display:flex;flex-direction:column">'
+    + '<div class="logoRow"><span class="brandMark"><span data-slot="sidebar.brand.mark" style="display: contents"></span></span>'
+    + '<span class="brandName"><span data-slot="sidebar.brand.name" style="display: contents"></span></span></div>'
+    + '<button class="newSession" aria-label="New session">New session</button>'
+    + '<div class="scrollRegion">'
+    + '<div class="scrollArea" style="display:grid">'
+    + '<nav class="panelList"><button>Plugins</button></nav>'
+    + '<div class="regionArea"><div data-slot="sidebar.workspaces" style="display: contents">'
+    + '<div class="workspaceRow"><button class="workspaceNewSession" aria-label="New session in 工作区" style="display:none">+</button></div>'
+    + '</div></div>'
+    + '</div>'
+    + '</div>'
+    + '<div class="footArea"><div data-slot="sidebar.footer.action" style="display: contents"></div>'
+    + '<div data-slot="sidebar.settings" style="display: contents"></div></div>'
+    + '</div>'
+    + '</body></html>',
+    { pretendToBeVisual: true },
+  )
+  const jsdomWindow = dom.window
+  const jsdomDocument = jsdomWindow.document
+  const realSetTimeout = jsdomWindow.setTimeout.bind(jsdomWindow)
+  jsdomWindow.setTimeout = (fn, delay, ...args) => realSetTimeout(fn, Math.min(Number(delay) || 0, 20), ...args)
+  const sandbox = {
+    window: jsdomWindow,
+    document: jsdomDocument,
+    MutationObserver: jsdomWindow.MutationObserver,
+    HTMLElement: jsdomWindow.HTMLElement,
+    console,
+  }
+  const stubs = {
+    'react': {
+      Fragment: 'Fragment',
+      createContext: (value) => ({ Provider: () => null, Consumer: () => null, _currentValue: value }),
+      createElement: () => null,
+      forwardRef: (render) => ({ $$typeof: Symbol.for('react.forward_ref'), render }),
+      memo: (fn) => ({ $$typeof: Symbol.for('react.memo'), type: fn }),
+      useContext: () => ({}),
+      useMemo: (factory) => factory(),
+      useRef: () => ({ current: null }),
+      useState: (initial) => [typeof initial === 'function' ? initial() : initial, () => {}],
+    },
+    'react/jsx-runtime': { jsx: () => null, jsxs: () => null },
+    'react-dom': {},
+    'react-dom/client': { createRoot: () => ({ render: () => {}, unmount: () => {} }) },
+    '@deepseek-ai/dsh-client-ui-primitives': {},
+    '@deepseek-ai/dsh-client-store': { createSnapshotStore: (initial) => ({
+      getSnapshot: () => initial,
+      set: () => {},
+      update: () => {},
+      subscribe: () => () => {},
+    }) },
+  }
+  let handoff
+  sandbox.window.__ModuleLoader__ = { load: (h) => { handoff = h } }
+  const source = readFileSync(new URL('../lib/client.js', import.meta.url), 'utf8')
+  vm.runInNewContext(source, sandbox, { filename: 'client.js' })
+  const exportsOf = handoff.factory((spec) => {
+    const stub = stubs[spec]
+    if (stub === undefined) throw new Error('unexpected require: ' + spec)
+    return stub
+  })
+  const { findSidebarRoot, mount } = exportsOf.sidebarEntryTestHooks
+  let panelOpen = false
+  const controller = {
+    getSnapshot: () => ({ panelOpen }),
+    open: () => { panelOpen = true },
+    close: () => { panelOpen = false },
+    subscribe: () => () => {},
+  }
+
+  assert.equal(findSidebarRoot()?.className, 'shellRoot', 'the shell column, not the scroll viewport, is the root')
+  const dispose = mount(controller, '会话', '回到当前对话', '生图', '打开生图工作室')
+  const tabs = jsdomDocument.querySelector('[data-dsh-imagegen-session-tabs]')
+  const newSession = jsdomDocument.querySelector('.newSession')
+  const scrollArea = jsdomDocument.querySelector('.scrollArea')
+  assert.ok(tabs !== null, 'the switcher mounts in the nested shell')
+  assert.equal(tabs.parentElement, jsdomDocument.querySelector('.shellRoot'), 'the switcher sits in the column, not the grid viewport')
+  assert.equal(newSession.previousElementSibling, tabs, 'the switcher sits directly above the shell action')
+  assert.equal(jsdomDocument.querySelector('[data-dsh-imagegen-history-host]')?.parentElement, jsdomDocument.querySelector('.regionArea'))
+  assert.equal(scrollArea.contains(tabs), false, 'the switcher is not a child of the scrolling grid')
+
+  const workspaceRow = jsdomDocument.querySelector('.workspaceRow')
+  const workspaceAction = jsdomDocument.querySelector('.workspaceNewSession')
+  workspaceAction.remove()
+  const revealedAction = jsdomDocument.createElement('button')
+  revealedAction.className = 'workspaceNewSession'
+  revealedAction.setAttribute('aria-label', 'New session in 工作区')
+  revealedAction.textContent = '+'
+  workspaceRow.append(revealedAction)
+  await new Promise(resolve => setTimeout(resolve, 30))
+  assert.equal(jsdomDocument.querySelectorAll('[data-dsh-imagegen-session-tabs]').length, 1, 'a revealed workspace action never duplicates the switcher')
+  assert.equal(tabs.parentElement, jsdomDocument.querySelector('.shellRoot'), 'a workspace action cannot steal the switcher into the tree')
+  assert.equal(newSession.previousElementSibling, tabs, 'the switcher stays above the shell action after a workspace row mutation')
+
+  const scrollRegion = jsdomDocument.querySelector('.scrollRegion')
+  const panelList = jsdomDocument.querySelector('.panelList')
+  assert.equal(scrollRegion.hasAttribute('data-dsh-imagegen-sidebar-block'), true, 'the wrapper carrying the region is spared')
+  assert.equal(panelList.hasAttribute('data-dsh-imagegen-sidebar-hide'), true, 'the panel nav beside the region is marked for hiding')
+  assert.equal(jsdomDocument.querySelector('.regionArea').getAttribute('data-dsh-imagegen-sidebar-region'), '')
+  dispose()
+  assert.equal(jsdomDocument.querySelector('[data-dsh-imagegen-session-tabs]'), null)
+  assert.equal(scrollRegion.hasAttribute('data-dsh-imagegen-sidebar-block'), false)
+  assert.equal(panelList.hasAttribute('data-dsh-imagegen-sidebar-hide'), false)
+  jsdomWindow.setTimeout = realSetTimeout
+})
+
 // ------------------------------- D4 google-native channel protocol (issue #28)
 await check('D4 google-native protocol is offered and wired on the client', () => {
   const settings = readFileSync(new URL('../src/client/SettingsCard.tsx', import.meta.url), 'utf8')
