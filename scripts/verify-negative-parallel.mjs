@@ -285,6 +285,14 @@ async function main () {
       console.log(result.out.trimEnd().split('\n').map(line => `      ${line}`).join('\n'))
     } else if (options.verbose) {
       console.log(result.out.trimEnd().split('\n').map(line => `      ${line}`).join('\n'))
+    } else {
+      // A passing group printed NOTHING until this existed, and that made the
+      // report unreadable in the other direction: `PASS video 1127s` says the
+      // process exited 0, not that eleven cases ran. The suite's own tally is
+      // the evidence, so surface it — one line, not the whole log.
+      const tally = /(\d+)\/(\d+) defects turn the check red/.exec(result.out)
+      if (tally !== null) console.log(`      ${tally[1]}/${tally[2]} defects turned the check red`)
+      else console.log('      (the suite printed no defect tally — read this group with --verbose)')
     }
   }
   console.log('='.repeat(64))
