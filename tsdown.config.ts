@@ -252,13 +252,34 @@ const clientConfig: UserConfig = {
       ].join('\n')
     },
     renderChunk(code: string) {
-      // Rolldown stamps each module's resolved id into a `//#region <id>`
-      // banner. node_modules ids resolve through symlinks to a real path, so
-      // the relative prefix depends on the checkout directory (a mirror with
-      // a symlinked node_modules emits `../../../Users/…/node_modules/…`
-      // where the original emits `node_modules/…`). Normalise the prefix away
-      // so the published bytes are a pure function of the source tree.
-      return code.replace(/\/\/#region [^\n]*?(node_modules\/[^\n]*)/g, '//#region $1')
+      // Rolldown stamps each module's resolved id into a banner comment.
+      // node_modules ids resolve through symlinks to a real path, so the
+      // relative prefix depends on the checkout directory (a mirror with a
+      // symlinked node_modules emits `../../../Users/…/node_modules/…` where
+      // the original emits `node_modules/…`). Normalise the prefix away so the
+      // published bytes are a pure function of the source tree.
+      //
+      // TWO spellings, because the banner format is not this repository's to
+      // keep stable: rolldown 1.1 writes `//#region <id>`, and rolldown 1.3
+      // (what tsdown 0.23 resolves) writes a bare `// <id>` with no region
+      // marker. Matching only the first form stopped normalising anything, and
+      // the leak is invisible until the same tree is built in another
+      // directory — which is exactly what verify-reproducible.mjs does.
+      // Checked before touching the second form: `// ` requires the space, so
+      // `//#region` can never be matched by it.
+      //
+      // The prefix between `// ` and `node_modules/` is constrained to a
+      // path-like token (relative or absolute, no whitespace or colon), so a
+      // prose banner mentioning the directory — `// loads node_modules …`, or
+      // a URL — is left alone. That guard is not decoration: an unconstrained
+      // `[^\n]*?` rewrites `// see https://…/node_modules/x` too, which would
+      // silently mangle comments that are not module ids at all.
+      return code
+        .replace(/\/\/#region [^\n]*?(node_modules\/[^\n]*)/g, '//#region $1')
+        .replace(
+          /^([ \t]*)\/\/ ((?:\.{1,2}\/|\/)?[^\s:]*?)(node_modules\/[^\r\n]*)$/gm,
+          '$1// $3',
+        )
     },
   }],
   outputOptions: {
