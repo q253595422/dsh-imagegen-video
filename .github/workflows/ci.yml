@@ -78,6 +78,13 @@ jobs:
           node scripts/smoke-canvas-geometry.mjs
           # Source-text guard for the outfit task-queue contract.
           node scripts/verify-outfit-task-gate.mjs
+          # Every reverse-verification case must still be ABLE to run: its `from`
+          # quote has to exist in the tree. Without this, a drifted anchor (a line
+          # inserted between two a case quoted together, a helper moved to another
+          # module) is `HARNESS BROKEN` only when that one group is scheduled --
+          # and the reverse verification is not in `pnpm test`, so three pack cases
+          # sat broken with nothing red. Static and copy-free: seconds, not suites.
+          node scripts/verify-negative-anchors.mjs
           # Pins the verdict rules of the shared check executor.
           node scripts/verify-check-harness.mjs
           # These three load the BUILT lib/ (built in the step above).

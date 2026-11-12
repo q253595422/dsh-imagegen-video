@@ -1004,8 +1004,8 @@ const CASES = [
     name: 'the overlay stops being outside the viewport',
     runner: 'smoke',
     file: 'src/client/canvas',
-    from: "    return <div className={css.composer} data-canvas-no-zoom=\"\" style={{ left: clampedX - 280, top }}>",
-    to: "    return <div className={`${css.composer} ${css.viewport}`} data-canvas-no-zoom=\"\" style={{ left: clampedX - 280, top }}>",
+    from: "return <div className={css.composer} data-canvas-no-zoom=\"\" style={{ left: clampedX - 280, top }}>",
+    to: "return <div className={`${css.composer} ${css.viewport}`} data-canvas-no-zoom=\"\" style={{ left: clampedX - 280, top }}>",
     expect: /composer sits outside the viewport/,
   },
   {
