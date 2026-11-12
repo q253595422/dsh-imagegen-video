@@ -69,6 +69,60 @@ function declaredEntryPoints (manifest) {
   return [...declared]
 }
 
+/**
+ * Files npm and pnpm add to every archive whether or not `files` names them.
+ *
+ * `package.json`, the readme and the licence are the documented freebies;
+ * everything else has to be declared, so only these are excused from the
+ * `files` coverage check. They are matched by name because the packer matches
+ * by name -- `README.md`, `README.markdown`, `LICENSE`, `LICENCE.txt` all ride
+ * along.
+ */
+function alwaysShipped (target) {
+  const base = target.slice(target.lastIndexOf('/') + 1)
+  if (base === 'package.json') return true
+  return /^(readme|licen[cs]e|copying|notice)(\.[a-z]+)?$/i.test(base)
+}
+
+/**
+ * Whether a `files` entry would ship `target` on its own merits.
+ *
+ * A directory entry covers everything below it (`"lib"` ships `lib/index.js`),
+ * a file entry covers itself, and a wildcard entry is matched segment by segment.
+ *
+ * WHY this is asked separately from "is it in the archive": npm and pnpm do not
+ * pack ONLY what `files` names. `package.json`, README, LICENSE, the file named
+ * by `main`, and everything under `bin` are added regardless of `files`. So an
+ * entry point can be present in the tarball while the manifest does not actually
+ * declare it -- measured on this repository: with `"index.js"` removed from
+ * `files`, `pnpm pack` still shipped `package/index.js` because `main` pointed
+ * at it, and every archive-content check stayed green. That is the packer
+ * covering for the manifest, and the cover disappears the moment `main` is
+ * renamed or the package is packed by something that reads `files` literally.
+ */
+function filesCovers (files, target) {
+  const clean = target.replace(/^\.\//, '')
+  for (const raw of files) {
+    if (typeof raw !== 'string') continue
+    const entry = raw.replace(/^\.\//, '').replace(/\/$/, '')
+    if (entry === clean) return true
+    if (entry !== '' && clean.startsWith(entry + '/')) return true
+    if (!entry.includes('*')) continue
+    const parts = entry.split('*')
+    let index = 0
+    let ok = true
+    for (let position = 0; position < parts.length; position += 1) {
+      const part = parts[position]
+      if (part === '') continue
+      const found = clean.indexOf(part, index)
+      if (found < 0) { ok = false; break }
+      index = found + part.length
+    }
+    if (ok) return true
+  }
+  return false
+}
+
 /** Directories that must NOT be published, with the reason shown on failure. */
 const FORBIDDEN = [
   { path: 'docs/videos/', why: 'demo recordings no shipped document references (~37 MiB)' },
@@ -258,6 +312,25 @@ if (unresolved.length > 0) {
     'The plugin would install and boot, and one of its halves would never load:',
     'the host half throws at import time, or the browser half 404s and the',
     'panel silently never appears. Neither error names the packaging mistake.',
+  ])
+}
+
+// The archive being complete is only half the promise. The OTHER half is that
+// the manifest is what put it there: every declared entry point has to be
+// shipped by a `files` entry, not by the packer adding `main` on its own.
+const undeclared = declaredEntryPoints(packedManifest)
+  .map(([label, target]) => [label, target.replace(/^\.\//, '')])
+  .filter(([, target]) => !alwaysShipped(target))
+  .filter(([, target]) => !filesCovers(packedManifest.files ?? [], target))
+if (undeclared.length > 0) {
+  fail([
+    '',
+    'FAIL: the archive contains entry points that `files` does not ship:',
+    ...undeclared.map(([label, target]) => `  - ${label} -> ${target}`),
+    'They are in the tarball only because the packer also ships `main` and `bin`',
+    'without being asked. Rename `main`, or pack with a tool that reads `files`',
+    'literally, and the entry point silently disappears while this check still',
+    'says the archive is complete.',
   ])
 }
 

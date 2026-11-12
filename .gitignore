@@ -23,3 +23,7 @@ node_modules/
 
 # Per-Bot parallel worktrees (task-16..20). Machine-local, never shipped.
 /.worktrees/
+
+# mrdayone 的任务运行器配置（launch.json 指向 /var/folders 下的临时 scratch 目录）。
+# 本机工具状态，与仓库无关，从不随仓库分发。
+/.mrdayone/

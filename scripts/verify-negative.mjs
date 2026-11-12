@@ -1296,6 +1296,22 @@ const CASES = [
     expect: /the published archive is missing entries the runtime needs:[\s\S]*package\/lib\/index\.js/,
   },
   {
+    // `files` is what the manifest promises to ship; the tarball is what got
+    // shipped. npm and pnpm add `main` (and `bin`, `package.json`, the readme,
+    // the licence) on their own, so the two disagree without anyone noticing:
+    // measured by deleting "index.js" from `files` and watching every
+    // archive-content check stay green, because the packer was doing the
+    // manifest's job. That cover vanishes the day `main` is renamed or the
+    // tarball is built by something that reads `files` literally.
+    name: 'the entry point ships only because the packer added it',
+    runner: 'pack',
+    file: 'package.json',
+    // Single-line anchor: the defect is the missing entry, not its neighbours.
+    from: '    "index.js",\n',
+    to: '',
+    expect: /entry points that `files` does not ship:[\s\S]*main -> index\.js/,
+  },
+  {
     // v1.8.0 shipped without `docs/releases/v1.8.0.md`, and the fallback in
     // release.yml published the version with GitHub's one-line compare link as
     // its entire body. A version bump that has no notes is exactly the state

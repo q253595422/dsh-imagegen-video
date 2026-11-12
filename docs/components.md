@@ -24,7 +24,7 @@ The bundle declares 13 Cordis loader entries: a shared core and twelve independe
 
 `lib/` is build output and is not in the repository, so a manifest aimed straight at it declares a runtime entry that does not exist until somebody runs `pnpm build`. Tooling that inspects the repository without building it -- package registries that check the declared entry exports `apply(ctx)`, for one -- reads the file the manifest names and finds nothing there. `index.js` is a two-line re-export of `lib/index.js` (`export *` plus an explicit `apply`), committed so the declaration always resolves, and `files` ships both it and `lib/`.
 
-`scripts/verify-pack.mjs` closes the other end of that: the packed manifest is read back out of the archive and every entry point it declares, `main` included, must be a real file inside the tarball. A `files` edit that drops either half therefore fails locally, before anything is published.
+`scripts/verify-pack.mjs` closes both ends of that. The packed manifest is read back out of the archive and every entry point it declares, `main` included, must be a real file inside the tarball -- and it must be shipped by a `files` entry, not by the packer adding `main` on its own. The second half matters because npm and pnpm always pack `package.json`, the readme, the licence and the file named by `main`: with `"index.js"` removed from `files`, the archive still contained `package/index.js` and every content check stayed green. A `files` edit that drops either half therefore fails locally, before anything is published.
 
 ## Lifecycle
 
