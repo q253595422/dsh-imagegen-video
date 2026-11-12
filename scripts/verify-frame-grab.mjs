@@ -30,7 +30,7 @@ import { tmpdir } from 'node:os'
 import path from 'node:path'
 import assert from 'node:assert/strict'
 import { findTool } from '../src/clip-compose.ts'
-import { findChrome, launchChrome } from './lib/headless-chrome.mjs'
+import { findChrome, launchChrome, skipWithoutChrome } from './lib/headless-chrome.mjs'
 
 /**
  * Tool discovery, not hardcoded personal paths. This script ships publicly, so
@@ -49,12 +49,15 @@ const CHROME = findChrome()
 if (FFMPEG === null || CHROME === null) {
   const missing = [FFMPEG === null ? 'ffmpeg' : null, CHROME === null ? 'chrome-headless-shell' : null]
     .filter(name => name !== null).join(' and ')
-  console.error('\n' + '='.repeat(72))
-  console.error(`SKIP: ${missing} not found -- the frame-grab path was NOT verified.`)
-  console.error('This is a MISSING TOOL, not a regression. Install it, or point FFMPEG')
-  console.error('and CHROME_HEADLESS_SHELL at usable binaries, to actually run this check.')
-  console.error('='.repeat(72) + '\n')
-  process.exit(0)
+  // Goes through the shared function, not a local copy: this file had its own
+  // skip block, so the CI guard added for the other four never reached it and
+  // it kept exiting 0 on a runner with no browser (seen in run 43166516751).
+  // One implementation, so a new guard cannot forget the CI rule.
+  //
+  // The message names whichever tool is missing. CI installs both, so reaching
+  // this line there means the install step broke -- which is exactly the state
+  // that must not read as green.
+  skipWithoutChrome(`${missing} not found -- the frame-grab path was NOT verified.`)
 }
 // A directory per run, not the fixed `tmpdir()/framegrab` this used to be: two
 // concurrent runs shared it, so one run's fixture build or cleanup deleted the
