@@ -110,7 +110,7 @@
     "react-dom": "^18.3.1",
     "shiki": "^4.5.0",
     "simple-icons": "16.31.0",
-    "tsdown": "0.22.2",
+    "tsdown": "0.23.7",
     "typescript": "~5.7.2"
   },
   "files": [
