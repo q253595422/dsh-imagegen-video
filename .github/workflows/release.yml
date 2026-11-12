@@ -16,8 +16,13 @@ name: Release
 on:
   push:
     branches: [main]
-    # Only a version bump (or a change to this file) is a release event. Docs
-    # commits keep their normal CI run and do not create a Release.
+    # This filter is a COST filter, not the release decision. It keeps a
+    # docs-only push away from a 40-minute runner, and it cannot be narrowed to
+    # "the version line changed": GitHub evaluates `paths` before any step
+    # runs. Every dependency bump edits `package.json` and every action bump
+    # edits this file, so both land here WITHOUT a new version -- which is why
+    # `preflight` below decides, and a push that changes no version is skipped
+    # rather than failed.
     paths:
       - package.json
       - .github/workflows/release.yml
@@ -46,12 +51,112 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
+  # ---------------------------------------------------------------------
+  # IS THIS PUSH A RELEASE?
+  #
+  # Its own job, before anything expensive, because "package.json changed"
+  # and "a new version is being published" are not the same event. A
+  # Dependabot bump rewrites package.json on every merge; an action bump edits
+  # this very file. Treating those as releases means each dependency update
+  # either republishes the current version or turns a green main red with a
+  # release run that has nothing to release.
+  #
+  # The decision, in order:
+  #   no tag for this version ..... publish (the ordinary case)
+  #   tag names THIS commit ... publish (a re-run of the release commit)
+  #   replace_released_assets      publish, announcing that a published
+  #                                version's assets are being replaced
+  #   the push kept the version ... skip: nothing to release, main stays green
+  #   anything else ............... fail: the bumped-to number is already
+  #                                published from another commit
+  #
+  # "skip" is a real outcome, not a silent pass: the log says why, and only
+  # the release job is skipped -- this job itself succeeds.
+  preflight:
+    name: Decide whether this push is a release
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    if: github.ref == 'refs/heads/main'
+    permissions:
+      contents: read
+    outputs:
+      should_release: ${{ steps.gate.outputs.should_release }}
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+        with:
+          # Tags are the entire question here, and a shallow clone has none.
+          fetch-depth: 0
+          fetch-tags: true
+
+      - name: Decide whether this push is a release
+        id: gate
+        env:
+          REPLACE_RELEASED_ASSETS: ${{ inputs.replace_released_assets }}
+          BEFORE: ${{ github.event.before }}
+        run: |
+          set -euo pipefail
+          version=$(node -p "require('./package.json').version")
+          tag="v${version}"
+          decide() {
+            echo "should_release=$1" >> "$GITHUB_OUTPUT"
+            echo "$2"
+          }
+
+          if ! git rev-parse -q --verify "refs/tags/$tag" >/dev/null; then
+            decide true "$tag does not exist yet; this push publishes it."
+            exit 0
+          fi
+
+          existing=$(git rev-list -n1 "$tag")
+          if [ "$existing" = "$GITHUB_SHA" ]; then
+            decide true "$tag already names this commit; re-running the release of $version."
+            exit 0
+          fi
+
+          if [ "${REPLACE_RELEASED_ASSETS:-false}" = "true" ]; then
+            decide true "::warning::$tag names $existing, not $GITHUB_SHA. replace_released_assets was requested, so the assets of the published version are being replaced. The tag itself stays where it is."
+            exit 0
+          fi
+
+          # The version is released from a different commit. Two very different
+          # situations produce that, and only one of them is a mistake:
+          #
+          #   the push did not change `version` -> a dependency bump, or an edit to
+          #                                        this file. There is no new version
+          #                                        to publish, so this is a SKIP.
+          #   the push DID change `version`     -> somebody bumped to a number that is
+          #                                        already published. Whatever they
+          #                                        meant, the assets of that release
+          #                                        must not be overwritten.
+          #
+          # `github.event.before` is the tip before the push, so it answers "did this
+          # push change the version" for a merge, a squash and a direct commit alike.
+          # It is absent on workflow_dispatch, where the absence of an explicit opt-in
+          # has to mean "no".
+          previous=""
+          if [ -n "${BEFORE:-}" ] \
+             && [ "$BEFORE" != "0000000000000000000000000000000000000000" ] \
+             && git cat-file -e "$BEFORE"^{commit} 2>/dev/null; then
+            previous=$(git show "$BEFORE:package.json" \
+              | node -p "JSON.parse(require('fs').readFileSync(0, 'utf8')).version" 2>/dev/null || true)
+          fi
+          if [ -n "$previous" ] && [ "$previous" = "$version" ]; then
+            decide false "package.json still says $version -- this push did not change the version -- and $tag is already released from $existing. Nothing to release."
+            exit 0
+          fi
+
+          echo "::error::$tag is already released from $existing, and this build is from $GITHUB_SHA; the version went from ${previous:-unknown} to $version, and $version is taken. Bump version in package.json to a number nobody has published yet, or dispatch this workflow with replace_released_assets=true if replacing that release's assets is really intended."
+          decide false ""
+          exit 1
+
   release:
     name: Validate, package and release
+    needs: preflight
     runs-on: ubuntu-latest
     timeout-minutes: 40
-    # A dispatch from a branch or tag other than main has no version to trust.
-    if: github.ref == 'refs/heads/main'
+    # A dispatch from a branch or tag other than main has no version to trust,
+    # and preflight has decided whether this push publishes anything at all.
+    if: github.ref == 'refs/heads/main' && needs.preflight.outputs.should_release == 'true'
     permissions:
       # `contents: write` is needed for exactly three things: pushing the tag,
       # creating the Release, and uploading/replacing its assets.
@@ -78,43 +183,6 @@ jobs:
         with:
           node-version: 24
           cache: pnpm
-
-      # Fails in seconds instead of after ten minutes of build and test.
-      #
-      # The tag is a version identity: v1.27.0 means the bytes published from
-      # one specific commit. This workflow rebuilds from GITHUB_SHA, so
-      # releasing from any other commit and uploading there does not "update"
-      # v1.27.0 -- it changes what everyone who already downloaded it got. That
-      # used to be a warning followed by a quiet replacement of the assets, and
-      # a warning inside a green run is a note nobody reads.
-      #
-      # Two cases are allowed, and only these two:
-      #   * the tag names THIS commit -- "Re-run jobs" on the release commit,
-      #     which has to stay idempotent;
-      #   * replace_released_assets was passed explicitly by a person.
-      # Anything else stops before the build. The fix is to bump `version`.
-      - name: Refuse to re-publish an already-released version
-        env:
-          REPLACE_RELEASED_ASSETS: ${{ inputs.replace_released_assets }}
-        run: |
-          set -euo pipefail
-          version=$(node -p "require('./package.json').version")
-          tag="v${version}"
-          if ! git rev-parse -q --verify "refs/tags/$tag" >/dev/null; then
-            echo "$tag does not exist yet; this run will create it."
-            exit 0
-          fi
-          existing=$(git rev-list -n1 "$tag")
-          if [ "$existing" = "$GITHUB_SHA" ]; then
-            echo "$tag already names this commit ($GITHUB_SHA); this is a re-run, and its assets will be replaced."
-            exit 0
-          fi
-          if [ "${REPLACE_RELEASED_ASSETS:-false}" = "true" ]; then
-            echo "::warning::$tag names $existing, not $GITHUB_SHA. replace_released_assets was requested, so the assets of the published version are being replaced. The tag itself stays where it is."
-            exit 0
-          fi
-          echo "::error::$tag is already released from $existing, and this build is from $GITHUB_SHA. Refusing to replace the assets of a published version. Bump version in package.json for a new release, or dispatch this workflow with replace_released_assets=true if replacing those assets is really intended."
-          exit 1
 
       - name: Install locked dependencies
         run: pnpm install --frozen-lockfile
