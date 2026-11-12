@@ -350,8 +350,14 @@ const CASES = [
     // under one id. (Dropping the run-map cleanup would also duplicate, but it
     // duplicates on EVERY poll tick, so the suite wedges long before the D1
     // assertion and the case proves nothing about this check.)
-    from: "        ...nodes,\n      ],\n      connections: [",
-    to: "        ...nodes,\n        ...nodes,\n      ],\n      connections: [",
+    //
+    // The append is `...fresh` (the batch minus ids already in the document),
+    // not `...nodes`: the applier is idempotent by id, so a second application
+    // of the same run adds nothing. Appending `fresh` twice still writes the
+    // same id twice within one document, which is what D1 forbids -- the anchor
+    // follows the code it guards, or the guard silently stops applying.
+    from: "          ...fresh,\n        ],\n        connections: [",
+    to: "          ...fresh,\n          ...fresh,\n        ],\n        connections: [",
     expect: /D1: the clip run applied exactly once/,
   },
   // --------------------------------------------- the jsdom teardown ordering

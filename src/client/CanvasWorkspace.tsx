@@ -40,7 +40,7 @@ import { Select } from './Select.tsx'
 import { CanvasVideoPicker } from './CanvasVideoPicker.tsx'
 import { ReactFlow, ReactFlowProvider, Background, BackgroundVariant, MiniMap, NodeResizer, type NodeChange, type EdgeChange, type Connection, type Viewport, type NodeProps } from '@xyflow/react'
 import { CanvasFlowProvider, canvasNodeTypes, useCanvasFlow, type CanvasFlowContextValue } from './canvas-flow-context.tsx'
-import { nodesToFlow, connectionsToEdges, edgeToConnection, viewportToFlow, viewportFromFlow, type CanvasFlowNode } from './canvas-flow-adapter.ts'
+import { nodesToFlow, viewportToFlow, viewportFromFlow, type CanvasFlowNode } from './canvas-flow-adapter.ts'
 import { onTablistKeyDown, tabIndexFor } from './tablist.ts'
 import css from './canvas-workspace.module.css'
 import { drawSketchStroke, rasterizeSketch } from './canvas/sketch-raster.ts'
@@ -1639,37 +1639,48 @@ export function CanvasWorkspace(props: CanvasWorkspaceProps): React.JSX.Element 
     const connections = output.connections ?? []
     if (nodes.length === 0) return 0
     const ids = new Set(nodes.map(node => node.id))
-    mutate(previous => ({
-      ...previous,
-      nodes: [
-        ...previous.nodes.map(node => sourceNodeIds.includes(node.id)
-          ? {
-              ...node,
-              metadata: {
-                ...node.metadata,
-                skill: {
-                  id: task.skillId,
-                  label: task.label ?? task.skillId,
-                  sourceNodeIds: [...sourceNodeIds],
-                  createdAt: Date.now(),
+    mutate(previous => {
+      // 输出节点按 id 幂等落盘：同一次运行的结果可能被两条路径各应用一次
+      // （轮询的 tick 在 await 之后用的是 ref 里的旧快照，而“切回原画布再落地”
+      // 那条 effect 只看 state，两者之间存在窗口），连线那边早就有这种去重，
+      // 节点这边原来没有——于是同一个 id 会在一份文档里出现两次。以 id 为准
+      // 判定“已落地”，比在调用侧加锁更稳：两条路径谁后到都不会重复。
+      const landed = new Set(previous.nodes.map(node => node.id))
+      const fresh = nodes.filter(node => !landed.has(node.id))
+      return {
+        ...previous,
+        nodes: [
+          ...previous.nodes.map(node => sourceNodeIds.includes(node.id)
+            ? {
+                ...node,
+                metadata: {
+                  ...node.metadata,
+                  skill: {
+                    id: task.skillId,
+                    label: task.label ?? task.skillId,
+                    sourceNodeIds: [...sourceNodeIds],
+                    createdAt: Date.now(),
+                  },
                 },
-              },
-            }
-          : node),
-        ...nodes,
-      ],
-      connections: [
-        ...previous.connections,
-        ...connections.filter(connection => ids.has(connection.toNodeId)
-          && !previous.connections.some(existing => existing.fromNodeId === connection.fromNodeId && existing.toNodeId === connection.toNodeId)),
-      ],
-    }))
+              }
+            : node),
+          ...fresh,
+        ],
+        connections: [
+          ...previous.connections,
+          ...connections.filter(connection => ids.has(connection.toNodeId)
+            && !previous.connections.some(existing => existing.fromNodeId === connection.fromNodeId && existing.toNodeId === connection.toNodeId)),
+        ],
+      }
+    })
     setSelectedIds(new Set(nodes.map(node => node.id)))
     // A clip-producing run has just persisted its clip into the video history,
     // which the panel reads only once: tell it to refresh that list. Kept out of
     // the mutate updater above, which has to stay pure, and fired for video
     // output only so a polish/describe run cannot trigger a history refetch.
     if (nodes.some(node => node.type === 'video')) onClipStored?.()
+    // 报输出节点数而不是“实际新增数”：mutate 的 updater 要到 React 渲染阶段
+    // 才执行，这里同步读不到它算出的数量。
     return nodes.length
   }, [mutate, onClipStored])
 
@@ -4564,14 +4575,11 @@ export function CanvasWorkspace(props: CanvasWorkspaceProps): React.JSX.Element 
     () => nodesToFlow(document?.nodes ?? []).map(node => ({ ...node, selected: selectedIds.has(node.id) })),
     [document, selectedIds],
   )
-  const flowEdges = useMemo(
-    () => connectionsToEdges((document?.connections ?? []).filter(connection => {
-      const from = nodeById.get(connection.fromNodeId)
-      const to = nodeById.get(connection.toNodeId)
-      return from !== undefined && to !== undefined && !isAnnotationCard(from) && !isAnnotationCard(to)
-    })),
-    [document, nodeById],
-  )
+  // 这里不再派生 flow 边：react-flow 的 `edges` 传的是空数组，连线由
+  // `ConnectionLayer` 自己按 document.connections 画，「两端都在且都不是标注卡」
+  // 这条过滤也在那边（canvas/connection-layer.tsx）。曾经这里还有一份
+  // connectionsToEdges 的 useMemo，算完没有任何读者，已随 react-flow 迁移的尾账
+  // 一并删掉——留着会让同一份过滤在两处各自漂移而没人发现。
   const flowViewport = viewportToFlow(document?.viewport ?? { x: 0, y: 0, k: 1 })
   const dragSnapshotRef = useRef<string | null>(null)
 

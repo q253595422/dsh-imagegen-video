@@ -85,7 +85,3 @@ export function viewportFromFlow(viewport: Viewport): CanvasViewport {
 export function nodesToFlow(nodes: readonly CanvasNode[]): CanvasFlowNode[] {
   return nodes.map(nodeToFlow)
 }
-
-export function connectionsToEdges(connections: readonly CanvasConnection[]): CanvasFlowEdge[] {
-  return connections.map(connectionToEdge)
-}
