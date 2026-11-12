@@ -5704,6 +5704,8 @@ await check('D3b sidebar entry mounts above the shell action when the workspace 
 
   const scrollRegion = jsdomDocument.querySelector('.scrollRegion')
   const panelList = jsdomDocument.querySelector('.panelList')
+  const panelCss = readFileSync(new URL('../src/client/panel.module.css', import.meta.url), 'utf8')
+  assert.match(panelCss, /\[data-sidebar-scrollport\][\s\S]{0,80}grid-template-rows:\s*8px max-content 2px minmax\(0,\s*1fr\)/, 'studio mode makes the history region fill the remaining sidebar height')
   assert.equal(scrollRegion.hasAttribute('data-dsh-imagegen-sidebar-block'), true, 'the wrapper carrying the region is spared')
   assert.equal(panelList.hasAttribute('data-dsh-imagegen-sidebar-hide'), true, 'the panel nav beside the region is marked for hiding')
   assert.equal(jsdomDocument.querySelector('.regionArea').getAttribute('data-dsh-imagegen-sidebar-region'), '')

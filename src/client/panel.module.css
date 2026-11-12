@@ -496,6 +496,16 @@ html[data-dsh-imagegen-active] [data-dsh-imagegen-sidebar-root][data-dsh-imagege
   text-overflow: ellipsis;
 }
 
+/* DSH 0.2.2-rc.2 makes the sidebar's scroll viewport a grid whose last row
+   is max-content. The workspace tree used to define that row; in studio mode
+   the tree is replaced by the history host, which has to take the whole
+   remaining column — otherwise it stops at the old tree height (~264px) and
+   leaves the lower half of the sidebar blank (desktop and drawer alike). Only
+   the active studio is touched: the session view keeps the shell's own rows. */
+html[data-dsh-imagegen-active] [data-dsh-imagegen-sidebar-root] [data-sidebar-scrollport] {
+  grid-template-rows: 8px max-content 2px minmax(0, 1fr);
+}
+
 /* The history surface occupies the shell's workspace/session region while
    image generation is active. The shell's own tree stays mounted underneath
    so closing the tab restores it without a React remount. */
