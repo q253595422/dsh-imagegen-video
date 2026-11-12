@@ -1694,7 +1694,19 @@ export function CanvasWorkspace(props: CanvasWorkspaceProps): React.JSX.Element 
   useEffect(() => {
     if (activeSkillRunCount === 0) return undefined
     let disposed = false
+    // The interval fires every 1.5s but a snapshot request is a network round
+    // trip: when the host is slow, a tick is still inside `await` when the next
+    // one starts. Overlapping ticks re-request every snapshot and each may fire
+    // its own notice for the same transition. The outputs themselves are
+    // id-keyed in `applySkillOutput`, so a second apply cannot duplicate a
+    // node -- this guard is about not repeating the work, not about D1.
+    let ticking = false
     const tick = async (): Promise<void> => {
+      if (ticking) return
+      ticking = true
+      try { await pollOnce() } finally { ticking = false }
+    }
+    const pollOnce = async (): Promise<void> => {
       const ids = Object.keys(skillRunsRef.current)
       for (const taskId of ids) {
         const entry = skillRunsRef.current[taskId]
