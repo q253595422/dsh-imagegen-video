@@ -25,7 +25,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 40
     steps:
-      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           # The tag is the source of truth; the branch this workflow runs from
           # is irrelevant.
@@ -118,7 +118,7 @@ jobs:
       # version from package.json, and if this job checks out main instead, it
       # probes the tip version and reports "already published" for the wrong
       # version -- leaving the backfill silently unpublished.
-      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           ref: refs/tags/v${{ inputs.version }}
           fetch-depth: 0
