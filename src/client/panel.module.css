@@ -314,6 +314,16 @@ html[data-dsh-imagegen-active] [data-dsh-imagegen-sidebar-root][data-dsh-imagege
   display: none !important;
 }
 
+/* DSH 0.2.2-rc.2 nests the workspace seat under a scrolling container
+   (`root > scrollRegion > scrollArea > regionArea`), so the root-child rule
+   above can only spare or hide the whole scroll container. The history host
+   lives inside the region, next to the panel navigation inside the same
+   container; hiding the navigation at its own level keeps both the header
+   chrome and the history surface. */
+html[data-dsh-imagegen-active] [data-dsh-imagegen-sidebar-root][data-dsh-imagegen-shell-blocks] [data-dsh-imagegen-sidebar-hide] {
+  display: none !important;
+}
+
 @media (max-width: 760px) {
   html[data-dsh-imagegen-active]:not([data-dsh-taskboard-active]):not([data-dsh-ssh-active]) [data-pane='conversation'],
   html[data-dsh-imagegen-active]:not([data-dsh-taskboard-active]):not([data-dsh-ssh-active]) [data-dsh-imagegen-center-col] {
@@ -484,6 +494,16 @@ html[data-dsh-imagegen-active] [data-dsh-imagegen-sidebar-root][data-dsh-imagege
   min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
+}
+
+/* DSH 0.2.2-rc.2 makes the sidebar's scroll viewport a grid whose last row
+   is max-content. The workspace tree used to define that row; in studio mode
+   the tree is replaced by the history host, which has to take the whole
+   remaining column — otherwise it stops at the old tree height (~264px) and
+   leaves the lower half of the sidebar blank (desktop and drawer alike). Only
+   the active studio is touched: the session view keeps the shell's own rows. */
+html[data-dsh-imagegen-active] [data-dsh-imagegen-sidebar-root] [data-sidebar-scrollport] {
+  grid-template-rows: 8px max-content 2px minmax(0, 1fr);
 }
 
 /* The history surface occupies the shell's workspace/session region while

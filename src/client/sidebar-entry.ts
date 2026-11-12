@@ -73,6 +73,17 @@ const SETTINGS_ANCHOR = '[data-slot="sidebar.settings"]'
  * entry (or hide the shell's own rows).
  */
 const BLOCK_ATTR = 'data-dsh-imagegen-sidebar-block'
+/**
+ * Our own mark on sidebar blocks that must disappear while the studio is open.
+ *
+ * A shell may nest the workspace seat a few levels deep inside a scrolling
+ * container (DSH 0.2.2-rc.2: root > scrollRegion > scrollArea > regionArea).
+ * The root-child rule can only hide the scroll container as a whole, which
+ * would also hide the history host seated next to the workspace tree. These
+ * marks let the stylesheet hide sibling branches (the panel nav) while the
+ * branch that carries the region, and only that branch, stays painted.
+ */
+const HIDE_ATTR = 'data-dsh-imagegen-sidebar-hide'
 /** Our own mark on the block the history host is seated in. */
 const REGION_ATTR = 'data-dsh-imagegen-sidebar-region'
 /**
@@ -179,7 +190,15 @@ function seatOf(selector: string): HTMLElement | undefined {
  */
 function newSessionButton(root: ParentNode = document): HTMLButtonElement | undefined {
   const candidates = Array.from(root.querySelectorAll<HTMLButtonElement>('button'))
-  return candidates.find((button) => looksLikeNewSession(button) && button.querySelector('[data-slot]') === null && isVisible(button))
+  return candidates.find((button) => looksLikeNewSession(button)
+    && button.querySelector('[data-slot]') === null
+    // Workspace bundles (dsh-better-sidebar, DSH's own tree) render a
+    // per-workspace "New session in …" action that reveals itself on row
+    // hover. It starts a session in that workspace, not the shell-level one
+    // this switcher belongs above, so it must never become the seat — the
+    // hover was what used to drag the tabs down into the tree.
+    && button.closest(WORKSPACES_ANCHOR) === null
+    && isVisible(button))
 }
 
 /**
@@ -271,10 +290,16 @@ function markBlocks(
 ): HTMLElement[] {
   const brand = blockOf(root, BRAND_MARK_ANCHOR) ?? blockOf(root, BRAND_NAME_ANCHOR)
   const toggle = sidebarToggleButton(root)
-  const blocks = [
+  const keep = new Set<HTMLElement>()
+  const hide = new Set<HTMLElement>()
+  for (const block of [
     brand,
     blockOf(root, FOOT_ACTION_ANCHOR),
     blockOf(root, SETTINGS_ANCHOR),
+    // The root-level block that carries the workspace seat. In 0.2.1 this is
+    // the region itself; in 0.2.2-rc.2 it is the `scrollRegion` wrapper. It
+    // must stay painted for the history host inside the region.
+    region === undefined ? undefined : blockHolding(root, region),
     region,
     // The row that holds the shell's New Session affordance stays visible too.
     // Marking it here rather than asking the sheet for `:not(:has(...))` keeps
@@ -285,12 +310,35 @@ function markBlocks(
     // Same for the collapse control: on macOS it lives in a chrome strip of its
     // own above the brand row, which is not any of the anchor blocks above.
     toggle === undefined ? undefined : blockHolding(root, toggle),
-  ].filter((block): block is HTMLElement => block !== undefined)
-  for (const block of blocks) block.setAttribute(BLOCK_ATTR, '')
+  ]) {
+    if (block !== undefined) keep.add(block)
+  }
+
+  // A shell that nests the region under a scrolling container puts the panel
+  // navigation next to the region inside that container. Mark every sibling
+  // branch on the path from the region up to the column: the history host must
+  // keep the whole column, but the panel nav is foreign chrome in studio mode.
+  if (region !== undefined) {
+    let node: HTMLElement = region
+    while (node.parentElement !== null && node.parentElement !== root) {
+      const parent = node.parentElement
+      for (const child of Array.from(parent.children)) {
+        if (child === node || !(child instanceof HTMLElement) || child.matches(OWN_NODES)) continue
+        hide.add(child)
+      }
+      node = parent
+    }
+  }
+
+  for (const block of keep) {
+    hide.delete(block)
+    block.setAttribute(BLOCK_ATTR, '')
+  }
+  for (const block of hide) block.setAttribute(HIDE_ATTR, '')
   if (region !== undefined) region.setAttribute(REGION_ATTR, '')
   if (brand !== undefined) root.setAttribute(BLOCKS_ATTR, '')
   else root.removeAttribute(BLOCKS_ATTR)
-  return blocks
+  return [...keep, ...hide]
 }
 
 /**
@@ -301,10 +349,31 @@ function markBlocks(
  * a shell that has the action but none of the marks around it.
  */
 function sidebarRoot(): HTMLElement | undefined {
-  // `SidebarRoot` renders the region seat as an only child of the column, so
-  // the seat's parent IS the shell root in every shape this plugin supports.
-  const column = seatOf(WORKSPACES_ANCHOR)?.parentElement
-  if (column !== undefined && column !== null && isVisible(column)) return column
+  const region = seatOf(WORKSPACES_ANCHOR)
+  const action = newSessionButton()
+
+  // The region seat is NOT necessarily a child of the column. DSH 0.2.2-rc.2
+  // inserted `scrollRegion > scrollArea` between them (0.2.1 had the seat as a
+  // direct child), so `seat.parentElement` answers with the scrolling grid.
+  // Inserting the switcher there made it one 4x8px grid cell — invisible
+  // (#35) — and scoping the New Session search to it let a hovered workspace
+  // row's action steal the tabs into the tree. The column is the nearest
+  // painted ancestor of the seat that also owns the shell-level action.
+  if (region !== undefined) {
+    for (let candidate: HTMLElement | null = region.parentElement; candidate !== null; candidate = candidate.parentElement) {
+      if (candidate === document.body) break
+      if (isVisible(candidate) && action !== undefined && candidate.contains(action)) return candidate
+    }
+    // A shell that hid its New Session action still has a brand row; the
+    // column is the nearest common ancestor of the seat and the brand mark.
+    const brand = seatOf(BRAND_MARK_ANCHOR) ?? seatOf(BRAND_NAME_ANCHOR)
+    if (brand !== undefined) {
+      for (let candidate: HTMLElement | null = region; candidate !== null; candidate = candidate.parentElement) {
+        if (candidate === document.body) break
+        if (isVisible(candidate) && candidate.contains(brand)) return candidate
+      }
+    }
+  }
 
   const brand = seatOf(BRAND_MARK_ANCHOR) ?? seatOf(BRAND_NAME_ANCHOR)
   if (brand !== undefined) {
@@ -339,6 +408,24 @@ function makeTab(
 }
 
 /**
+ * Close the shell's mobile drawer after a tab activation.
+ *
+ * DSH renders the sidebar as an off-canvas drawer on narrow viewports. The
+ * switcher lives inside that drawer, so switching to the image studio would
+ * leave the drawer covering the studio the user just asked for (the same for
+ * switching back to the conversation). Only an OPEN drawer is touched: in the
+ * desktop layout there is no `data-sidebar-drawer` frame and the sidebar
+ * stays exactly where it was.
+ */
+function closeSidebarDrawer(): void {
+  const frame = document.querySelector<HTMLElement>('[data-sidebar-drawer="true"]')
+  if (frame === null || frame.hasAttribute('data-sidebar-collapsed')) return
+  const toggle = frame.querySelector<HTMLButtonElement>('[data-sidebar-toggle]')
+    ?? sidebarToggleButton(frame)
+  toggle?.click()
+}
+
+/**
  * Build the two-tab switcher. Detached from any seat: the caller decides where
  * it goes, so both the preferred seat and the fallback below share one builder.
  */
@@ -359,8 +446,8 @@ function createTabs(
   // One `activate` per tab, shared by the click and the arrow key that lands on
   // it: two lambdas meaning the same thing is how a keyboard path drifts away
   // from the mouse path it is supposed to mirror.
-  const activateSession = (): void => { controller.close() }
-  const activateImage = (): void => { controller.open() }
+  const activateSession = (): void => { controller.close(); closeSidebarDrawer() }
+  const activateImage = (): void => { controller.open(); closeSidebarDrawer() }
 
   const sessionTab = makeTab(sessionLabel, sessionTooltip, SESSION_ICON, activateSession)
   const imageTab = makeTab(imageLabel, imageTooltip, IMAGE_ICON, activateImage)
@@ -568,6 +655,7 @@ export function mountSidebarEntry(
       markedButton = undefined
       for (const block of markedBlocks) {
         block.removeAttribute(BLOCK_ATTR)
+        block.removeAttribute(HIDE_ATTR)
         block.removeAttribute(REGION_ATTR)
       }
       markedBlocks = []
@@ -606,6 +694,7 @@ export function mountSidebarEntry(
     for (const block of markedBlocks) {
       if (nextBlocks.includes(block)) continue
       block.removeAttribute(BLOCK_ATTR)
+      block.removeAttribute(HIDE_ATTR)
       block.removeAttribute(REGION_ATTR)
     }
     markedBlocks = nextBlocks
@@ -627,6 +716,7 @@ export function mountSidebarEntry(
     markedButton?.removeAttribute('data-dsh-imagegen-new-session')
     for (const block of markedBlocks) {
       block.removeAttribute(BLOCK_ATTR)
+      block.removeAttribute(HIDE_ATTR)
       block.removeAttribute(REGION_ATTR)
     }
     markedBlocks = []
