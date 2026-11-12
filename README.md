@@ -421,7 +421,23 @@ pnpm run test:negative
 
 `pnpm test` 跑全部离线检查（`verify-tracked` 排第一）；`pnpm run test:negative` 做反向验证——
 把每处修复对应的缺陷重新注回**仓库副本**，要求对应检查变红，
-工作树不被改动。时间线与身份锚定各有自己的纯函数套件，可以单独跑：
+工作树不被改动。
+
+反向验证的 17 个组可以并排跑，不必等 40 分钟以上的串行链：
+
+```bash
+node scripts/verify-negative-parallel.mjs              # 默认 2 并发
+node scripts/verify-negative-parallel.mjs --jobs 3     # 上限 4（内存）
+node scripts/verify-negative-parallel.mjs --only smoke,pack
+```
+
+它从 `test:negative` 里读组名，启动前先 `pnpm build` 把工作树钉住（有别的进程
+持有 `.build-lock` 时拒绝启动）。一组失败不会中断其余组，最后统一报。
+**注意瓶颈不在调度**：`contracts` 与 `smoke` 这类组内部是逐条用例跑的，单组就是
+大半的墙钟；并发只能把「各组之和」压到「最慢那一组」，要再快得让每条用例只跑
+它针对的那条检查。
+
+时间线与身份锚定各有自己的纯函数套件，可以单独跑：
 `pnpm run test:timeline`、`pnpm run test:cast`、`pnpm run test:timeline-compose`
 （最后一个需要本机 ffmpeg，缺工具时明确跳过）。
 

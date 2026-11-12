@@ -102,7 +102,18 @@ function gatedPackageScripts(scripts, workflowTexts) {
   // that `verify-negative-anchors` keeps honest. Leaving it out would report
   // `verify-negative.mjs` as orphaned, which is untrue and would push someone
   // to add it to CI under a name that does not work there.
+  //
+  // `verify-negative-parallel.mjs` is the same kind of entry: it runs exactly
+  // those groups, several at a time, and is run by hand. It is not chained FROM
+  // `test:negative` (it is the faster alternative to it), so it has to be named
+  // as a gate root itself rather than discovered through the closure.
   const MANUALLY_GATED_SUITES = ['test:negative']
+  // A gate root that is itself a script, not a package.json entry: nothing
+  // invokes it, a person types `node scripts/<name>`. `test:negative` is a
+  // chain of `verify-negative.mjs <group>`; this is the same work, several
+  // groups at a time. It cannot be discovered through the closure above (it
+  // does not appear in package.json at all), so it is named here.
+  const MANUAL_GATE_ROOTS = ['verify-negative-parallel.mjs']
   for (const text of workflowTexts) {
     for (const match of text.matchAll(/\bpnpm(?:[ \t]+run)?[ \t]+([\w:@./-]+)/g)) {
       const name = match[1]
@@ -122,7 +133,10 @@ function gatedPackageScripts(scripts, workflowTexts) {
       if (byName.has(match[1])) queue.push(match[1])
     }
   }
-  return scripts.filter(entry => gated.has(entry.name))
+  return {
+    scripts: scripts.filter(entry => gated.has(entry.name)),
+    roots: MANUAL_GATE_ROOTS,
+  }
 }
 
 /**
@@ -195,7 +209,13 @@ function main() {
     }
   }
 
-  for (const { name, command } of gatedPackageScripts(packageCommands(pkg), workflowTexts)) {
+  // A gate root that is itself a script (not a package.json entry). Recorded
+  // rather than discovered through `invocationsIn`, because nothing invokes it:
+  // a person types `node scripts/<name>`.
+  const gatedNow = gatedPackageScripts(packageCommands(pkg), workflowTexts)
+  for (const root of gatedNow.roots) record(root, 'manual gate root')
+
+  for (const { name, command } of gatedNow.scripts) {
     for (const file of invocationsIn(command)) record(file, `package.json → ${name}`)
   }
   for (const { name, command } of workflowCommands()) {
