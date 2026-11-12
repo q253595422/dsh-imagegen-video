@@ -64,6 +64,11 @@ function declaredEntryPoints (manifest) {
     add(`exports[${JSON.stringify(key)}]`, target)
   }
   add('dsh.bundle.patch', manifest.dsh?.bundle?.patch)
+  // The manifest icon the plugin manager and the market card draw. It is read
+  // from `package.json` (not from an export), so it is exactly the kind of
+  // entry a `files` edit drops silently: the card falls back to the generic
+  // artwork with no error anywhere.
+  add('icon', manifest.icon)
   // `dsh.client` names no file (the client is found through `exports`), but a
   // `dsh.profile`/`dsh.bundle` rename would silently unmount the plugin.
   return [...declared]
@@ -332,6 +337,28 @@ if (undeclared.length > 0) {
     'literally, and the entry point silently disappears while this check still',
     'says the archive is complete.',
   ])
+}
+
+// The host reads the icon itself: it base64-inlines the file into the plugin
+// metadata it hands the browser, and it REFUSES anything over 256 KiB -- the
+// card then shows the generic artwork and the only trace is a diagnostic string
+// nobody renders. A photo used as an icon is exactly the kind of file that
+// creeps past that limit when someone re-exports it at a larger size.
+const ICON_LIMIT_BYTES = 256 * 1024
+if (typeof packedManifest.icon === 'string' && packedManifest.icon !== '') {
+  const iconPath = packedManifest.icon.replace(/^\.\//, '')
+  const iconBytes = Number(execFileSync('tar', ['-xzOf', archiveName, `package/${iconPath}`], {
+    cwd: ROOT, encoding: 'buffer',
+  }).length)
+  if (iconBytes > ICON_LIMIT_BYTES) {
+    fail([
+      '',
+      `FAIL: ${iconPath} is ${iconBytes} bytes; the host rejects icons over ${ICON_LIMIT_BYTES}.`,
+      'The plugin still loads, but the manager and market cards fall back to the',
+      'generic artwork and no visible error says why.',
+    ])
+  }
+  console.log(`pack: icon ${iconPath} is ${iconBytes} bytes, under the host's ${ICON_LIMIT_BYTES}-byte cap`)
 }
 
 // Same reason as the tar calls above, in the other direction: `du` also reads a

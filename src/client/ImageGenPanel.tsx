@@ -1,5 +1,5 @@
 /**
- * The AI 生图 studio: a three-column layout — left, a card-grouped
+ * The 团团TV studio: a three-column layout — left, a card-grouped
  * configuration sidebar (mode tabs, prompt with counter, rounded parameter
  * selectors, model dropdown + generate button); center, the result canvas;
  * right, a persistent generation history column.

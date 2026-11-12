@@ -1,6 +1,6 @@
-# dsh-imagegen-video
+# 团团TV（TuanTuan TV）
 
-> **图片与视频一体化的 DSH 生图 / 生视频插件。**
+> **图片与视频一体化的 DSH 生图 / 生视频插件。**（包名 `@q253595422/dsh-imagegen-video`）
 > 生图之外，本仓库提供**完整的生视频链路**，以及**画布视频节点、片段拼接**。
 > 各版本的改动见 [CHANGELOG.md](./CHANGELOG.md)，第三方代码归属见 [NOTICE](./NOTICE)。
 

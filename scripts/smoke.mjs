@@ -5748,6 +5748,33 @@ await check('D5 qwen-draw protocol is offered and wired on the client', () => {
   assert.ok(bundle.includes('qwen-draw'), 'the built client bundle carries the qwen-draw option')
 })
 
+// ------------------------------- D6 plugin display title (the plugin details page)
+await check('D6 the plugin declares its own display title in both locales', () => {
+  // WHY: the plugin details page draws the title from `locale/<lang>.json`'s
+  // `meta.title`, NOT from the package name. The host falls back to the full
+  // specifier (`@scope/dsh-imagegen-video`) when no locale declares one, which
+  // is exactly what the page showed before this title existed: a wall of
+  // package name where the product name belongs. Dropping `meta.title` again
+  // silently restores that -- nothing else in the suite would notice, because
+  // the field is display-only and no runtime path reads it.
+  const read = lang => JSON.parse(readFileSync(new URL(`../locale/${lang}.json`, import.meta.url), 'utf8'))
+  const zh = read('zh')
+  const en = read('en')
+  for (const [lang, file] of [['zh', zh], ['en', en]]) {
+    assert.equal(typeof file.meta?.title, 'string', `${lang}.json declares meta.title`)
+    assert.ok(file.meta.title.trim() !== '', `${lang}.json's meta.title is not blank`)
+    assert.equal(typeof file.meta?.description, 'string', `${lang}.json still declares meta.description`)
+  }
+  assert.equal(zh.meta.title, '团团TV', 'the Chinese plugin page shows the product name, not the package name')
+  // The host builds `{ en: <manifest name>, ...languageEntries }`, so `en.json`
+  // must win over that fallback rather than repeat it.
+  assert.doesNotMatch(en.meta.title, /^@|dsh-imagegen/, 'the English title is a product name, not the package specifier')
+  // The name the user sees has to be the name the panel and the sidebar show.
+  const locales = readFileSync(new URL('../src/client/locales.ts', import.meta.url), 'utf8')
+  assert.ok(locales.includes("'panel.title': '团团TV'"), 'the studio panel header carries the same name')
+  assert.ok(locales.includes("'entry.label': '团团TV'"), 'the sidebar entry carries the same name')
+})
+
 // --------------- E. full client apply in jsdom (mounts the sidebar entry)
 await check('E1 client apply mounts the sidebar entry and studio (jsdom)', async () => {
   const { JSDOM } = await import('jsdom')

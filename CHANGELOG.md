@@ -5,6 +5,14 @@ Attribution for third-party code is in [NOTICE](./NOTICE).
 
 ## Releases
 
+### 1.29.0 — 插件改名「团团TV」
+
+- **插件显示名定为「团团TV」**（英文界面 `TuanTuan TV`），包名 `@q253595422/dsh-imagegen-video` 不变——npm 包名不允许中文，改的是用户看到的那一层。声明方式是 `locale/zh.json` 与 `locale/en.json` 的 `meta.title`：宿主插件详情页从这个字段取标题，**此前没有声明，于是回退显示完整包名**，页面上就是 `@q253595422/dsh-imagegen-video`。
+- **三语品牌文案统一**：`entry.label`（侧边栏入口）、`panel.title`（面板标题，原为 `VisioWork`）、`settings.title`（设置卡标题）、`config.disabledTitle`（停用提示）在 zh / en / ru 三语里改成同一个名字。此前三处各写各的，互不一致。
+- **Agent 指导文案与 `/edit_image` 成功提示**同步改用新名；指导文案保留包名以免模型对不上实际安装的模块。
+- **刻意不改**：设置分区名「生图配置 / Image settings / Настройки генерации」。它是位置名不是品牌名，后端 22 处错误提示与 3 条测试断言按它定位，改它得成批同步且不带来品牌收益。
+- 新增 `smoke` 的 **D6** 守卫：两语 `meta.title` 必须存在且非空、中文必须是「团团TV」、英文不得回退成包名、且与界面里的 `panel.title` / `entry.label` 一致。**反向验证过**：删掉 `meta.title` 后 D6 变红。这个字段纯展示、没有运行时代码读它，漏写不会有别的检查报错。
+
 ### 1.28.0 — 插件拆成 13 个可独立装卸的组件；画布整图导出/导入；Agent 读写画布结构
 
 - **宿主侧从一个组件拆成 13 个**：1 个共享核心（`imagegen`：设置、渠道、队列、订阅、更新、浏览器工作台）+ 12 个独立 feature 组件（image / video / canvas / gallery / templates / skills / ppt / ecommerce / outfit / prompt / storage / diagnostics）。每个都有自己的 exports 子路径、多语言文件与注册行，可单独 mount 与 unload；路由归属由一处判定函数决定，未知端点留在核心；移除核心连带挂起依赖者。这是生命周期边界不是权限边界——浏览器侧仍是一个共享工作台，已提交的上游任务不会因卸载而取消。老安装需重新加载新版包并重组 bundle 才能看到这 13 行。

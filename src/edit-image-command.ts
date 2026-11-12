@@ -99,7 +99,7 @@ export function registerEditImageCommand(
         })
         if (task.status === 'completed') {
           if (pendingImage !== undefined) pendingImages?.consume(String(invocation.agent.id), pendingImage)
-          return { kind: 'success', text: '图片编辑已完成，可在 AI 生图面板查看结果。' }
+          return { kind: 'success', text: '图片编辑已完成，可在团团TV 面板查看结果。' }
         }
         return { kind: 'error', text: task.error ?? `图片编辑${task.status === 'cancelled' ? '已取消' : '失败'}。` }
       } catch (error) {
