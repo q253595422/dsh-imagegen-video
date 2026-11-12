@@ -75,8 +75,19 @@ const LIB = join(ROOT, 'lib')
  * this list. The guard is about build entries growing, not about leftovers:
  * adding an entry without adding its stem must fail, or a sixth artifact would
  * ship uncompared.
+ *
+ * Names may be relative paths (`components/image`): the per-feature Cordis
+ * components live in a subdirectory, and they are published through their own
+ * `./image` exports, so they are exactly as shippable as `index.js`. Listing
+ * only the top-level files would have left twelve published artifacts that no
+ * run ever compares — the failure mode this list exists to prevent.
  */
-const KNOWN_STEMS = ['client', 'index', 'locale-tables', 'locale-tables-chunk']
+const KNOWN_STEMS = [
+  'client', 'components-chunk', 'index', 'locale-tables', 'locale-tables-chunk',
+  'components/canvas', 'components/diagnostics', 'components/ecommerce', 'components/gallery',
+  'components/image', 'components/outfit', 'components/ppt', 'components/prompt',
+  'components/skills', 'components/storage', 'components/templates', 'components/video',
+]
 
 /**
  * What a build reads, relative to the repository root.
@@ -190,11 +201,16 @@ function build (cwd) {
  * sixth artifact drifts.
  */
 function artifacts (libDir) {
-  const stems = new Set(
-    readdirSync(libDir)
-      .filter(name => name.endsWith('.js') || name.endsWith('.js.map'))
-      .map(name => name.replace(/\.js(\.map)?$/, '')),
-  )
+  // Walk one level down as well: the per-feature components are emitted to
+  // `lib/components/`, and a stem list that only looked at the top level would
+  // report "reproducible" while a dozen published files went uncompared.
+  const stemOf = (dir, prefix) => readdirSync(dir, { withFileTypes: true }).flatMap((entry) => {
+    if (entry.isDirectory()) return prefix === '' ? stemOf(join(dir, entry.name), entry.name) : []
+    return entry.name.endsWith('.js') || entry.name.endsWith('.js.map')
+      ? [prefix === '' ? entry.name.replace(/\.js(\.map)?$/, '') : `${prefix}/${entry.name.replace(/\.js(\.map)?$/, '')}`]
+      : []
+  })
+  const stems = new Set(stemOf(libDir, ''))
   const unknown = [...stems].filter(stem => !KNOWN_STEMS.includes(stem))
   if (unknown.length > 0) {
     fail([
@@ -212,7 +228,7 @@ function artifacts (libDir) {
     fail(['', `FAIL: expected build outputs are missing from lib/: ${missing.join(', ')}`])
   }
   return [...stems].sort().flatMap(stem => [`${stem}.js`, `${stem}.js.map`])
-    .filter(name => readdirSync(libDir).includes(name))
+    .filter(name => existsSync(join(libDir, name)))
 }
 
 function sha256 (file) {
