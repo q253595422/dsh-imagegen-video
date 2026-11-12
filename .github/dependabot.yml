@@ -1,0 +1,18 @@
+version: 2
+
+# The lockfile and the workflow pins are what a supply-chain fix has to touch,
+# so both surfaces are watched. Action updates arrive as SHA bumps (this
+# repository pins third-party actions to full commit SHAs) with the tag in the
+# commit message, which is the form the scanner requires.
+updates:
+  - package-ecosystem: "npm"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+    open-pull-requests-limit: 5
+
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+    open-pull-requests-limit: 5
