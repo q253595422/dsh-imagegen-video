@@ -65,7 +65,7 @@ jobs:
         with:
           version: 12.11.2
 
-      - uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version: 24
           cache: pnpm
@@ -231,7 +231,7 @@ jobs:
       # npm aborts with "Failed to replace env in config" when that variable is
       # absent -- which it must be for trusted publishing. The registry is named
       # explicitly on every npm command below instead.
-      - uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version: 24
 
