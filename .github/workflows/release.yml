@@ -22,6 +22,15 @@ on:
       - package.json
       - .github/workflows/release.yml
   workflow_dispatch:
+    # The only reason to run this by hand is to rebuild a commit whose tag
+    # already exists elsewhere. That replaces the assets an already-released
+    # version serves, which nobody should be able to do by accident -- so it
+    # takes an explicit, named opt-in on the run itself.
+    inputs:
+      replace_released_assets:
+        description: 'Replace the assets of an already-published version (the tag is never moved).'
+        type: boolean
+        default: false
 
 # Nothing here is inherited: contents is read-only by default and each job
 # widens it only where it must. A workflow token that cannot write by default
@@ -70,6 +79,43 @@ jobs:
           node-version: 24
           cache: pnpm
 
+      # Fails in seconds instead of after ten minutes of build and test.
+      #
+      # The tag is a version identity: v1.27.0 means the bytes published from
+      # one specific commit. This workflow rebuilds from GITHUB_SHA, so
+      # releasing from any other commit and uploading there does not "update"
+      # v1.27.0 -- it changes what everyone who already downloaded it got. That
+      # used to be a warning followed by a quiet replacement of the assets, and
+      # a warning inside a green run is a note nobody reads.
+      #
+      # Two cases are allowed, and only these two:
+      #   * the tag names THIS commit -- "Re-run jobs" on the release commit,
+      #     which has to stay idempotent;
+      #   * replace_released_assets was passed explicitly by a person.
+      # Anything else stops before the build. The fix is to bump `version`.
+      - name: Refuse to re-publish an already-released version
+        env:
+          REPLACE_RELEASED_ASSETS: ${{ inputs.replace_released_assets }}
+        run: |
+          set -euo pipefail
+          version=$(node -p "require('./package.json').version")
+          tag="v${version}"
+          if ! git rev-parse -q --verify "refs/tags/$tag" >/dev/null; then
+            echo "$tag does not exist yet; this run will create it."
+            exit 0
+          fi
+          existing=$(git rev-list -n1 "$tag")
+          if [ "$existing" = "$GITHUB_SHA" ]; then
+            echo "$tag already names this commit ($GITHUB_SHA); this is a re-run, and its assets will be replaced."
+            exit 0
+          fi
+          if [ "${REPLACE_RELEASED_ASSETS:-false}" = "true" ]; then
+            echo "::warning::$tag names $existing, not $GITHUB_SHA. replace_released_assets was requested, so the assets of the published version are being replaced. The tag itself stays where it is."
+            exit 0
+          fi
+          echo "::error::$tag is already released from $existing, and this build is from $GITHUB_SHA. Refusing to replace the assets of a published version. Bump version in package.json for a new release, or dispatch this workflow with replace_released_assets=true if replacing those assets is really intended."
+          exit 1
+
       - name: Install locked dependencies
         run: pnpm install --frozen-lockfile
 
@@ -85,6 +131,27 @@ jobs:
       - name: Install ffmpeg
         run: sudo apt-get update && sudo apt-get install -y ffmpeg
 
+      # Same step as ci.yml, for the same reason: four of the suites in
+      # `pnpm test` drive a headless browser, and `skipWithoutChrome` turns a
+      # missing browser into a FAILURE under GITHUB_ACTIONS. CI installs the
+      # shell and exports CHROME_HEADLESS_SHELL; this workflow did not, so it
+      # fell through to the runner image own Chrome and died in `launchChrome`
+      # with "published no DevTools port" (release run 43213204875) -- a red
+      # release that says nothing about the commit.
+      #
+      # chrome-headless-shell rather than the image Chrome, for the reason
+      # spelled out in ci.yml: it is the build these guards were written
+      # against, and pinning it keeps the release check independent of runner
+      # image updates.
+      - name: Install chrome-headless-shell
+        run: |
+          set -euo pipefail
+          npx --yes @puppeteer/browsers install chrome-headless-shell@stable \
+            --path "$HOME/.cache/chrome-headless"
+          SHELL_BIN=$(find "$HOME/.cache/chrome-headless" -name 'chrome-headless-shell' -type f | head -1)
+          test -n "$SHELL_BIN"
+          echo "CHROME_HEADLESS_SHELL=$SHELL_BIN" >> "$GITHUB_ENV"
+          "$SHELL_BIN" --version
       - name: Test suites
         run: pnpm test
 
