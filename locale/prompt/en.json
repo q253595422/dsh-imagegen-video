@@ -1,0 +1,6 @@
+{
+  "meta": {
+    "title": "Imagegen prompt",
+    "description": "Independent prompt component; requires the shared core."
+  }
+}

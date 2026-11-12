@@ -1,0 +1,6 @@
+{
+  "meta": {
+    "title": "Imagegen diagnostics",
+    "description": "Independent diagnostics component; requires the shared core."
+  }
+}

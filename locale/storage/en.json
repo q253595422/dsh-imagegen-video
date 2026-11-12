@@ -1,0 +1,6 @@
+{
+  "meta": {
+    "title": "Imagegen storage",
+    "description": "Independent storage component; requires the shared core."
+  }
+}

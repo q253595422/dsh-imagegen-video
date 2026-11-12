@@ -8,6 +8,7 @@
  */
 
 import type { Context } from '@deepseek-ai/cordis'
+import { COMPONENT_SERVICE, ROUTE_SERVICE, routeComponent, type Feature, type ComponentRuntime } from './components.ts'
 import { readFileSync } from 'node:fs'
 import { mkdir } from 'node:fs/promises'
 import path from 'node:path'
@@ -690,6 +691,7 @@ export function resolvePromptModelConfig(value: EffectiveConfig): PromptModelCon
  * @param config - resolved plugin config (schema defaults applied by the loader).
  */
 export function apply(ctx: Context, config?: Config): (() => void) | void {
+  const mounts = new Map<Feature, (ctx: Context) => void>()
   // The live source the surfaces read: the settings section once the settings
   // service is attached, the composition entry otherwise.
   let current: () => Config = () => config ?? {}
@@ -785,6 +787,8 @@ export function apply(ctx: Context, config?: Config): (() => void) | void {
   // Object-storage sync: the image stores announce every file they write; the
   // handler resolves the live settings and uploads when enabled. Fire and
   // forget — a sync failure never blocks the save path.
+  mounts.set('storage', componentCtx => {
+  componentCtx.effect(() => {
   setStorageSyncHandler((kind, filePath) => {
     const storage = resolve().storage
     if (!storage.enabled || !storage.endpoint.trim() || storage.secretKey.trim() === '') return
@@ -795,6 +799,10 @@ export function apply(ctx: Context, config?: Config): (() => void) | void {
     void putObject(storage, key, data, mimeOfPath(filePath)).catch(() => {
       // Best-effort sync: surfaced through the settings test, never fatal here.
     })
+  })
+
+  return () => setStorageSyncHandler(undefined)
+  }, 'dsh-imagegen: storage sync')
   })
 
   // Browser endpoints and Agent tools share the exact same serial queue. This
@@ -1071,7 +1079,8 @@ export function apply(ctx: Context, config?: Config): (() => void) | void {
   // Attach the host skill registry and agent runtime when this deployment has
   // them. Both are optional seams: the plugin must keep working (light tier
   // included) on a host that never mounted them.
-  ctx.inject(['skills', 'agents'], sctx => {
+  mounts.set('skills', componentCtx => {
+  componentCtx.inject(['skills', 'agents'], sctx => {
     const services = sctx as unknown as CanvasSkillServices
     // Hand the host conversation model to the code-render path. Set inside the
     // effect and cleared on unload, so a host that drops the services makes the
@@ -1139,6 +1148,8 @@ export function apply(ctx: Context, config?: Config): (() => void) | void {
     void unregister
   })
 
+  })
+
   // The route family mounts once, gated on the settings seam (the bridge
   // serves it; without the seam there is nothing to expose). Route handlers
   // read resolve() per request, so config edits apply live. The settings
@@ -1175,7 +1186,15 @@ export function apply(ctx: Context, config?: Config): (() => void) | void {
           pptRuntime,
           skillLibrary,
         })
-        const disposers = routes.map(route => ctx.webServer.register(route))
+        const disposeRoutes = sctx.provide(ROUTE_SERVICE, { routes })
+        const disposers = routes.filter(route => routeComponent(route.path) === 'core').map(route => sctx.webServer.register(route))
+        return () => { disposeRoutes(); for (const dispose of disposers) dispose() }
+      }, 'dsh-imagegen: core routes',
+    )
+  })
+
+  mounts.set('templates', componentCtx => {
+    componentCtx.effect(() => {
         // Background template sync: the upstream sources update on their own
         // schedule, so pull every one of them shortly after start and then
         // twice a day while the plugin stays enabled. Best-effort: failures
@@ -1193,14 +1212,15 @@ export function apply(ctx: Context, config?: Config): (() => void) | void {
         return () => {
           clearTimeout(startTimer)
           clearInterval(syncTimer)
-          for (const dispose of disposers) dispose()
         }
       },
-      'dsh-imagegen: routes',
+      'dsh-imagegen: template sync',
     )
   })
 
-  ctx.inject(['tools', 'attachments', 'commands'], (tctx) => {
+  for (const feature of ['image', 'video', 'canvas'] as const) {
+  mounts.set(feature, componentCtx => {
+  componentCtx.inject(['tools', 'attachments', 'commands'], (tctx) => {
     tctx.effect(() => {
       const resolveAgentConfig = () => {
         const value = resolve()
@@ -1222,15 +1242,15 @@ export function apply(ctx: Context, config?: Config): (() => void) | void {
           defaultVideoModel: value.defaultVideoModel,
         }
       }
+      if (feature === 'video') return registerAgentVideoTools(tctx, runtime, resolveVideoToolConfig)
+      if (feature === 'canvas') return registerAgentCanvasTools(tctx, resolveVideoToolConfig)
       const disposeTools = registerAgentImageTools(tctx, runtime, resolveAgentConfig)
       // Video tools mount alongside the image ones and share the same runtime,
       // so a task started by an Agent and one started in the panel are visible
       // to each other and to the same persisted history.
-      const disposeVideoTools = registerAgentVideoTools(tctx, runtime, resolveVideoToolConfig)
       // Canvas tools are structure-only: they lay out nodes and wires, never a
       // render. Generation stays behind the user's run button (see the module
       // header for why that is a product decision, not an omission).
-      const disposeCanvasTools = registerAgentCanvasTools(tctx, resolveVideoToolConfig)
       const disposeCommand = registerEditImageCommand(tctx, runtime, resolveAgentConfig, {
         get: sessionId => pendingConversationImages.get(sessionId),
         consume: (sessionId, ref) => {
@@ -1239,12 +1259,15 @@ export function apply(ctx: Context, config?: Config): (() => void) | void {
       })
       return () => {
         disposeCommand()
-        disposeCanvasTools()
-        disposeVideoTools()
         disposeTools()
       }
-    }, 'dsh-imagegen: agent image tools and commands')
+    }, 'dsh-imagegen: ' + feature + ' agent tools')
   })
+
+  })
+  }
+  const components: ComponentRuntime = { mount: (feature, componentCtx) => { mounts.get(feature)?.(componentCtx) } }
+  ctx.provide(COMPONENT_SERVICE, components)
 
   // System-prompt announcement (toggled by settings changes).
   let disposeSection: (() => void) | undefined
@@ -1274,5 +1297,5 @@ export function apply(ctx: Context, config?: Config): (() => void) | void {
   // no settings service, whose installSettingsSection never fires its hooks).
   sync()
 
-  return () => { setStorageSyncHandler(undefined) }
+  return () => { disposeSection?.() }
 }

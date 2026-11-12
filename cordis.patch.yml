@@ -1,8 +1,28 @@
-# dsh-imagegen bundle patch: inserts the plugin row into the web profile
-# roster. The row is a bare plugin by package name: the node half (exports ".")
-# runs in the host process (settings bridge + image-generation proxy routes),
-# and the `dsh.client` declaration in package.json makes the browser half
-# (exports "./client", served at /plugins/<id>/client.js) load in the web GUI.
+# Shared settings and workspace browser entry, followed by independent host components.
 - insert:
     - id: imagegen
       name: '@q253595422/dsh-imagegen-video'
+    - id: imagegen-image
+      name: '@q253595422/dsh-imagegen-video/image'
+    - id: imagegen-video
+      name: '@q253595422/dsh-imagegen-video/video'
+    - id: imagegen-canvas
+      name: '@q253595422/dsh-imagegen-video/canvas'
+    - id: imagegen-gallery
+      name: '@q253595422/dsh-imagegen-video/gallery'
+    - id: imagegen-templates
+      name: '@q253595422/dsh-imagegen-video/templates'
+    - id: imagegen-skills
+      name: '@q253595422/dsh-imagegen-video/skills'
+    - id: imagegen-ppt
+      name: '@q253595422/dsh-imagegen-video/ppt'
+    - id: imagegen-ecommerce
+      name: '@q253595422/dsh-imagegen-video/ecommerce'
+    - id: imagegen-outfit
+      name: '@q253595422/dsh-imagegen-video/outfit'
+    - id: imagegen-prompt
+      name: '@q253595422/dsh-imagegen-video/prompt'
+    - id: imagegen-storage
+      name: '@q253595422/dsh-imagegen-video/storage'
+    - id: imagegen-diagnostics
+      name: '@q253595422/dsh-imagegen-video/diagnostics'

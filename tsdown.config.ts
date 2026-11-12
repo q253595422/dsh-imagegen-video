@@ -101,7 +101,7 @@ const nodeConfig: UserConfig = {
   name: ID,
   // `locale-tables` is a second entry so the host-side copy resolver can be
   // exercised (and reused) without creating a cycle back through index.
-  entry: { index: 'src/index.ts', 'locale-tables': 'src/locale-tables.ts' },
+  entry: { index: 'src/index.ts', 'locale-tables': 'src/locale-tables.ts', 'components/image': 'src/components/image.ts', 'components/video': 'src/components/video.ts', 'components/canvas': 'src/components/canvas.ts', 'components/gallery': 'src/components/gallery.ts', 'components/templates': 'src/components/templates.ts', 'components/skills': 'src/components/skills.ts', 'components/ppt': 'src/components/ppt.ts', 'components/ecommerce': 'src/components/ecommerce.ts', 'components/outfit': 'src/components/outfit.ts', 'components/prompt': 'src/components/prompt.ts', 'components/storage': 'src/components/storage.ts', 'components/diagnostics': 'src/components/diagnostics.ts' },
   outDir: 'lib',
   format: ['esm'],
   platform: 'node',

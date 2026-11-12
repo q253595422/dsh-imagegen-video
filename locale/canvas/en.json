@@ -1,0 +1,6 @@
+{
+  "meta": {
+    "title": "Imagegen canvas",
+    "description": "Independent canvas component; requires the shared core."
+  }
+}
