@@ -360,6 +360,31 @@ const CASES = [
     to: "          ...fresh,\n          ...fresh,\n        ],\n        connections: [",
     expect: /D1: the clip run applied exactly once/,
   },
+  {
+    // The defect D4 exists for, restored exactly: seeding a canvas throws away
+    // the traces that belong to other canvases (and any held output). Measured
+    // consequence, not a guess -- `activeSkillRunCount` drops to zero, the poll
+    // effect tears down and never re-arms, and a run that was still in flight
+    // when the user switched canvases is gone with no card and no node.
+    name: 'switching canvases throws away a run that is still in flight',
+    runner: 'canvas-video',
+    file: 'src/client/CanvasWorkspace.tsx',
+    from: "        if (trace.canvasId !== canvasId || trace.status === 'pending') next[taskId] = trace",
+    to: "        if (trace.canvasId === canvasId && trace.status !== 'pending') next[taskId] = trace",
+    expect: /D4: returning to the run\u2019s own canvas applies the held output/,
+  },
+  {
+    // The held output is the only copy of that result in the browser -- the
+    // poll tick skips `pending` outright. Dropping the apply leaves the card
+    // cleared but no node, which is what a user would report as "it said it
+    // finished and nothing appeared".
+    name: 'a held skill output is cleared without being applied',
+    runner: 'canvas-video',
+    file: 'src/client/CanvasWorkspace.tsx',
+    from: "      if (trace.output !== undefined) {",
+    to: "      if (trace.output !== undefined && false) {",
+    expect: /D4: returning to the run\u2019s own canvas applies the held output/,
+  },
   // --------------------------------------------- the jsdom teardown ordering
   {
     // The bug this round was about, restored verbatim: `ReferenceError: window

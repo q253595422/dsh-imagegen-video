@@ -451,6 +451,24 @@ await check('W1-W3 a finished studio clip lands a referenced node and states are
   const galleryVideoFavorites = []
   /** Polls of the stitched run so far: the first says "still working". */
   let composeTaskPolls = 0
+  /** When false, every stitch poll answers "still working" no matter how many
+   *  times it is asked; a check flips it to true to decide WHEN the run reports
+   *  done. Counting polls instead would make the check a race against however
+   *  long a canvas switch happens to take -- the poll runs on a 1.5 s timer and
+   *  the switch takes an unknown slice of that, so "the Nth poll" lands on
+   *  either side of it from run to run. The order a check needs is "switch
+   *  first, THEN finish", and only the check knows when it got there. */
+  let composeReportsDone = true
+  /** A second canvas, listed from the very first `canvasList` call. The client
+   *  reads that list exactly once, on mount, so a canvas invented later never
+   *  reaches the project picker and there is no way to switch to it. It starts
+   *  empty on purpose: any node that appears on it can only have come from the
+   *  run under test. */
+  const otherCanvas = {
+    version: 2, id: 'canvas-other', title: '第二个画布', revision: 1,
+    viewport: { x: 0, y: 0, k: 1 }, background: 'blank',
+    nodes: [], connections: [],
+  }
 
   const configState = {
     enabled: true,
@@ -585,7 +603,10 @@ await check('W1-W3 a finished studio clip lands a referenced node and states are
         })
       }
       composeTaskPolls += 1
-      if (composeTaskPolls < 2) {
+      // The first poll answers "still working" so a run card has a running
+      // state to show, and the gate lets a check hold the completion back until
+      // it has done whatever must happen FIRST (see `composeReportsDone`).
+      if (composeTaskPolls < 2 || !composeReportsDone) {
         return json({
           ok: true,
           task: {
@@ -652,9 +673,18 @@ await check('W1-W3 a finished studio clip lands a referenced node and states are
       })
     }
     if (path.endsWith('/canvas/list')) {
-      return json({ ok: true, projects: [{ id: canvasDocument.id, title: canvasDocument.title, revision: canvasDocument.revision, nodeCount: 0, createdAt: 1, updatedAt: 1 }] })
+      return json({ ok: true, projects: [
+        { id: canvasDocument.id, title: canvasDocument.title, revision: canvasDocument.revision, nodeCount: 0, createdAt: 1, updatedAt: 1 },
+        { id: otherCanvas.id, title: otherCanvas.title, revision: otherCanvas.revision, nodeCount: 0, createdAt: 1, updatedAt: 1 },
+      ] })
     }
-    if (path.endsWith('/canvas/read')) return json({ ok: true, document: canvasReadDocument })
+    if (path.endsWith('/canvas/read')) {
+      // `selectProject` reads BY ID, so the second canvas answers for its own id
+      // and switching really changes which document is open.
+      const payload = JSON.parse(init.body)
+      if (payload.id === otherCanvas.id) return json({ ok: true, document: otherCanvas })
+      return json({ ok: true, document: canvasReadDocument })
+    }
     if (path.endsWith('/canvas/save')) {
       const payload = JSON.parse(init.body)
       canvasSaves.push(payload.document)
@@ -886,6 +916,9 @@ await check('W1-W3 a finished studio clip lands a referenced node and states are
       pointerDown, nodeById, badgesNow, pickerMenu, openComposeMenu, closeSkillMenu,
       /** Swap what `/canvas/read` answers with (a document the fixture lacks). */
       setCanvasReadDocument: next => { canvasReadDocument = next },
+      otherCanvas,
+      /** Hold the stitched run at "still working" until a check says otherwise. */
+      setComposeReportsDone: next => { composeReportsDone = next },
       /**
        * Re-open the canvas so it RE-READS its document — the same path a page
        * reload or a project switch takes. Switching to another workspace and
@@ -2264,6 +2297,106 @@ await check('E7 a video node whose clip is gone says so, and can be reloaded', a
     nodeById('node-clip-prompted').querySelector('[data-video-body] video') !== null,
     'E7: the player is rendered again after the reload',
   )
+})
+
+await check('D4 a run that finishes on another canvas lands when its own canvas returns', async () => {
+  const {
+    jsdomWindow, jsdomDocument, view, waitUntil, waitForSelector, pointerDown, nodeById,
+    skillRunRequests, canvasSaves, canvasDocument, otherCanvas,
+    openComposeMenu, setComposeReportsDone,
+  } = shared
+
+  const selectedNodes = () => [...view.querySelectorAll('[data-node-id]')]
+    .filter(node => node.querySelector('[data-corner]') !== null)
+  const closeComposeCard = () => {
+    const card = jsdomDocument.querySelector('[data-compose-card]')
+    if (card === null) return
+    const cancel = [...card.querySelectorAll('button')].find(button => button.textContent === '先不运行')
+    assert.ok(cancel !== undefined, 'D4: the confirm card can be dismissed')
+    cancel.dispatchEvent(new jsdomWindow.MouseEvent('click', { bubbles: true, cancelable: true }))
+  }
+  /** Switch canvases through the project picker -- the only UI that changes the
+   *  open document without unmounting the workspace. */
+  const pickCanvas = async label => {
+    const trigger = view.querySelector('button[data-dsh-select][aria-label="画布项目"]')
+    assert.ok(trigger !== null, 'D4: the canvas picker is on screen')
+    trigger.dispatchEvent(new jsdomWindow.MouseEvent('click', { bubbles: true, cancelable: true }))
+    await waitForSelector(jsdomDocument, '[data-dsh-select-menu]')
+    const option = [...jsdomDocument.querySelectorAll('[data-dsh-select-menu] [role="option"]')]
+      .find(row => (row.textContent ?? '').includes(label))
+    assert.ok(option !== undefined, `D4: the picker lists "${label}"`)
+    option.dispatchEvent(new jsdomWindow.MouseEvent('click', { bubbles: true, cancelable: true }))
+    await waitUntil(() => jsdomDocument.querySelector('[data-dsh-select-menu]') === null)
+    assert.ok(
+      await waitUntil(() => view.querySelector('[data-canvas-workspace]') !== null),
+      'D4: the workspace survives the switch',
+    )
+  }
+
+  closeComposeCard()
+  for (const selected of selectedNodes()) pointerDown(selected, true)
+  assert.ok(await waitUntil(() => selectedNodes().length === 0), 'D4: prior selections are cleared')
+
+  // ------------------------------------------------- start a stitch run here
+  // Held at "still working" from the start: the completion must not be visible
+  // until this check has switched canvases, or the run lands on the canvas it
+  // was started on and the held-output path is never entered at all.
+  setComposeReportsDone(false)
+  const runsBefore = skillRunRequests.length
+
+  pointerDown(nodeById('node-clip-left'))
+  assert.ok(await waitUntil(() => selectedNodes().length === 1), 'D4: the first clip is selected')
+  pointerDown(nodeById('node-clip-right'), true)
+  assert.ok(await waitUntil(() => selectedNodes().length === 2), 'D4: the second clip joins the selection')
+
+  await openComposeMenu('node-clip-left')
+  const stitchRow = [...jsdomDocument.body.querySelectorAll('button[role="menuitem"]')]
+    .find(button => (button.textContent ?? '').includes('拼接视频'))
+  assert.ok(stitchRow !== undefined && stitchRow.disabled === false, 'D4: two clips enable the stitch entry')
+  stitchRow.dispatchEvent(new jsdomWindow.MouseEvent('click', { bubbles: true, cancelable: true }))
+  await waitForSelector(jsdomDocument, '[data-compose-card]')
+  jsdomDocument.querySelector('[data-compose-run]')
+    .dispatchEvent(new jsdomWindow.MouseEvent('click', { bubbles: true, cancelable: true }))
+  assert.ok(
+    await waitUntil(() => skillRunRequests.length > runsBefore),
+    'D4: confirming starts the run',
+  )
+  const taskId = skillRunRequests.at(-1).taskId
+  const landedNodeId = taskId === 'task-compose-1' ? 'node-composed' : `node-composed-${taskId}`
+
+  // ----------------------------------- leave, and only THEN let it finish
+  // The order is the point: the switch has to complete while the run is still
+  // 'running', which is why the poll is gated rather than counted.
+  await pickCanvas(otherCanvas.title)
+  assert.equal(otherCanvas.nodes.length, 0, 'D4: the other canvas starts empty')
+  setComposeReportsDone(true)
+
+  // Give the poll a window to reach `completed` while the OTHER canvas is open.
+  // Nothing can be awaited here -- the assertion is that a node does NOT show
+  // up -- so this is time for the poll to have had its chance, not a condition.
+  await new Promise(resolve => setTimeout(resolve, 4000))
+  assert.ok(
+    view.querySelector(`[data-node-id="${landedNodeId}"]`) === null,
+    'D4: a run that finishes elsewhere does not land on the canvas the user switched to',
+  )
+  assert.equal(
+    (canvasSaves.at(-1)?.nodes ?? []).some(node => node.id === landedNodeId), false,
+    'D4: nor is it persisted onto that canvas',
+  )
+
+  // ------------------------- back home: the held output is grafted on arrival
+  await pickCanvas(canvasDocument.title)
+  assert.ok(
+    await waitUntil(() => view.querySelector(`[data-node-id="${landedNodeId}"]`) !== null, 12_000),
+    'D4: returning to the run\u2019s own canvas applies the held output',
+  )
+  assert.equal(
+    [...view.querySelectorAll(`[data-node-id="${landedNodeId}"]`)].length, 1,
+    'D4: it lands exactly once, not once per effect run',
+  )
+
+  setComposeReportsDone(true)
+  closeComposeCard()
 })
 
 for (const cleanup of cleanups.reverse()) await cleanup()

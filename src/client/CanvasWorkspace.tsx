@@ -1814,7 +1814,19 @@ export function CanvasWorkspace(props: CanvasWorkspaceProps): React.JSX.Element 
     setSkillRuns(previous => {
       const next: Record<string, SkillRunTrace> = {}
       for (const [taskId, trace] of Object.entries(previous)) {
-        if (trace.canvasId === canvasId && trace.status !== 'pending') next[taskId] = trace
+        // Keep every trace that is not this canvas's settled business:
+        //  - another canvas's trace belongs to a different document, and the
+        //    poll that watches it keeps running globally, so dropping it here
+        //    loses the run the moment the user looks at another canvas;
+        //  - a `pending` trace is the ONLY copy of a held output (the tick skips
+        //    `pending` outright), so nothing would ever re-fetch it.
+        // What DOES stay behind is this canvas's own live work: the host is the
+        // authority on that after a reopen, which is what the tasks below
+        // rebuild. Measured cause, not symmetry: with the old filter, switching
+        // canvases mid-run deleted the trace, `activeSkillRunCount` fell to
+        // zero, the poll effect tore down and never re-armed -- the run was
+        // simply gone.
+        if (trace.canvasId !== canvasId || trace.status === 'pending') next[taskId] = trace
       }
       const current = documentRef.current
       for (const task of tasks) {
