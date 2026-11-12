@@ -5,13 +5,22 @@ Attribution for third-party code is in [NOTICE](./NOTICE).
 
 ## Releases
 
-### 1.29.0 — 插件改名「团团TV」
+### 1.29.0 — 插件改名「团团TV」；入口可被扫描器验证；侧栏适配 DSH 0.2.2
 
 - **插件显示名定为「团团TV」**（英文界面 `TuanTuan TV`），包名 `@q253595422/dsh-imagegen-video` 不变——npm 包名不允许中文，改的是用户看到的那一层。声明方式是 `locale/zh.json` 与 `locale/en.json` 的 `meta.title`：宿主插件详情页从这个字段取标题，**此前没有声明，于是回退显示完整包名**，页面上就是 `@q253595422/dsh-imagegen-video`。
 - **三语品牌文案统一**：`entry.label`（侧边栏入口）、`panel.title`（面板标题，原为 `VisioWork`）、`settings.title`（设置卡标题）、`config.disabledTitle`（停用提示）在 zh / en / ru 三语里改成同一个名字。此前三处各写各的，互不一致。
 - **Agent 指导文案与 `/edit_image` 成功提示**同步改用新名；指导文案保留包名以免模型对不上实际安装的模块。
 - **刻意不改**：设置分区名「生图配置 / Image settings / Настройки генерации」。它是位置名不是品牌名，后端 22 处错误提示与 3 条测试断言按它定位，改它得成批同步且不带来品牌收益。
 - 新增 `smoke` 的 **D6** 守卫：两语 `meta.title` 必须存在且非空、中文必须是「团团TV」、英文不得回退成包名、且与界面里的 `panel.title` / `entry.label` 一致。**反向验证过**：删掉 `meta.title` 后 D6 变红。这个字段纯展示、没有运行时代码读它，漏写不会有别的检查报错。
+- **插件图标入库**：`icon.png` 此前只在本机、没提交，`package.json` 也没有 `icon` 字段；现两样都有并进 `files`。
+- **`main` / `exports["."]` 改指仓库根目录的 `index.js`。** 此前指向构建产物 `lib/index.js`——`lib/` 被 gitignore，只读源码树的扫描器拿到一个声明了却不存在的文件，读不到 `apply(ctx)`，`DSH_RUNTIME_APPLY_MISSING` 让收录扫描的 DeepSeek Harness Plugin 一项丢 5 分。现根目录是两行再导出（`export *` 加显式 `export { apply }`），`files` 同时装它与 `lib/`。**同一版本扫描器本地 77/100 → 85/100**，该项 15/20 → 20/20。
+- **`verify-pack` 改按声明入口追问「是否被某条 `files` 条目自己覆盖」。** 此前只问「包里有没有」，而打包器总会无条件附带 `main` 指的文件，所以从 `files` 删掉 `index.js` 依旧全绿——这层兜底在 `main` 改名或换成严格读 `files` 的打包器时消失，入口静默消失的后果是「装上了、什么都没发生」。新增负向用例钉住。
+- **侧栏入口与历史区适配 DSH 0.2.2（#35）**：新版本在侧栏列与 `sidebar.workspaces` 槽之间加了 `scrollRegion > scrollArea` 两层，插件仍按旧结构定位，导致入口不可见、点击被工作区行内动作抢走、历史区只占半截。`sidebarRoot()` 改为向上找「同时含全局 New Session 按钮」的最近祖先，`newSessionButton()` 排除工作区级行内动作，`markBlocks()` 只隐藏与 region 同级的 panel nav 而保留 history host；**手机端**点「会话 / 生图」后调宿主 `[data-sidebar-toggle]` 收起抽屉，不再被盖住。新增 smoke D3b。
+- **修掉 rolldown 1.3 上的可复现性静默失效**：banner 从 `//#region <id>` 改成 `// <id>`，只匹配前者的正则一条都匹配不上，`node_modules` realpath 前缀进了产物，同源码在另一目录构建字节不同。旧正则只在 rolldown 1.1 上验证过，升级后是静默失效而非报错。现两种拼写都归一化，并限制前缀不含空白与冒号以免误伤普通注释。
+- **没有版本变更的推送不再当成发布事件**：原闸门把「`package.json` 变了」当「要发布」，九条 dependabot PR 全会触发 Release 并因版本未升而让 `main` 变红。现提成独立 `preflight` job：tag 不存在→发；tag 指向本次提交→发；`replace_released_assets`→发并告警；**本次没改 `version`→跳过且不失败**；改了 `version` 撞上已发布号→失败（不许覆盖旧资产）。用 `github.event.before` 比对，merge / squash / 直推都适用。
+- **新增 HOL 插件扫描器自检 workflow**（收录 PR 的建议项，缺它会在 registry trust score 扣 10%）。取官方模板，checkout 换成仓库统一 pin v7.0.1，权限仅 `contents: read` 且 checkout 不留凭据，action 固定 v1.2.806。它是 advisory：`min_score` 钉在收录门槛 75、`fail_on_severity: none`。
+- **本版 `Publish to npm` 首次运行报红，是读取延迟不是发布失败**：`npm publish` 退出码 0，5 分钟轮询窗口内 registry 尚不可读（日志明确写了不是 auth failure），实际 3 分半后可见、`latest` 已指向 1.29.0，重跑后整条 run 转绿；npm 与 GitHub 资产 tgz 字节一致。
+- 依赖升级：`tsdown` 0.23.7、`lightningcss` 1.33.0、`@types/node` 26.6.6、两个 `@deepseek-ai/dsh-client-*` 到 0.1.2-rc.1；actions checkout 7.0.1 / setup-node 7.1.0 / upload-artifact 7.0.2 / download-artifact 8.0.2 / pnpm-action-setup 6.1.1。
 
 ### 1.28.0 — 插件拆成 13 个可独立装卸的组件；画布整图导出/导入；Agent 读写画布结构
 

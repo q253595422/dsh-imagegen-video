@@ -1351,15 +1351,15 @@ const CASES = [
     expect: new RegExp(`does not contain docs\\/releases\\/v${SRC_VERSION.replace(/\./g, '\\.')}\\.md`),
   },
   {
-    // The publish job proves a publish worked by reading the version back. On
-    // 2026-10-18 that read lagged the write by 3m16s, so the shipped 60-second
-    // window failed a run whose publish had actually succeeded -- the worst
-    // shape of a false failure, because it points at credentials. Restoring
-    // the short window restores the defect.
+    // The publish job proves a publish worked by reading the version back. That
+    // read lags the write by minutes: 3m16s on 1.7.8, and 6m11s on 1.29.0. The
+    // shipped window has to outlast the worst of them, so the negative case
+    // restores a window short enough to fail on a publish that worked -- the
+    // worst shape of a false failure, because it points at credentials.
     name: 'the publish job gives the registry read less time than it takes',
     runner: 'pack',
     file: '.github/workflows/release.yml',
-    from: 'for attempt in $(seq 1 30); do',
+    from: 'for attempt in $(seq 1 60); do',
     to: 'for attempt in $(seq 1 6); do',
     expect: /the publish visibility window is 60s \(6 x 10s\)/,
   },

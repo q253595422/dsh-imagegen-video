@@ -188,14 +188,16 @@ jobs:
           fi
 
           # Registry read lags a successful write; verify with retries, never
-          # re-publish.
-          for attempt in $(seq 1 30); do
+          # re-publish. The window is 10m because the lag has measured 6m11s
+          # (1.29.0) and 3m16s (1.7.8) on this repository -- see the longer note
+          # in release.yml. A short window here fails a backfill that worked.
+          for attempt in $(seq 1 60); do
             if npm view "$package@$version" version --prefer-online --registry="$registry"; then
               echo "Verified on the registry: $package@$version"
               exit 0
             fi
-            echo "not visible yet (attempt $attempt/30); waiting 10s"
+            echo "not visible yet (attempt $attempt/60); waiting 10s"
             sleep 10
           done
-          echo "::error::$package@$version was published and npm exited 0, but it is still not readable after ~5m. Check https://www.npmjs.com/package/$package/v/$version before retrying."
+          echo "::error::$package@$version was published and npm exited 0, but it is still not readable after ~10m. Check https://www.npmjs.com/package/$package/v/$version before retrying."
           exit 1

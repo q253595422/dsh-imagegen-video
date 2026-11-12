@@ -371,11 +371,18 @@ console.log('pack: no docs/videos, no docs/images')
 
 // ---------------------------------------------------------------- publish lag
 // The publish job verifies the version it just pushed by reading it back. That
-// read lags the write by MINUTES, not seconds -- measured on this repository:
-// the 1.7.8 publish returned `+ pkg@1.7.8` with a provenance statement at
-// 08:17:45Z and the version was not readable until 08:21:01Z, so the original
-// 60-second window turned a successful publish into a red run. The guard here
-// is the window itself: it has to outlast the lag we actually observed.
+// read lags the write by MINUTES, not seconds -- measured on this repository
+// twice, and the second measurement is the one that matters:
+//
+//   1.7.8  -- `+ pkg@1.7.8` at 08:17:45Z, readable at 08:21:01Z: 3m16s. This is
+//             what first turned a 60-second window from "short" into "wrong".
+//   1.29.0 -- `+ pkg@1.29.0` at 16:55:58Z, readable at 17:02:09Z: 6m11s. The
+//             5-minute window that the first measurement justified was outgrown
+//             by this one, and the job failed on a publish that had worked.
+//
+// The lesson is not "5m was wrong" -- it is that the lag has no contract and
+// every window will eventually be outgrown by it. So the guard asks for a
+// window comfortably past the WORST measurement we have, not the average.
 //
 // This is a source invariant, not a runtime one, which is why it lives here
 // rather than in a browser check: nothing at install time can observe it, and
@@ -394,17 +401,19 @@ if (!skipVersionShape) {
   }
   const [, attempts, interval] = windowLoop
   const windowSeconds = Number(attempts) * Number(interval)
-  // 3m16s was observed once. Anything under four minutes would have failed that
-  // same day, so the floor is the observation plus headroom, not a round number.
-  if (windowSeconds < 240) {
+  // 6m11s is the worst lag observed (1.29.0). The floor is that observation
+  // plus headroom, because a window equal to the worst case fails on the next
+  // slightly-worse day -- which is exactly how 5m failed.
+  if (windowSeconds < 600) {
     fail([
       '',
-      `FAIL: the publish visibility window is ${windowSeconds}s (${attempts} x ${interval}s).`,
-      'The registry read path lagged a successful publish by 3m16s on 2026-10-18.',
-      'A shorter window reports a publish that worked as a failed one.',
+      `FAIL: the publish visibility window is ${windowSeconds}s (${attempts} x ${interval}s), under 10 minutes.`,
+      'The registry read path lagged a successful publish by 6m11s on 1.29.0',
+      'and by 3m16s on 1.7.8. A shorter window reports a publish that worked as',
+      'a failed one, which costs a manual re-run and teaches nobody anything.',
     ])
   }
-  console.log(`pack: publish visibility window is ${windowSeconds}s, past the 3m16s read lag measured on 1.7.8`)
+  console.log(`pack: publish visibility window is ${windowSeconds}s, past the 6m11s read lag measured on 1.29.0`)
 } else {
   console.log('pack: version-shape checks skipped (backfill mode)')
 }

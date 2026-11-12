@@ -460,25 +460,33 @@ jobs:
           # The registry read path lags a successful write. Only the
           # verification is retried; the publish itself never repeats.
           #
-          # Measured, not guessed: the 1.7.8 publish returned `+ pkg@1.7.8`
-          # with a provenance statement at 08:17:45Z, and the version did not
-          # become readable until 08:21:01Z -- 3m16s. A 60s window therefore
-          # reported a *successful* publish as a failure. The window is 5m,
-          # and when it still runs out the message says the publish succeeded
-          # and only the read lagged, so nobody is sent looking for an auth
-          # problem that is not there.
-          for attempt in $(seq 1 30); do
+          # Measured, not guessed. Two observations on this repository, and the
+          # second one is why the window is 10m rather than 5m:
+          #
+          #   1.7.8  -- `+ pkg@1.7.8` with provenance at 08:17:45Z, readable at
+          #             08:21:01Z: 3m16s. A 60s window called that a failure.
+          #   1.29.0 -- provenance at 16:55:55Z, `+ pkg@1.29.0` at 16:55:58Z,
+          #             readable at 17:02:09Z: 6m11s. The 5m window that the
+          #             first measurement justified was outgrown by the second,
+          #             so the job went red on a publish that had worked.
+          #
+          # The lag is the registry's read path, not ours, and it has no
+          # contract -- it can get longer again. So the window is deliberately
+          # wide, and when it still runs out the message says the publish
+          # succeeded and only the read lagged, so nobody is sent looking for an
+          # auth problem that is not there.
+          for attempt in $(seq 1 60); do
             if npm view "$package@$version" version --prefer-online --registry="$registry"; then
               npm view "$package" dist-tags --json --prefer-online --registry="$registry"
               echo "Verified on the registry: $package@$version"
               exit 0
             fi
-            echo "not visible yet (attempt $attempt/30); waiting 10s"
+            echo "not visible yet (attempt $attempt/60); waiting 10s"
             sleep 10
           done
           if [ "${we_published:-false}" = "true" ]; then
-            echo "::error::$package@$version was published and npm exited 0, but it is still not readable after ~5m. This is a registry read lag, not an auth failure -- check https://www.npmjs.com/package/$package/v/$version before changing anything here."
+            echo "::error::$package@$version was published and npm exited 0, but it is still not readable after ~10m. This is a registry read lag, not an auth failure -- check https://www.npmjs.com/package/$package/v/$version before changing anything here."
           else
-            echo "::error::$package@$version was not visible on the registry after ~5m, and this run did not publish it."
+            echo "::error::$package@$version was not visible on the registry after ~10m, and this run did not publish it."
           fi
           exit 1
