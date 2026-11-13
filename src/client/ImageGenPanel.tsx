@@ -40,7 +40,7 @@ import { AGENT_IMAGE_API, SUBSCRIPTION_API, SUBSCRIPTION_PROVIDERS, type Subscri
 import type { ImageGenConfig, ImageGenScope, ImageModelGroup } from './settings-scope.ts'
 import { imageModelOptions, videoModelOptions } from './settings-scope.ts'
 import { VideoPanel } from './VideoPanel.tsx'
-import { clampGifFrameCount, clampGifFrameDurationMs, describeModel, GIF_FRAME_DEFAULT, GIF_FRAME_MAX, GIF_FRAME_MIN, GIF_FRAME_MS_DEFAULT, promptCharLimit, supportsGifOutput } from '../model-catalog.ts'
+import { clampGifFrameCount, clampGifFrameDurationMs, describeModel, GIF_FRAME_DEFAULT, GIF_FRAME_MAX, GIF_FRAME_MIN, GIF_FRAME_MS_DEFAULT, lifecycleNoticeKey, promptCharLimit, supportsGifOutput } from '../model-catalog.ts'
 import {
   addConversationAttachments, conversationInput, createConversationDrafts, releaseConversationDrafts,
   removeConversationAttachment, CHAT_IMAGE_EVENT,
@@ -1281,6 +1281,22 @@ export function ImageGenPanel(props: {
    *  channel drops whatever it cannot carry. See ecommerceReferenceLimit for
    *  why this does not reuse editReferenceLimit(). */
   const ecommerceReferenceCapacity = ecommerceReferenceLimit(model)
+  /** Upstream lifecycle of the selected id, as a sentence the user can act on.
+   *
+   *  Computed here rather than inside the render so the branch is testable and
+   *  the row stays a single ternary. `null` covers the overwhelming majority
+   *  (every active model, and every id we do not have on file) — the notice
+   *  only exists for ids the baseline explicitly records as retired.
+   *
+   *  Note what this does NOT do: it never changes `model`, disables generation,
+   *  or rewrites the request. A user can be pointed at a gateway that still
+   *  serves a model the vendor dropped, and blocking that would break a
+   *  workflow that works. See `model-baseline.ts`. */
+  const modelLifecycle = describeModel(model)
+  const modelLifecycleKey = lifecycleNoticeKey(modelLifecycle)
+  const modelLifecycleNotice = modelLifecycleKey === null
+    ? null
+    : tt(modelLifecycleKey, modelLifecycle.replacement === undefined ? undefined : { replacement: modelLifecycle.replacement })
   const ecommerceRefOverflow = ecommerceAssets.reduce((worst, asset) => {
     if (asset.role === 'style') return worst
     return Math.max(worst, ecommerceAssets.filter(item => item.role === asset.role).length)
@@ -4133,6 +4149,19 @@ export function ImageGenPanel(props: {
                 onChange={choice => { setModelChannelId(choice.channelId); setModel(choice.model) }}
               />
             </label> : null}
+            {/* Upstream retired or deprecated the selected id. A notice, never
+                a block: the request still goes out unchanged, because a
+                gateway may well still serve a model the first party dropped.
+                Absent for every ordinary model, so the row costs nothing. */}
+            {isGeneration && modelLifecycleNotice !== null ? (
+              <p
+                className={css.modelLifecycleNotice}
+                role="status"
+                data-model-lifecycle={describeModel(model).lifecycle}
+              >
+                {modelLifecycleNotice}
+              </p>
+            ) : null}
             {isGeneration ? <div className={css.compareControl}>
               <label className={css.compareToggle}>
                 <input

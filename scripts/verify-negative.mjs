@@ -1894,6 +1894,29 @@ const CASES = [
     to: "  if (protocol === 'chat-completions') return EDIT_REFERENCE_LIMIT",
     expect: /five-reference ceiling/,
   },
+  // ------------------------------------------- 内置模型基线表
+  {
+    // 本轮修的真实缺陷：聚合网关按 `vendor/model` 寻址，旧实现拿原始串直接
+    // 比对，`google/gemini-3-pro-image` 因此落到 unknown——面板随即误报
+    // 「只保留 1 张参考图」，engine 也退回通用 OpenAI 协议。把剥离逻辑退回
+    // 原样（不剥前缀）后，基线表套件必须变红。
+    name: 'a vendor-prefixed model id falls back to unknown',
+    runner: 'baseline',
+    file: 'src/model-baseline.ts',
+    from: "  const slash = id.indexOf('/')\n  if (slash <= 0 || slash === id.length - 1) return id\n  return id.slice(slash + 1)",
+    to: '  return id',
+    expect: /带厂商前缀的图像模型不再落到 unknown|前缀 id 也能精确命中基线表/,
+  },
+  {
+    // 生命周期是「提示而非拦截」。若哪天有人把它写成硬门（例如认不出就
+    // 当成 removed），未记录的模型会被集体误报弃用——这条守住那个边界。
+    name: 'an unrecorded model is reported as deprecated',
+    runner: 'baseline',
+    file: 'src/model-catalog.ts',
+    from: "    lifecycle: entry.lifecycle ?? 'active',",
+    to: "    lifecycle: entry.lifecycle ?? 'deprecated',",
+    expect: /未记录的模型一律 active，不误报弃用/,
+  },
 ]
 
 const RUNNERS = {
@@ -1933,6 +1956,8 @@ const RUNNERS = {
   'google-native': { script: 'scripts/smoke-google-native.mjs', build: false },
   // 千问生图 API 同样是纯请求体/轮询桩，套件直接 import src，无需构建。
   'qwen-draw': { script: 'scripts/smoke-qwen-draw.mjs', build: false },
+  // 内置模型基线表：纯函数，直接 import src，零网络零构建。
+  baseline: { script: 'scripts/smoke-model-baseline.mjs', build: false },
   // The archive rule, run against a real `pnpm pack`. No rebuild: the archive
   // contents depend on package.json and the tree, not on the built output.
   pack: { script: 'scripts/verify-pack.mjs', build: false },

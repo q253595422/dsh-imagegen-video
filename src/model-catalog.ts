@@ -8,7 +8,15 @@
  * Framework-free (pure data + regex), safe for the client bundle to inline.
  */
 
-export type ModelFamily = 'gpt-image' | 'dall-e' | 'grok' | 'nanobanana' | 'seedream' | 'agnes' | 'zhipu' | 'qwen' | 'minimax' | 'unknown'
+/**
+ * The family union now lives in `model-baseline.ts`, which is the data layer
+ * this file reads. Re-exported here so the ~dozen existing imports of
+ * `ModelFamily` from this module keep resolving to one declaration rather
+ * than a second copy that could drift.
+ */
+export type { ModelFamily, ModelLifecycle } from './model-baseline.ts'
+import { baselineEntry, normalizeModelId, type ModelFamily, type ModelLifecycle } from './model-baseline.ts'
+export type { ModelBaselineEntry } from './model-baseline.ts'
 
 /** Capability/identity annotation for one model id. */
 export interface ModelCatalogEntry {
@@ -26,9 +34,25 @@ export interface ModelCatalogEntry {
   supportsAspectRatio: boolean
   /** Quality tiers the family interprets natively. */
   qualityTiers: string[]
+  /**
+   * Where this exact id sits in its life, from the built-in baseline.
+   *
+   * Absent means "active" for a family we recognize — the table only records
+   * exceptions, so the ordinary case costs nothing. `unknown` families report
+   * `active` too: not knowing an id is not evidence that upstream retired it,
+   * and guessing `deprecated` here would nag users on every gateway whose
+   * naming we have not seen yet.
+   *
+   * This is a NOTICE, never a gate: no request is blocked or rewritten
+   * because of it. See `model-baseline.ts` for why no shutdown dates are
+   * recorded.
+   */
+  lifecycle: ModelLifecycle
+  /** Id to suggest instead, when `lifecycle` is `deprecated` or `removed`. */
+  replacement?: string
 }
 
-const ENTRIES: Record<Exclude<ModelFamily, 'unknown'>, Omit<ModelCatalogEntry, 'family'>> = {
+const ENTRIES: Record<Exclude<ModelFamily, 'unknown'>, Omit<ModelCatalogEntry, 'family' | 'lifecycle' | 'replacement'>> = {
   'gpt-image': {
     label: 'gpt-image',
     labelZh: 'GPT 图像',
@@ -129,19 +153,49 @@ const NANOBANANA_GEMINI_IDS = new Set([
   'gemini-2.5-flash-image',
 ])
 
-/** Classify one upstream model id into its request-shaping family. */
+/** Classify one upstream model id into its request-shaping family.
+ *
+ * Three tiers, in this order, and the order is the whole point:
+ *
+ *   1. **Exact baseline** (`model-baseline.ts`). An id we have written down
+ *      is answered by what we know about that id, never by a pattern that
+ *      happens to match its name. This is also the only tier that can report
+ *      a lifecycle, because it is the only one backed by a recorded source.
+ *   2. **Family pattern.** Unlisted ids in a family we recognize. Upstream
+ *      ships new suffixes (`-sunburst`, `-vip`, date stamps) faster than any
+ *      table can be maintained, so the pattern is what keeps a fresh id from
+ *      falling to `unknown` and losing its request shape.
+ *   3. **`unknown`**, which still sends a best-effort OpenAI request.
+ *
+ * Both the raw id and the vendor-stripped one are tried at every tier: an
+ * aggregator gateway addresses `google/gemini-3-pro-image`, and a leading
+ * vendor segment describes who publishes the model, not how to call it.
+ */
 export function describeModel(model: string): ModelCatalogEntry {
-  const id = model.trim()
-  if (/^gpt-image/i.test(id)) return { family: 'gpt-image', ...ENTRIES['gpt-image'] }
-  if (/^dall-e/i.test(id)) return { family: 'dall-e', ...ENTRIES['dall-e'] }
-  if (/^grok-imagine(?:-|$)/.test(id)) return { family: 'grok', ...ENTRIES.grok }
-  if (/^nanobanana/i.test(id) || NANOBANANA_GEMINI_IDS.has(id)) return { family: 'nanobanana', ...ENTRIES.nanobanana }
-  if (/^(?:doubao-)?seedream/i.test(id)) return { family: 'seedream', ...ENTRIES.seedream }
-  if (/^agnes-image(?:[.\-_]|$)/i.test(id)) return { family: 'agnes', ...ENTRIES.agnes }
-  if (/^(?:glm-image|cogview(?:-|$))/i.test(id)) return { family: 'zhipu', ...ENTRIES.zhipu }
-  if (/^qwen-image(?:[-_.]|$)/i.test(id)) return { family: 'qwen', ...ENTRIES.qwen }
-  if (/^(?:minimax[-_/])?image-\d+/i.test(id)) return { family: 'minimax', ...ENTRIES.minimax }
-  return { family: 'unknown', label: 'unknown', labelZh: '未知协议', known: false, supportsEdit: true, supportsAspectRatio: false, qualityTiers: [] }
+  const id = normalizeModelId(model)
+  // Tier 1: exact, with lifecycle. `entry.family` is already a known family
+  // by construction of the baseline type, so ENTRIES always has its row.
+  const entry = baselineEntry(model)
+  if (entry !== undefined) {
+    return {
+      family: entry.family,
+      ...ENTRIES[entry.family],
+      lifecycle: entry.lifecycle ?? 'active',
+      ...entry.replacement === undefined ? {} : { replacement: entry.replacement },
+    }
+  }
+  // Tier 2: family by naming convention.
+  if (/^gpt-image/i.test(id)) return { family: 'gpt-image', ...ENTRIES['gpt-image'], lifecycle: 'active' }
+  if (/^dall-e/i.test(id)) return { family: 'dall-e', ...ENTRIES['dall-e'], lifecycle: 'active' }
+  if (/^grok-imagine(?:-|$)/.test(id)) return { family: 'grok', ...ENTRIES.grok, lifecycle: 'active' }
+  if (/^nanobanana/i.test(id) || NANOBANANA_GEMINI_IDS.has(id)) return { family: 'nanobanana', ...ENTRIES.nanobanana, lifecycle: 'active' }
+  if (/^(?:doubao-)?seedream/i.test(id)) return { family: 'seedream', ...ENTRIES.seedream, lifecycle: 'active' }
+  if (/^agnes-image(?:[.\-_]|$)/i.test(id)) return { family: 'agnes', ...ENTRIES.agnes, lifecycle: 'active' }
+  if (/^(?:glm-image|cogview(?:-|$))/i.test(id)) return { family: 'zhipu', ...ENTRIES.zhipu, lifecycle: 'active' }
+  if (/^qwen-image(?:[-_.]|$)/i.test(id)) return { family: 'qwen', ...ENTRIES.qwen, lifecycle: 'active' }
+  if (/^(?:minimax[-_/])?image-\d+/i.test(id)) return { family: 'minimax', ...ENTRIES.minimax, lifecycle: 'active' }
+  // Tier 3.
+  return { family: 'unknown', label: 'unknown', labelZh: '未知协议', known: false, supportsEdit: true, supportsAspectRatio: false, qualityTiers: [], lifecycle: 'active' }
 }
 
 /**
@@ -212,4 +266,28 @@ export function isLikelyImageModelId(model: string): boolean {
 /** The family a model id routes its request through. */
 export function modelFamily(model: string): ModelFamily {
   return describeModel(model).family
+}
+
+/** Which copy key explains a lifecycle state, or `null` to say nothing.
+ *
+ *  Split out from the panel so the mapping is testable without rendering, and
+ *  so the "no notice" case is an explicit answer rather than a missing branch.
+ *  Returns the key rather than the translated string because the caller owns
+ *  the locale.
+ *
+ *  The return type is the literal union rather than `string` on purpose: the
+ *  panel feeds it straight to `tt`, which only accepts real copy keys, and a
+ *  bare `string` would force a cast at the call site — turning a compile-time
+ *  guarantee into a runtime surprise the day a key is renamed. */
+export type LifecycleNoticeKey =
+  | 'model.deprecated'
+  | 'model.deprecatedNoReplacement'
+  | 'model.removed'
+  | 'model.removedNoReplacement'
+
+export function lifecycleNoticeKey(entry: Pick<ModelCatalogEntry, 'lifecycle' | 'replacement'>): LifecycleNoticeKey | null {
+  if (entry.lifecycle === 'active') return null
+  const hasReplacement = entry.replacement !== undefined && entry.replacement !== ''
+  if (entry.lifecycle === 'removed') return hasReplacement ? 'model.removed' : 'model.removedNoReplacement'
+  return hasReplacement ? 'model.deprecated' : 'model.deprecatedNoReplacement'
 }

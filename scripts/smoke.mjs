@@ -7004,6 +7004,21 @@ await check('E1 client apply mounts the sidebar entry and studio (jsdom)', async
     assert.equal(jsdomDocument.querySelectorAll('[data-comparison]').length, 1, 'comparison history rows collapse into one item')
     assert.ok(jsdomDocument.querySelector('[data-comparison]')?.textContent?.includes('gpt-image-2'), 'comparison history shows its models')
 
+    // Upstream lifecycle notice: the overwhelmingly common state is "no
+    // notice", and a model we have on file as active must not produce one.
+    // Getting this backwards is the expensive direction — a permanent warning
+    // beside every model trains users to ignore the row when it finally says
+    // something true. The positive branch (deprecated / removed rendering) is
+    // covered by the `baseline` suite through `lifecycleNoticeKey`, because no
+    // id in the shipped table is retired yet; this half is what a real DOM can
+    // prove today.
+    const sessionPanel = jsdomDocument.querySelector('[data-dsh-imagegen-view]')
+    assert.equal(
+      sessionPanel?.querySelector('[data-model-lifecycle]') ?? null,
+      null,
+      'an active model shows no lifecycle notice',
+    )
+
     // Issue #19 regression: DSH 0.1.5+ seats the Conversation in the keyed
     // `main` slot instead of a `conversation` slot, whose anchors are
     // layout-neutral. The studio takeover must keep that slot (hiding it leaves
