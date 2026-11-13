@@ -13,6 +13,7 @@ import {
   Shrink, SquareDashedMousePointer, Trash2, Type, Undo2, Upload, Video, Wand2, Wallpaper,
 } from 'lucide-react'
 import type { CanvasAnnotation, CanvasAssetRef, CanvasConnection, CanvasDocument, CanvasFileKind, CanvasLayerInfo, CanvasLayerPlanItem, CanvasNode, CanvasRect, CanvasStoryboard, CanvasVideoRef, CanvasSkillConfigApplyResult, CanvasSkillConfigField, CanvasSkillConfigSaveResult, CanvasSkillConfigStep, CanvasSkillConfigView, CanvasSkillDescriptor, CanvasSkillLibrary, CanvasSkillOutput, CanvasSkillRunRequest, CanvasSkillTask, CanvasSketchStroke, GenerateRequest, GenerationTask, HistoryEntry, VideoGenerateRequest, VideoTaskSummary, VideoMode, VideoResolution } from '../protocol.ts'
+import type { CanvasBundleUnresolved } from '../canvas-bundle.ts'
 import { describeVideoModel, durationsOf } from '../video-model-catalog.ts'
 // The stitch order is a SHARED rule: the host builds its ffmpeg concat list with
 // the same function, so the numbers on the badges are the order of the file.
@@ -282,6 +283,50 @@ function pinchStateFrom(
 
 
 
+
+/**
+ * A file name the browser and the three target OSes all accept, derived from
+ * the canvas title.
+ *
+ * Titles are free text and routinely contain the separators a path cannot
+ * carry (`/`, `\`, `:`), quotes, or a trailing dot — on Windows `a.` and `a`
+ * name the same file and the trailing dot is silently dropped, which turns an
+ * obviously-wrong name into a quietly-wrong one. Control characters are
+ * stripped too rather than escaped: they cannot be typed back into a picker to
+ * re-select the file.
+ *
+ * A title that reduces to nothing (all separators, or empty) falls back to a
+ * fixed stem instead of producing `.json`, which every OS refuses to open.
+ */
+function bundleFileName(title: string): string {
+  const cleaned = title
+    .replace(/[\u0000-\u001f\u007f]/g, '')
+    .replace(/[/\\:*?"<>|]/g, '_')
+    .replace(/\s+/g, ' ')
+    .trim()
+    .replace(/[. ]+$/, '')
+    .slice(0, 80)
+  return `${cleaned === '' ? 'canvas' : cleaned}.json`
+}
+
+/**
+ * Count what a bundle could not carry, split by what it means to the reader.
+ *
+ * The two kinds are separate on purpose: a clip left behind is a reference to
+ * a video that still plays on the machine it came from, while an asset with no
+ * bytes was already gone at export time and is lost for good. Adding them into
+ * one number would tell the user "3 things went wrong" without saying whether
+ * anything is actually unrecoverable.
+ */
+function countUnresolved(unresolved: readonly CanvasBundleUnresolved[]): { video: number; asset: number } {
+  let video = 0
+  let asset = 0
+  for (const entry of unresolved) {
+    if (entry.kind === 'video') video += 1
+    else asset += 1
+  }
+  return { video, asset }
+}
 
 function summaryOf(document: CanvasDocument, favorite = false): ProjectSummary {
   return {
@@ -656,6 +701,17 @@ export function CanvasWorkspace(props: CanvasWorkspaceProps): React.JSX.Element 
     }
   }, [])
   const imageFileRef = useRef<HTMLInputElement>(null)
+  /** The hidden picker behind the top bar's import button. One input for the
+   *  whole workspace: a second one would have to be kept in sync with this
+   *  one's `value` reset, and the reset is what lets the same file be picked
+   *  twice in a row. */
+  const bundleFileRef = useRef<HTMLInputElement>(null)
+  /** A whole bundle is document + every referenced image's bytes, so both
+   *  directions can take a while on a big canvas. The flags exist to disable
+   *  the buttons (a second export of a canvas being exported allocates the
+   *  bundle twice) and to say something is happening. */
+  const [bundleExporting, setBundleExporting] = useState(false)
+  const [bundleImporting, setBundleImporting] = useState(false)
   const [renamingTitle, setRenamingTitle] = useState(false)
   const [confirmDeleteProject, setConfirmDeleteProject] = useState(false)
   const [saveState, setSaveState] = useState<'loading' | 'saved' | 'saving' | 'error'>('loading')
@@ -4387,6 +4443,95 @@ export function CanvasWorkspace(props: CanvasWorkspaceProps): React.JSX.Element 
       pastRef.current = []; futureRef.current = []; setHistoryVersion(version => version + 1)
     } catch (caught) { setError(caught instanceof Error ? caught.message : String(caught)) }
   }, [api, flushPendingCanvas])
+
+  /**
+   * Package the current canvas and hand it to the browser as a download.
+   *
+   * Clips are referenced rather than copied (a bundle would have to carry whole
+   * videos), so a canvas with clips always exports with `unresolved` entries.
+   * That is a success, not a failure: the document and every still image are
+   * complete. What the notice adds is which half of them the user will lose on
+   * the other machine, because "exported" on its own would read as "everything
+   * came along".
+   */
+  const exportBundle = useCallback(async (): Promise<void> => {
+    const current = documentRef.current
+    if (current === null || bundleExporting) return
+    setBundleExporting(true)
+    try {
+      const bundle = await api.canvasBundleExport(current.id)
+      const json = JSON.stringify(bundle)
+      const url = URL.createObjectURL(new Blob([json], { type: 'application/json' }))
+      try {
+        const link = globalThis.document.createElement('a')
+        link.href = url
+        link.download = bundleFileName(current.title)
+        link.rel = 'noopener'
+        link.click()
+      } finally {
+        // The click has already started the download; holding the object URL
+        // alive past this point keeps the whole (possibly hundreds of MB) blob
+        // resident for the life of the document.
+        URL.revokeObjectURL(url)
+      }
+      const { video, asset } = countUnresolved(bundle.unresolved)
+      const parts = [tt('canvas.bundle.exported', { title: current.title })]
+      if (video > 0) parts.push(tt('canvas.bundle.droppedVideo', { count: video }))
+      if (asset > 0) parts.push(tt('canvas.bundle.droppedAsset', { count: asset }))
+      setNotice(parts.join(' '))
+    } catch (caught) {
+      setError(errorMessage(caught))
+    } finally {
+      setBundleExporting(false)
+    }
+  }, [api, bundleExporting])
+
+  /**
+   * Import a bundle as a brand new canvas.
+   *
+   * Deliberately not `selectProject`: the route already returned the whole
+   * document, so re-reading it would be a second round trip for bytes we are
+   * holding. Everything else `selectProject` does still has to happen — most
+   * importantly `flushPendingCanvas()`, or the edits still buffered from the
+   * canvas we are leaving get written into the one we just imported.
+   */
+  const importBundle = useCallback(async (file: File): Promise<void> => {
+    if (bundleImporting) return
+    setBundleImporting(true)
+    try {
+      let parsed: unknown
+      try {
+        parsed = JSON.parse(await file.text())
+      } catch {
+        // A JSON parse error names a character offset in a file the user never
+        // opened — useless as advice. The actionable fact is which two things
+        // could have produced it.
+        setError(tt('canvas.bundle.importNotJson'))
+        return
+      }
+      await flushPendingCanvas()
+      const { document: imported, unresolved } = await api.canvasBundleImport(parsed)
+      const next = seedDocument(normalizeConfigNodeSizes(imported))
+      // The route does not return the project list, but the select above is
+      // driven by `projects`: without this insert the new canvas is not in the
+      // dropdown, and `currentProject` — which finds by `document.id` — comes
+      // back undefined, leaving the favourite/delete buttons in a wrong state
+      // for a canvas that does exist.
+      setProjects(previous => [summaryOf(next), ...previous.filter(project => project.id !== next.id)])
+      setDocument(next); setSelectedIds(new Set()); setSelectedConnectionId(null)
+      syncedRef.current = JSON.stringify(next); setSaveState('saved')
+      pastRef.current = []; futureRef.current = []; setHistoryVersion(version => version + 1)
+      const { video, asset } = countUnresolved(unresolved)
+      const parts = [tt('canvas.bundle.importDone', { title: next.title })]
+      if (video > 0) parts.push(tt('canvas.bundle.importMissingVideo', { count: video }))
+      if (asset > 0) parts.push(tt('canvas.bundle.importMissingAsset', { count: asset }))
+      setNotice(parts.join(' '))
+    } catch (caught) {
+      setError(errorMessage(caught))
+    } finally {
+      setBundleImporting(false)
+    }
+  }, [api, bundleImporting, flushPendingCanvas, seedDocument])
 
   const currentProject = projects.find(project => project.id === document?.id)
   const favoriteProjects = projects.filter(project => project.favorite === true)
