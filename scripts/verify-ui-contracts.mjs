@@ -804,6 +804,7 @@ const server = (await import('node:http')).createServer((req, res) => {
   else if (req.url?.includes('sidebartabs=1') === true) res.end(sidebarTabsPage)
   else if (req.url?.includes('shortcuts=1') === true) res.end(shortcutPage)
   else if (req.url?.includes('navscroll=1') === true) res.end(navScrollPage)
+  else if (req.url?.includes('historyscroll=1') === true) res.end(historyScrollPage)
   else if (req.url?.includes('settings850=1') === true) res.end(settingsPage)
   else res.end(page)
 })
@@ -1232,6 +1233,129 @@ const sidebarTabsPage = `<!doctype html><html><head><style>
     ${sidebarAlignScript}
     alignToSeat(document.getElementById('tabs'), document.querySelector('.newSession'))
   </script>
+</body></html>`
+
+// --- the history surface owns its wheel events ------------------------------
+// DSH 0.2.2's sidebar runs a scroll handoff: a `wheel` listener (`passive:
+// false`) on `[data-sidebar-scrollport]` that, for every event NOT aimed at its
+// own session tree, calls `preventDefault()` and scrolls that tree instead. The
+// handed-off tree is an ANCESTOR-and-sibling arrangement around the region this
+// plugin paints its history into, so in the studio the visible list froze while
+// an invisible one scrolled behind it.
+//
+// The handoff below is copied from the 0.2.2 bundle (`createScrollHandoff`),
+// because the host that ships it is not a dependency of this repository — the
+// check needs its behaviour, not its package.
+const historyHandoffScript = `
+  const GESTURE_GAP_MS = 100
+  function verticalWheelPixels (event, page) {
+    if (event.ctrlKey || Math.abs(event.deltaX) > Math.abs(event.deltaY)) return undefined
+    if (event.deltaMode === WheelEvent.DOM_DELTA_LINE) return event.deltaY * 16
+    if (event.deltaMode === WheelEvent.DOM_DELTA_PAGE) return event.deltaY * page
+    return event.deltaY
+  }
+  function scrollClamped (element, delta) { const before = element.scrollTop; element.scrollTop = before + delta; return element.scrollTop - before }
+  function atEnd (viewport) { return viewport.scrollHeight - viewport.clientHeight - viewport.scrollTop < 1 }
+  function installHandoff (viewport, scroller) {
+    let lastSplit = Number.NEGATIVE_INFINITY
+    viewport.addEventListener('wheel', event => {
+      if (scroller === null || event.defaultPrevented) return
+      const delta = verticalWheelPixels(event, viewport.clientHeight)
+      if (delta === undefined || delta === 0) return
+      if (!(event.cancelable && event.timeStamp - lastSplit < GESTURE_GAP_MS)) {
+        const native = atEnd(viewport) && scroller.contains(event.target)
+        if (native && (delta > 0 || scroller.scrollTop + delta >= 0)) return
+        if (!event.cancelable) { if (native) scrollClamped(viewport, delta + scroller.scrollTop); return }
+      }
+      event.preventDefault()
+      lastSplit = event.timeStamp
+      if (delta > 0) { const rest = delta - scrollClamped(viewport, delta); if (rest > 0) scrollClamped(scroller, rest); return }
+      const rest = delta - scrollClamped(scroller, delta)
+      if (rest < 0) scrollClamped(viewport, rest)
+    }, { passive: false })
+  }
+`
+
+/**
+ * The real `containHistoryWheel` from `sidebar-entry.ts`, type annotations
+ * stripped so a plain browser can evaluate it.
+ *
+ * Lifted from the source for the same reason as `alignToSeat` above: a copy
+ * would keep passing after the shipped logic changed, which is the failure this
+ * check exists to catch.
+ */
+const historyWheelScript = (() => {
+  const source = read('sidebar-entry.ts')
+  const match = source.match(/function containHistoryWheel\(host: HTMLElement\): void \{[\s\S]*?\n\}/)
+  if (match === null) {
+    console.error('\nFAIL: containHistoryWheel is gone from sidebar-entry.ts.')
+    console.error('The history wheel check lifts that function into the page; without it there is')
+    console.error('nothing to exercise, and the check would pass by measuring a page it never protected.')
+    process.exit(1)
+  }
+  // The function reads the module-level attribute name, which is not in scope
+  // once it is lifted out of the module. Taken from the source rather than
+  // retyped, so renaming the attribute cannot leave the fixture silently
+  // marking nothing.
+  const attr = source.match(/const WHEEL_CONTAINER_ATTR = '([^']+)'/)
+  if (attr === null) {
+    console.error('\nFAIL: WHEEL_CONTAINER_ATTR is gone from sidebar-entry.ts.')
+    process.exit(1)
+  }
+  return `const WHEEL_CONTAINER_ATTR = '${attr[1]}'\n` + match[0]
+    .replace(/\(host: HTMLElement\): void/, '(host)')
+    .replace(/\/\*\*[\s\S]*?\*\//g, '')
+    .replace(/\/\/[^\n]*/g, '')
+})()
+
+// The DOM is the one 0.2.2 renders around the history host: a scroll viewport
+// that owns the session tree, the region the tree sits in, and the plugin's
+// absolutely-positioned host on top of it. The list is tall enough to scroll
+// and the tree tall enough to prove it did not move instead.
+const historyScrollPage = `<!doctype html><html data-dsh-imagegen-active><head><style>
+  body { margin: 0;
+    --dsw-alias-border-l1: #d9dade;
+    --dsw-alias-border-l2: #e6e7ea;
+    --dsw-alias-bg-layer-1: #ffffff;
+    --dsw-alias-bg-layer-2: #f7f7f8;
+    --dsw-alias-label-primary: #17171c;
+    --dsw-alias-label-secondary: #5b5e6b;
+    --dsw-alias-label-tertiary: #8a8d99;
+    --dsw-radius-md: 8px;
+    --dsw-radius-sm: 6px;
+  }
+  #column { width: 280px; height: 640px; display: flex; flex-direction: column; }
+  /* The shell's scroll viewport. Overflow is hidden (it scrolls nothing
+     itself), it owns the session tree and the region, and it is what carries
+     the wheel listener. */
+  #scrollport { flex: 1; min-height: 0; overflow: hidden; display: flex; flex-direction: column; }
+  #tree { flex: 0 0 auto; height: 120px; overflow: hidden; }
+  #treeScroll { height: 100%; overflow-y: auto; }
+  #treeScroll div { height: 40px; }
+  #region { position: relative; flex: 1; min-height: 0; overflow: hidden; }
+  ${browserCss(read('panel.module.css'))}
+</style></head><body>
+<div id="column">
+  <div id="scrollport" data-sidebar-scrollport>
+    <div id="tree"><div id="treeScroll">${Array.from({ length: 60 }, (_, i) => `<div>session ${i}</div>`).join('')}</div></div>
+    <div id="region">
+      <div class="sidebarHistoryHost" id="host" data-dsh-imagegen-history-host>
+        <aside class="history" data-dsh-imagegen-history>
+          <header class="historyHeader"><span class="historyTitle">历史记录</span></header>
+          <div class="historyList" id="list">${Array.from({ length: 40 }, (_, i) => `<div class="historyItem"><span class="historyPrompt">第 ${i} 条记录，用来把列表撑到可以滚动的高度</span></div>`).join('')}</div>
+        </aside>
+      </div>
+    </div>
+  </div>
+</div>
+<script>
+  ${historyHandoffScript}
+  ${historyWheelScript}
+  // The tree is INSIDE the scroll viewport, as the shell's is; without the
+  // containment every wheel over the list would be forwarded to it.
+  installHandoff(document.getElementById('scrollport'), document.getElementById('treeScroll'))
+  containHistoryWheel(document.getElementById('host'))
+</script>
 </body></html>`
 
 // --- the shortcut legend fits the canvas it opens over ----------------------
@@ -1684,6 +1808,63 @@ if (sidebarProblems.length > 0) {
   process.exit(1)
 }
 console.log('sidebar switcher: same inset and one 8px gap against the shell button')
+
+// --- the history surface owns its wheel events ------------------------------
+// Measured with real wheel input, because the defect is a real-browser one: the
+// shell's handoff calls preventDefault() on the same bubble path, and nothing
+// in jsdom can tell you whether the browser then scrolled the list or not.
+const historyPage = await openPage(launched.port, `http://127.0.0.1:${port}/?historyscroll=1`)
+let historyReady = false
+for (let i = 0; i < 60; i++) {
+  historyReady = await historyPage.evaluate(`document.readyState === 'complete' && document.getElementById('list') !== null && document.getElementById('host').hasAttribute('data-dsh-imagegen-wheel-owner')`)
+  if (historyReady === true) break
+  await new Promise(r => setTimeout(r, 50))
+}
+if (historyReady !== true) {
+  console.error('\nFAIL: the history fixture never installed its wheel containment.')
+  console.error('Either the page did not load or containHistoryWheel did not mark the host;')
+  console.error('nothing was measured either way.')
+  process.exit(1)
+}
+await historyPage.send('Emulation.setDeviceMetricsOverride', { width: 1280, height: 800, deviceScaleFactor: 1, mobile: false })
+const historyGeometry = await historyPage.evaluate(`(() => {
+  const list = document.getElementById('list')
+  const tree = document.getElementById('treeScroll')
+  list.scrollTop = 0
+  tree.scrollTop = 0
+  const r = list.getBoundingClientRect()
+  return { x: Math.round(r.left + r.width / 2), y: Math.round(r.top + Math.min(100, r.height / 2)), listScrollable: list.scrollHeight - list.clientHeight, treeScrollable: tree.scrollHeight - tree.clientHeight }
+})()`)
+if (historyGeometry.listScrollable < 200 || historyGeometry.treeScrollable < 200) {
+  console.error('\nFAIL: the history fixture cannot show the defect.')
+  console.error(`list scrollable ${historyGeometry.listScrollable}px, tree scrollable ${historyGeometry.treeScrollable}px —`)
+  console.error('both have to overflow, or "the list scrolled" and "the tree scrolled instead" are')
+  console.error('indistinguishable from "there was nothing to scroll".')
+  process.exit(1)
+}
+await historyPage.send('Input.dispatchMouseEvent', { type: 'mouseMoved', x: historyGeometry.x, y: historyGeometry.y })
+await new Promise(r => setTimeout(r, 80))
+for (let i = 0; i < 3; i++) {
+  await historyPage.send('Input.dispatchMouseEvent', { type: 'mouseWheel', x: historyGeometry.x, y: historyGeometry.y, deltaX: 0, deltaY: 200 })
+  await new Promise(r => setTimeout(r, 120))
+}
+await new Promise(r => setTimeout(r, 200))
+const historyAfter = await historyPage.evaluate(`({ list: Math.round(document.getElementById('list').scrollTop), tree: Math.round(document.getElementById('treeScroll').scrollTop) })`)
+historyPage.close()
+if (historyAfter.list < 100) {
+  console.error('\nFAIL: a wheel over the history surface does not scroll the history list.')
+  console.error(`After three wheel steps the list is at ${historyAfter.list}px and the shell's session tree at ${historyAfter.tree}px.`)
+  console.error('DSH 0.2.2 runs a scroll handoff on an ancestor of this host: for any event that is')
+  console.error('not its own tree it calls preventDefault() and scrolls the tree instead, which in the')
+  console.error('studio is painted over by the list. The host has to claim its own wheel events.')
+  process.exit(1)
+}
+if (historyAfter.tree > 0) {
+  console.error('\nFAIL: the wheel over the history list also scrolled the shell session tree.')
+  console.error(`list ${historyAfter.list}px, tree ${historyAfter.tree}px — the handoff still received the event.`)
+  process.exit(1)
+}
+console.log(`history list: wheel scrolled it ${historyAfter.list}px while the shell session tree stayed at ${historyAfter.tree}px`)
 
 // --- the shortcut legend fits the canvas it opens over ----------------------
 const shortcutTarget = await (await fetch(`http://127.0.0.1:${launched.port}/json/new?${encodeURIComponent(`http://127.0.0.1:${port}/?shortcuts=1`)}`, { method: 'PUT' })).json()

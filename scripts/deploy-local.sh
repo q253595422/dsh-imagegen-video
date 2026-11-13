@@ -49,10 +49,17 @@ check "icon.png 存在"             "test -f '$PKG/icon.png'"
 check "根 index.js 存在"          "test -f '$PKG/index.js'"
 check "locale/zh.json 有 meta"    "grep -q 'meta' '$PKG/locale/zh.json'"
 
-# 本次改动的存在性核对：按钮文案与工作流开关都要真的进了构建产物
+# 本次改动的存在性核对：真实功能的字符串必须真的进了构建产物，
+# 而不是只在源码里存在、打包时被摇掉。
 check "client.js 含导出画布按钮"  "grep -q '导出画布' '$PKG/lib/client.js'"
 check "client.js 含工作流开关"    "grep -q 'workflowReuse' '$PKG/lib/client.js'"
 check "client.js 含整图导入接口"  "grep -q 'canvas/bundle/import' '$PKG/lib/client.js'"
+# 1.30.2：768P 档位与 MiniMax-H3 特化。档位串同时出现在服务端（submitBody 的
+# size）与客户端（面板按钮），两处都要有，否则修好一半。
+# 用双引号匹配：tsdown 产物里的字符串字面量是双引号，写成单引号会永远不命中。
+check "index.js 含 768P 档位"     "grep -q '\"768P\"' '$PKG/lib/index.js'"
+check "index.js 含 MiniMax 特化"  "grep -q 'minimax\\[-_.\]' '$PKG/lib/index.js'"
+check "client.js 含 768P 档位"    "grep -q '\"768P\"' '$PKG/lib/client.js'"
 
 if [ "$fail" -ne 0 ]; then echo "预检未通过，中止"; exit 1; fi
 

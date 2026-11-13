@@ -34,6 +34,7 @@ import { addTemplateFavorite, listTemplateFavorites, removeTemplateFavorite } fr
 import { testStorage, type StorageSyncConfig } from './storage-sync.ts'
 import { checkForUpdate, CURRENT_VERSION, installUpdate, ManualUpdateRequiredError, updateInstallTarget, type UpdateHostContext } from './updater.ts'
 import { IMAGE_PRESETS } from './presets.ts'
+import { parseVideoResolution } from './video-model-catalog.ts'
 import { clearDiagnostics, listDiagnostics } from './diagnostics-store.ts'
 import { allSignals, clearSignals, listSignals, promptBucketOf, recordSignal } from './signal-store.ts'
 import { buildReport, DEFAULT_WINDOW_DAYS } from './signal-report.ts'
@@ -570,7 +571,7 @@ function parseVideoRequest(
   const mode = body.mode === 'image' || body.mode === 'keyframe' || body.mode === 'reference' ? body.mode : 'text'
   const model = typeof body.model === 'string' ? body.model.trim() : ''
   const seconds = typeof body.seconds === 'number' ? body.seconds : Number(body.seconds ?? 5)
-  const resolution = typeof body.resolution === 'string' && body.resolution.trim() !== '' ? body.resolution.trim() : '720P'
+  const resolution = parseVideoResolution(body.resolution)
   const images = Array.isArray(body.images)
     ? body.images.filter((item): item is string => typeof item === 'string' && item !== '').slice(0, 4)
     : []
@@ -590,7 +591,7 @@ function parseVideoRequest(
     model,
     prompt,
     aspectRatio: typeof body.aspectRatio === 'string' && body.aspectRatio.trim() !== '' ? body.aspectRatio.trim() : '16:9',
-    resolution: (resolution === '480P' || resolution === '720P' || resolution === '1080P' ? resolution : '720P'),
+    resolution,
     seconds: Number.isFinite(seconds) ? seconds : 5,
     ...canvas === undefined ? {} : { canvas },
     ...typeof body.image === 'string' && body.image !== '' ? { image: body.image } : {},
@@ -2804,7 +2805,10 @@ export function makeRoutes(deps: ImageGenRoutesDeps): WebRoute[] {
         if (!guard(req, res, 'POST')) return
         const body = await readJsonBody(req)
         const kind = body?.kind === 'image' ? 'image' : 'video'
-        const resolution = body?.resolution === '480P' || body?.resolution === '1080P' ? body.resolution : '720P'
+        // The probe reports pixel size only; every tier the plugin can name is
+        // accepted here so the composer's "1920x1080, 150 frames" line matches
+        // the tier the user picked instead of silently reading 720P.
+        const resolution = parseVideoResolution(body?.resolution)
         const aspectRatio = typeof body?.aspectRatio === 'string' && body.aspectRatio.trim() !== '' ? body.aspectRatio.trim() : '16:9'
         const seconds = typeof body?.seconds === 'number' && Number.isFinite(body.seconds) ? body.seconds : 5
         const fps = typeof body?.fps === 'number' && Number.isFinite(body.fps) ? body.fps : undefined

@@ -8,7 +8,7 @@
 export const IMAGEGEN_SETTINGS_NAMESPACE = 'dsh-imagegen'
 
 /** Published package version shared by the host updater and the client UI. */
-export const PLUGIN_VERSION = '1.30.0'
+export const PLUGIN_VERSION = '1.30.2'
 
 /** Same-origin route family (loopback-only, mirroring the dsh-ssh fence). */
 export const SETTINGS_API = {
@@ -656,8 +656,15 @@ export type VideoModelFamily =
   | 'muse'
   | 'unknown'
 
-/** Video output resolution tier, mapped per family by the engine. */
-export type VideoResolution = '480P' | '720P' | '1080P'
+/**
+ * Video output resolution tier, mapped per family by the engine.
+ *
+ * `768P` is not a marketing tier: some providers accept exactly one number and
+ * reject everything else (MiniMax-H3 answers 400 to both 720P and 1080P), so
+ * the union has to be able to name what they actually take. Families that do
+ * not list it never see it — `normalizeVideoResolution` degrades it away.
+ */
+export type VideoResolution = '480P' | '720P' | '768P' | '1080P'
 
 /** Aspect ratios the video panel offers; families narrow this themselves. */
 export const VIDEO_ASPECT_RATIOS = ['16:9', '9:16', '1:1', '4:3', '3:4', '21:9'] as const

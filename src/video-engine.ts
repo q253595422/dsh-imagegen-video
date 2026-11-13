@@ -437,7 +437,20 @@ async function readJsonWithText(response: Response): Promise<{ payload: Record<s
       text,
     }
   } catch {
-    return { payload: { message: text.slice(0, 300) }, text }
+    // A non-JSON body is either an HTML error page or — the case measured
+    // against a gateway whose base URL omitted `/v1` — the site's own homepage
+    // served with 200. Saying "HTML" and naming the likely cause is far more
+    // actionable than echoing 300 characters of `<meta charset>` markup, and it
+    // is what turns "submit failed" into "your base URL is wrong".
+    const looksHtml = /^\s*<(?:!doctype|html|head|body|meta)/i.test(text)
+    return {
+      payload: {
+        message: looksHtml
+          ? '返回的是网页而不是接口响应，通常是渠道的 API 地址少了路径（例如末尾缺 /v1）'
+          : text.slice(0, 300),
+      },
+      text,
+    }
   }
 }
 

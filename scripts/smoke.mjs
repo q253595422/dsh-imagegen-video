@@ -5497,6 +5497,38 @@ await check('D3 sidebar entry mounts inside desktop and unknown sidebar shells, 
   await new Promise(resolve => setTimeout(resolve, 60))
   assert.equal(warnings.length, 0, `a mounted sidebar entry logs nothing: ${warnings.join(' | ')}`)
 
+  // --- the history surface owns its wheel events ------------------------------
+  // DSH 0.2.2's sidebar listens for `wheel` on its scroll viewport (an ANCESTOR
+  // of the region the host sits in) and, for anything that is not its own
+  // session tree, calls preventDefault() and scrolls the tree instead. In the
+  // studio the tree is painted over by the history host, so the visible symptom
+  // is "the history list will not scroll and the session records scroll" — the
+  // scene the fixture below reproduces. The host has to stop the event before
+  // it reaches that listener, WITHOUT preventing the browser's own scroll.
+  const wheelOrder = []
+  const hostForWheel = jsdomDocument.querySelector('[data-dsh-imagegen-history-host]')
+  assert.equal(hostForWheel.getAttribute('data-dsh-imagegen-wheel-owner'), '', 'the history host claims its own wheel events')
+  // A stand-in for the shell's scroll viewport: the column around the host,
+  // which is where 0.2.2 puts its listener. Bubble phase, same as the shell's.
+  const onShellWheel = () => { wheelOrder.push('shell') }
+  const onHostWheel = () => { wheelOrder.push('host') }
+  desktopRoot.addEventListener('wheel', onShellWheel)
+  hostForWheel.addEventListener('wheel', onHostWheel)
+  const wheelEvent = new jsdomWindow.WheelEvent('wheel', { deltaY: 200, bubbles: true, cancelable: true })
+  hostForWheel.dispatchEvent(wheelEvent)
+  assert.deepEqual(wheelOrder, ['host'], 'a wheel over the history surface never reaches the shell handoff that would scroll the hidden session tree')
+  assert.equal(wheelEvent.defaultPrevented, false, 'and it is not prevented: the browser still scrolls the history list')
+  desktopRoot.removeEventListener('wheel', onShellWheel)
+  hostForWheel.removeEventListener('wheel', onHostWheel)
+  // The listener is installed once per host, not once per shell mutation: the
+  // host element itself is reused across re-seats. Dropping the mark and
+  // mutating the shell (which is what runs `ensure`) has to put it back.
+  hostForWheel.removeAttribute('data-dsh-imagegen-wheel-owner')
+  jsdomDocument.body.append(jsdomDocument.createElement('span'))
+  await new Promise(resolve => setTimeout(resolve, 20))
+  assert.equal(hostForWheel.getAttribute('data-dsh-imagegen-wheel-owner'), '', 'a re-seat reinstalls the wheel ownership mark')
+  assert.equal(hostForWheel.parentElement.className, 'xUkysG_regionArea', 'the re-seated host is the same element, in the same seat')
+
   disposeDesktop()
   assert.equal(jsdomDocument.querySelector('[data-dsh-imagegen-session-tabs]') === null, true, 'the disposer takes the tabs back out')
   assert.equal(jsdomDocument.querySelector('[data-dsh-imagegen-history-host]') === null, true, 'the disposer takes the history host back out')

@@ -14,7 +14,7 @@ import {
 } from 'lucide-react'
 import type { CanvasAnnotation, CanvasAssetRef, CanvasConnection, CanvasDocument, CanvasFileKind, CanvasLayerInfo, CanvasLayerPlanItem, CanvasNode, CanvasRect, CanvasStoryboard, CanvasVideoRef, CanvasSkillConfigApplyResult, CanvasSkillConfigField, CanvasSkillConfigSaveResult, CanvasSkillConfigStep, CanvasSkillConfigView, CanvasSkillDescriptor, CanvasSkillLibrary, CanvasSkillOutput, CanvasSkillRunRequest, CanvasSkillTask, CanvasSketchStroke, GenerateRequest, GenerationTask, HistoryEntry, VideoGenerateRequest, VideoTaskSummary, VideoMode, VideoResolution } from '../protocol.ts'
 import type { CanvasBundleUnresolved } from '../canvas-bundle.ts'
-import { describeVideoModel, durationsOf } from '../video-model-catalog.ts'
+import { describeVideoModel, durationsOf, VIDEO_RESOLUTIONS } from '../video-model-catalog.ts'
 // The stitch order is a SHARED rule: the host builds its ffmpeg concat list with
 // the same function, so the numbers on the badges are the order of the file.
 import { TimelinePanel, type TimelineClipView } from './TimelinePanel.tsx'
@@ -525,24 +525,40 @@ export function CanvasWorkspace(props: CanvasWorkspaceProps): React.JSX.Element 
   const [videoPickerOpen, setVideoPickerOpen] = useState(false)
   const [backgroundMenu, setBackgroundMenu] = useState<Point | null>(null)
   const [imageMenu, setImageMenu] = useState<Point | null>(null)
+  // 工作流选项菜单的锚点。放在这三个 dock 菜单旁边而不是跟三个开关一起：
+  // 它是**同一类东西**（挂靠一个底栏按钮的临时浮层），必须和它们共用关闭
+  // 逻辑——状态各自独立时，Escape / 点画布 / 悬停离开每一条都只清自己认识
+  // 的那两个，新加的这个就被漏下来，一直挂在底栏上面关不掉。
+  const [workflowMenu, setWorkflowMenu] = useState<Point | null>(null)
   const menuCloseTimer = useRef<number | null>(null)
   const clearMenuCloseTimer = (): void => {
     if (menuCloseTimer.current !== null) { window.clearTimeout(menuCloseTimer.current); menuCloseTimer.current = null }
   }
+  /** 关掉全部底栏浮层。**每一条关闭路径都必须走这里**，不要再各自手写一遍
+   *  把前两个 state 置空的语句。
+   *
+   *  工作流选项菜单当初就是被漏在这张名单外面：Escape、点画布、悬停离开
+   *  每一条都只清前两个，于是它成了画布上唯一关不掉的浮层，用户只能用
+   *  点「运行工作流」把它带走——而那一次运行是会真花钱的。清单只写一份，
+   *  下次再加浮层就不会再漏。 */
+  const closeDockMenus = useCallback((): void => {
+    setBackgroundMenu(null); setImageMenu(null); setWorkflowMenu(null)
+  }, [])
   const scheduleMenuClose = useCallback((): void => {
     clearMenuCloseTimer()
-    menuCloseTimer.current = window.setTimeout(() => { setBackgroundMenu(null); setImageMenu(null) }, 280)
+    menuCloseTimer.current = window.setTimeout(closeDockMenus, 280)
   }, [])
   /** Open one dock menu anchored to its button (root-relative) and close the
-   *  other: the two menus are mutually exclusive. */
+   *  other: the three menus are mutually exclusive. */
   const openDockMenu = useCallback((kind: 'image' | 'background', button: HTMLElement): void => {
     clearMenuCloseTimer()
     const bounds = button.getBoundingClientRect()
     const rootRect = rootRef.current?.getBoundingClientRect()
     const screen: Point = { x: bounds.left + bounds.width / 2 - (rootRect?.left ?? 0), y: bounds.top - (rootRect?.top ?? 0) }
-    if (kind === 'image') { setImageMenu(screen); setBackgroundMenu(null) }
-    else { setBackgroundMenu(screen); setImageMenu(null) }
-  }, [])
+    closeDockMenus()
+    if (kind === 'image') setImageMenu(screen)
+    else setBackgroundMenu(screen)
+  }, [closeDockMenus])
   const [libraryOpen, setLibraryOpen] = useState(false)
   const [pickerTab, setPickerTab] = useState<'upload' | 'history' | 'gallery' | 'generate'>('upload')
   /** Canvas file nodes: the hidden file input plus the skill catalog overlay. */
@@ -749,7 +765,6 @@ export function CanvasWorkspace(props: CanvasWorkspaceProps): React.JSX.Element 
   const [workflowReuse, setWorkflowReuse] = useState(true)
   const [workflowRerunSelected, setWorkflowRerunSelected] = useState(false)
   const [workflowParallel, setWorkflowParallel] = useState(true)
-  const [workflowMenu, setWorkflowMenu] = useState<Point | null>(null)
   const [focusNodeId, setFocusNodeId] = useState<string | null>(null)
   const [colorPickerNodeId, setColorPickerNodeId] = useState<string | null>(null)
   const annotationDragRef = useRef<{ nodeId: string; pointerId: number; start: Point; box: { left: number; top: number; width: number; height: number } } | null>(null)
@@ -798,7 +813,7 @@ export function CanvasWorkspace(props: CanvasWorkspaceProps): React.JSX.Element 
   ), [composerVideoCatalog])
   const composerDurationOptions = useMemo(() => durationsOf(composerVideoCatalog), [composerVideoCatalog])
   const composerResolutionOptions = useMemo<VideoResolution[]>(() => (
-    composerVideoCatalog.resolutions.length > 0 ? composerVideoCatalog.resolutions : ['480P', '720P', '1080P']
+    composerVideoCatalog.resolutions.length > 0 ? composerVideoCatalog.resolutions : [...VIDEO_RESOLUTIONS]
   ), [composerVideoCatalog])
   useEffect(() => {
     if (!composerAspectOptions.includes(composerAspect)) setComposerAspect(composerAspectOptions[0] ?? '16:9')
@@ -1551,10 +1566,11 @@ export function CanvasWorkspace(props: CanvasWorkspaceProps): React.JSX.Element 
 
   const openSkillMenu = useCallback((node: CanvasNode, anchor: { x: number; y: number }): void => {
     if (!selectedIdsRef.current.has(node.id)) setSelectedIds(new Set([node.id]))
-    setContextMenu(null); setCreateMenu(null); setImageMenu(null); setBackgroundMenu(null); setNodeAddMenu(null)
+    setContextMenu(null); setCreateMenu(null); setNodeAddMenu(null)
+    closeDockMenus()
     setSkillMenu({ screen: anchor, nodeId: node.id })
     void loadSkillCatalog()
-  }, [loadSkillCatalog])
+  }, [closeDockMenus, loadSkillCatalog])
 
   /** Queue one skill run through the host, grow a run card out of the source
    *  node (connected with an animated edge), and track its task. */
@@ -3876,8 +3892,12 @@ export function CanvasWorkspace(props: CanvasWorkspaceProps): React.JSX.Element 
       if (documentRef.current === null) return
       const mod = event.ctrlKey || event.metaKey
       if (event.key === 'Escape') {
-        setContextMenu(null); setCreateMenu(null); setBackgroundMenu(null); setImageMenu(null); setNodeAddMenu(null); setZoomMenuOpen(false)
+        setContextMenu(null); setCreateMenu(null); setNodeAddMenu(null); setZoomMenuOpen(false)
         setColorPickerNodeId(null)
+        // 工作流选项菜单和那几个底栏菜单是同一类浮层，Esc 必须一视同仁地清掉。
+        // 漏掉它的话，它就成了画布上唯一「Esc 关不掉」的东西，用户只能点
+        // 「运行工作流」把它带走——而那一次运行是要花钱的。
+        closeDockMenus()
         // The legend is the topmost surface whenever it is open, so Esc closes it
         // before anything behind it (the selection it would otherwise clear is
         // what the user expects to survive).
@@ -3978,7 +3998,7 @@ export function CanvasWorkspace(props: CanvasWorkspaceProps): React.JSX.Element 
       window.removeEventListener('blur', onBlur)
       window.removeEventListener('paste', onPaste)
     }
-  }, [addAssets, annotateNodeId, api, canvasCenter, copySelection, deleteNode, deleteSelection, duplicateSelection, pasteClipboard, pickerOpen, polishNode, redo, shortcutHelpOpen, skillLibraryOpen, skillMenu, undo, videoPreviewNodeId, pendingSkill, timelineOpen, castTarget])
+  }, [addAssets, annotateNodeId, api, canvasCenter, closeDockMenus, copySelection, deleteNode, deleteSelection, duplicateSelection, pasteClipboard, pickerOpen, polishNode, redo, shortcutHelpOpen, skillLibraryOpen, skillMenu, undo, videoPreviewNodeId, pendingSkill, timelineOpen, castTarget])
 
   // ------------------------------------------------------ viewport events
 
@@ -4043,7 +4063,7 @@ export function CanvasWorkspace(props: CanvasWorkspaceProps): React.JSX.Element 
   const onViewportPointerDown = (event: ReactPointerEvent<HTMLDivElement>): void => {
     const target = event.target as Element | null
     setContextMenu(null); setCreateMenu(null); setNodeAddMenu(null); setZoomMenuOpen(false)
-    if (closestOf(target, '[data-canvas-no-zoom]') === null) { setBackgroundMenu(null); setImageMenu(null) }
+    if (closestOf(target, '[data-canvas-no-zoom]') === null) closeDockMenus()
     // 捏合缩放保留自定义引擎（jsdom 合成触摸可驱动；react-flow 的 d3-zoom
     // 触摸捏合在 jsdom 里不生效），故 ReactFlow 设 zoomOnPinch=false 避免双重缩放。
     if (event.pointerType === 'touch') {
@@ -5314,6 +5334,11 @@ export function CanvasWorkspace(props: CanvasWorkspaceProps): React.JSX.Element 
             active={workflowMenu !== null}
             disabled={document === null || document.nodes.length === 0}
             onClick={event => {
+              clearMenuCloseTimer()
+              // 再点一次收起。此前这里无条件 set，等于「点了没反应」——
+              // 菜单开着时唯一的收起办法是点里面的「运行工作流」，而那一次
+              // 运行是要真花钱的，等于用一个付费动作当关闭按钮。
+              if (workflowMenu !== null) { setWorkflowMenu(null); return }
               const bounds = event.currentTarget.getBoundingClientRect()
               const rootRect = rootRef.current?.getBoundingClientRect()
               setWorkflowMenu({ x: bounds.left + bounds.width / 2 - (rootRect?.left ?? 0), y: bounds.top - (rootRect?.top ?? 0) })

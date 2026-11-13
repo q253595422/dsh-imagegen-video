@@ -44,6 +44,14 @@ function startUpstream() {
         const body = JSON.parse(Buffer.concat(chunks).toString('utf8'))
         state.submits.push({ body, authorization: req.headers.authorization })
         const script = state.script
+        // An HTML body with a 200 is what a gateway serves when the configured
+        // base URL is the site root instead of its API root -- measured, and
+        // the one shape a "wrong address" test needs.
+        if (script.html === true) {
+          res.writeHead(200, { 'content-type': 'text/html; charset=utf-8' })
+          res.end('<!DOCTYPE html><html lang="zh-CN"><head><meta charset="UTF-8"><title>API</title></head><body>home</body></html>')
+          return
+        }
         res.writeHead(200, { 'content-type': 'application/json' })
         res.end(JSON.stringify(script.submit))
       })
@@ -841,6 +849,75 @@ await check('V1k muse-video speaks its own closed body and resolves a relative c
   assert.equal(host.describeVideoModel('kling-v2-master').family, 'openai-video', 'the generic fallback still works')
 })
 
+// ---------------------------------------------------------------------- V1l
+await check('V1l MiniMax-H3 speaks the generic body but accepts exactly one tier', async () => {
+  // Measured against https://api.nbility.ai/v1/videos: the submit body is the
+  // generic {model,prompt,seconds,size,aspect_ratio} shape (the gateway
+  // normalises it and echoes back resolution/ratio/seconds), so the family has
+  // to stay `openai-video`. What is NOT generic is the tier: 720P and 1080P
+  // are both answered with 400 `MiniMax-H3 supports only 768P at
+  // normalizeRequest`. Offering either of them is a guaranteed failed submit.
+  const catalog = host.describeVideoModel('MiniMax-H3')
+  assert.equal(catalog.family, 'openai-video', 'the wire shape is the generic one')
+  assert.deepEqual(catalog.resolutions, ['768P'], 'the only tier the upstream accepts')
+  assert.deepEqual(catalog.modes, ['text'], 'reference frames need a public HTTPS URL, and this host only sends data URLs')
+  assert.deepEqual(
+    catalog.aspectRatios,
+    ['16:9', '9:16', '1:1', '4:3', '3:4', '21:9'],
+    'six ratios measured as accepted',
+  )
+  // A different model on the same gateway is NOT affected by the branch.
+  assert.equal(host.describeVideoModel('doubao-seedance-2-0').family, 'seedance', 'the Seedance id keeps its own family')
+  assert.deepEqual(host.describeVideoModel('kling-v2-master').resolutions, ['480P', '720P', '1080P'], 'a generic model keeps every tier')
+
+  // Every tier degrades to 768P, and nothing else moves: a 1080P ask must not
+  // land on 480P, and 768P must survive as itself rather than becoming 720P.
+  assert.equal(host.normalizeVideoResolution('MiniMax-H3', '1080P'), '768P', 'a 1080P ask degrades to the only supported tier')
+  assert.equal(host.normalizeVideoResolution('MiniMax-H3', '480P'), '768P', 'a 480P ask upgrades to the only supported tier')
+  assert.equal(host.normalizeVideoResolution('MiniMax-H3', '768P'), '768P', 'the supported tier is kept as written')
+  assert.equal(host.normalizeVideoResolution('MiniMax-H3', 'nonsense'), '768P', 'an unknown word falls back to a tier that works, not to a 400')
+
+  // Tier parsing is centralised now: the routes, the agent tools and the panel
+  // all go through it, so a new tier cannot be silently rewritten to 720P in
+  // one of the four places it used to be spelled out.
+  assert.equal(host.parseVideoResolution('768p'), '768P', 'case and padding are normalised')
+  assert.equal(host.parseVideoResolution(' 1080P '), '1080P', 'a known tier survives trimming')
+  assert.equal(host.parseVideoResolution(undefined), '720P', 'a missing tier keeps the default')
+  assert.equal(host.parseVideoResolution('4K'), '720P', 'a word the plugin cannot name falls back to the default')
+  // The ranking is the same list the planner compares against, and 768P must
+  // sit between its neighbours or a plan would "raise" quality by accident.
+  assert.ok(host.resolutionRank('720P') < host.resolutionRank('768P'), '768P ranks above 720P')
+  assert.ok(host.resolutionRank('768P') < host.resolutionRank('1080P'), '768P ranks below 1080P')
+
+  // End to end: the submit carries the generic shape with the measured tier.
+  const upstream = await startUpstream()
+  upstream.state.script = {
+    submit: { id: 'task_mm', object: 'video', status: 'queued', progress: 0 },
+    polls: [
+      { id: 'task_mm', status: 'in_progress', progress: 33 },
+      { id: 'task_mm', status: 'completed', progress: 100, url: `http://127.0.0.1:${upstream.port}/mm.mp4`, resolution: '768P', ratio: '16:9', seconds: 5 },
+    ],
+  }
+  try {
+    const result = await generateVideo(
+      { apiUrl: upstream.base, apiKey: 'sk-mm', channelName: 'Nbility' },
+      { mode: 'text', model: 'MiniMax-H3', prompt: 'ocean waves at sunset', aspectRatio: '16:9', resolution: '1080P', seconds: 5 },
+    )
+    assert.equal(result.videos[0].mime, 'video/mp4')
+    const body = upstream.state.submits[0].body
+    assert.equal(body.model, 'MiniMax-H3')
+    assert.equal(body.size, '768P', 'a 1080P ask is sent as the only tier the upstream takes')
+    assert.equal(body.aspect_ratio, '16:9')
+    assert.equal(body.seconds, '5', 'the generic body keeps seconds as a string')
+    assert.ok(!('resolution' in body), 'the generic body names the tier as `size`, which the gateway normalises')
+    assert.ok(!('image' in body), 'text mode sends no reference frame')
+    assert.equal(upstream.state.submits[0].authorization, 'Bearer sk-mm')
+    assert.equal(upstream.state.polls[0].id, 'task_mm', 'the poll uses the task id the gateway returned')
+  } finally {
+    await upstream.close()
+  }
+})
+
 // ---------------------------------------------------------------------- V2/V3
 // ---------------------------------------------------------------------- V2/V3
 await check('V2 the runtime persists a clip and the store serves it', async () => {
@@ -1076,6 +1153,32 @@ await check('V3b the clip route serves bytes and honors Range for seeking', asyn
   }
 })
 
+
+await check('V1m an HTML response is explained as a wrong base URL, not echoed as markup', async () => {
+  // Measured: a gateway whose channel URL omitted `/v1` answered the submit
+  // with 200 and its own homepage. The bytes are not the user's problem -- the
+  // missing path segment is. This asserts the message names the likely cause
+  // and never contains the markup itself.
+  const upstream = await startUpstream()
+  upstream.state.script = { html: true }
+  try {
+    await assert.rejects(
+      () => generateVideo(
+        { apiUrl: upstream.base, apiKey: 'sk-html', channelName: 'WrongBase' },
+        { mode: 'text', model: 'MiniMax-H3', prompt: 'p', aspectRatio: '16:9', resolution: '768P', seconds: 5 },
+      ),
+      (error) => {
+        assert.match(error.message, /网页而不是接口响应/, 'the message names what came back')
+        assert.match(error.message, /\/v1/, 'and names the usual cause')
+        assert.ok(!/<meta|<html|charset=/i.test(error.message), 'the markup itself is not pasted into the message')
+        return true
+      },
+      'a 200 HTML body is a configured-address problem, not a provider rejection',
+    )
+  } finally {
+    await upstream.close()
+  }
+})
 
 await check('V6 a freshly configured generic video model works through the runtime', async () => {
   // Proves the "generic channel" claim: an operator adds an arbitrary video
