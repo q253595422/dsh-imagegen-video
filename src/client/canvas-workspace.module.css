@@ -328,6 +328,59 @@
   background: var(--dsw-alias-border-l1);
 }
 
+/* ------------------------------------------------ workflow options menu */
+
+/* `.backgroundMenu button` is a single horizontal row (an icon and a label).
+ * A workflow option is two rows — the toggle's own name, then the sentence
+ * that explains what switching it costs — so this has to override the
+ * shorthand rather than add to it: `flex-direction` alone would still leave
+ * `align-items: center` pushing the hint to the middle of the button. */
+.backgroundMenu .workflowOption {
+  flex-direction: column;
+  align-items: stretch;
+  gap: 2px;
+  padding: 8px 10px;
+}
+
+/* The check mark only exists after selection, so it is given a fixed column:
+ * sized to the glyph but always present, or every label shifts sideways the
+ * moment a box is ticked and the row reads as having jumped. */
+.workflowOptionLabel {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  line-height: 1.4;
+}
+
+.workflowOptionCheck {
+  width: 10px;
+  flex: none;
+  font-size: 11px;
+  line-height: 1;
+  color: var(--dsw-alias-brand-primary);
+}
+
+.workflowOptionHint {
+  /* Indented to the label's text, not its check box, so the two lines read as
+   * one item instead of the hint looking like a sibling option. */
+  padding-left: 16px;
+  font-size: 11px;
+  line-height: 1.5;
+  color: var(--dsw-alias-label-secondary);
+  white-space: normal;
+}
+
+/* "Force rerun" with nothing selected: the hint explains why it cannot be used
+ * instead of the item simply swallowing the click. Dimmed via the label colour
+ * rather than opacity so the explanatory line keeps its contrast in both
+ * themes — it is the only thing on screen that says what to do about it. */
+.backgroundMenu .workflowOption:disabled {
+  cursor: default;
+  background: transparent;
+  color: var(--dsw-alias-label-tertiary);
+}
+
 .world {
   position: absolute;
   left: 0;

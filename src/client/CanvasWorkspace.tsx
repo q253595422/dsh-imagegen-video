@@ -295,6 +295,70 @@ function summaryOf(document: CanvasDocument, favorite = false): ProjectSummary {
   }
 }
 
+/**
+ * 运行工作流前的三个开关。
+ *
+ * 放在这里而不是 `canvas/dock-menus.tsx`：那个文件是与画布状态无关的纯展示
+ * 菜单，而这一份的三个值都属于「这一次怎么跑」的会话状态，跟随画布组件走
+ * 更近，也不会为三个布尔props再加一层转发。
+ *
+ * 关掉「复用」是这里唯一有代价的操作：整条链路重新提交，按节点数计费。
+ * 提示写在每一项下面而不是做成确认弹窗——选项菜单本来就该在点之前看清。
+ */
+function WorkflowOptionsMenu(props: {
+  anchor: Point
+  reuse: boolean
+  rerunSelected: boolean
+  parallel: boolean
+  /** 选中节点数；0 时「强制重跑」没有作用对象，提示而不是静默无效。 */
+  selectionCount: number
+  onEnter: () => void
+  onLeave: () => void
+  onToggleReuse: () => void
+  onToggleRerun: () => void
+  onToggleParallel: () => void
+  onRun: () => void
+}): React.JSX.Element {
+  /** 三项长得一样，只有文案与状态不同；抽出来避免四处各写一遍。 */
+  const item = (label: string, hint: string, checked: boolean, onToggle: () => void, disabled = false): React.JSX.Element =>
+    <button
+      type="button"
+      role="menuitemcheckbox"
+      aria-checked={checked}
+      data-active={checked ? '' : undefined}
+      disabled={disabled}
+      onClick={onToggle}
+      className={css.workflowOption}
+    >
+      <span className={css.workflowOptionLabel}>
+        <span className={css.workflowOptionCheck} aria-hidden="true">{checked ? '✓' : ''}</span>
+        {label}
+      </span>
+      <span className={css.workflowOptionHint}>{hint}</span>
+    </button>
+  return <div
+    className={css.backgroundMenu}
+    style={{ left: props.anchor.x, top: props.anchor.y - 10 }}
+    data-canvas-no-zoom=""
+    role="menu"
+    aria-label={tt('canvas.workflow.options')}
+    onMouseEnter={props.onEnter}
+    onMouseLeave={props.onLeave}
+  >
+    {item(tt('canvas.workflow.reuse'), tt('canvas.workflow.reuseHint'), props.reuse, props.onToggleReuse)}
+    {item(
+      tt('canvas.workflow.rerun'),
+      props.selectionCount === 0 ? tt('canvas.workflow.rerunNoSelection') : tt('canvas.workflow.rerunHint'),
+      props.rerunSelected,
+      props.onToggleRerun,
+      props.selectionCount === 0,
+    )}
+    {item(tt('canvas.workflow.parallel'), tt('canvas.workflow.parallelHint'), props.parallel, props.onToggleParallel)}
+    <span className={css.backgroundMenuDivider} />
+    <button type="button" role="menuitem" onClick={props.onRun}>{tt('canvas.workflow.run')}</button>
+  </div>
+}
+
 
 
 
@@ -618,6 +682,18 @@ export function CanvasWorkspace(props: CanvasWorkspaceProps): React.JSX.Element 
   // 防重入读 ref 而不是 state：`runWorkflowFrom` 的闭包会捕获创建时的
   // `workflowBusy`，连点两下时第二次看到的仍是 false。
   const workflowBusyRef = useRef(false)
+  /**
+   * 工作流运行选项。三项都是「这一次怎么跑」的参数，不是画布内容，所以放
+   * 组件 state 而不是写进 `CanvasDocument`——后者有 v2 契约与 revision 锁，
+   * 为一个开关去动它，等于给每个用户的数据加一个他们从没用过的字段。
+   *
+   * 默认值就是此前写死的行为（复用开、强制重跑关、层内并发开），所以不做
+   * 任何选择时，跑出来的结果与升级前完全一致。
+   */
+  const [workflowReuse, setWorkflowReuse] = useState(true)
+  const [workflowRerunSelected, setWorkflowRerunSelected] = useState(false)
+  const [workflowParallel, setWorkflowParallel] = useState(true)
+  const [workflowMenu, setWorkflowMenu] = useState<Point | null>(null)
   const [focusNodeId, setFocusNodeId] = useState<string | null>(null)
   const [colorPickerNodeId, setColorPickerNodeId] = useState<string | null>(null)
   const annotationDragRef = useRef<{ nodeId: string; pointerId: number; start: Point; box: { left: number; top: number; width: number; height: number } } | null>(null)
@@ -3093,8 +3169,17 @@ export function CanvasWorkspace(props: CanvasWorkspaceProps): React.JSX.Element 
         edges: current.connections,
         signal: controller.signal,
         onProgress: progress => setWorkflowProgress(progress),
+        // 两处 `reuse` 是两回事，关掉复用必须同时作用：这一层的数组决定
+        // 执行器是否跳过节点，`runWorkflowNode` 里的布尔决定单节点是否在
+        // `hasProduce` 时短路成 cached。只关一处等于关一半——节点仍会被
+        // 上游那层拦下来，用户看到「已关闭复用」却什么都没重跑。
+        ...workflowReuse ? { reuse: current.nodes.filter(node => hasProduce(node)).map(node => node.id) } : {},
+        // 闭包由执行器自己算（`downstreamClosure`），这里只交出起点：
+        // 在 UI 侧再算一遍，两处的成员集迟早会不一致。
+        ...workflowRerunSelected && selectedIds.size > 0 ? { rerun: [...selectedIds] } : {},
+        ...workflowParallel ? {} : { maxParallel: 1 },
         run: async nodeId => {
-          const outcome = await runWorkflowNode(nodeId, { signal: controller.signal, reuse: true })
+          const outcome = await runWorkflowNode(nodeId, { signal: controller.signal, reuse: workflowReuse })
           return outcome === 'cached' ? 'cached' : outcome
         },
       })
@@ -3131,7 +3216,7 @@ export function CanvasWorkspace(props: CanvasWorkspaceProps): React.JSX.Element 
       setWorkflowBusy(false)
       setWorkflowProgress(null)
     }
-  }, [hasProduce, runWorkflowNode])
+  }, [hasProduce, runWorkflowNode, selectedIds, workflowParallel, workflowRerunSelected, workflowReuse])
 
   const cancelWorkflow = useCallback((): void => {
     workflowAbort.current?.abort()
@@ -5029,13 +5114,20 @@ export function CanvasWorkspace(props: CanvasWorkspaceProps): React.JSX.Element 
         </div>
         <span className={css.dockDivider} aria-hidden="true" />
         <div className={css.dockItem} data-dock-item="" data-label={tt('canvas.workflow.run')}>
+          {/* 点开的是「怎么跑」，跑本身在菜单最后一项：三项默认值就是升级前
+              写死的行为，所以想直接跑的人多点一下，但不会在不知情的情况下
+              关掉复用而多付一次钱。 */}
           <IconButton
             name="workflow"
             size={18}
-            label={tt('canvas.workflow.run')}
-            active={workflowBusy}
+            label={tt('canvas.workflow.options')}
+            active={workflowBusy || workflowMenu !== null}
             disabled={document === null || document.nodes.length === 0}
-            onClick={() => { void runWorkflowFrom([...selectedIds]) }}
+            onClick={event => {
+              const bounds = event.currentTarget.getBoundingClientRect()
+              const rootRect = rootRef.current?.getBoundingClientRect()
+              setWorkflowMenu({ x: bounds.left + bounds.width / 2 - (rootRect?.left ?? 0), y: bounds.top - (rootRect?.top ?? 0) })
+            }}
           />
         </div>
         <div className={css.dockItem} data-dock-item="" data-label={tt('timeline.open')}>
@@ -5246,6 +5338,19 @@ export function CanvasWorkspace(props: CanvasWorkspaceProps): React.JSX.Element 
       onDismiss={() => { setError(null); setErrorAction(null) }}
     /> : null}
     {notice !== null ? <CanvasNoticeToast notice={notice} onDismiss={() => setNotice(null)} /> : null}
+    {workflowMenu !== null ? <WorkflowOptionsMenu
+      anchor={workflowMenu}
+      reuse={workflowReuse}
+      rerunSelected={workflowRerunSelected}
+      parallel={workflowParallel}
+      selectionCount={selectedIds.size}
+      onEnter={clearMenuCloseTimer}
+      onLeave={scheduleMenuClose}
+      onToggleReuse={() => setWorkflowReuse(value => !value)}
+      onToggleRerun={() => setWorkflowRerunSelected(value => !value)}
+      onToggleParallel={() => setWorkflowParallel(value => !value)}
+      onRun={() => { setWorkflowMenu(null); void runWorkflowFrom([...selectedIds]) }}
+    /> : null}
     {workflowProgress !== null ? <CanvasWorkflowProgressBar progress={workflowProgress} onCancel={cancelWorkflow} /> : null}
     {/* 时间线：排序/裁剪/转场都在这里改，提交时把整条时间线交给既有拼接链路。 */}
     {timelineOpen ? <TimelinePanel
