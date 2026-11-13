@@ -462,6 +462,20 @@ const CASES = [
     to: 'images.length === 0 ? (',
     expect: /inspiration wall yields to a clip/,
   },
+  // ---------------------------------------- history list vs the shell handoff
+  {
+    // DSH 0.2.2's sidebar listens for `wheel` on an ancestor of the history
+    // host and, for anything that is not its own session tree, calls
+    // preventDefault() and scrolls that (in the studio: invisible) tree. Drop
+    // the host's stopPropagation and the event reaches that listener again —
+    // the reported "the list will not scroll, the session records scroll".
+    name: 'a wheel over the history list falls through to the shell handoff',
+    runner: 'smoke',
+    file: 'src/client/sidebar-entry.ts',
+    from: "  host.addEventListener('wheel', (event) => { event.stopPropagation() })",
+    to: "  host.addEventListener('wheel', () => {})",
+    expect: /never reaches the shell handoff|claims its own wheel events/,
+  },
   // ------------------------------------------------------- the shortcut legend
   {
     // Every binding existed before the legend; none was discoverable. Drop the

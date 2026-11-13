@@ -101,6 +101,16 @@ const BLOCKS_ATTR = 'data-dsh-imagegen-shell-blocks'
  * where the branch above always answers first.
  */
 const LEGACY_SIDEBAR_PANE = '[data-pane="sidebar"]'
+/**
+ * Marks the history host as the owner of its own wheel events.
+ *
+ * The shell's 0.2.2 sidebar scroll viewport listens for `wheel` on an ancestor
+ * of the host and takes over anything that is not its own tree, so the host
+ * claims its events first (see `containHistoryWheel`). The attribute is also
+ * what tells a re-render that the listener is already installed — the host
+ * element is reused across shell mutations.
+ */
+const WHEEL_CONTAINER_ATTR = 'data-dsh-imagegen-wheel-owner'
 /** Our own injected nodes, never candidates for the shell's seats. */
 const OWN_NODES = `${ENTRY_SELECTOR}, ${HISTORY_HOST_SELECTOR}, [data-dsh-imagegen-sidebar-root]`
 
@@ -562,6 +572,32 @@ function placeTabs(
   return tabs
 }
 
+/**
+ * Keep the shell's own wheel handoff out of the history surface.
+ *
+ * DSH 0.2.2 puts a `wheel` listener (`passive: false`) on its sidebar scroll
+ * viewport — `[data-sidebar-scrollport]`, an ANCESTOR of the region this host
+ * sits in — and for every event that does not belong to its own session tree it
+ * calls `preventDefault()` and scrolls that tree instead. In the studio the
+ * tree is painted over by this host, so the visible result is a history list
+ * that refuses to move while an invisible one scrolls behind it.
+ *
+ * The listener has to run inside the host and before the shell's, which sits
+ * further out on the same bubble path: hence the host element, and
+ * `stopPropagation()`. It deliberately does NOT `preventDefault()` — the
+ * browser's own scroll of `.historyList` is exactly the behaviour we want, and
+ * stopping propagation cancels no default action.
+ *
+ * At the list's ends nothing else happens. Handing the remainder back to the
+ * shell would scroll the hidden session tree, which is the bug being fixed, not
+ * a fallback.
+ */
+function containHistoryWheel(host: HTMLElement): void {
+  if (host.hasAttribute(WHEEL_CONTAINER_ATTR)) return
+  host.setAttribute(WHEEL_CONTAINER_ATTR, '')
+  host.addEventListener('wheel', (event) => { event.stopPropagation() })
+}
+
 /** Mount an overlay host over the workspace/session tree for image history. */
 function placeHistoryHost(root: HTMLElement, region: HTMLElement | undefined): HTMLDivElement | undefined {
   // Reuse the host already in place: the seat is recomputed on every shell
@@ -570,12 +606,14 @@ function placeHistoryHost(root: HTMLElement, region: HTMLElement | undefined): H
   const installed = root.querySelector<HTMLDivElement>(HISTORY_HOST_SELECTOR)
   if (installed !== null) {
     if (region !== undefined && installed.parentElement !== region) region.append(installed)
+    containHistoryWheel(installed)
     return installed
   }
   if (region === undefined) return undefined
   const host = document.createElement('div')
   host.dataset.dshImagegenHistoryHost = ''
   host.className = css.sidebarHistoryHost
+  containHistoryWheel(host)
   region.append(host)
   return host
 }
