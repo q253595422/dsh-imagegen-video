@@ -8,6 +8,7 @@
 import assert from 'node:assert/strict'
 import { downstreamClosure, planLayers, planWorkflow, upstreamClosure } from '../src/client/workflow-graph.ts'
 import { runWorkflow } from '../src/client/workflow-runner.ts'
+import { readModuleSource } from './lib/canvas-source.mjs'
 
 const nodes = ['text', 'img', 'vid', 'vid2', 'compose', 'lonely']
 const edges = [
@@ -381,6 +382,50 @@ assert.deepEqual(planWorkflow([], nodes, edges), { layers: [], cycle: [] }, '无
   assert.deepEqual(order, ['a', 'b', 'c'], '串行时按画布顺序提交')
 }
 
+// maxParallel = 2：四个节点一层，同时在飞的应当恰好是 2。
+// 只测 1（完全串行）与不限（全发）两个极端时，限流里真正「部分放行」的
+// 那条路径写错也看不出来——而 2 或 3 恰恰是用户真会填的值。
+{
+  let inFlight = 0
+  let peak = 0
+  await runWorkflow({
+    roots: ['a', 'b', 'c', 'd'],
+    nodeIds: ['a', 'b', 'c', 'd'],
+    edges: [],
+    maxParallel: 2,
+    run: async () => {
+      inFlight += 1
+      peak = Math.max(peak, inFlight)
+      await new Promise(resolve => setTimeout(resolve, 10))
+      inFlight -= 1
+      return 'done'
+    },
+  })
+  assert.equal(peak, 2, `maxParallel=2 时应恰有 2 个节点同时在飞，实测 ${peak}`)
+}
+
+// 小于 1、非整数、NaN 一律按 1 处理（选项注释就是这么承诺的）。
+// 漏掉归一的话 `Math.floor(0)` 会让限流宽度变成 0，一个节点都不派发，
+// 整条工作流静默挂住——不是报错，是一直没有进展。
+for (const bad of [0, -3, 1.5, Number.NaN]) {
+  let inFlight = 0
+  let peak = 0
+  await runWorkflow({
+    roots: ['a', 'b', 'c'],
+    nodeIds: ['a', 'b', 'c'],
+    edges: [],
+    maxParallel: bad,
+    run: async () => {
+      inFlight += 1
+      peak = Math.max(peak, inFlight)
+      await new Promise(resolve => setTimeout(resolve, 3))
+      inFlight -= 1
+      return 'done'
+    },
+  })
+  assert.equal(peak, 1, `maxParallel=${bad} 应按 1 处理，实测峰值 ${peak}`)
+}
+
 // 默认（不限）时同层仍然并发，保持旧行为。
 {
   let inFlight = 0
@@ -427,6 +472,73 @@ assert.deepEqual(planWorkflow([], nodes, edges), { layers: [], cycle: [] }, '无
     run: async nodeId => nodeId === 'a' ? 'failed' : 'done',
   })
   assert.deepEqual(result.failedNodeIds, ['a'], '限流下失败节点仍然准确')
+}
+
+// ------------------------------------------------------- 画布到执行器的接线
+//
+// 上面测的全是「传了参数之后」的行为。这一段测的是**参数有没有从界面传下来**，
+// 因为这类故障不会让任何执行器测试变红：开关照常可点、执行器照常正确，
+// 只是值停在了半路。改 `CanvasWorkspace.tsx` 时这里必须一起改。
+{
+  const workspace = readModuleSource('CanvasWorkspace.tsx')
+
+  // 默认值必须等于升级前写死的行为。改错的话，用户升级后第一次点运行就
+  // 会全量重新提交——按节点数再付一遍钱，而且没有任何测试会说话。
+  for (const [state, expected] of [
+    ['workflowReuse', 'true'],
+    ['workflowRerunSelected', 'false'],
+    ['workflowParallel', 'true'],
+  ]) {
+    assert.match(
+      workspace,
+      new RegExp(`const \\[${state}, set\\w+\\] = useState\\(${expected}\\)`),
+      `${state} 的初始值必须保持升级前的行为（${expected}）`,
+    )
+  }
+
+  // 「复用」两层都必须跟着开关走。只关 plan 那层的话，节点仍会在
+  // runWorkflowNode 里被 hasProduce 短路成 cached：用户看到开关关了，
+  // 实际什么都没重跑。执行器的测试测不到这里——它不调 runWorkflowNode。
+  assert.match(
+    workspace,
+    /runWorkflowNode\(nodeId, \{ signal: controller\.signal, reuse: workflowReuse \}\)/,
+    '单节点闸门必须跟着复用开关走，不能退回字面量 true',
+  )
+  assert.match(
+    workspace,
+    /\.\.\.workflowReuse \? \{ reuse: current\.nodes\.filter\(node => hasProduce\(node\)\)\.map\(node => node\.id\) \} : \{\}/,
+    'plan 层的复用清单必须跟着复用开关走',
+  )
+
+  // 方向颠倒语义正好相反：开着并发反而串行、关掉反而整层全发——
+  // 一次二十个付费请求，而用户以为自己限流了。
+  assert.match(
+    workspace,
+    /\.\.\.workflowParallel \? \{\} : \{ maxParallel: 1 \}/,
+    '并发开关必须映射到 maxParallel: 1，且方向不能反',
+  )
+
+  // 重跑只交起点，闭包归执行器算。两边各算一份必然漂移。
+  assert.match(
+    workspace,
+    /\.\.\.workflowRerunSelected && selectedIds\.size > 0 \? \{ rerun: \[\.\.\.selectedIds\] \} : \{\}/,
+    '强制重跑必须把选中节点原样交给执行器',
+  )
+  // Anchored on the call, not the bare name: the comment above the switch
+  // explains that the runner owns `downstreamClosure`, and matching that word
+  // would fail on a correct file.
+  assert.doesNotMatch(
+    workspace,
+    /downstreamClosure\s*\(/,
+    '画布不该自己算重跑闭包——执行器已经负责这件事',
+  )
+
+  // useCallback 漏依赖时捕获旧值：用户拨了开关，下一次运行仍按旧值跑。
+  assert.match(
+    workspace,
+    /\}, \[hasProduce, runWorkflowNode, selectedIds, workflowParallel, workflowRerunSelected, workflowReuse\]\)/,
+    'runWorkflowFrom 的依赖数组必须含三个开关，否则读到的是上一次的值',
+  )
 }
 
 console.log('workflow: ok')

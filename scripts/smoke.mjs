@@ -8030,6 +8030,26 @@ await check('E1 client apply mounts the sidebar entry and studio (jsdom)', async
     await waitForSelector(view, '[data-canvas-workspace]')
     assert.ok(view.querySelector('[data-canvas-workspace]') !== null, 'infinite canvas workspace is mounted')
 
+    // --- canvas bundle: 整图导出 / 导入的入口真的在顶栏上 ---
+    // The route pair and the API wrappers existed long before this button did:
+    // the feature was complete except for something to click. A source-level
+    // guard cannot tell "the handler is wired" from "the button renders", and
+    // the failure mode here is an exception in jsdom that the selector search
+    // would swallow as "not found" — so assert the two labels by name.
+    {
+      const header = view.querySelector('[data-canvas-workspace] header')
+      assert.ok(header !== null, 'canvas top bar is rendered')
+      const labels = [...header.querySelectorAll('button')].map(button => button.getAttribute('aria-label'))
+      assert.ok(labels.includes('导出画布'), `export button missing from the top bar; found ${JSON.stringify(labels)}`)
+      assert.ok(labels.includes('导入画布'), `import button missing from the top bar; found ${JSON.stringify(labels)}`)
+      // The layout guard measures every `[data-dock-item]`; these two live in the
+      // top bar and must not be counted as dock tiles.
+      assert.equal(header.querySelectorAll('[data-dock-item]').length, 0, 'top-bar buttons must not be tagged as dock tiles')
+      const fileInput = header.querySelector('input[type="file"]')
+      assert.ok(fileInput !== null, 'the import button needs a file input to open')
+      assert.equal(fileInput.getAttribute('accept'), 'application/json,.json', 'only JSON bundles should be selectable')
+    }
+
     // --- canvas image tools: 标注 / 移除背景 / 图层拆分 / 模型选择 ---
     // The fixture below seeds an image -> config pair, so the whole pipeline can
     // run headless: draw a box, get a prompt card, generate a boxed edit, cut

@@ -4,6 +4,11 @@
  */
 
 import { MODEL_API, CANVAS_API, CANVAS_SKILL_API, CODE_RENDER_API, CONVERSATION_IMAGE_API, DATA_FOLDER_API, DIAGNOSTICS_API, GALLERY_API, GENERATE_API, HISTORY_API, LISTING_COPY_API, ECOMMERCE_LINK_API, PROMPT_ENHANCE_API, SIGNALS_API, STORAGE_API, TASK_API, TEMPLATE_FAVORITES_API, TEMPLATES_API, UPDATE_API, VIDEO_API, type CanvasAssetRef, type CanvasDocument, type CanvasFilePreview, type CanvasLayerPlan, type CanvasSkillCatalog, type CanvasSkillConfigApplyRequest, type CanvasSkillConfigApplyResult, type CanvasSkillConfigSaveRequest, type CanvasSkillConfigSaveResult, type CanvasSkillInstallRequest, type CanvasSkillInstallResult, type CanvasSkillLibrary, type CanvasSkillRemoveResult, type CanvasSkillRunRequest, type CanvasSkillTask, type CanvasSummary, type CodeRenderResponse, type CodeTarget, type DiagnosticEntry, type GenerateRequest, type GenerateResult, type ListingCopyRequest, type ListingCopyResult, type EcommerceLinkResult, type GenerationTask, type GenerationTaskSummary, type HistoryEntry, type HistoryEntryInput, type PptRunRequest, type PptRuntimeStatus, type SignalReportSummary, type TemplateCase, type TemplateFavorite, type TemplateListResult, type TemplateRefreshResult, type TemplateSample, type UpdateInfo, type VideoDirectorPlan, type VideoGenerateRequest, type VideoGenerateResult, type VideoHistoryEntry, type VideoTask, type VideoTaskSummary } from '../protocol.ts'
+// The bundle contract lives in its own module rather than in `protocol.ts`,
+// because the host is the one that builds and parses bundles and only the
+// client's two thin wrappers need the constants. Importing it directly keeps
+// `protocol.ts` from becoming a barrel that every new feature widens.
+import { CANVAS_BUNDLE_API, type CanvasBundle, type CanvasBundleUnresolved } from '../canvas-bundle.ts'
 import { activeImageGenLanguage } from './helpers.ts'
 
 /** Error carrying the route's JSON error message. */
@@ -559,6 +564,38 @@ export class ImageGenApi {
       body: JSON.stringify(asset),
     })
     return (await readEnvelope<{ ok: true; preview: CanvasFilePreview }>(response)).preview
+  }
+
+  /**
+   * Ask the host to package one canvas into a self-contained bundle: the
+   * document plus the bytes of every asset it references. Clips are referenced
+   * rather than copied (they can be tens of megabytes each), so a bundle whose
+   * `unresolved` is non-empty imports with those nodes pointing at nothing —
+   * the UI has to say so instead of dropping them silently.
+   *
+   * The response is a plain object ready to be `JSON.stringify`d into a file;
+   * nothing here touches the disk, because the browser owns that step.
+   */
+  async canvasBundleExport(id: string): Promise<CanvasBundle> {
+    const response = await fetch(CANVAS_BUNDLE_API.export, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ id }) })
+    return (await readEnvelope<{ ok: true; bundle: CanvasBundle }>(response)).bundle
+  }
+
+  /**
+   * Import a bundle as a NEW canvas. Never overwrites: the host assigns a fresh
+   * id whatever the bundle's own document says, so the person who exported it
+   * cannot clobber the original by importing it back.
+   *
+   * `unresolved` is returned rather than thrown — a bundle that lost its clips
+   * still imports, and the caller is expected to report which ones are gone.
+   */
+  async canvasBundleImport(bundle: unknown): Promise<{ document: CanvasDocument; unresolved: CanvasBundleUnresolved[] }> {
+    const response = await fetch(CANVAS_BUNDLE_API.import, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ bundle }),
+    })
+    return await readEnvelope<{ ok: true; document: CanvasDocument; unresolved: CanvasBundleUnresolved[] }>(response)
   }
 
   /** Read the skill catalog offered to canvas nodes. */

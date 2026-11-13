@@ -19,7 +19,7 @@ import { shortcutKeysFor } from '../ShortcutHelp.tsx'
 import css from '../canvas-workspace.module.css'
 
 
-export type ToolbarIconName = 'new' | 'select' | 'pan' | 'image' | 'text' | 'file' | 'sketch' | 'eraser' | 'trash' | 'undo' | 'redo' | 'fit' | 'minimap' | 'background' | 'template' | 'download' | 'duplicate' | 'sparkle' | 'send' | 'close' | 'deleteProject' | 'annotate' | 'removeBg' | 'layers' | 'bold' | 'color' | 'skill' | 'upload' | 'expand' | 'favorite' | 'favoriteFilled' | 'help' | 'workflow' | 'timeline' | 'fullscreen' | 'exitFullscreen' | 'video' | 'snap' | 'connections'
+export type ToolbarIconName = 'new' | 'select' | 'pan' | 'image' | 'text' | 'file' | 'sketch' | 'eraser' | 'trash' | 'undo' | 'redo' | 'fit' | 'minimap' | 'background' | 'template' | 'download' | 'duplicate' | 'sparkle' | 'send' | 'close' | 'deleteProject' | 'annotate' | 'removeBg' | 'layers' | 'bold' | 'color' | 'skill' | 'upload' | 'expand' | 'favorite' | 'favoriteFilled' | 'help' | 'workflow' | 'timeline' | 'fullscreen' | 'exitFullscreen' | 'video' | 'snap' | 'connections' | 'chevronDown'
 
 /** Lucide icons (stroke matches the DSH line style); one shared component so
  *  every dock/toolbar icon comes from the same well-drawn set. */
@@ -71,6 +71,8 @@ export function ToolbarIcon({ name, size = 16 }: { name: ToolbarIconName; size?:
     case 'video': return <Video {...common} />
     case 'snap': return <Magnet {...common} />
     case 'connections': return <Share2 {...common} />
+    // 一个「展开还有别的」的箭头，挂在主按钮旁边：主按钮做主动作，箭头只开菜单。
+    case 'chevronDown': return <ChevronDown {...common} />
   }
 }
 

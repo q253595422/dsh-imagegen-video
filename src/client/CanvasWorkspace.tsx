@@ -13,6 +13,7 @@ import {
   Shrink, SquareDashedMousePointer, Trash2, Type, Undo2, Upload, Video, Wand2, Wallpaper,
 } from 'lucide-react'
 import type { CanvasAnnotation, CanvasAssetRef, CanvasConnection, CanvasDocument, CanvasFileKind, CanvasLayerInfo, CanvasLayerPlanItem, CanvasNode, CanvasRect, CanvasStoryboard, CanvasVideoRef, CanvasSkillConfigApplyResult, CanvasSkillConfigField, CanvasSkillConfigSaveResult, CanvasSkillConfigStep, CanvasSkillConfigView, CanvasSkillDescriptor, CanvasSkillLibrary, CanvasSkillOutput, CanvasSkillRunRequest, CanvasSkillTask, CanvasSketchStroke, GenerateRequest, GenerationTask, HistoryEntry, VideoGenerateRequest, VideoTaskSummary, VideoMode, VideoResolution } from '../protocol.ts'
+import type { CanvasBundleUnresolved } from '../canvas-bundle.ts'
 import { describeVideoModel, durationsOf } from '../video-model-catalog.ts'
 // The stitch order is a SHARED rule: the host builds its ffmpeg concat list with
 // the same function, so the numbers on the badges are the order of the file.
@@ -283,6 +284,50 @@ function pinchStateFrom(
 
 
 
+/**
+ * A file name the browser and the three target OSes all accept, derived from
+ * the canvas title.
+ *
+ * Titles are free text and routinely contain the separators a path cannot
+ * carry (`/`, `\`, `:`), quotes, or a trailing dot — on Windows `a.` and `a`
+ * name the same file and the trailing dot is silently dropped, which turns an
+ * obviously-wrong name into a quietly-wrong one. Control characters are
+ * stripped too rather than escaped: they cannot be typed back into a picker to
+ * re-select the file.
+ *
+ * A title that reduces to nothing (all separators, or empty) falls back to a
+ * fixed stem instead of producing `.json`, which every OS refuses to open.
+ */
+function bundleFileName(title: string): string {
+  const cleaned = title
+    .replace(/[\u0000-\u001f\u007f]/g, '')
+    .replace(/[/\\:*?"<>|]/g, '_')
+    .replace(/\s+/g, ' ')
+    .trim()
+    .replace(/[. ]+$/, '')
+    .slice(0, 80)
+  return `${cleaned === '' ? 'canvas' : cleaned}.json`
+}
+
+/**
+ * Count what a bundle could not carry, split by what it means to the reader.
+ *
+ * The two kinds are separate on purpose: a clip left behind is a reference to
+ * a video that still plays on the machine it came from, while an asset with no
+ * bytes was already gone at export time and is lost for good. Adding them into
+ * one number would tell the user "3 things went wrong" without saying whether
+ * anything is actually unrecoverable.
+ */
+function countUnresolved(unresolved: readonly CanvasBundleUnresolved[]): { video: number; asset: number } {
+  let video = 0
+  let asset = 0
+  for (const entry of unresolved) {
+    if (entry.kind === 'video') video += 1
+    else asset += 1
+  }
+  return { video, asset }
+}
+
 function summaryOf(document: CanvasDocument, favorite = false): ProjectSummary {
   return {
     id: document.id,
@@ -293,6 +338,70 @@ function summaryOf(document: CanvasDocument, favorite = false): ProjectSummary {
     updatedAt: document.updatedAt,
     ...favorite ? { favorite: true } : {},
   }
+}
+
+/**
+ * 运行工作流前的三个开关。
+ *
+ * 放在这里而不是 `canvas/dock-menus.tsx`：那个文件是与画布状态无关的纯展示
+ * 菜单，而这一份的三个值都属于「这一次怎么跑」的会话状态，跟随画布组件走
+ * 更近，也不会为三个布尔props再加一层转发。
+ *
+ * 关掉「复用」是这里唯一有代价的操作：整条链路重新提交，按节点数计费。
+ * 提示写在每一项下面而不是做成确认弹窗——选项菜单本来就该在点之前看清。
+ */
+function WorkflowOptionsMenu(props: {
+  anchor: Point
+  reuse: boolean
+  rerunSelected: boolean
+  parallel: boolean
+  /** 选中节点数；0 时「强制重跑」没有作用对象，提示而不是静默无效。 */
+  selectionCount: number
+  onEnter: () => void
+  onLeave: () => void
+  onToggleReuse: () => void
+  onToggleRerun: () => void
+  onToggleParallel: () => void
+  onRun: () => void
+}): React.JSX.Element {
+  /** 三项长得一样，只有文案与状态不同；抽出来避免四处各写一遍。 */
+  const item = (label: string, hint: string, checked: boolean, onToggle: () => void, disabled = false): React.JSX.Element =>
+    <button
+      type="button"
+      role="menuitemcheckbox"
+      aria-checked={checked}
+      data-active={checked ? '' : undefined}
+      disabled={disabled}
+      onClick={onToggle}
+      className={css.workflowOption}
+    >
+      <span className={css.workflowOptionLabel}>
+        <span className={css.workflowOptionCheck} aria-hidden="true">{checked ? '✓' : ''}</span>
+        {label}
+      </span>
+      <span className={css.workflowOptionHint}>{hint}</span>
+    </button>
+  return <div
+    className={css.backgroundMenu}
+    style={{ left: props.anchor.x, top: props.anchor.y - 10 }}
+    data-canvas-no-zoom=""
+    role="menu"
+    aria-label={tt('canvas.workflow.options')}
+    onMouseEnter={props.onEnter}
+    onMouseLeave={props.onLeave}
+  >
+    {item(tt('canvas.workflow.reuse'), tt('canvas.workflow.reuseHint'), props.reuse, props.onToggleReuse)}
+    {item(
+      tt('canvas.workflow.rerun'),
+      props.selectionCount === 0 ? tt('canvas.workflow.rerunNoSelection') : tt('canvas.workflow.rerunHint'),
+      props.rerunSelected,
+      props.onToggleRerun,
+      props.selectionCount === 0,
+    )}
+    {item(tt('canvas.workflow.parallel'), tt('canvas.workflow.parallelHint'), props.parallel, props.onToggleParallel)}
+    <span className={css.backgroundMenuDivider} />
+    <button type="button" role="menuitem" onClick={props.onRun}>{tt('canvas.workflow.run')}</button>
+  </div>
 }
 
 
@@ -592,6 +701,17 @@ export function CanvasWorkspace(props: CanvasWorkspaceProps): React.JSX.Element 
     }
   }, [])
   const imageFileRef = useRef<HTMLInputElement>(null)
+  /** The hidden picker behind the top bar's import button. One input for the
+   *  whole workspace: a second one would have to be kept in sync with this
+   *  one's `value` reset, and the reset is what lets the same file be picked
+   *  twice in a row. */
+  const bundleFileRef = useRef<HTMLInputElement>(null)
+  /** A whole bundle is document + every referenced image's bytes, so both
+   *  directions can take a while on a big canvas. The flags exist to disable
+   *  the buttons (a second export of a canvas being exported allocates the
+   *  bundle twice) and to say something is happening. */
+  const [bundleExporting, setBundleExporting] = useState(false)
+  const [bundleImporting, setBundleImporting] = useState(false)
   const [renamingTitle, setRenamingTitle] = useState(false)
   const [confirmDeleteProject, setConfirmDeleteProject] = useState(false)
   const [saveState, setSaveState] = useState<'loading' | 'saved' | 'saving' | 'error'>('loading')
@@ -618,6 +738,18 @@ export function CanvasWorkspace(props: CanvasWorkspaceProps): React.JSX.Element 
   // 防重入读 ref 而不是 state：`runWorkflowFrom` 的闭包会捕获创建时的
   // `workflowBusy`，连点两下时第二次看到的仍是 false。
   const workflowBusyRef = useRef(false)
+  /**
+   * 工作流运行选项。三项都是「这一次怎么跑」的参数，不是画布内容，所以放
+   * 组件 state 而不是写进 `CanvasDocument`——后者有 v2 契约与 revision 锁，
+   * 为一个开关去动它，等于给每个用户的数据加一个他们从没用过的字段。
+   *
+   * 默认值就是此前写死的行为（复用开、强制重跑关、层内并发开），所以不做
+   * 任何选择时，跑出来的结果与升级前完全一致。
+   */
+  const [workflowReuse, setWorkflowReuse] = useState(true)
+  const [workflowRerunSelected, setWorkflowRerunSelected] = useState(false)
+  const [workflowParallel, setWorkflowParallel] = useState(true)
+  const [workflowMenu, setWorkflowMenu] = useState<Point | null>(null)
   const [focusNodeId, setFocusNodeId] = useState<string | null>(null)
   const [colorPickerNodeId, setColorPickerNodeId] = useState<string | null>(null)
   const annotationDragRef = useRef<{ nodeId: string; pointerId: number; start: Point; box: { left: number; top: number; width: number; height: number } } | null>(null)
@@ -3093,8 +3225,17 @@ export function CanvasWorkspace(props: CanvasWorkspaceProps): React.JSX.Element 
         edges: current.connections,
         signal: controller.signal,
         onProgress: progress => setWorkflowProgress(progress),
+        // 两处 `reuse` 是两回事，关掉复用必须同时作用：这一层的数组决定
+        // 执行器是否跳过节点，`runWorkflowNode` 里的布尔决定单节点是否在
+        // `hasProduce` 时短路成 cached。只关一处等于关一半——节点仍会被
+        // 上游那层拦下来，用户看到「已关闭复用」却什么都没重跑。
+        ...workflowReuse ? { reuse: current.nodes.filter(node => hasProduce(node)).map(node => node.id) } : {},
+        // 闭包由执行器自己算（`downstreamClosure`），这里只交出起点：
+        // 在 UI 侧再算一遍，两处的成员集迟早会不一致。
+        ...workflowRerunSelected && selectedIds.size > 0 ? { rerun: [...selectedIds] } : {},
+        ...workflowParallel ? {} : { maxParallel: 1 },
         run: async nodeId => {
-          const outcome = await runWorkflowNode(nodeId, { signal: controller.signal, reuse: true })
+          const outcome = await runWorkflowNode(nodeId, { signal: controller.signal, reuse: workflowReuse })
           return outcome === 'cached' ? 'cached' : outcome
         },
       })
@@ -3131,7 +3272,7 @@ export function CanvasWorkspace(props: CanvasWorkspaceProps): React.JSX.Element 
       setWorkflowBusy(false)
       setWorkflowProgress(null)
     }
-  }, [hasProduce, runWorkflowNode])
+  }, [hasProduce, runWorkflowNode, selectedIds, workflowParallel, workflowRerunSelected, workflowReuse])
 
   const cancelWorkflow = useCallback((): void => {
     workflowAbort.current?.abort()
@@ -4303,6 +4444,100 @@ export function CanvasWorkspace(props: CanvasWorkspaceProps): React.JSX.Element 
     } catch (caught) { setError(caught instanceof Error ? caught.message : String(caught)) }
   }, [api, flushPendingCanvas])
 
+  /**
+   * Package the current canvas and hand it to the browser as a download.
+   *
+   * Clips are referenced rather than copied (a bundle would have to carry whole
+   * videos), so a canvas with clips always exports with `unresolved` entries.
+   * That is a success, not a failure: the document and every still image are
+   * complete. What the notice adds is which half of them the user will lose on
+   * the other machine, because "exported" on its own would read as "everything
+   * came along".
+   */
+  const exportBundle = useCallback(async (): Promise<void> => {
+    const current = documentRef.current
+    if (current === null || bundleExporting) return
+    setBundleExporting(true)
+    try {
+      const bundle = await api.canvasBundleExport(current.id)
+      const json = JSON.stringify(bundle)
+      const url = URL.createObjectURL(new Blob([json], { type: 'application/json' }))
+      try {
+        const link = globalThis.document.createElement('a')
+        link.href = url
+        link.download = bundleFileName(current.title)
+        link.rel = 'noopener'
+        link.click()
+      } finally {
+        // The click has already started the download; holding the object URL
+        // alive past this point keeps the whole (possibly hundreds of MB) blob
+        // resident for the life of the document.
+        URL.revokeObjectURL(url)
+      }
+      const { video, asset } = countUnresolved(bundle.unresolved)
+      const parts = [tt('canvas.bundle.exported', { title: current.title })]
+      if (video > 0) parts.push(tt('canvas.bundle.droppedVideo', { count: video }))
+      if (asset > 0) parts.push(tt('canvas.bundle.droppedAsset', { count: asset }))
+      setNotice(parts.join(' '))
+    } catch (caught) {
+      setError(errorMessage(caught))
+    } finally {
+      setBundleExporting(false)
+    }
+  }, [api, bundleExporting])
+
+  /**
+   * Import a bundle as a brand new canvas.
+   *
+   * Deliberately not `selectProject`: the route already returned the whole
+   * document, so re-reading it would be a second round trip for bytes we are
+   * holding. Everything else `selectProject` does still has to happen — most
+   * importantly `flushPendingCanvas()`, or the edits still buffered from the
+   * canvas we are leaving get written into the one we just imported.
+   */
+  const importBundle = useCallback(async (file: File): Promise<void> => {
+    if (bundleImporting) return
+    setBundleImporting(true)
+    try {
+      let parsed: unknown
+      try {
+        parsed = JSON.parse(await file.text())
+      } catch {
+        // A JSON parse error names a character offset in a file the user never
+        // opened — useless as advice. The actionable fact is which two things
+        // could have produced it.
+        setError(tt('canvas.bundle.importNotJson'))
+        return
+      }
+      await flushPendingCanvas()
+      const { document: imported, unresolved } = await api.canvasBundleImport(parsed)
+      // Deliberately NOT `seedDocument`: an import restores what was exported,
+      // and a bundle of an empty canvas must come back empty. `seedDocument`
+      // adds a text + config pair to any canvas with no nodes — right for a
+      // canvas the user just created, wrong for one they shipped between
+      // machines.
+      const next = normalizeConfigNodeSizes(imported)
+      // The route does not return the project list, but the select above is
+      // driven by `projects`: without this insert the new canvas is not in the
+      // dropdown, and `currentProject` — which finds by `document.id` — comes
+      // back undefined, leaving the favourite/delete buttons in a wrong state
+      // for a canvas that does exist.
+      setProjects(previous => [summaryOf(next), ...previous.filter(project => project.id !== next.id)])
+      setDocument(next); setSelectedIds(new Set()); setSelectedConnectionId(null)
+      syncedRef.current = JSON.stringify(next); setSaveState('saved')
+      pastRef.current = []; futureRef.current = []; setHistoryVersion(version => version + 1)
+      const { video, asset } = countUnresolved(unresolved)
+      const parts = [tt('canvas.bundle.importDone', { title: next.title })]
+      if (video > 0) parts.push(tt('canvas.bundle.importMissingVideo', { count: video }))
+      if (asset > 0) parts.push(tt('canvas.bundle.importMissingAsset', { count: asset }))
+      setNotice(parts.join(' '))
+    } catch (caught) {
+      setError(errorMessage(caught))
+    } finally {
+      setBundleImporting(false)
+    }
+  }, [api, bundleImporting, flushPendingCanvas])
+
   const currentProject = projects.find(project => project.id === document?.id)
   const favoriteProjects = projects.filter(project => project.favorite === true)
   const otherProjects = projects.filter(project => project.favorite !== true)
@@ -4808,6 +5043,35 @@ export function CanvasWorkspace(props: CanvasWorkspaceProps): React.JSX.Element 
         active={fullscreen}
         onClick={toggleFullscreen}
       />
+      {/* Same row as fullscreen: both operate on the canvas as a whole rather
+          than on an object inside it, which is the line the bottom dock draws.
+          No `data-dock-item` on these — that attribute marks dock tiles and the
+          layout guard measures every one of them. */}
+      <IconButton
+        name="download"
+        label={bundleExporting ? tt('canvas.bundle.exporting') : tt('canvas.bundle.export')}
+        disabled={document === null || bundleExporting}
+        onClick={() => { void exportBundle() }}
+      />
+      <IconButton
+        name="upload"
+        label={bundleImporting ? tt('canvas.bundle.importing') : tt('canvas.bundle.import')}
+        disabled={bundleImporting}
+        onClick={() => { bundleFileRef.current?.click() }}
+      />
+      <input
+        ref={bundleFileRef}
+        type="file"
+        accept="application/json,.json"
+        hidden
+        onChange={event => {
+          const file = event.target.files?.[0]
+          // Cleared before the async work: the same file chosen twice in a row
+          // fires no change event otherwise, and the second attempt looks dead.
+          event.target.value = ''
+          if (file !== undefined) void importBundle(file)
+        }}
+      />
       <span className={css.topBarSpacer} />
       <span className={css.saveState} data-state={saveState}>{saveState === 'saving' ? tt('canvas.saving') : saveState === 'saved' ? tt('canvas.saved') : saveState === 'error' ? tt('canvas.saveFailed') : tt('canvas.loading')}</span>
     </header>
@@ -5029,6 +5293,10 @@ export function CanvasWorkspace(props: CanvasWorkspaceProps): React.JSX.Element 
         </div>
         <span className={css.dockDivider} aria-hidden="true" />
         <div className={css.dockItem} data-dock-item="" data-label={tt('canvas.workflow.run')}>
+          {/* 运行是主动作，不能被「怎么跑」的选项挡住。三项默认值就是升级前
+              写死的行为，所以直接跑与旧版完全一致；想看选项的人点旁边那个
+              箭头。把运行塞进菜单会让常用路径每次都多点一下，换来的只是
+              「先看见复用是开着的」——而默认值已经保证了这一点。 */}
           <IconButton
             name="workflow"
             size={18}
@@ -5036,6 +5304,20 @@ export function CanvasWorkspace(props: CanvasWorkspaceProps): React.JSX.Element 
             active={workflowBusy}
             disabled={document === null || document.nodes.length === 0}
             onClick={() => { void runWorkflowFrom([...selectedIds]) }}
+          />
+        </div>
+        <div className={css.dockItem} data-dock-item="" data-label={tt('canvas.workflow.options')}>
+          <IconButton
+            name="chevronDown"
+            size={14}
+            label={tt('canvas.workflow.options')}
+            active={workflowMenu !== null}
+            disabled={document === null || document.nodes.length === 0}
+            onClick={event => {
+              const bounds = event.currentTarget.getBoundingClientRect()
+              const rootRect = rootRef.current?.getBoundingClientRect()
+              setWorkflowMenu({ x: bounds.left + bounds.width / 2 - (rootRect?.left ?? 0), y: bounds.top - (rootRect?.top ?? 0) })
+            }}
           />
         </div>
         <div className={css.dockItem} data-dock-item="" data-label={tt('timeline.open')}>
@@ -5246,6 +5528,19 @@ export function CanvasWorkspace(props: CanvasWorkspaceProps): React.JSX.Element 
       onDismiss={() => { setError(null); setErrorAction(null) }}
     /> : null}
     {notice !== null ? <CanvasNoticeToast notice={notice} onDismiss={() => setNotice(null)} /> : null}
+    {workflowMenu !== null ? <WorkflowOptionsMenu
+      anchor={workflowMenu}
+      reuse={workflowReuse}
+      rerunSelected={workflowRerunSelected}
+      parallel={workflowParallel}
+      selectionCount={selectedIds.size}
+      onEnter={clearMenuCloseTimer}
+      onLeave={scheduleMenuClose}
+      onToggleReuse={() => setWorkflowReuse(value => !value)}
+      onToggleRerun={() => setWorkflowRerunSelected(value => !value)}
+      onToggleParallel={() => setWorkflowParallel(value => !value)}
+      onRun={() => { setWorkflowMenu(null); void runWorkflowFrom([...selectedIds]) }}
+    /> : null}
     {workflowProgress !== null ? <CanvasWorkflowProgressBar progress={workflowProgress} onCancel={cancelWorkflow} /> : null}
     {/* 时间线：排序/裁剪/转场都在这里改，提交时把整条时间线交给既有拼接链路。 */}
     {timelineOpen ? <TimelinePanel
