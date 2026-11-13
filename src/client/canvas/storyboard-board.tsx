@@ -10,10 +10,11 @@
  */
 
 import { useState } from 'react'
-import type { CanvasNode, CanvasStoryboard } from '../../protocol.ts'
+import type { CanvasNode, CanvasStoryboard, VideoResolution } from '../../protocol.ts'
 import { tt } from '../helpers.ts'
 import type { ImageGenKey } from '../locales.ts'
 import { MAX_SHOTS, SHOT_SECONDS, nextShotIndex, shotNodeOf, shotState, storyboardClipIds, storyboardOf, storyboardProgress, withAppendedShot, withMovedShot, withRemovedShot, withShot } from '../storyboard.ts'
+import { describeVideoModel, VIDEO_RESOLUTIONS } from '../../video-model-catalog.ts'
 import type { ShotState } from '../storyboard.ts'
 import css from '../canvas-workspace.module.css'
 
@@ -61,6 +62,22 @@ export function StoryboardBody(props: {
   // button follows it rather than counting empty rows itself, so the button and
   // the submit can never disagree about whether a run is possible.
   const runnable = nextIndex >= 0
+  // The settings strip follows the board's model, the same way the composer and
+  // the studio panel do. MiniMax-H3 accepts exactly one tier (768P) and answers
+  // 720P with a 400, so a fixed three-option list would offer two choices that
+  // cannot work. A resolution the model does not list is kept as a choice
+  // rather than dropped: it is what the board already says, and silently
+  // rewriting the user's document on open is worse than showing a stale row.
+  // An unset model means "the channel default", which this body cannot resolve
+  // on its own (the default lives in settings), so the full list is offered
+  // rather than the unknown-family list -- that one exists to describe a model
+  // we cannot classify, not the absence of a model.
+  const catalog = board.model === undefined || board.model.trim() === '' ? undefined : describeVideoModel(board.model)
+  const resolutionOptions = catalog !== undefined && catalog.resolutions.length > 0 ? catalog.resolutions : VIDEO_RESOLUTIONS
+  const resolutionChoices = resolutionOptions.includes(board.resolution as VideoResolution)
+    ? resolutionOptions
+    : [board.resolution as VideoResolution, ...resolutionOptions]
+  const aspectOptions = catalog !== undefined && catalog.aspectRatios.length > 0 ? catalog.aspectRatios : ['16:9', '9:16', '1:1']
   return <div className={css.storyboardBody} data-storyboard-body="" onPointerDown={event => event.stopPropagation()}>
     <div className={css.storyboardSettings}>
       <label className={css.storyboardField}>
@@ -83,7 +100,7 @@ export function StoryboardBody(props: {
           aria-label={tt('canvas.videoAspect')}
           onChange={event => props.onChange({ ...board, aspectRatio: event.target.value })}
         >
-          {['16:9', '9:16', '1:1'].map(value => <option key={value} value={value}>{value}</option>)}
+          {aspectOptions.map(value => <option key={value} value={value}>{value}</option>)}
         </select>
       </label>
       <label className={css.storyboardField}>
@@ -94,7 +111,7 @@ export function StoryboardBody(props: {
           aria-label={tt('canvas.videoResolution')}
           onChange={event => props.onChange({ ...board, resolution: event.target.value })}
         >
-          {(['480P', '720P', '1080P'] as const).map(value => <option key={value} value={value}>{value}</option>)}
+          {resolutionChoices.map(value => <option key={value} value={value}>{value}</option>)}
         </select>
       </label>
     </div>

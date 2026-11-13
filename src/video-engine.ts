@@ -104,6 +104,7 @@ const REMOTE_CANCEL: Record<string, 'supported' | 'unsupported'> = {
   'openai-video': 'unsupported',
   seedance: 'unsupported',
   xai: 'unsupported',
+  minimax: 'unsupported',
   unknown: 'unsupported',  snapgen: 'unsupported',
   muse: 'unsupported',
 
@@ -206,6 +207,10 @@ const POLL_POLICY: Record<string, { intervalMs: number; deadlineMs: number }> = 
   // Muse measured at 1-2 minutes for a 5s clip; the shared cadence with the
   // same ceiling covers a queue slot as well.
   muse: { intervalMs: 5_000, deadlineMs: 20 * 60_000 },
+  // MiniMax-H3 measured at ~3 minutes for a 5s clip; the documented advice is
+  // to poll every 5-10s, so the shared cadence with a longer ceiling covers a
+  // queue slot without hammering the status endpoint.
+  minimax: { intervalMs: 5_000, deadlineMs: 30 * 60_000 },
   unknown: { intervalMs: 5_000, deadlineMs: 20 * 60_000 },
 }
 
@@ -437,7 +442,20 @@ async function readJsonWithText(response: Response): Promise<{ payload: Record<s
       text,
     }
   } catch {
-    return { payload: { message: text.slice(0, 300) }, text }
+    // A non-JSON body is either an HTML error page or — the case measured
+    // against a gateway whose base URL omitted `/v1` — the site's own homepage
+    // served with 200. Saying "HTML" and naming the likely cause is far more
+    // actionable than echoing 300 characters of `<meta charset>` markup, and it
+    // is what turns "submit failed" into "your base URL is wrong".
+    const looksHtml = /^\s*<(?:!doctype|html|head|body|meta)/i.test(text)
+    return {
+      payload: {
+        message: looksHtml
+          ? '返回的是网页而不是接口响应，通常是渠道的 API 地址少了路径（例如末尾缺 /v1）'
+          : text.slice(0, 300),
+      },
+      text,
+    }
   }
 }
 
@@ -1007,6 +1025,184 @@ function videoMimeOf(contentType: string | undefined, url: string): string {
 
 /** Agnes reference cap (Flash: `images length must not exceed 5`). */
 const MAX_AGNES_REFERENCES = 5
+
+/**
+ * MiniMax-H3's reference-image cap (`reference_image` items, up to 9).
+ *
+ * The canvas only ever wires four, but the tool surface can pass more, and the
+ * upstream answers a 400 for the whole submit rather than dropping the extras.
+ */
+const MAX_MINIMAX_REFERENCES = 9
+
+/**
+ * Where Nbility's upload endpoint lives, relative to the API base.
+ *
+ * Not in {@link VIDEO_PATHS}: that table is about submit/status pairs, and an
+ * upload is neither. It is resolved from the same base so a channel that sets
+ * `apiUrlFull` still points at the right host.
+ */
+const MINIMAX_UPLOAD_PATH = '/media/uploads'
+
+/** File name for one uploaded reference frame; the extension comes from mime. */
+function uploadFileName(mime: string, index: number): string {
+  const extension = mime === 'image/jpeg' ? 'jpg'
+    : mime === 'image/webp' ? 'webp'
+      : mime === 'image/heic' ? 'heic'
+        : mime === 'image/heif' ? 'heif'
+          : 'png'
+  return `reference-${index + 1}.${extension}`
+}
+
+/**
+ * The upload URL for a family that requires public reference URLs.
+ *
+ * Derived like {@link statusUrlFor}: with `apiUrlFull` the configured URL is the
+ * exact SUBMIT address, so the submit path is trimmed off to recover the base.
+ */
+function uploadUrlFor(upstream: VideoUpstreamConfig, baseUrl: string, family: string): string {
+  if (upstream.apiUrlFull !== true) return `${baseUrl}${MINIMAX_UPLOAD_PATH}`
+  const configured = baseUrl.replace(/\/+$/, '')
+  const submitPath = VIDEO_PATHS[family]?.submit ?? '/videos'
+  const base = configured.endsWith(submitPath)
+    ? configured.slice(0, configured.length - submitPath.length)
+    : configured
+  return `${base}${MINIMAX_UPLOAD_PATH}`
+}
+
+/**
+ * Upload one reference frame and return the public URL the submit body needs.
+ *
+ * Nbility rejects data URIs outright (`Reference media requires a public HTTPS
+ * URL; uploads and Base64 are not supported`), so for that family each frame
+ * must be parked in its media storage first. The URL is valid for one hour,
+ * which is why the task is submitted immediately after the uploads finish.
+ */
+async function uploadMinimaxMedia(
+  upstream: VideoUpstreamConfig,
+  request: VideoGenerateRequest,
+  model: string,
+  url: string,
+  reference: { mime: string; base64: string },
+  index: number,
+  signal: AbortSignal,
+): Promise<string> {
+  const form = new FormData()
+  form.append(
+    'file',
+    new Blob([new Uint8Array(Buffer.from(reference.base64, 'base64'))], { type: reference.mime }),
+    uploadFileName(reference.mime, index),
+  )
+  // `video-upload` rather than `video-submit`: a frame the upstream refused to
+  // store is a different conversation from a render request it rejected, and
+  // the byte size and format limits only apply here.
+  const attempt = videoAttempt(upstream, request, model, 'video-upload', url, 'POST')
+  let response: Response
+  try {
+    response = await fetch(url, {
+      method: 'POST',
+      headers: { authorization: `Bearer ${upstream.apiKey}` },
+      body: form,
+      signal,
+    })
+  } catch (error) {
+    if (signal.aborted) throw error
+    const network = networkErrorFields(error)
+    const failure = new VideoGenError(
+      `无法上传参考图片：${network.detail}${network.errorCode === undefined ? '' : ` [${network.errorCode}]`} · 请求地址 ${attempt.url}`,
+      'video-unreachable',
+    )
+    recordVideoFailure(attempt, failure)
+    throw failure
+  }
+  const { payload, text } = await readJsonWithText(response)
+  const uploaded = typeof payload.url === 'string' ? payload.url.trim() : ''
+  if (!response.ok || uploaded === '') {
+    const failure = new VideoGenError(
+      `${errorTextOf(payload, `参考图片上传失败（HTTP ${response.status}）`)}（HTTP ${response.status} · ${attempt.url}）`,
+      'video-upload-failed',
+      false,
+      response.status,
+    )
+    recordVideoFailure(attempt, failure, { status: response.status, bodyExcerpt: excerptOf(text) })
+    throw failure
+  }
+  return uploaded
+}
+
+/** Aspect ratios MiniMax-H3 accepts, in the panel's own vocabulary. */
+const ENTRIES_RATIOS = ['16:9', '9:16', '1:1', '4:3', '3:4', '21:9']
+
+/**
+ * The `role` one reference frame travels under.
+ *
+ * The contract separates "this is the first frame of the shot" from "use this
+ * as a style/subject reference", and forbids mixing the two: `first_frame` /
+ * `last_frame` are one each, `reference_image` up to nine.
+ */
+function minimaxRole(mode: VideoMode, index: number): string {
+  if (mode === 'keyframe') return index === 0 ? 'first_frame' : 'last_frame'
+  if (mode === 'reference') return 'reference_image'
+  return 'first_frame'
+}
+
+/**
+ * Build the MiniMax-H3 submit body, uploading every reference first.
+ *
+ * Text-only requests use the documented flat `prompt` form; anything carrying
+ * frames needs the `content` array, whose media items can only hold URLs. The
+ * `duration`/`ratio` names are the upstream's own -- sending the generic
+ * `seconds`/`aspect_ratio`/`size` triple would be answered with the resolution
+ * complaint instead of anything useful.
+ */
+async function minimaxSubmitBody(
+  upstream: VideoUpstreamConfig,
+  request: VideoGenerateRequest,
+  model: string,
+  references: DecodedReferences,
+  baseUrl: string,
+  seconds: number,
+  signal: AbortSignal,
+): Promise<Record<string, unknown>> {
+  const ratio = ENTRIES_RATIOS.includes(request.aspectRatio) ? request.aspectRatio : '16:9'
+  const prompt = request.prompt.trim()
+  if (prompt === '') {
+    // `Error` before any upload: an empty prompt is answered with a 400 whose
+    // message never mentions the prompt, and the frames would already be paid
+    // for in upload time.
+    throw new VideoGenError('提示词不能为空：MiniMax-H3 要求文本项非空', 'video-bad-prompt')
+  }
+  if (references.all.length === 0) {
+    return {
+      model: request.upstream ?? request.model,
+      prompt: request.prompt,
+      resolution: '768P',
+      duration: seconds,
+      ratio,
+    }
+  }
+  if (request.mode === 'reference' && references.all.length > MAX_MINIMAX_REFERENCES) {
+    throw new VideoGenError(
+      `MiniMax-H3 最多支持 ${MAX_MINIMAX_REFERENCES} 张参考图，本次是 ${references.all.length} 张`,
+      'video-bad-reference',
+    )
+  }
+  const uploadUrl = uploadUrlFor(upstream, baseUrl, 'minimax')
+  const urls: string[] = []
+  for (const [index, reference] of references.all.entries()) {
+    urls.push(await uploadMinimaxMedia(upstream, request, model, uploadUrl, reference, index, signal))
+  }
+  const content: Array<Record<string, unknown>> = [{ type: 'text', text: request.prompt }]
+  for (const [index, url] of urls.entries()) {
+    content.push({ type: 'image_url', image_url: { url }, role: minimaxRole(request.mode, index) })
+  }
+  return {
+    model: request.upstream ?? request.model,
+    content,
+    resolution: '768P',
+    duration: seconds,
+    ratio,
+  }
+}
 
 /** Build the family-specific submit body. */
 function submitBody(
@@ -1607,15 +1803,28 @@ export async function generateVideo(
 
   const baseUrl = upstream.apiUrl.replace(/\/+$/, '')
   const url = endpointUrl(upstream, baseUrl, VIDEO_PATHS[family]?.submit ?? '/videos')
-  const body = submitBody(entry, family, request, references)
-  // The submit leg's own context: every failure from here to the task id is a
-  // "the render never started" report, which is a different problem from a
-  // render that started and then failed.
-  const submitAttempt = videoAttempt(upstream, request, model, 'video-submit', url, 'POST', JSON.stringify(body))
-
+  // One budget for the whole "get this render started" leg: for MiniMax-H3 that
+  // includes parking each reference frame in media storage, and a task created
+  // after the uploads outlive their own deadline is useless.
   const submitBudget = requestSignal(options.signal, SUBMIT_TIMEOUT_MS)
+  let submitAttempt: VideoAttempt
   let taskId = ''
   try {
+    const body = family === 'minimax'
+      ? await minimaxSubmitBody(
+        upstream,
+        request,
+        model,
+        references,
+        baseUrl,
+        clampVideoSeconds(request.seconds),
+        submitBudget.signal,
+      )
+      : submitBody(entry, family, request, references)
+    // The submit leg's own context: every failure from here to the task id is a
+    // "the render never started" report, which is a different problem from a
+    // render that started and then failed.
+    submitAttempt = videoAttempt(upstream, request, model, 'video-submit', url, 'POST', JSON.stringify(body))
     const payload = await postJson(submitAttempt, request, url, upstream.apiKey, body, submitBudget.signal)
     taskId = taskIdOf(payload)
     if (taskId === '') {

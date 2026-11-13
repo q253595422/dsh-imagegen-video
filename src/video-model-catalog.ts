@@ -143,6 +143,30 @@ const ENTRIES: Record<Exclude<VideoModelFamily, 'unknown'>, Omit<VideoCatalogEnt
     supportsSeed: false,
     requiresReference: false,
   },
+  // Nbility's MiniMax-H3 contract (nbility.ai/docs/api/videos/minimax-h3):
+  // `POST /v1/videos` with a `content` array -- exactly one text item plus
+  // 0-12 media items, each carrying a `role` -- polled at `GET /v1/videos/{id}`,
+  // clip at the completed body's `url`. Output is fixed at 768P (720P/1080P are
+  // a 400), duration is a 1..15 integer, ratio is the six standard values, and
+  // `adaptive` additionally needs a visual input.
+  //
+  // The reason this is a family of its own rather than the generic shape:
+  // every reference must be a PUBLIC HTTPS URL. The host only ever holds data
+  // URLs, so a reference has to be uploaded to `POST /v1/media/uploads` first
+  // and swapped for the returned (one-hour) URL with its role attached.
+  minimax: {
+    label: 'minimax',
+    labelZh: 'MiniMax 视频',
+    known: true,
+    // `reference` rides a different role (`reference_image`) from `image`
+    // (`first_frame`); both are wired. `keyframe` maps to first_frame +
+    // last_frame, which the upstream allows one each of.
+    modes: ['text', 'image', 'keyframe', 'reference'],
+    resolutions: ['768P'],
+    aspectRatios: ['16:9', '9:16', '1:1', '4:3', '3:4', '21:9'],
+    supportsSeed: false,
+    requiresReference: false,
+  },
 }
 
 /**
@@ -257,6 +281,27 @@ export function describeVideoModel(model: string): VideoCatalogEntry {
   // and body (see above). Muse ids beyond `muse-video` are unmeasured, so they
   // stay on the generic branch where the failure is at least readable.
   if (/^muse-video$/i.test(id)) return { family: 'muse', ...ENTRIES.muse }
+  // MiniMax-H3 through the Nbility gateway, matched by id: the gateway serves
+  // other vendors' ids on the same `/v1/videos` path, and only this one speaks
+  // the `content` array with per-item roles.
+  //
+  // Two capabilities are narrowed from the family default:
+  //  - resolution: measured against api.nbility.ai, 720P and 1080P are both
+  //    answered with 400 `MiniMax-H3 supports only 768P at normalizeRequest`.
+  //    The upstream also takes `adaptive`, which needs a visual input to be
+  //    meaningful, so it is not offered as a tier.
+  //  - reference images: capped at 9 by the contract (the generic panel allows
+  //    four; the cap is enforced when the body is built).
+  // Durations are the upstream's real 1..15 seconds; the panel's 5/10 steps are
+  // both inside that range, so the default list is kept.
+  if (/^minimax[-_.]?h3(?:$|[-_.])/i.test(id)) {
+    return {
+      family: 'minimax',
+      ...ENTRIES.minimax,
+      label: 'MiniMax-H3',
+      labelZh: 'MiniMax H3',
+    }
+  }
   // A well-known generic-video naming convention: anything that is clearly a
   // video model but not one of the families above still gets the generic
   // shape, flagged as known-but-generic so the UI can warn without blocking.
@@ -371,8 +416,43 @@ export function clampVideoSeconds(seconds: number): number {
   return Math.min(30, Math.max(1, rounded))
 }
 
-/** Ordered clarity tiers, lowest first. */
-const RESOLUTION_RANK: readonly VideoResolution[] = ['480P', '720P', '1080P']
+/**
+ * Ordered clarity tiers, lowest first.
+ *
+ * `768P` sits between 720P and 1080P: it is a real tier, not an alias, and it
+ * must rank below 1080P so a model that only takes 768P degrades a 1080P ask
+ * to it (and never up from 480P past a tier the caller asked for).
+ */
+const RESOLUTION_RANK: readonly VideoResolution[] = ['480P', '720P', '768P', '1080P']
+
+/** Every tier the plugin can name on the wire, lowest first. */
+export const VIDEO_RESOLUTIONS: readonly VideoResolution[] = ['480P', '720P', '768P', '1080P']
+
+/**
+ * Read one resolution off an untrusted request body.
+ *
+ * The route handlers used to spell the three old tiers out inline, which meant
+ * a new tier had to be added in four places and silently became 720P if one was
+ * missed. Parsing is centralised here: an unknown word still falls back to the
+ * default (the request is never sent with a tier the panel cannot display), but
+ * every tier the plugin understands is accepted as written.
+ */
+export function parseVideoResolution(value: unknown, fallback: VideoResolution = '720P'): VideoResolution {
+  if (typeof value !== 'string') return fallback
+  const wanted = value.trim().toUpperCase()
+  return VIDEO_RESOLUTIONS.find(row => row === wanted) ?? fallback
+}
+
+/**
+ * Position of one tier in `RESOLUTION_RANK`, or -1 for a word we do not know.
+ *
+ * Exported so the planner compares tiers with the same order the panel sorts
+ * them by: two private copies of the list drifted apart the moment a tier was
+ * added, and the drift showed up as a plan that "raised" quality.
+ */
+export function resolutionRank(resolution: string): number {
+  return RESOLUTION_RANK.indexOf(resolution.trim().toUpperCase() as VideoResolution)
+}
 
 /**
  * Clamp one resolution to what the family understands.

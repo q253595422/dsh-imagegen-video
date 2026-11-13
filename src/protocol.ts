@@ -8,7 +8,7 @@
 export const IMAGEGEN_SETTINGS_NAMESPACE = 'dsh-imagegen'
 
 /** Published package version shared by the host updater and the client UI. */
-export const PLUGIN_VERSION = '1.30.0'
+export const PLUGIN_VERSION = '1.30.2'
 
 /** Same-origin route family (loopback-only, mirroring the dsh-ssh fence). */
 export const SETTINGS_API = {
@@ -654,10 +654,21 @@ export type VideoModelFamily =
   | 'openai-video'
   | 'snapgen'
   | 'muse'
+  // Nbility's MiniMax-H3 contract: a `content` array with per-item `role`, and
+  // every reference must be uploaded to a public HTTPS URL first -- the family
+  // exists because that upload leg has no analogue in the generic shape.
+  | 'minimax'
   | 'unknown'
 
-/** Video output resolution tier, mapped per family by the engine. */
-export type VideoResolution = '480P' | '720P' | '1080P'
+/**
+ * Video output resolution tier, mapped per family by the engine.
+ *
+ * `768P` is not a marketing tier: some providers accept exactly one number and
+ * reject everything else (MiniMax-H3 answers 400 to both 720P and 1080P), so
+ * the union has to be able to name what they actually take. Families that do
+ * not list it never see it — `normalizeVideoResolution` degrades it away.
+ */
+export type VideoResolution = '480P' | '720P' | '768P' | '1080P'
 
 /** Aspect ratios the video panel offers; families narrow this themselves. */
 export const VIDEO_ASPECT_RATIOS = ['16:9', '9:16', '1:1', '4:3', '3:4', '21:9'] as const
@@ -2106,6 +2117,10 @@ export type DiagnosticPhase =
   // "the render never started" and "the status endpoint stopped answering" are
   // different problems, and the image phases cannot express that difference.
   | 'video-submit' | 'video-poll' | 'video-download'
+  // Reference media for providers that only accept public HTTPS URLs has to be
+  // uploaded before the submit; that leg fails on its own terms (size, format,
+  // expiry) and needs its own phase to be readable.
+  | 'video-upload'
   // The reasoning step that runs before a submit. Its own phase because a
   // failed plan is neither a rejected submit nor a failed render.
   | 'video-plan'

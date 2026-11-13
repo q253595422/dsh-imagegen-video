@@ -34,7 +34,7 @@ const MP4 = Buffer.from('00000018667479706d7034320000000069736f6d6d703431', 'hex
 
 /** A local upstream that speaks the measured submit/poll/download contract. */
 function startUpstream() {
-  const state = { submits: [], polls: [], downloads: [], script: null }
+  const state = { submits: [], polls: [], downloads: [], uploads: [], script: null }
   const server = createServer((req, res) => {
     const url = new URL(req.url ?? '/', 'http://127.0.0.1')
     if (req.method === 'POST' && (url.pathname === '/v1/videos' || url.pathname === '/v1/videos/generations' || url.pathname === '/v1/contents/generations/tasks')) {
@@ -44,6 +44,14 @@ function startUpstream() {
         const body = JSON.parse(Buffer.concat(chunks).toString('utf8'))
         state.submits.push({ body, authorization: req.headers.authorization })
         const script = state.script
+        // An HTML body with a 200 is what a gateway serves when the configured
+        // base URL is the site root instead of its API root -- measured, and
+        // the one shape a "wrong address" test needs.
+        if (script.html === true) {
+          res.writeHead(200, { 'content-type': 'text/html; charset=utf-8' })
+          res.end('<!DOCTYPE html><html lang="zh-CN"><head><meta charset="UTF-8"><title>API</title></head><body>home</body></html>')
+          return
+        }
         res.writeHead(200, { 'content-type': 'application/json' })
         res.end(JSON.stringify(script.submit))
       })
@@ -52,6 +60,42 @@ function startUpstream() {
     // Ark polls one task by id under the same collection; keep the fake strict
     // about this path so a wrong status URL fails loudly instead of 404ing
     // into the generic route below.
+    // Nbility's media storage: reference frames must become public HTTPS URLs
+    // before they can be submitted, so a family that needs that leg has to have
+    // a place to park the bytes here (#minimax).
+    if (req.method === 'POST' && url.pathname === '/v1/media/uploads') {
+      const chunks = []
+      req.on('data', chunk => chunks.push(chunk))
+      req.on('end', () => {
+        const raw = Buffer.concat(chunks)
+        const contentType = req.headers['content-type'] ?? ''
+        // The multipart part headers are text; the payload is not, so only the
+        // text half is inspected -- enough to assert the file name and mime the
+        // engine chose, without treating a PNG as UTF-8.
+        const head = raw.subarray(0, Math.min(raw.length, 512)).toString('latin1')
+        const fileMatch = /filename="([^"]+)"/.exec(head)
+        const typeMatch = /content-type: ([^\r\n]+)/i.exec(head)
+        state.uploads.push({
+          filename: fileMatch?.[1] ?? '',
+          mime: typeMatch?.[1]?.trim() ?? '',
+          bytes: raw.length,
+          contentType,
+          authorization: req.headers.authorization,
+        })
+        const script = state.script
+        if (script.uploadStatus !== undefined) {
+          res.writeHead(script.uploadStatus, { 'content-type': 'application/json' })
+          res.end(JSON.stringify(script.uploadBody ?? { error: { message: 'upload rejected' } }))
+          return
+        }
+        res.writeHead(200, { 'content-type': 'application/json' })
+        res.end(JSON.stringify({
+          url: `https://media.example.test/${state.uploads.length}.png`,
+          expires_at: Math.floor(Date.now() / 1000) + 3600,
+        }))
+      })
+      return
+    }
     if (req.method === 'GET' && url.pathname.startsWith('/v1/contents/generations/tasks/')) {
       state.polls.push({ id: url.pathname.slice('/v1/contents/generations/tasks/'.length), authorization: req.headers.authorization })
       const list = state.script.polls
@@ -841,6 +885,202 @@ await check('V1k muse-video speaks its own closed body and resolves a relative c
   assert.equal(host.describeVideoModel('kling-v2-master').family, 'openai-video', 'the generic fallback still works')
 })
 
+// ---------------------------------------------------------------------- V1l
+await check('V1l MiniMax-H3 speaks the Nbility content contract, 768P only', async () => {
+  // Contract: https://nbility.ai/docs/api/videos/minimax-h3. Two things are not
+  // generic and both are measured:
+  //  - the tier is fixed at 768P (720P/1080P answer `MiniMax-H3 supports only
+  //    768P at normalizeRequest`);
+  //  - every reference must be a PUBLIC HTTPS URL, so a family of its own is
+  //    needed to run the upload leg before the submit.
+  const catalog = host.describeVideoModel('MiniMax-H3')
+  assert.equal(catalog.family, 'minimax', 'the content array plus upload leg is its own family')
+  assert.deepEqual(catalog.resolutions, ['768P'], 'the only tier the upstream accepts')
+  assert.deepEqual(
+    catalog.modes,
+    ['text', 'image', 'keyframe', 'reference'],
+    'frames travel as first_frame / last_frame / reference_image roles',
+  )
+  assert.deepEqual(
+    catalog.aspectRatios,
+    ['16:9', '9:16', '1:1', '4:3', '3:4', '21:9'],
+    'six ratios documented as accepted',
+  )
+  // A different model on the same gateway is NOT affected by the branch.
+  assert.equal(host.describeVideoModel('doubao-seedance-2-0').family, 'seedance', 'the Seedance id keeps its own family')
+  assert.deepEqual(host.describeVideoModel('kling-v2-master').resolutions, ['480P', '720P', '1080P'], 'a generic model keeps every tier')
+
+  // Every tier degrades to 768P, and nothing else moves: a 1080P ask must not
+  // land on 480P, and 768P must survive as itself rather than becoming 720P.
+  assert.equal(host.normalizeVideoResolution('MiniMax-H3', '1080P'), '768P', 'a 1080P ask degrades to the only supported tier')
+  assert.equal(host.normalizeVideoResolution('MiniMax-H3', '480P'), '768P', 'a 480P ask upgrades to the only supported tier')
+  assert.equal(host.normalizeVideoResolution('MiniMax-H3', '768P'), '768P', 'the supported tier is kept as written')
+  assert.equal(host.normalizeVideoResolution('MiniMax-H3', 'nonsense'), '768P', 'an unknown word falls back to a tier that works, not to a 400')
+
+  // Tier parsing is centralised now: the routes, the agent tools and the panel
+  // all go through it, so a new tier cannot be silently rewritten to 720P in
+  // one of the four places it used to be spelled out.
+  assert.equal(host.parseVideoResolution('768p'), '768P', 'case and padding are normalised')
+  assert.equal(host.parseVideoResolution(' 1080P '), '1080P', 'a known tier survives trimming')
+  assert.equal(host.parseVideoResolution(undefined), '720P', 'a missing tier keeps the default')
+  assert.equal(host.parseVideoResolution('4K'), '720P', 'a word the plugin cannot name falls back to the default')
+  // The ranking is the same list the planner compares against, and 768P must
+  // sit between its neighbours or a plan would "raise" quality by accident.
+  assert.ok(host.resolutionRank('720P') < host.resolutionRank('768P'), '768P ranks above 720P')
+  assert.ok(host.resolutionRank('768P') < host.resolutionRank('1080P'), '768P ranks below 1080P')
+
+  // Text-only: the documented flat body, with `duration`/`ratio` as the
+  // upstream names them.
+  const upstream = await startUpstream()
+  upstream.state.script = {
+    submit: { id: 'task_mm', object: 'video', status: 'queued', progress: 0 },
+    polls: [
+      { id: 'task_mm', status: 'in_progress', progress: 33 },
+      { id: 'task_mm', status: 'completed', progress: 100, url: `http://127.0.0.1:${upstream.port}/mm.mp4`, resolution: '768P', ratio: '16:9', seconds: 5 },
+    ],
+  }
+  try {
+    const result = await generateVideo(
+      { apiUrl: upstream.base, apiKey: 'sk-mm', channelName: 'Nbility' },
+      { mode: 'text', model: 'MiniMax-H3', prompt: 'ocean waves at sunset', aspectRatio: '16:9', resolution: '1080P', seconds: 5 },
+    )
+    assert.equal(result.videos[0].mime, 'video/mp4')
+    const body = upstream.state.submits[0].body
+    assert.equal(body.model, 'MiniMax-H3')
+    assert.equal(body.prompt, 'ocean waves at sunset', 'text-only uses the flat prompt form')
+    assert.equal(body.resolution, '768P', 'a 1080P ask is sent as the only tier the upstream takes')
+    assert.equal(body.duration, 5, 'duration is an integer, not the generic string seconds')
+    assert.equal(body.ratio, '16:9')
+    assert.ok(!('content' in body), 'text-only omits the content array')
+    assert.ok(!('size' in body), 'the generic size field is not sent')
+    assert.ok(!('seconds' in body), 'the generic seconds field is not sent')
+    assert.equal(upstream.state.uploads.length, 0, 'text-only uploads nothing')
+    assert.equal(upstream.state.submits[0].authorization, 'Bearer sk-mm')
+    assert.equal(upstream.state.polls[0].id, 'task_mm', 'the poll uses the task id the gateway returned')
+  } finally {
+    await upstream.close()
+  }
+})
+
+// ---------------------------------------------------------------------- V1n
+await check('V1n MiniMax-H3 uploads every frame and carries its role', async () => {
+  // Measured: data URIs are refused outright (`Reference media requires a
+  // public HTTPS URL; uploads and Base64 are not supported`), while
+  // `POST /v1/media/uploads` with a multipart file answers {url, expires_at}.
+  // The role decides what the frame means, and first/last may not be mixed with
+  // reference_image -- so each mode is asserted on its own.
+  const PNG = 'data:image/png;base64,iVBORw0KGgo='
+  const cases = [
+    { mode: 'image', fields: { image: PNG }, roles: ['first_frame'], files: 1 },
+    { mode: 'keyframe', fields: { firstFrame: PNG, lastFrame: PNG }, roles: ['first_frame', 'last_frame'], files: 2 },
+    { mode: 'reference', fields: { image: PNG, images: [PNG, PNG] }, roles: ['reference_image', 'reference_image', 'reference_image'], files: 3 },
+  ]
+  for (const item of cases) {
+    const upstream = await startUpstream()
+    upstream.state.script = {
+      submit: { id: 'task_ref', object: 'video', status: 'queued' },
+      polls: [{ status: 'completed', url: `http://127.0.0.1:${upstream.port}/ref.mp4` }],
+    }
+    try {
+      // 1080P on purpose: the mode under test must not depend on the caller
+      // having picked the right tier.
+      await generateVideo(
+        { apiUrl: upstream.base, apiKey: 'sk-mm', channelName: 'Nbility' },
+        { mode: item.mode, model: 'MiniMax-H3', prompt: 'she turns to the window', aspectRatio: '9:16', resolution: '1080P', seconds: 8, ...item.fields },
+      )
+      assert.equal(upstream.state.uploads.length, item.files, `${item.mode}: one upload per frame`)
+      const firstUpload = upstream.state.uploads[0]
+      assert.equal(firstUpload.authorization, 'Bearer sk-mm', `${item.mode}: the upload carries the key`)
+      assert.equal(firstUpload.mime, 'image/png', `${item.mode}: the part is typed with the frame's own mime`)
+      assert.match(firstUpload.filename, /^reference-\d+\.png$/, `${item.mode}: the part is named for the frame`)
+      assert.ok(firstUpload.bytes > 0, `${item.mode}: the frame bytes reach the wire`)
+
+      const body = upstream.state.submits[0].body
+      assert.equal(body.resolution, '768P', `${item.mode}: the tier is always 768P`)
+      assert.equal(body.duration, 8, `${item.mode}: duration is the requested integer`)
+      assert.equal(body.ratio, '9:16', `${item.mode}: the ratio survives`)
+      assert.equal(Array.isArray(body.content), true, `${item.mode}: frames need the content array`)
+      const text = body.content[0]
+      assert.deepEqual(text, { type: 'text', text: 'she turns to the window' }, `${item.mode}: exactly one text item leads`)
+      const media = body.content.slice(1)
+      assert.deepEqual(
+        media.map(entry => entry.role),
+        item.roles,
+        `${item.mode}: each frame travels under the role the contract names`,
+      )
+      for (const [index, entry] of media.entries()) {
+        assert.equal(entry.type, 'image_url', `${item.mode}: a frame is an image_url item`)
+        assert.equal(
+          entry.image_url.url,
+          `https://media.example.test/${index + 1}.png`,
+          `${item.mode}: the item carries the UPLOADED url, never a data URI`,
+        )
+        assert.equal(entry.image_url.url.startsWith('data:'), false, `${item.mode}: no base64 leaves the host`)
+      }
+    } finally {
+      await upstream.close()
+    }
+  }
+})
+
+// ---------------------------------------------------------------------- V1o
+await check('V1o a rejected upload explains itself before any render starts', async () => {
+  // The upload leg fails on its own terms: the file was refused, so no task
+  // exists and no render is billed. Recording it under its own phase keeps that
+  // distinct from "the submit was rejected".
+  host.clearDiagnostics()
+  const upstream = await startUpstream()
+  upstream.state.script = {
+    uploadStatus: 413,
+    uploadBody: { error: { message: 'file too large' } },
+    submit: { id: 'task_never', status: 'queued' },
+    polls: [{ status: 'completed', url: `http://127.0.0.1:${upstream.port}/never.mp4` }],
+  }
+  try {
+    await assert.rejects(
+      generateVideo(
+        { apiUrl: upstream.base, apiKey: 'sk-mm', channelName: 'Nbility' },
+        { mode: 'image', model: 'MiniMax-H3', prompt: 'a room', aspectRatio: '16:9', resolution: '768P', seconds: 5, image: 'data:image/png;base64,iVBORw0KGgo=' },
+      ),
+      error => {
+        assert.equal(error.code, 'video-upload-failed')
+        assert.match(error.message, /file too large/, 'the upstream wording survives')
+        assert.match(error.message, /HTTP 413/, 'the status survives')
+        return true
+      },
+    )
+    assert.equal(upstream.state.submits.length, 0, 'no submit is attempted after a refused upload')
+    const entry = host.listDiagnostics().find(row => row.phase === 'video-upload')
+    assert.ok(entry !== undefined, 'the failure is recorded under the upload phase')
+    assert.equal(entry.url, 'http://127.0.0.1:' + upstream.port + '/v1/media/uploads', 'the entry names the upload url')
+    assert.equal(entry.status, 413)
+    assert.equal(entry.failureCode, 'video-upload-failed')
+    assert.equal(entry.hadAuth, true)
+  } finally {
+    await upstream.close()
+  }
+
+  // An empty prompt is answered with an opaque 400, and uploading first would
+  // waste the transfer: the guard has to run before the first upload.
+  const quiet = await startUpstream()
+  quiet.state.script = { submit: { id: 'task_none', status: 'queued' }, polls: [] }
+  try {
+    await assert.rejects(
+      generateVideo(
+        { apiUrl: quiet.base, apiKey: 'sk-mm' },
+        { mode: 'image', model: 'MiniMax-H3', prompt: '   ', aspectRatio: '16:9', resolution: '768P', seconds: 5, image: 'data:image/png;base64,iVBORw0KGgo=' },
+      ),
+      error => {
+        assert.equal(error.code, 'video-bad-prompt')
+        return true
+      },
+    )
+    assert.equal(quiet.state.uploads.length, 0, 'an empty prompt is refused before any upload')
+  } finally {
+    await quiet.close()
+  }
+})
+
 // ---------------------------------------------------------------------- V2/V3
 // ---------------------------------------------------------------------- V2/V3
 await check('V2 the runtime persists a clip and the store serves it', async () => {
@@ -1076,6 +1316,32 @@ await check('V3b the clip route serves bytes and honors Range for seeking', asyn
   }
 })
 
+
+await check('V1m an HTML response is explained as a wrong base URL, not echoed as markup', async () => {
+  // Measured: a gateway whose channel URL omitted `/v1` answered the submit
+  // with 200 and its own homepage. The bytes are not the user's problem -- the
+  // missing path segment is. This asserts the message names the likely cause
+  // and never contains the markup itself.
+  const upstream = await startUpstream()
+  upstream.state.script = { html: true }
+  try {
+    await assert.rejects(
+      () => generateVideo(
+        { apiUrl: upstream.base, apiKey: 'sk-html', channelName: 'WrongBase' },
+        { mode: 'text', model: 'MiniMax-H3', prompt: 'p', aspectRatio: '16:9', resolution: '768P', seconds: 5 },
+      ),
+      (error) => {
+        assert.match(error.message, /网页而不是接口响应/, 'the message names what came back')
+        assert.match(error.message, /\/v1/, 'and names the usual cause')
+        assert.ok(!/<meta|<html|charset=/i.test(error.message), 'the markup itself is not pasted into the message')
+        return true
+      },
+      'a 200 HTML body is a configured-address problem, not a provider rejection',
+    )
+  } finally {
+    await upstream.close()
+  }
+})
 
 await check('V6 a freshly configured generic video model works through the runtime', async () => {
   // Proves the "generic channel" claim: an operator adds an arbitrary video

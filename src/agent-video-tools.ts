@@ -15,9 +15,9 @@ import type { ImageAttachmentRef } from '@deepseek-ai/dsh-attachment'
 import type {} from '@deepseek-ai/dsh-attachment'
 import type {} from '@deepseek-ai/dsh-tools'
 import { VideoGenError } from './video-engine.ts'
-import { describeVideoModel } from './video-model-catalog.ts'
+import { describeVideoModel, parseVideoResolution } from './video-model-catalog.ts'
 import type { ImageGenerationRuntime, RuntimeChannel } from './generation-runtime.ts'
-import type { VideoGenerateRequest, VideoMode, VideoTask, VideoResolution } from './protocol.ts'
+import type { VideoGenerateRequest, VideoMode, VideoTask } from './protocol.ts'
 
 export interface AgentVideoToolConfig {
   enabled: boolean
@@ -238,7 +238,10 @@ export function registerAgentVideoTools(ctx: Context, runtime: ImageGenerationRu
     frame?: { image?: string; firstFrame?: string; lastFrame?: string; refName?: string },
   ): VideoGenerateRequest => {
     const seconds = typeof args.seconds === 'number' ? args.seconds : 5
-    const resolution = typeof args.resolution === 'string' ? args.resolution : '720P'
+    // The upstream id decides which tiers are real (MiniMax-H3 takes only
+    // 768P); anything this plugin does not name falls back to the default and
+    // is normalised again against the family inside the engine.
+    const resolution = parseVideoResolution(args.resolution)
     return {
       mode,
       model: picked.alias,
@@ -247,7 +250,7 @@ export function registerAgentVideoTools(ctx: Context, runtime: ImageGenerationRu
       channel: picked.channel.name,
       prompt: typeof args.prompt === 'string' ? args.prompt.trim() : '',
       aspectRatio: typeof args.aspect_ratio === 'string' && args.aspect_ratio.trim() !== '' ? args.aspect_ratio.trim() : '16:9',
-      resolution: (resolution === '480P' || resolution === '720P' || resolution === '1080P' ? resolution : '720P') as VideoResolution,
+      resolution,
       seconds,
       ...frame === undefined ? {} : frame,
     }
@@ -261,7 +264,7 @@ export function registerAgentVideoTools(ctx: Context, runtime: ImageGenerationRu
         prompt: { type: 'string', required: true, description: 'Detailed video prompt: subject, action, camera movement, lighting and mood.' },
         model: { type: 'string', description: 'One of the configured video models. Defaults to the configured default video model.' },
         aspect_ratio: { type: 'string', description: 'Aspect ratio such as 16:9, 9:16 or 1:1. Defaults to 16:9.' },
-        resolution: { type: 'string', description: '480P, 720P (default) or 1080P, when the model supports it.' },
+        resolution: { type: 'string', description: 'One of the tiers the chosen model accepts: usually 480P, 720P (default) or 1080P; MiniMax-H3 takes 768P only.' },
         seconds: { type: 'integer', description: 'Clip length in seconds. Defaults to 5.' },
         wait_for_completion: { type: 'boolean', description: 'Wait for the finished clip and return its URL. Defaults to true; set false for background mode.' },
       },
@@ -288,7 +291,7 @@ export function registerAgentVideoTools(ctx: Context, runtime: ImageGenerationRu
         last_frame: { ...imageRefSchema, description: 'Optional last-frame image for mode=keyframe.' },
         model: { type: 'string', description: 'One of the configured video models. Defaults to the configured default video model.' },
         aspect_ratio: { type: 'string', description: 'Aspect ratio such as 16:9, 9:16 or 1:1.' },
-        resolution: { type: 'string', description: '480P, 720P (default) or 1080P, when the model supports it.' },
+        resolution: { type: 'string', description: 'One of the tiers the chosen model accepts: usually 480P, 720P (default) or 1080P; MiniMax-H3 takes 768P only.' },
         seconds: { type: 'integer', description: 'Clip length in seconds. Defaults to 5.' },
         wait_for_completion: { type: 'boolean', description: 'Wait for the finished clip and return its URL. Defaults to true.' },
       },

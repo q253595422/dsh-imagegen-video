@@ -36,7 +36,6 @@ const POLL_INTERVAL_MS = 5_000
 const FRAME_ACCEPT = 'image/png,image/jpeg,image/webp'
 
 /** Resolution tiers offered in the UI (narrowed per model by the engine). */
-const RESOLUTIONS: VideoResolution[] = ['480P', '720P', '1080P']
 
 /** One picked reference frame staged in the panel. */
 interface FrameDraft {

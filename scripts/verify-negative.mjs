@@ -558,6 +558,27 @@ const CASES = [
     to: "      if (false) {",
     expect: /链路中段失败应让整体失败|失败节点之后不该再提交任何节点/,
   },
+  {
+    // 用户报的那个缺陷：菜单点开就挂在底栏上，只有点「运行工作流」能带它走。
+    // 把工作流菜单从统一清单里摘出去，就等于回到「关闭清单各写一份」的状态，
+    // 断言必须按名字说出这件事，而不是笼统地报某处不匹配。
+    name: 'the workflow options menu is dropped from the shared close list',
+    runner: 'workflow',
+    file: 'src/client/CanvasWorkspace.tsx',
+    from: 'setBackgroundMenu(null); setImageMenu(null); setWorkflowMenu(null)',
+    to: 'setBackgroundMenu(null); setImageMenu(null)',
+    expect: /底栏浮层的关闭清单必须只有一处，且含工作流选项菜单/,
+  },
+  {
+    // 同一类缺陷的另一种形状：清单还在，但某个入口又自己抄了一份。抄一份就
+    // 意味着下一次加浮层会漏一处——这次漏的就是工作流菜单本身。
+    name: 'a close path writes its own parallel list again',
+    runner: 'workflow',
+    file: 'src/client/CanvasWorkspace.tsx',
+    from: "    setContextMenu(null); setCreateMenu(null); setNodeAddMenu(null)\n    closeDockMenus()",
+    to: "    setContextMenu(null); setCreateMenu(null); setNodeAddMenu(null)\n    setBackgroundMenu(null); setImageMenu(null)",
+    expect: /关闭清单被抄了 2 份/,
+  },
   // ------------------------------------------------- one browser launcher only
   {
     // The flake this removes is invisible in a single run: two guards picking

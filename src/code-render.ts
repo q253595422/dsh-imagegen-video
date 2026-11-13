@@ -90,7 +90,10 @@ export interface CodeRenderResult {
 
 /** Output dimensions for a resolution tier at a given aspect ratio. */
 export function dimensionsFor(resolution: VideoResolution, aspectRatio: string): { width: number; height: number } {
-  const shortEdge = resolution === '480P' ? 480 : resolution === '1080P' ? 1080 : 720
+  // Every tier the plugin can name has a real short edge here: the code path
+  // renders at the tier the composer shows, so 768P must not silently become
+  // 720P and make the probe's pixel count disagree with the label.
+  const shortEdge = resolution === '480P' ? 480 : resolution === '1080P' ? 1080 : resolution === '768P' ? 768 : 720
   switch (aspectRatio) {
     case '9:16': return { width: shortEdge, height: Math.round(shortEdge * 16 / 9 / 2) * 2 }
     case '1:1': return { width: shortEdge, height: shortEdge }

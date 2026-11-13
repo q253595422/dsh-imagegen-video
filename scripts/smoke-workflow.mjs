@@ -539,6 +539,42 @@ for (const bad of [0, -3, 1.5, Number.NaN]) {
     /\}, \[hasProduce, runWorkflowNode, selectedIds, workflowParallel, workflowRerunSelected, workflowReuse\]\)/,
     'runWorkflowFrom 的依赖数组必须含三个开关，否则读到的是上一次的值',
   )
+
+  // ------------------------------------------------- 选项菜单关得掉
+  //
+  // 这是真机走查抓到的缺陷，任何执行器测试都看不见：菜单照常打开、三个开关
+  // 照常生效，只是关不掉。用户的原话是「点开未选择 他就一直挂在上面，只能
+  // 运行工作流他才关掉」——即关闭路径只剩一个付费动作。
+  //
+  // 成因是关闭清单被抄了四份（悬停计时器、Escape、点画布、开技能菜单），
+  // 每份只写自己认识的那两个 state，新加的第三个就被漏在外面。所以这里锁的
+  // 不是「某处有没有写 setWorkflowMenu(null)」，而是**只有一份清单**。
+  assert.match(
+    workspace,
+    /const closeDockMenus = useCallback\(\(\): void => \{\s*setBackgroundMenu\(null\); setImageMenu\(null\); setWorkflowMenu\(null\)\s*\}, \[\]\)/,
+    '底栏浮层的关闭清单必须只有一处，且含工作流选项菜单',
+  )
+  // 手写 `setBackgroundMenu(null); setImageMenu(null)` 的平行清单一旦回来，
+  // 下一处新增浮层还会被漏掉。除了 closeDockMenus 自己，不该再有人这么写。
+  const parallelLists = workspace.match(/setBackgroundMenu\(null\);\s*setImageMenu\(null\)/g) ?? []
+  assert.equal(
+    parallelLists.length,
+    1,
+    `关闭清单被抄了 ${parallelLists.length} 份，应只有 closeDockMenus 里那一份——抄几份就会漏几处`,
+  )
+  // 打开菜单的互斥关系同理：开背景/图片菜单必须把工作流菜单一起收掉。
+  assert.match(
+    workspace,
+    /closeDockMenus\(\)\s*\n\s*if \(kind === 'image'\) setImageMenu\(screen\)/,
+    '打开其它底栏菜单时必须先收掉已开的浮层，否则两个菜单会叠在一起',
+  )
+  // 箭头按钮必须是 toggle。此前它无条件 set，菜单开着时再点一次只是把同一个
+  // 坐标重新设一遍，读起来就是「点了没反应」。
+  assert.match(
+    workspace,
+    /if \(workflowMenu !== null\) \{ setWorkflowMenu\(null\); return \}/,
+    '箭头按钮再点一次必须收起菜单',
+  )
 }
 
 console.log('workflow: ok')

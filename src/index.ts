@@ -340,7 +340,7 @@ export { makeRoutes } from './routes.ts'
 export { SubscriptionManager, vendorOf, subscriptionOauthRef } from './subscription/manager.ts'
 export { generateImage, ImageGenError } from './engine.ts'
 export { generateVideo, VideoGenError, isVideoModel } from './video-engine.ts'
-export { describeVideoModel, DEFAULT_VIDEO_MODELS, durationsOf, isSnapgenVideoModel, normalizeVideoResolution, resolveVideoModelId, videoDurationsFor } from './video-model-catalog.ts'
+export { describeVideoModel, DEFAULT_VIDEO_MODELS, durationsOf, isSnapgenVideoModel, normalizeVideoResolution, parseVideoResolution, resolutionRank, resolveVideoModelId, videoDurationsFor, VIDEO_RESOLUTIONS } from './video-model-catalog.ts'
 // The snapgen protocol is hand-rolled, so its primitives are exported too: the
 // offline smoke suite pins the guard bytes and the wire vocabulary against the
 // values measured from the real site, with no network and no browser.

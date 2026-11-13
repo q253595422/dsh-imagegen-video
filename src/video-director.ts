@@ -38,6 +38,7 @@ import {
   clampVideoSeconds,
   describeVideoModel,
   durationsOf,
+  resolutionRank,
   type VideoCatalogEntry,
 } from './video-model-catalog.ts'
 import type { PromptModelConfig } from './prompt-enhancer.ts'
@@ -338,8 +339,8 @@ function finalize(raw: RawPlan, input: VideoPlanInput, source: VideoPlanSource, 
   const wantedResolution = (raw.resolution ?? '').trim().toUpperCase()
   if (wantedResolution !== '' && wantedResolution !== resolution && entry.resolutions.includes(wantedResolution as VideoResolution)) {
     // The plan may drop to a cheaper tier when the clip is a draft, never raise.
-    const order: VideoResolution[] = ['480P', '720P', '1080P']
-    if (order.indexOf(wantedResolution as VideoResolution) < order.indexOf(resolution)) {
+    // The order is the catalogue's, so a new tier cannot rank differently here.
+    if (resolutionRank(wantedResolution as VideoResolution) < resolutionRank(resolution)) {
       resolution = wantedResolution as VideoResolution
       notes.push(`分辨率降为 ${resolution} 以缩短出片时间`)
     }
@@ -641,9 +642,8 @@ export function adoptPlan(
     : request.aspectRatio
 
   const wantedResolution = (preview.params?.resolution ?? '').trim().toUpperCase()
-  const order: VideoResolution[] = ['480P', '720P', '1080P']
   const resolution = entry.resolutions.includes(wantedResolution as VideoResolution)
-    && order.indexOf(wantedResolution as VideoResolution) < order.indexOf(request.resolution)
+    && resolutionRank(wantedResolution as VideoResolution) < resolutionRank(request.resolution)
     ? wantedResolution as VideoResolution
     : request.resolution
 
