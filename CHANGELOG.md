@@ -5,6 +5,18 @@ Attribution for third-party code is in [NOTICE](./NOTICE).
 
 ## Releases
 
+### 1.30.3 — 接通 Nbility 的 MiniMax-H3（768P + 参考图上传）
+
+- **`minimax` 协议族**：`MiniMax-H3` 此前被归进通用的 `openai-video` 族，只提供 480P/720P/1080P 三档；而上游只认 **768P**，720P / 1080P 一律 400（`MiniMax-H3 supports only 768P at normalizeRequest`）——每个请求都注定失败。补上 768P 档位后，图生视频仍然失败：参考图必须是公网 HTTPS URL，而插件只会发 data URI。官方契约的 `POST /v1/media/uploads` 正是把本地图换成公网 URL 的那条腿。
+- **两条提交形状**：文生视频发扁平 `{model, prompt, resolution: '768P', duration, ratio}`；有参考图时先 multipart 上传，再发 `content[]` + 每项 `role`（`image` → `first_frame`，`keyframe` → `first_frame` + `last_frame`，`reference` → `reference_image`，上限 9 张）。
+- **上传有自己的失败域**：新增诊断阶段 `video-upload` 与失败码 `video-upload-failed` / `video-unreachable`。上传的 413 与提交的 401 是完全不同的问题，混在一个 phase 里没法排查。「上传 + 建任务」共用同一个 `SUBMIT_TIMEOUT_MS` 预算，避免卡住的上传让整体耗时翻倍。
+- **档位白名单收成一处**：四处各写一份的三档判断收成 `parseVideoResolution` / `resolutionRank`，`video-director.ts` 里两份私有排序数组消失；分镜板分辨率下拉框改为从模型目录派生。
+- **code-render 给 768P 真实短边**；`200 + HTML` 改为点名「渠道地址少了路径」而不是把 markup 塞进错误消息。
+- **工作流运行选项菜单关不掉已修**：根因是关闭清单被抄了多份，工作流菜单是后加的第三个，成了画布上唯一关不掉的浮层。收成一处 `closeDockMenus()`，五条关闭路径（悬停离开 / Escape / 点画布 / 打开其它菜单 / 技能菜单）全部改调它，箭头按钮改成 toggle。
+- **测试**：`smoke-video.mjs` 新增 V1l/V1n/V1o（目录与文生视频、三种参考图模式的 role 与上传、上传失败与前置守卫），41 项全绿；`smoke-workflow.mjs` 锁「平行关闭清单只有一份」而不是「某处有没有写 `setWorkflowMenu(null)`」。
+- **真机**（api.nbility.ai）：文生视频 1,859,764 字节、图生视频 1,628,276 字节、首尾帧 959,479 字节（376 秒）。
+- **版本说明**：本版内容原本准备以 1.30.2 发布，但那个号已被一次不完整的发布占用（只含 768P，缺参考图上传；且发布后 main 被重置，那批代码不在 main 上）。为不覆盖已发布版本的资产，以 1.30.3 发出。
+
 ### 1.30.1 — 三个「已经实现但没有入口」的功能补上界面
 
 - **画布整图导出 / 导入接上界面**：后端两条路由与 `buildCanvasBundle` / `parseCanvasBundle` 早就写好了，客户端一直是零引用。现在画布顶栏全屏按钮右侧两个入口。导出把文档连同每个图片资产的字节打成一个 JSON；片段是**引用而非拷贝**（捎上整段视频会让体积不可用），所以带片段的画布一定会产生 `unresolved`，提示按 `asset` / `video` 分开计数告诉用户换台机器后哪部分打不开。导入**总是创建新画布**、分配新 id，绝不覆盖已有画布。

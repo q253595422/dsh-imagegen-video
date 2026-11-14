@@ -54,13 +54,13 @@ check "locale/zh.json 有 meta"    "grep -q 'meta' '$PKG/locale/zh.json'"
 check "client.js 含导出画布按钮"  "grep -q '导出画布' '$PKG/lib/client.js'"
 check "client.js 含工作流开关"    "grep -q 'workflowReuse' '$PKG/lib/client.js'"
 check "client.js 含整图导入接口"  "grep -q 'canvas/bundle/import' '$PKG/lib/client.js'"
-# 1.30.2：768P 档位与 MiniMax-H3 特化。档位串同时出现在服务端（submitBody 的
+# 1.30.3：768P 档位与 MiniMax-H3 特化。档位串同时出现在服务端（submitBody 的
 # size）与客户端（面板按钮），两处都要有，否则修好一半。
 # 用双引号匹配：tsdown 产物里的字符串字面量是双引号，写成单引号会永远不命中。
 check "index.js 含 768P 档位"     "grep -q '\"768P\"' '$PKG/lib/index.js'"
 check "index.js 含 MiniMax 特化"  "grep -q 'minimax\\[-_.\]' '$PKG/lib/index.js'"
 check "client.js 含 768P 档位"    "grep -q '\"768P\"' '$PKG/lib/client.js'"
-# 1.30.2：参考图上传腿。少了这条，图生视频会退回「只发 data URL 被上游拒」。
+# 1.30.3：参考图上传腿。少了这条，图生视频会退回「只发 data URL 被上游拒」。
 check "index.js 含上传端点"       "grep -q '/media/uploads' '$PKG/lib/index.js'"
 check "index.js 含上传失败域"     "grep -q 'video-upload-failed' '$PKG/lib/index.js'"
 
