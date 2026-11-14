@@ -5603,7 +5603,7 @@ await check('D3 sidebar entry mounts inside desktop and unknown sidebar shells, 
   const fallbackTabs = jsdomDocument.querySelector('[data-dsh-imagegen-session-tabs]')
   assert.ok(fallbackTabs !== null, 'the switcher mounts even when no shell New Session action is reachable')
   assert.equal(fallbackTabs.parentElement, fallbackPane, 'the sidebar column itself becomes the seat')
-  assert.equal(fallbackTabs, fallbackPane.firstElementChild, 'the fallback switcher is the column first child')
+  assert.equal(fallbackTabs.nextElementSibling, jsdomDocument.querySelector('.regionArea'), 'the fallback switcher sits directly above the block that carries the workspace seat')
   assert.equal(fallbackTabs.getAttribute('data-dsh-imagegen-tabs-seat'), 'top', 'the fallback seat is marked so only that seat is restyled')
   assert.equal(jsdomDocument.querySelector('.brandButton').style.display, '', 'the brand button is not mistaken for the new-session control')
   assert.equal(jsdomDocument.querySelector('.brandButton').hasAttribute('data-dsh-imagegen-new-session'), false, 'no action marker lands on an unrelated control')
@@ -5630,6 +5630,134 @@ await check('D3 sidebar entry mounts inside desktop and unknown sidebar shells, 
   assert.equal(warning.includes('SESSION-TITLE-MUST-NOT-BE-LOGGED'), false, 'the probe never dumps sidebar content')
   disposeUnmounted()
   jsdomWindow.setTimeout = realSetTimeout
+})
+
+// ------------------- D3d sidebar entry in another plugin's sidebar (ds-bot)
+await check('D3d the switcher still mounts when another plugin hides the shell action AND the brand row (ds-bot team view)', async () => {
+  const { JSDOM } = await import('jsdom')
+  // The shape ds-bot's team view leaves behind (ds-bot 0.3.6, read from
+  // node_modules/ds-bot/client.js):
+  //   [class*="_newSession"], [class*="_logoRow"]  →  display: none !important
+  //   shadow("sidebar.workspaces", …)              →  its own team column inside
+  // The shell still renders both blocks, so the slot anchors stay in the DOM
+  // and DISPLAY: CONTENTS on a hidden ancestor — every `seatOf()` answer is
+  // filtered out by `isVisible`, and `newSessionButton()` answers undefined.
+  // Before this check the entry resolved no root at all, never mounted, and the
+  // studio was unreachable for as long as the user stayed in that view.
+  const dom = new JSDOM(
+    '<!doctype html><html lang="zh-CN"><head></head><body>'
+    // The window frame every desktop shell wraps the sidebar in: a flex ROW
+    // holding the sidebar column beside the conversation surface. It contains
+    // the very same slot anchors as the column, because the whole sidebar is
+    // inside it — which is why "the outermost box that holds an anchor" seated
+    // the switcher in this row instead of in the column. jsdom does not compute
+    // `display` from a stylesheet here, so the axis is set inline, the same way
+    // the sidebar column carries `flex-direction: column`.
+    + '<div class="appFrame" style="display: flex; flex-direction: row">'
+    + '<div class="shellRoot" style="display: flex; flex-direction: column">'
+    // macOS chrome strip: the traffic-light band. The switcher must NOT land
+    // here — inserting at the column's first child would paint over it.
+    + '<div class="topStrip"><button class="toggle" aria-label="收起侧边栏">toggle</button></div>'
+    + '<div class="logoRow" style="display: none">'
+    + '<span data-slot="sidebar.brand.mark" style="display: contents"></span>'
+    + '<span data-slot="sidebar.brand.name" style="display: contents"></span>'
+    + '</div>'
+    + '<div class="newSessionRow" style="display: none">'
+    + '<div data-slot="sidebar.session.action" style="display: contents"></div>'
+    + '<button class="newSession" aria-label="New session">New session</button>'
+    + '</div>'
+    + '<div class="scrollRegion"><div class="scrollArea" data-sidebar-scrollport="">'
+    + '<div class="regionArea"><div data-slot="sidebar.workspaces" style="display: contents">'
+    // The team column ds-bot shadows the workspace slot with.
+    + '<div class="bt-side"><span>团团</span><div class="bt-side-roster"></div></div>'
+    + '</div></div>'
+    + '</div></div>'
+    + '<div class="footArea">'
+    + '<div class="footerActions"><div data-slot="sidebar.footer.action" style="display: contents"></div></div>'
+    + '<div class="settingsArea"><div data-slot="sidebar.settings" style="display: contents"></div></div>'
+    + '</div>'
+    + '</div>'
+    + '<main class="conversation">conversation</main>'
+    + '</div>'
+    + '</body></html>',
+    { pretendToBeVisual: true },
+  )
+  const botWindow = dom.window
+  const botDocument = botWindow.document
+  const botRoot = botDocument.querySelector('.shellRoot')
+  // No root at all before the fix — assert the precondition, not the fix.
+  const resolveIn = (win, doc) => {
+    const realSetTimeout = win.setTimeout.bind(win)
+    win.setTimeout = (fn, delay, ...args) => realSetTimeout(fn, Math.min(Number(delay) || 0, 20), ...args)
+    return { realSetTimeout }
+  }
+  const { realSetTimeout: botRealSetTimeout } = resolveIn(botWindow, botDocument)
+  const botWarnings = []
+  const sandbox = {
+    window: botWindow,
+    document: botDocument,
+    MutationObserver: botWindow.MutationObserver,
+    HTMLElement: botWindow.HTMLElement,
+    getComputedStyle: botWindow.getComputedStyle.bind(botWindow),
+    console: { log: () => {}, warn: (...a) => { botWarnings.push(a.join(' ')) }, error: () => {}, info: () => {}, debug: () => {} },
+  }
+  const stubs = {
+    'react': {
+      Fragment: 'Fragment',
+      createContext: (value) => ({ Provider: () => null, Consumer: () => null, _currentValue: value }),
+      createElement: () => null,
+      forwardRef: (render) => ({ $$typeof: Symbol.for('react.forward_ref'), render }),
+      memo: (fn) => ({ $$typeof: Symbol.for('react.memo'), type: fn }),
+      useContext: () => ({}),
+      useMemo: (factory) => factory(),
+      useRef: () => ({ current: null }),
+      useState: (initial) => [typeof initial === 'function' ? initial() : initial, () => {}],
+    },
+    'react/jsx-runtime': { jsx: () => null, jsxs: () => null },
+    'react-dom': {},
+    'react-dom/client': { createRoot: () => ({ render: () => {}, unmount: () => {} }) },
+    '@deepseek-ai/dsh-client-ui-primitives': {},
+    '@deepseek-ai/dsh-client-store': { createSnapshotStore: (initial) => ({
+      getSnapshot: () => initial, set: () => {}, update: () => {}, subscribe: () => () => {},
+    }) },
+  }
+  let botHandoff
+  sandbox.window.__ModuleLoader__ = { load: (h) => { botHandoff = h } }
+  const botSource = readFileSync(new URL('../lib/client.js', import.meta.url), 'utf8')
+  vm.runInNewContext(botSource, sandbox, { filename: 'client.js' })
+  const botExports = botHandoff.factory((spec) => {
+    const stub = stubs[spec]
+    if (stub === undefined) throw new Error(`unexpected require: ${spec}`)
+    return stub
+  })
+  const { findSidebarRoot: botFindRoot, mount: botMount } = botExports.sidebarEntryTestHooks
+
+  assert.equal(botFindRoot(), botRoot, 'the column is still resolvable when the action row and the brand row are both hidden')
+  const botCalls = []
+  const botController = {
+    getSnapshot: () => ({ panelOpen: false }),
+    open: () => { botCalls.push('open') },
+    close: () => { botCalls.push('close') },
+    subscribe: () => () => {},
+  }
+  const disposeBot = botMount(botController, 'Session', 'Back to the current conversation', 'Image', 'Open the image studio')
+  const botTabs = botDocument.querySelector('[data-dsh-imagegen-session-tabs]')
+  assert.ok(botTabs !== null, 'the switcher mounts in another plugin\'s sidebar instead of disappearing')
+  assert.equal(botTabs.parentElement, botRoot, 'it seats in the column, not inside a scrolling grid wrapper')
+  assert.notEqual(botTabs.parentElement, botDocument.querySelector('.scrollArea'), 'never in the scroll area (#35)')
+  assert.equal(botTabs.nextElementSibling, botDocument.querySelector('.scrollRegion'), 'it sits directly above the block that carries the workspace seat')
+  assert.notEqual(botTabs, botRoot.firstElementChild, 'it never lands on the macOS traffic-light strip')
+  assert.equal(botTabs.previousElementSibling?.className, 'newSessionRow', 'the hidden action row stays above the switcher, so the order is unchanged when it comes back')
+  assert.equal(botTabs.getAttribute('data-dsh-imagegen-tabs-seat'), 'top', 'the fallback seat is marked for the stylesheet')
+  // The whole point: 生图 is reachable from that view.
+  botTabs.querySelector('[data-dsh-imagegen-tab="image"]').dispatchEvent(new botWindow.MouseEvent('click', { bubbles: true }))
+  assert.equal(botCalls.join(','), 'open', 'the tab opens the studio from the other plugin\'s sidebar')
+  assert.ok(botDocument.querySelector('[data-dsh-imagegen-history-host]') !== null, 'the history surface seats too')
+  await new Promise(resolve => setTimeout(resolve, 60))
+  assert.equal(botWarnings.length, 0, `a mounted entry in a foreign sidebar logs nothing: ${botWarnings.join(' | ')}`)
+  disposeBot()
+  assert.equal(botDocument.querySelector('[data-dsh-imagegen-session-tabs]') === null, true, 'the disposer takes the tabs back out')
+  botWindow.setTimeout = botRealSetTimeout
 })
 
 // ------------------------------- D3b sidebar entry in the 0.2.2 nested shell

@@ -264,6 +264,41 @@ function newSessionBlock(root: HTMLElement, action: HTMLElement): HTMLElement | 
 }
 
 /**
+ * True for the sidebar column: the box that stacks vertically AND paints the
+ * shell's own chrome around the seat.
+ *
+ * The seat is reached through single-purpose wrappers in 0.2.2
+ * (`scrollRegion > scrollArea > regionArea`), and every one of them also
+ * contains the brand row and the foot, so "contains the chrome" alone answers
+ * with the innermost wrapper and seats the switcher in a scrolling grid cell
+ * (#35). What separates the column from those wrappers is the axis it stacks
+ * on: the column is a vertical stack (flex column) that owns the chrome, while
+ * the wrappers between it and the seat are either horizontal rows or grids.
+ *
+ * The chrome has to be counted from the anchors, NOT from their visibility:
+ * another plugin can hide the brand row and the New Session row outright
+ * (`ds-bot`'s team view does), and a visibility test would then call the
+ * column "a plain wrapper" and walk past it to `body`.
+ *
+ * Nor can it be "the outermost box that holds an anchor": the app frame that
+ * contains the whole window also contains the sidebar, so that test walks past
+ * the column and seats the switcher in the window's own flex row.
+ */
+function ownsColumnChrome(candidate: HTMLElement): boolean {
+  if (!isVisible(candidate)) return false
+  // The wrappers between the column and the seat own no chrome anchor at all.
+  if (!holdsAnyAnchor(candidate)) return false
+  // A horizontal row or a grid does not stack the shell's chrome; the column does.
+  const style = getComputedStyle(candidate)
+  return style.display === 'flex' || style.display === 'block' || style.display === 'inline-flex'
+}
+
+/** True while the box owns at least one of the shell's own chrome anchors. */
+function holdsAnyAnchor(node: HTMLElement): boolean {
+  return node.querySelector(`${BRAND_MARK_ANCHOR}, ${BRAND_NAME_ANCHOR}, ${FOOT_ACTION_ANCHOR}, ${SETTINGS_ANCHOR}`) !== null
+}
+
+/**
  * The shell's own sidebar-collapse control.
  *
  * On macOS the shell puts it in a window-chrome strip above the brand row (so it
@@ -383,6 +418,23 @@ function sidebarRoot(): HTMLElement | undefined {
         if (isVisible(candidate) && candidate.contains(brand)) return candidate
       }
     }
+    // Neither the action nor the brand row is reachable: another plugin owns
+    // the whole shell chrome above this seat and hid both (`ds-bot`'s team view
+    // does exactly that — `[class*="_newSession"]` and `[class*="_logoRow"]`
+    // are `display: none !important`, and it shadows `sidebar.workspaces` with
+    // its own team column). The column itself is still there, still painted,
+    // and it still contains this seat — which is all the switcher needs. Without
+    // this branch the entry resolved no root at all and never mounted, so the
+    // studio became unreachable for as long as the user stayed in the other
+    // plugin's view.
+    for (let candidate: HTMLElement | null = region; candidate !== null; candidate = candidate.parentElement) {
+      if (candidate === document.body) break
+      // `regionArea`/`scrollArea` wrappers are single-purpose boxes; the column
+      // is the one that also owns the shell's other chrome. Stopping at the
+      // first ancestor of the seat that is NOT one of its own single-child
+      // wrappers keeps the switcher from landing inside the scrolling grid.
+      if (ownsColumnChrome(candidate)) return candidate
+    }
   }
 
   const brand = seatOf(BRAND_MARK_ANCHOR) ?? seatOf(BRAND_NAME_ANCHOR)
@@ -395,6 +447,16 @@ function sidebarRoot(): HTMLElement | undefined {
 
   const pane = document.querySelector<HTMLElement>(LEGACY_SIDEBAR_PANE)
   if (pane !== null && isVisible(pane)) return pane
+
+  // Last resort: the column that holds the workspace seat, even when every
+  // anchor above answers nothing because a foreign plugin hid the shell's own
+  // chrome. A shell that has neither an anchor nor the action still has a
+  // column around its region.
+  if (region !== undefined) {
+    for (let candidate: HTMLElement | null = region.parentElement; candidate !== null && candidate !== document.body; candidate = candidate.parentElement) {
+      if (ownsColumnChrome(candidate)) return candidate
+    }
+  }
 
   return newSessionButton()?.parentElement ?? undefined
 }
@@ -562,12 +624,12 @@ function actionSeat(root: HTMLElement, button: HTMLElement): HTMLElement {
  * visible there — the switcher only moves between the conversation and the
  * studio, it never creates a session.
  *
- * Fallback seat: the first child of the sidebar column. Another plugin may take
- * over the shell's sidebar and hide that button (`display: none !important`, the
- * way ds-bot's team view does), which used to leave this switcher with no seat
- * at all and therefore no way into the panel. The column itself always paints,
- * so the switcher becomes its first child instead of vanishing. The marker lets
- * the stylesheet restyle only this seat.
+ * Fallback seat: directly above the block that carries the workspace seat.
+ * Another plugin may take over the shell's sidebar, hide that button and hide
+ * the brand row with it (`display: none !important`, the way ds-bot's team view
+ * does). The column itself always paints, and the workspace block always
+ * exists, so the switcher goes above that block instead of vanishing. The
+ * marker lets the stylesheet restyle only this seat.
  */
 function placeTabs(
   root: HTMLElement,
@@ -602,7 +664,15 @@ function placeTabs(
   existing?.remove()
   const tabs = createTabs(controller, sessionLabel, sessionTooltip, imageLabel, imageTooltip)
   tabs.dataset[FALLBACK_SEAT_ATTR] = FALLBACK_SEAT_VALUE
-  root.insertBefore(tabs, root.firstChild)
+  // NOT the column's first child: on macOS that is the window-chrome strip that
+  // clears the traffic lights, and the switcher would be painted over the
+  // drag surface. The block that carries the workspace seat is what the studio
+  // paints over anyway, so the switcher goes directly above it — the same
+  // place it takes when the shell's own action row is visible.
+  const anchor = regionSeat(root)
+  const above = anchor === undefined ? undefined : blockHolding(root, anchor)
+  if (above !== undefined) root.insertBefore(tabs, above)
+  else root.append(tabs)
   return tabs
 }
 
