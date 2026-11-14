@@ -1410,6 +1410,63 @@
   filter: drop-shadow(0 0 6px color-mix(in srgb, var(--dsw-alias-brand-primary) 45%, transparent));
 }
 
+/* ---------------------------------------- connections: 角色（role）
+ *
+ * 只有被显式标过 role 的连线才会挂上下面这些类。没标角色的连线（含全部
+ * 老画布）走的还是 `.connectionPath` + 渐变 + 默认箭头，外观与加角色之前
+ * 完全一致——这层样式不许反向影响它。
+ *
+ * 三种角色的读法：首帧/尾帧是决定成片的那两张，画粗、并在「进门的那一端」
+ * 加实心点；参考图只是素材、不占帧位，所以虚线 + 降透明度。
+ */
+
+.connectionRoleFirst {
+  stroke-width: 2.8;
+  stroke-opacity: 1;
+}
+
+.connectionRoleLast {
+  stroke-width: 2.8;
+  stroke-opacity: 1;
+}
+
+.connectionRoleReference {
+  stroke-width: 2;
+  stroke-opacity: 0.42;
+  stroke-dasharray: 7 6;
+}
+
+/* 选中态写在角色之后：两者同时挂在一条路径上，同特异度时后者生效，
+ * 所以选中的首帧线仍然比未选中的首帧线更亮。 */
+.connectionPath.connectionActive {
+  stroke-width: 3.2;
+  stroke-opacity: 1;
+}
+
+/* 「进门那一端」的实心点：箭头讲方向，圆点讲这一端被当成帧用。 */
+.connectionRoleDot {
+  fill: var(--dsw-alias-brand-primary);
+  stroke: var(--dsw-alias-bg-layer-1);
+  stroke-width: 1.6;
+  pointer-events: none;
+}
+
+/* 中点徽标：不接指针，否则从线上划过去会断掉连线的悬停/拖拽。
+ * 底色用 `paint-order: stroke` 描在字形外围——宽度由字体决定，不用测量。 */
+.connectionRoleBadgeText {
+  fill: var(--dsw-alias-label-secondary);
+  stroke: var(--dsw-alias-bg-layer-1);
+  stroke-width: 3.5;
+  stroke-linejoin: round;
+  paint-order: stroke fill;
+  font-family: var(--dsw-font-family);
+  font-size: 11px;
+  font-weight: 500;
+  letter-spacing: 0.02em;
+  pointer-events: none;
+  user-select: none;
+}
+
 .connectionPreview {
   fill: none;
   stroke: var(--dsw-alias-brand-primary);
@@ -1461,6 +1518,13 @@
 .connectionFlowActive {
   stroke: var(--dsw-alias-brand-primary);
   opacity: 0.85;
+}
+
+/* 参考图这条边只是素材，流光也弱下去：两条边并排时，能靠「哪条在动」一眼
+ * 分出决定成片的那条和供料的那条。 */
+.connectionFlowMuted {
+  opacity: 0.12;
+  stroke-dasharray: 14 116;
 }
 
 @keyframes connectionFlow {
