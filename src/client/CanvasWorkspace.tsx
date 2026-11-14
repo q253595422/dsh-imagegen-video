@@ -909,6 +909,11 @@ export function CanvasWorkspace(props: CanvasWorkspaceProps): React.JSX.Element 
       // 的话，上面这行 setDocument 会被当成一次**用户编辑**，650 ms 后原样再
       // 写一遍服务端（revision 只多不少，白写一次），写失败还会弹一条用户
       // 根本没动手却看到的保存错误。
+      //
+      // 先记快照再换文档：接受是一次真改动，用户按 Cmd+Z 必须**先撤掉它**。
+      // 顺序反了会把「接受之后」的文档压进历史栈，撤销于是变成什么都不做。
+      // 只在成功后记：失败时文档没变，多一条空转的历史项会让下一次撤销失灵。
+      pushHistoryRef.current()
       documentRef.current = saved
       syncedRef.current = JSON.stringify(saved)
       setDocument(saved)
@@ -1075,6 +1080,18 @@ export function CanvasWorkspace(props: CanvasWorkspaceProps): React.JSX.Element 
    */
   const flushPendingRef = useRef<() => Promise<void>>(async () => {})
   /**
+   * 把「这次改动要能撤销」转给下面的 `beginHistory`。
+   *
+   * 同样的定义顺序问题：`acceptProposal` 在上方，`beginHistory` 在一千行
+   * 以下。接受提案是**一次真正的画布改动**，用户按 Cmd+Z 时必须先撤掉它，
+   * 而不是连着他上一次手动编辑一起撤。改造前它根本没进撤销栈：撤销弹掉的是
+   * 更早那次编辑，而接受的结果被一起带走——用户看到的是一次「撤掉了两件事」。
+   *
+   * 只在**写成功之后**记快照：失败时文档没变，多一条空转的历史项会让下一次
+   * 撤销什么都不做；`beginHistory` 自己也比对了最后一条快照，重复调用无害。
+   */
+  const pushHistoryRef = useRef<() => void>(() => {})
+  /**
    * Where every canvas-owned overlay mounts. See the host div in the render:
    * portals to <body> are invisible while the canvas is fullscreen, because the
    * promoted element is in the top layer and paints above the document.
@@ -1150,6 +1167,16 @@ export function CanvasWorkspace(props: CanvasWorkspaceProps): React.JSX.Element 
     setHistoryVersion(version => version + 1)
     return snapshot
   }, [])
+
+  // 接上给 `acceptProposal` 用的那一条（见上方 `pushHistoryRef`）。赋值放在
+  // `beginHistory` 定义之后、任何一次渲染的回调触发之前——子组件与外层
+  // 事件都在挂载后才跑，ref 读到的一定是这一份。
+  pushHistoryRef.current = () => {
+    beginHistory()
+    // `beginHistory` 把**当前**文档压栈，而撤销要回到的是「接受之前」。
+    // 所以先压栈再覆盖文档的顺序在 acceptProposal 里已经保证了：那里在
+    // setDocument(saved) 之前调用本函数。这里只负责压栈。
+  }
 
   const commitSnapshot = useCallback((snapshot: string | null): void => {
     if (snapshot === null) return

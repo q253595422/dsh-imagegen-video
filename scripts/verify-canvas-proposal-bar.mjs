@@ -380,6 +380,33 @@ if (!componentSource.includes('data-stacked')) {
   }
 }
 
+// 8b. 接受提案要进撤销栈，而且快照要在换文档**之前**记。
+//
+// 接受是一次真正的画布改动。改造前它根本没进历史栈：用户接受后发现不对、
+// 按 Cmd+Z，弹掉的是他上一次手动编辑，接受的结果被一起带走——一次撤销撤掉了
+// 两件事，而更早的那笔工作永远回不来。
+//
+// 顺序同样是重点：`beginHistory` 压的是**当前**文档，必须先压再 `setDocument`，
+// 否则压进去的是「接受之后」的文档，撤销于是什么都不做。
+{
+  const body = workspaceSource.slice(workspaceSource.indexOf('const acceptProposal'))
+  const pushAt = body.indexOf('pushHistoryRef.current()')
+  const replaceAt = body.indexOf('documentRef.current = saved')
+  if (pushAt < 0) {
+    failures.push('acceptProposal 没有记撤销快照——用户按 Cmd+Z 会连上一次手动编辑一起撤掉')
+  } else if (replaceAt < 0) {
+    failures.push('找不到 acceptProposal 里替换本地文档的那一行，这条断言的前提已失效')
+  } else if (pushAt > replaceAt) {
+    failures.push('acceptProposal 里记快照排在换文档之后——压进历史栈的是接受后的文档，撤销会变成空操作')
+  }
+  // 失败路径不能记快照：文档没变，多一条空转的历史项会让下一次撤销失灵。
+  const pushCount = body.split('pushHistoryRef.current()').length - 1
+  if (pushCount !== 1) failures.push(`acceptProposal 里记了 ${pushCount} 次撤销快照，应当只在成功路径记一次`)
+  if (!/pushHistoryRef\.current\s*=\s*\(\)\s*=>/.test(workspaceSource)) {
+    failures.push('pushHistoryRef 没有被接到 beginHistory——那次快照永远不会发生')
+  }
+}
+
 session.close()
 // 必须显式关掉浏览器：只关 WebSocket 与 HTTP server 的话 Chrome 进程还活着，
 // 它的事件循环会让这个脚本永远退不出去。
