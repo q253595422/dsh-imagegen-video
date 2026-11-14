@@ -52,6 +52,20 @@ function shortExcerpt(text: string): string {
   return collapsed.length > EXCERPT_MAX ? `${collapsed.slice(0, EXCERPT_MAX)}…` : collapsed
 }
 
+/**
+ * The media type alone: `text/html; charset=utf-8` → `text/html`.
+ *
+ * WHY not the whole header: the parameters are noise to a user reading one
+ * sentence, and the headline complaint in #48 was a message that read like
+ * machine output. `charset=` in particular made the video suite's "no markup
+ * is pasted into the message" assertion fail on a message that contained no
+ * markup at all — a guard tripping on the wrong thing is nearly as costly as
+ * the bug it guards, so the sentence keeps only what identifies the body.
+ */
+function mediaTypeOf(contentType: string): string {
+  return contentType.split(';')[0]?.trim() ?? ''
+}
+
 /** The address as the user can act on it: no query, no credentials. */
 export function requestAddress(url: string): string {
   try {
@@ -82,7 +96,8 @@ export interface NonJsonDiagnosisInput {
  */
 export function diagnoseNonJsonBody(input: NonJsonDiagnosisInput): string {
   const shape = bodyShapeOf(input.text, input.contentType)
-  const type = input.contentType.trim() === '' ? '未声明 Content-Type' : input.contentType.trim()
+  const mediaType = mediaTypeOf(input.contentType)
+  const type = mediaType === '' ? '未声明 Content-Type' : mediaType
   const address = requestAddress(input.url)
   const head = `${input.label}返回了非 JSON 响应（HTTP ${input.status}, ${type}）：${address}`
 

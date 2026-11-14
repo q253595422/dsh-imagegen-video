@@ -9,6 +9,7 @@ Attribution for third-party code is in [NOTICE](./NOTICE).
 
 - **非 JSON 响应不再是一句「（HTTP 404）」（#48）**：此前生图链路上 9 处 `JSON.parse` 失败分支各自拼一句 `上游接口返回了非 JSON 响应（HTTP 404）`，既不带请求地址，也没说返回的其实是一页 HTML。事后形态最难查：网关把 `/models` 挂在根上（「检测模型」绿灯），而 `/images/generations` 只在 `/v1` 下（每次生成必失败），用户拿不到任何自查线索。现在报错形如 `上游接口返回了非 JSON 响应（HTTP 404, text/html）：https://host/images/generations —— 返回的是网页而不是接口响应，通常说明渠道的 API 地址少了路径（例如末尾缺 /v1）或填成了站点首页`。空响应体、二进制响应体、纯文本各有对应的一句，纯文本给截断摘要而不是把整页 markup 贴进来。
 - **同一句判定只写一处**：新增 `src/upstream-diagnosis.ts`（`bodyShapeOf` / `diagnoseNonJsonBody` / `requestAddress`）。视频引擎 1.30.x 已经单独修过这个 HTML 判定并留了内联正则——同一件事第二份实现，正是这次三条链路各说各话的原因。现在视频引擎的 `readJsonWithText` 也改用共享判定。
+- **括号里只报媒体类型，不带参数**：最初把整条 `Content-Type` 写进句子，于是消息里出现 `text/html; charset=utf-8`。视频套件 `V1m`（「返回的 markup 不得被贴进消息」）因此在一条**根本不含 markup** 的消息上变红——守门抓错了对象，和它要防的 bug 一样费事。现在 `mediaTypeOf()` 只留 `text/html`；消息短一截，`charset=` 也不再把读者的注意力从「你的地址填错了」上带走。
 - **错误码一律不变**（仍 `upstream-invalid` / `video-submit-failed` / `video-upload-failed` 等）：这次改的是那句话，不是失败分类，面板与诊断按码分组的行为不动。**不做 `/v1` 自动回退**——那会静默改写用户填的地址语义，且无真网关可验；把地址与原因说清楚比替用户猜更诚实。
 - **Magpie 网关能发现图像模型了（#47）**：Magpie 的 `/v1/models` 只返回聊天模型，图像条目在 `?kind=image` 后面（老版本认 `X-Magpie-Drawers: 1` 头）。旧实现「第一个返回记录的候选就赢」，普通列表必然先命中，于是「检测模型」绿灯、图像模型恒为 0。现在图像发现自己走一遍带 `kind=image` 的候选并带头，且兼容 Magpie 两种私有形状（`kind:"image"`、嵌套 `modalities.output:["image"]`）。
 - **回退有两条，不止一条**：`?kind=image` 报错或 404 要退回普通候选；**作用域列表返回 200 但里面认不出图像模型**（网关静默忽略未知参数）时也要回退再合并。少了后一条，结果就是「检测成功但一个模型都没有」。聊天模型列表不受影响：不请求 `kind=image`、不带 Magpie 头。
