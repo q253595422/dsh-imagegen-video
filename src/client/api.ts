@@ -3,7 +3,7 @@
  * data access path the panel uses — plain fetch, same origin.
  */
 
-import { MODEL_API, CANVAS_API, CANVAS_SKILL_API, CODE_RENDER_API, CONVERSATION_IMAGE_API, DATA_FOLDER_API, DIAGNOSTICS_API, GALLERY_API, GENERATE_API, HISTORY_API, LISTING_COPY_API, ECOMMERCE_LINK_API, PROMPT_ENHANCE_API, SIGNALS_API, STORAGE_API, TASK_API, TEMPLATE_FAVORITES_API, TEMPLATES_API, UPDATE_API, VIDEO_API, type CanvasAssetRef, type CanvasDocument, type CanvasFilePreview, type CanvasLayerPlan, type CanvasSkillCatalog, type CanvasSkillConfigApplyRequest, type CanvasSkillConfigApplyResult, type CanvasSkillConfigSaveRequest, type CanvasSkillConfigSaveResult, type CanvasSkillInstallRequest, type CanvasSkillInstallResult, type CanvasSkillLibrary, type CanvasSkillRemoveResult, type CanvasSkillRunRequest, type CanvasSkillTask, type CanvasSummary, type CodeRenderResponse, type CodeTarget, type DiagnosticEntry, type GenerateRequest, type GenerateResult, type ListingCopyRequest, type ListingCopyResult, type EcommerceLinkResult, type GenerationTask, type GenerationTaskSummary, type HistoryEntry, type HistoryEntryInput, type PptRunRequest, type PptRuntimeStatus, type SignalReportSummary, type TemplateCase, type TemplateFavorite, type TemplateListResult, type TemplateRefreshResult, type TemplateSample, type UpdateInfo, type VideoDirectorPlan, type VideoGenerateRequest, type VideoGenerateResult, type VideoHistoryEntry, type VideoTask, type VideoTaskSummary } from '../protocol.ts'
+import { MODEL_API, CANVAS_API, CANVAS_SKILL_API, CODE_RENDER_API, CONVERSATION_IMAGE_API, DATA_FOLDER_API, DIAGNOSTICS_API, GALLERY_API, GENERATE_API, HISTORY_API, LISTING_COPY_API, ECOMMERCE_LINK_API, PROMPT_ENHANCE_API, SIGNALS_API, STORAGE_API, TASK_API, TEMPLATE_FAVORITES_API, TEMPLATES_API, UPDATE_API, VIDEO_API, type CanvasAssetRef, type CanvasDocument, type CanvasFilePreview, type CanvasLayerPlan, type CanvasSkillCatalog, type CanvasSkillConfigApplyRequest, type CanvasSkillConfigApplyResult, type CanvasSkillConfigSaveRequest, type CanvasSkillConfigSaveResult, type CanvasSkillInstallRequest, type CanvasSkillInstallResult, type CanvasSkillLibrary, type CanvasSkillRemoveResult, type CanvasSkillRunRequest, type CanvasSkillTask, type CanvasProposal, type CanvasSummary, type CodeRenderResponse, type CodeTarget, type DiagnosticEntry, type GenerateRequest, type GenerateResult, type ListingCopyRequest, type ListingCopyResult, type EcommerceLinkResult, type GenerationTask, type GenerationTaskSummary, type HistoryEntry, type HistoryEntryInput, type PptRunRequest, type PptRuntimeStatus, type SignalReportSummary, type TemplateCase, type TemplateFavorite, type TemplateListResult, type TemplateRefreshResult, type TemplateSample, type UpdateInfo, type VideoDirectorPlan, type VideoGenerateRequest, type VideoGenerateResult, type VideoHistoryEntry, type VideoTask, type VideoTaskSummary } from '../protocol.ts'
 // The bundle contract lives in its own module rather than in `protocol.ts`,
 // because the host is the one that builds and parses bundles and only the
 // client's two thin wrappers need the constants. Importing it directly keeps
@@ -510,6 +510,24 @@ export class ImageGenApi {
   async canvasSave(document: CanvasDocument, expectedRevision: number): Promise<CanvasDocument> {
     const response = await fetch(CANVAS_API.save, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ document, expectedRevision }) })
     return (await readEnvelope<{ ok: true; document: CanvasDocument }>(response)).document
+  }
+
+  /** Pending Agent changes on one canvas, oldest first. */
+  async canvasProposals(canvasId: string): Promise<CanvasProposal[]> {
+    const response = await fetch(CANVAS_API.proposals, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ canvasId }) })
+    return (await readEnvelope<{ ok: true; proposals: CanvasProposal[] }>(response)).proposals
+  }
+
+  /** Accept one pending change. Fails with a readable code when it went stale. */
+  async canvasProposalAccept(canvasId: string, proposalId: string): Promise<CanvasDocument> {
+    const response = await fetch(CANVAS_API.proposalAccept, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ canvasId, proposalId }) })
+    return (await readEnvelope<{ ok: true; document: CanvasDocument }>(response)).document
+  }
+
+  /** Discard one pending change, or every one when proposalId is omitted. */
+  async canvasProposalDiscard(canvasId: string, proposalId?: string): Promise<number> {
+    const response = await fetch(CANVAS_API.proposalDiscard, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ canvasId, proposalId }) })
+    return (await readEnvelope<{ ok: true; discarded: number }>(response)).discarded
   }
 
   async canvasRemove(id: string): Promise<CanvasSummary[]> {

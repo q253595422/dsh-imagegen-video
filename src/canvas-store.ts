@@ -240,7 +240,7 @@ function mimeOf(file: string): string {
   }
 }
 
-function safeId(value: string): string {
+export function safeId(value: string): string {
   const id = value.replace(/[^a-zA-Z0-9_-]/g, '-')
   return id === '' ? randomUUID() : id
 }
@@ -263,14 +263,14 @@ async function ensureDirs(): Promise<void> {
   await fs.mkdir(path.join(imageDataRoot(), 'canvas', 'assets'), { recursive: true })
 }
 
-async function writeJsonAtomic(file: string, value: unknown): Promise<void> {
+export async function writeJsonAtomic(file: string, value: unknown): Promise<void> {
   await fs.mkdir(path.dirname(file), { recursive: true })
   const temp = `${file}.tmp-${process.pid}-${randomUUID()}`
   await fs.writeFile(temp, `${JSON.stringify(value)}\n`, 'utf8')
   await fs.rename(temp, file)
 }
 
-async function readJson(file: string): Promise<unknown | undefined> {
+export async function readJson(file: string): Promise<unknown | undefined> {
   try { return JSON.parse(await fs.readFile(file, 'utf8')) as unknown } catch { return undefined }
 }
 
@@ -556,7 +556,7 @@ const REMOVED_BACKGROUND_FALLBACK: Record<string, CanvasDocument['background']> 
 }
 
 /** Accept either the v2 document or a legacy v1 payload and return v2. */
-function coerceDocument(value: unknown): CanvasDocument | undefined {
+export function coerceDocument(value: unknown): CanvasDocument | undefined {
   if (value === null || typeof value !== 'object') return undefined
   const document = value as Record<string, unknown>
   if (document.version === 1) {

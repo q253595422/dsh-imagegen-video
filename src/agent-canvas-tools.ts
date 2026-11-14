@@ -8,15 +8,29 @@
  * canvas. Anything that submits a task belongs to `agent-image-tools.ts` /
  * `agent-video-tools.ts`, where the user asked for it explicitly.
  *
- * Every write goes through `CanvasStore.save(document, expectedRevision)`, so
- * the same optimistic lock that protects the canvas window protects the Agent:
- * a stale read fails with `CanvasConflictError` instead of overwriting edits the
- * user made in the meantime.
+ * ## Writes are proposals
+ *
+ * A write tool does NOT touch the user's canvas. It records what it would
+ * change in `canvas/proposals/` and reports back; the canvas window shows the
+ * pending changes and the user accepts or discards them. The reason is not
+ * politeness: the Agent runs while the user is away, and an edit that only
+ * needs an optimistic lock is still an edit the user never agreed to.
+ *
+ * `DSH_CANVAS_AGENT_AUTO_APPLY=1` opts out and restores the old direct-write
+ * behaviour, for scripted use where nobody is there to press accept. It is an
+ * environment variable rather than a tool argument on purpose: a model must
+ * not be able to grant itself the permission.
+ *
+ * When a proposal is accepted, the client applies it through
+ * `CanvasStore.save(document, expectedRevision)` — the same optimistic lock
+ * that protects the canvas window, so an edit the user made in between fails
+ * loudly instead of being overwritten.
  */
 
 import type { Context } from '@deepseek-ai/cordis'
 import { defineTool } from '@deepseek-ai/dsh-tools'
 import { canvasStore, CanvasConflictError } from './canvas-store.ts'
+import { ProposalStore, proposalStore, type CanvasProposalChange } from './canvas-proposal-store.ts'
 import { CONNECTION_ROLES, roleOf, withRole } from './client/canvas/connection-role.ts'
 import type {
   CanvasConnectionRole,
@@ -88,8 +102,11 @@ interface AgentCanvasView {
   revision: number
   nodes: AgentNode[]
   connections: AgentEdge[]
-  /** Actionable note when the graph cannot run as laid out. */
+  /** Actionable note when the graph cannot run as laid out, or that this is a
+   *  pending proposal rather than a saved change. */
   note?: string
+  /** Present when the call produced a proposal; the canvas shows it for accept. */
+  proposalId?: string
 }
 
 const nodeSchema = {
@@ -133,6 +150,8 @@ const canvasViewSchema = {
       },
     },
     note: { type: 'string' },
+    /** Set when this call produced a pending change instead of saving one. */
+    proposalId: { type: 'string' },
   },
 } as const
 
@@ -184,6 +203,78 @@ function noteFor(nodes: readonly CanvasNode[], connections: readonly { fromNodeI
     parts.push(`${orphans.length} node(s) are not wired to anything: ${orphans.map(node => node.id).join(', ')}.`)
   }
   return parts.length === 0 ? undefined : parts.join(' ')
+}
+
+/**
+ * 直接写回的兼容开关。
+ *
+ * 默认**关**：Agent 的改动一律先成提案。把它设成 1 的只有一种场景——脚本
+ * 或 CI 里跑、没有人能点「接受」。刻意不给工具参数：模型不该能自己给自己
+ * 发这个权限。
+ */
+const AUTO_APPLY = process.env.DSH_CANVAS_AGENT_AUTO_APPLY === '1'
+
+/**
+ * 算出草稿相对原稿的差异。没有差异返回 `undefined`。
+ *
+ * 比的是节点 id 集合与每个节点的**内容**，不是引用：`edit` 可能重建了整个
+ * 数组，只要内容一样就不该算一次改动。排序稳定，免得同一份内容因为数组顺序
+ * 不同被判成变了。
+ */
+function diffOf(before: CanvasDocument, after: CanvasDocument): CanvasProposalChange | undefined {
+  const sameNode = (left: CanvasNode, right: CanvasNode): boolean => JSON.stringify(left) === JSON.stringify(right)
+
+  const beforeById = new Map(before.nodes.map(node => [node.id, node]))
+  const afterById = new Map(after.nodes.map(node => [node.id, node]))
+
+  const addedNodes = after.nodes.filter(node => !beforeById.has(node.id))
+  const updatedNodes = after.nodes.filter(node => {
+    const original = beforeById.get(node.id)
+    return original !== undefined && !sameNode(original, node)
+  })
+  const removedNodeIds = before.nodes.filter(node => !afterById.has(node.id)).map(node => node.id)
+
+  const beforeEdges = new Map(before.connections.map(edge => [edge.id, edge]))
+  const afterEdges = new Map(after.connections.map(edge => [edge.id, edge]))
+  const addedConnections = after.connections.filter(edge => !beforeEdges.has(edge.id))
+  const removedConnectionIds = before.connections.filter(edge => !afterEdges.has(edge.id)).map(edge => edge.id)
+
+  const title = before.title === after.title ? undefined : after.title
+
+  if (addedNodes.length === 0 && updatedNodes.length === 0 && removedNodeIds.length === 0
+    && addedConnections.length === 0 && removedConnectionIds.length === 0 && title === undefined) {
+    return undefined
+  }
+  return {
+    ...addedNodes.length === 0 ? {} : { addedNodes },
+    ...updatedNodes.length === 0 ? {} : { updatedNodes },
+    ...removedNodeIds.length === 0 ? {} : { removedNodeIds },
+    ...addedConnections.length === 0 ? {} : { addedConnections },
+    ...removedConnectionIds.length === 0 ? {} : { removedConnectionIds },
+    ...title === undefined ? {} : { title },
+  }
+}
+
+/**
+ * 一句话告诉用户这条提案要做什么，例如「添加 2 个节点、连接 1 条线」。
+ *
+ * 这是用户在提案条上唯一会读的东西，所以写具体的数量与最常见的动作，
+ * 不写「Agent 修改了画布」这种等于没说的句子。
+ */
+function summarise(tool: string, change: CanvasProposalChange): string {
+  const parts: string[] = []
+  const added = change.addedNodes?.length ?? 0
+  const updated = change.updatedNodes?.length ?? 0
+  const removed = change.removedNodeIds?.length ?? 0
+  const wired = change.addedConnections?.length ?? 0
+  const unwired = change.removedConnectionIds?.length ?? 0
+  if (added > 0) parts.push(`添加 ${added} 个节点`)
+  if (updated > 0) parts.push(`修改 ${updated} 个节点`)
+  if (removed > 0) parts.push(`删除 ${removed} 个节点`)
+  if (wired > 0) parts.push(`连接 ${wired} 条线`)
+  if (unwired > 0) parts.push(`断开 ${unwired} 条线`)
+  if (change.title !== undefined) parts.push(`改名为「${change.title}」`)
+  return parts.length === 0 ? tool : parts.join('、')
 }
 
 function viewOf(document: CanvasDocument): AgentCanvasView {
@@ -267,15 +358,74 @@ export function registerAgentCanvasTools(ctx: Context, config: () => { enabled: 
     return document
   }
 
-  /** Read, mutate, save under the revision that was read. */
-  const mutate = async (canvasId: string, edit: (document: CanvasDocument) => void): Promise<AgentCanvasView> => {
+  /**
+   * 让写操作在「真实文档 + 本画布已有提案」之上跑，然后把它带来的变化记成
+   * 一条新提案。
+   *
+   * 为什么要先叠加已有提案：Agent 一次任务里通常连着几步——先
+   * `add_canvas_node`，再 `connect_canvas_nodes`。第二步要连的那个节点 id
+   * 还不存在于真实文档里（它只在提案里），不叠加就会报「节点不存在」，一整
+   * 串操作只有第一步能成立。
+   *
+   * `edit` 拿到的是一份**可以随便改的草稿**：它改完，这里比对出差异。只要
+   * 差异为空（模型让它改的字段本来就是这个值），就不产生提案——用户不该被
+   * 一条「什么都没改」的待确认项打断。
+   */
+  const mutate = async (canvasId: string, tool: string, edit: (document: CanvasDocument) => void): Promise<AgentCanvasView> => {
     const document = await load(canvasId)
-    const revision = document.revision
-    edit(document)
-    try {
-      return viewOf(await canvasStore.save(document, revision))
-    } catch (error) {
-      rethrowConflict(error)
+    const pending = await proposalStore.list(canvasId)
+
+    // 草稿：真实文档 → 应用已有提案 → 交给 edit。
+    let draft: CanvasDocument = document
+    for (const proposal of pending) {
+      const applied = ProposalStore.apply(draft, proposal.change)
+      // 已有提案里有一步已经对不上当前文档（例如用户手改过）：不能拿错误的
+      // 起点继续算，否则新提案会把那条坏掉的差异固化下来。
+      if (applied === undefined) {
+        throw new Error('A pending change on this canvas no longer applies to the current document (the canvas was edited after it was proposed). Ask the user to accept or discard the pending changes first, then retry.')
+      }
+      draft = applied
+    }
+
+    // 关键：先**深拷贝**一份再交给 edit。
+    //
+    // `edit` 是原地改的（`document.nodes.push(...)`），如果 `before` 和它指向
+    // 同一个对象，改完之后两边一模一样，`diffOf` 永远算出「没有差异」——工具
+    // 报告成功、实际上什么都没记下来。这个错很安静：类型对、测试跑得动、界面
+    // 上只是那条提案不出现。
+    const before = structuredClone(draft)
+    edit(draft)
+    const change = diffOf(before, draft)
+
+    if (AUTO_APPLY) {
+      // 兼容通道：没有人值守的脚本场景，直接写回，行为与改造前一致。
+      try {
+        return viewOf(await canvasStore.save(draft, document.revision))
+      } catch (error) {
+        rethrowConflict(error)
+      }
+    }
+
+    if (change === undefined) {
+      // 没有差异：返回当前视图，并说明这次调用没有产生待确认项，免得模型
+      // 以为自己在等一个永远不会出现的确认。
+      return { ...viewOf(draft), note: 'This call changed nothing, so there is no pending change to accept.' }
+    }
+
+    const proposal = await proposalStore.add({
+      canvasId,
+      tool,
+      summary: summarise(tool, change),
+      // 钉住真实文档的 revision，不是草稿的：用户接受时要比对的是他手上
+      // 那份文档，而草稿只存在于这次调用里。
+      baseRevision: document.revision,
+      change,
+    })
+
+    return {
+      ...viewOf(draft),
+      note: `This is a PROPOSAL (${pending.length + 1} pending on this canvas), not a change to the user's canvas yet. Tell the user what you proposed and that they need to accept it in the canvas window. Nothing was saved.`,
+      proposalId: proposal.id,
     }
   }
 
@@ -367,7 +517,7 @@ export function registerAgentCanvasTools(ctx: Context, config: () => { enabled: 
       },
       async execute(args) {
         ensureEnabled()
-        return await mutate(args.canvas_id, document => {
+        return await mutate(args.canvas_id, 'add_canvas_node', document => {
           const node = createNode(args as Record<string, unknown>)
           if (document.nodes.some(existing => existing.id === node.id)) throw new Error(`A node with id ${node.id} already exists on this canvas.`)
           document.nodes.push(node)
@@ -393,7 +543,7 @@ export function registerAgentCanvasTools(ctx: Context, config: () => { enabled: 
       },
       async execute(args) {
         ensureEnabled()
-        return await mutate(args.canvas_id, document => {
+        return await mutate(args.canvas_id, 'update_canvas_node', document => {
           const node = document.nodes.find(candidate => candidate.id === args.node_id)
           if (node === undefined) throw new Error(`Node ${args.node_id} was not found. Read the canvas again for current ids.`)
           if (typeof args.title === 'string') node.title = args.title
@@ -420,7 +570,7 @@ export function registerAgentCanvasTools(ctx: Context, config: () => { enabled: 
       },
       async execute(args) {
         ensureEnabled()
-        return await mutate(args.canvas_id, document => {
+        return await mutate(args.canvas_id, 'remove_canvas_node', document => {
           const before = document.nodes.length
           document.nodes = document.nodes.filter(node => node.id !== args.node_id)
           if (document.nodes.length === before) throw new Error(`Node ${args.node_id} was not found. Read the canvas again for current ids.`)
@@ -448,7 +598,7 @@ export function registerAgentCanvasTools(ctx: Context, config: () => { enabled: 
       async execute(args) {
         ensureEnabled()
         if (args.from_node_id === args.to_node_id) throw new Error('A node cannot connect to itself.')
-        return await mutate(args.canvas_id, document => {
+        return await mutate(args.canvas_id, 'connect_canvas_nodes', document => {
           const ids = new Set(document.nodes.map(node => node.id))
           if (!ids.has(args.from_node_id)) throw new Error(`Node ${args.from_node_id} was not found.`)
           if (!ids.has(args.to_node_id)) throw new Error(`Node ${args.to_node_id} was not found.`)
@@ -476,7 +626,7 @@ export function registerAgentCanvasTools(ctx: Context, config: () => { enabled: 
       },
       async execute(args) {
         ensureEnabled()
-        return await mutate(args.canvas_id, document => {
+        return await mutate(args.canvas_id, 'disconnect_canvas_nodes', document => {
           document.connections = document.connections.filter(edge => !(edge.fromNodeId === args.from_node_id && edge.toNodeId === args.to_node_id))
         })
       },

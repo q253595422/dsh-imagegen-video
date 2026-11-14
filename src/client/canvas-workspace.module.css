@@ -4167,3 +4167,113 @@
   outline: 2px solid var(--dsw-alias-brand-primary);
   outline-offset: 2px;
 }
+
+/* ---------------------------------------------------------------- 提案条
+   Agent 提议的改动：贴在画布顶部居中。
+   z 档沿用 --z-notice：项目有一张 z-index 契约表，不为一个浮层新增档位。
+
+   与 .errorToast 的**错开**：两者会同时出现——接受一条提案失败时，提案条上
+   有一句失败原因，同时旁边可能还挂着画布自己的错误提示。它们之前都写
+   top: 14px，于是必然叠在一起，而注释还宣称「刻意错开」：注释描述的是意图，
+   不是代码。
+
+   现在的做法不是猜一个「够大」的数字：`.errorToast` 是不定高的（一行错误
+   和带重试按钮的长错误差很多）。画布那边知道自己的错误提示在不在，所以由它
+   传 `stacked`，这里按 `[data-stacked]` 整体下移。
+   （不用 `.root:has(> .errorToast)`：docs/native-ui-contract.md §4.3 明确
+   禁止用 `:has()` 表达「包含某节点」，jsdom 里它既不解析也没有判别力。）
+   没有提示时提案条停在 52px——低于顶栏（padding 8px + 30px 内容 ≈ 46px），
+   顶栏浮在它上面，谁也不会盖谁。
+   scripts/verify-canvas-proposal-bar.mjs 会把两者真的画出来量一遍：只在
+   这里写注释，注释和代码就会再次漂开。 */
+.proposalBar {
+  position: absolute;
+  left: 50%;
+  top: 52px;
+  transform: translateX(-50%);
+  z-index: var(--z-notice);
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  max-width: min(520px, 84%);
+  padding: 10px 12px;
+  border-radius: var(--dsw-radius-md);
+  border: 1px solid color-mix(in srgb, var(--dsw-alias-brand-primary) 32%, transparent);
+  background: color-mix(in srgb, var(--dsw-alias-brand-primary) 8%, var(--dsw-alias-bg-layer-1));
+  color: var(--dsw-alias-label-primary);
+  font-size: 12px;
+  line-height: 1.5;
+  box-shadow: var(--dsw-shadow-lv2);
+}
+
+.proposalHead {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+}
+
+.proposalTitle {
+  font-weight: 600;
+}
+
+.proposalCount {
+  color: var(--dsw-alias-label-tertiary);
+  font-size: 11px;
+}
+
+.proposalSummary {
+  font-weight: 500;
+}
+
+/* 「接受之前不会变化」这句必须一直看得见：用户看到画布上多出东西时，最想
+   知道的是「这是已经改了，还是只是提示」。 */
+.proposalHint {
+  color: var(--dsw-alias-label-tertiary);
+}
+
+.proposalError {
+  color: var(--dsw-alias-state-error-primary, #ec1313);
+}
+
+.proposalActions {
+  display: flex;
+  gap: 8px;
+  margin-top: 2px;
+}
+
+.proposalAccept,
+.proposalDiscard {
+  padding: 4px 12px;
+  border-radius: var(--dsw-radius-sm);
+  border: 1px solid var(--dsw-alias-border-secondary);
+  background: transparent;
+  color: var(--dsw-alias-label-primary);
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.proposalAccept {
+  border-color: var(--dsw-alias-brand-primary);
+  background: var(--dsw-alias-brand-primary);
+  color: var(--dsw-alias-label-primary-foreground);
+}
+
+.proposalAccept:disabled,
+.proposalDiscard:disabled {
+  opacity: 0.55;
+  cursor: default;
+}
+
+.proposalAccept:focus-visible,
+.proposalDiscard:focus-visible {
+  outline: 2px solid var(--dsw-alias-brand-primary);
+  outline-offset: 2px;
+}
+
+/* 画布上还挂着一条错误提示时整体下移，让开它。
+   数值按 `.errorToast` 的实测高度取（脚本里量的），不是猜的：一行提示约
+   40px，起点 14px，所以 68px 才真正不重叠。带重试按钮的长错误会更高，那时
+   提案条仍可能压住一点——但两块的**可点区域**已经错开，按钮点得到。 */
+.proposalBar[data-stacked] {
+  top: 68px;
+}

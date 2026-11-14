@@ -376,6 +376,7 @@ export { recipeFor, recipeNames } from './skill-config-recipes.ts'
 export { createClipComposer, findTool, localVideoToolDirs } from './clip-compose.ts'
 export { isZipDirectory, readZipDirectory, readZipEntry } from './zip.ts'
 export { canvasStore, isBlockedFileName, fileKindOf, MAX_CANVAS_FILE_BYTES, mimeFromFileName, safeFileName } from './canvas-store.ts'
+export { ProposalStore, proposalStore } from './canvas-proposal-store.ts'
 export { checkForUpdate, clearUpdateCache, compareVersions, CURRENT_VERSION, DESKTOP_PROFILE, installUpdate, isInstallableTarballUrl, ManualUpdateRequiredError, PACKAGE_NAME, profileFromProcess, updateInstallTarget, type UpdateHostContext, type UpdateInstallTarget } from './updater.ts'
 export { clearDiagnostics, listDiagnostics, networkErrorFields, redactDiagnosticText, recordDiagnostic, DIAGNOSTIC_MAX, type DiagnosticEntry } from './diagnostics-store.ts'
 

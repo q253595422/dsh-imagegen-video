@@ -402,6 +402,40 @@ export const GALLERY_API = {
 } as const
 
 /** Host-persisted infinite canvas projects and their content-addressed assets. */
+/**
+ * 一条待确认的 Agent 画布改动。
+ *
+ * 定义在协议层而不是存储层：客户端要拿它渲染提案条，而存储层 import 了
+ * node:fs，客户端不能碰。
+ */
+export interface CanvasProposalChange {
+  /** 新建的节点（整份，接受时直接并入）。 */
+  addedNodes?: CanvasNode[]
+  /** 被改的节点，整份改后的节点。 */
+  updatedNodes?: CanvasNode[]
+  /** 被删的节点 id。 */
+  removedNodeIds?: string[]
+  /** 新建的连线。 */
+  addedConnections?: CanvasConnection[]
+  /** 被删的连线 id。 */
+  removedConnectionIds?: string[]
+  /** 画布标题改成什么。 */
+  title?: string
+}
+
+export interface CanvasProposal {
+  id: string
+  canvasId: string
+  /** 产出这条提案的工具名，界面按它说明来源。 */
+  tool: string
+  /** 一句话说明，直接给用户看，例如「添加 2 个节点、连接 1 条线」。 */
+  summary: string
+  /** 起草时的文档 revision。仅供参考：接受时不拿它当门槛（多条提案共享它）。 */
+  baseRevision: number
+  createdAt: number
+  change: CanvasProposalChange
+}
+
 export const CANVAS_API = {
   list: '/api/dsh-imagegen/canvas/list',
   create: '/api/dsh-imagegen/canvas/create',
@@ -418,6 +452,13 @@ export const CANVAS_API = {
   fileUpload: '/api/dsh-imagegen/canvas/file/upload',
   /** Structured content preview (text / table / office / archive) of one asset. */
   filePreview: '/api/dsh-imagegen/canvas/file/preview',
+  /**
+   * 待确认的 Agent 改动。Agent 的写工具只产出提案，用户在这里看到并接受或
+   * 丢弃；三者都不碰画布本身，只有 accept 会经由 canvas/save 的乐观锁写入。
+   */
+  proposals: '/api/dsh-imagegen/canvas/proposals',
+  proposalAccept: '/api/dsh-imagegen/canvas/proposal/accept',
+  proposalDiscard: '/api/dsh-imagegen/canvas/proposal/discard',
 } as const
 
 /** Same-origin route family for canvas skills (catalog + run control). */

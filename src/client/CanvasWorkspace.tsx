@@ -12,7 +12,7 @@ import {
   GitBranch, Keyboard, Layers, Magnet, Map as MapIcon, Maximize, Maximize2, MousePointer2, Palette, Pencil, Plus, Redo2, Scissors, SendHorizonal, Share2, Sparkles, Star,
   Shrink, SquareDashedMousePointer, Trash2, Type, Undo2, Upload, Video, Wand2, Wallpaper,
 } from 'lucide-react'
-import type { CanvasAnnotation, CanvasAssetRef, CanvasConnection, CanvasConnectionRole, CanvasDocument, CanvasFileKind, CanvasLayerInfo, CanvasLayerPlanItem, CanvasNode, CanvasRect, CanvasStoryboard, CanvasVideoRef, CanvasSkillConfigApplyResult, CanvasSkillConfigField, CanvasSkillConfigSaveResult, CanvasSkillConfigStep, CanvasSkillConfigView, CanvasSkillDescriptor, CanvasSkillLibrary, CanvasSkillOutput, CanvasSkillRunRequest, CanvasSkillTask, CanvasSketchStroke, GenerateRequest, GenerationTask, HistoryEntry, VideoGenerateRequest, VideoTaskSummary, VideoMode, VideoResolution } from '../protocol.ts'
+import type { CanvasAnnotation, CanvasAssetRef, CanvasConnection, CanvasConnectionRole, CanvasDocument, CanvasProposal, CanvasFileKind, CanvasLayerInfo, CanvasLayerPlanItem, CanvasNode, CanvasRect, CanvasStoryboard, CanvasVideoRef, CanvasSkillConfigApplyResult, CanvasSkillConfigField, CanvasSkillConfigSaveResult, CanvasSkillConfigStep, CanvasSkillConfigView, CanvasSkillDescriptor, CanvasSkillLibrary, CanvasSkillOutput, CanvasSkillRunRequest, CanvasSkillTask, CanvasSketchStroke, GenerateRequest, GenerationTask, HistoryEntry, VideoGenerateRequest, VideoTaskSummary, VideoMode, VideoResolution } from '../protocol.ts'
 import type { CanvasBundleUnresolved } from '../canvas-bundle.ts'
 import { describeVideoModel, durationsOf, VIDEO_RESOLUTIONS } from '../video-model-catalog.ts'
 // The stitch order is a SHARED rule: the host builds its ffmpeg concat list with
@@ -63,6 +63,7 @@ import { CanvasContextMenu, type CanvasContextMenuActions, type CanvasContextMen
 import { ImagePicker, readImageSize, SketchBoard } from './canvas/sketch-and-picker.tsx'
 import { RUN_NODE_SIZE, runRectOf, SkillRunCard, type SkillRunTrace } from './canvas/run-card.tsx'
 import { CanvasErrorToast, CanvasNoticeToast, CanvasVideoPreviewOverlay, CanvasWorkflowProgressBar } from './canvas/overlays.tsx'
+import { CanvasProposalBar } from './canvas/proposal-bar.tsx'
 import { BackgroundDockMenu, ImageDockMenu, NodeAddMenu } from './canvas/dock-menus.tsx'
 import {
   annotationAnchor, assetOf, assetToDataUrl, attachedCards, bezierPath, clamp01, clampScale, cloneNodesWithCards, freeColumnX, imageDataUrl, isAnnotationCard, isSketchNode, layerKindLabel, liveAnnotations, newId, nodeAnchor, nodeMetadata, nodeSizeFromRatio, nodesBounds, normalizeConfigNodeSizes, pruneAnnotations, removeNodesAndCards, resizedRect, sizeForAsset, textStyleOf, usableAsset, videoOf,
@@ -531,6 +532,16 @@ export function CanvasWorkspace(props: CanvasWorkspaceProps): React.JSX.Element 
    *  overlay rather than reusing the file one: the file overlay resolves an
    *  asset through the canvas store, which a clip deliberately does not have. */
   const [videoPreviewNodeId, setVideoPreviewNodeId] = useState<string | null>(null)
+  /**
+   * Agent 提议的改动。这些**不是**画布的一部分——它们住在
+   * canvas/proposals/，只有用户点接受才会经 canvasSave 写进文档。
+   *
+   * 轮询而不是推送：提案由宿主侧的 Agent 进程写入，与浏览器之间没有通道。
+   * 5 秒一次、只在画布打开时跑，代价是一次很小的 JSON 请求。
+   */
+  const [proposals, setProposals] = useState<CanvasProposal[]>([])
+  const [proposalsBusy, setProposalsBusy] = useState(false)
+  const [proposalError, setProposalError] = useState<string | null>(null)
   /** Video nodes whose clip the browser refused to load. The canvas stores a
    *  served URL, not bytes, so clearing the video history (or evicting past
    *  VIDEO_HISTORY_MAX) deletes the file under a node that still points at it.
@@ -785,6 +796,103 @@ export function CanvasWorkspace(props: CanvasWorkspaceProps): React.JSX.Element 
   useEffect(() => {
     if (!composerResolutionOptions.includes(composerResolution)) setComposerResolution(composerResolutionOptions[0] ?? '720P')
   }, [composerResolutionOptions, composerResolution])
+  /**
+   * 拉一次提案。失败静默：提案是旁路功能，网络抖一下不该在画布上弹错误，
+   * 也不该让下一次成功的轮询之后还挂着一条旧错误。
+   *
+   * 用 `documentRef` 读当前画布而不是闭包里的 `document`：轮询的回调可能在
+   * 用户切换画布之后才回来，拿闭包会读到他刚离开的那一份。
+   */
+  const refreshProposals = useCallback(async (): Promise<void> => {
+    const canvasId = documentRef.current?.id
+    if (canvasId === undefined) { setProposals([]); return }
+    try {
+      const next = await api.canvasProposals(canvasId)
+      // 再确认一次画布没换：这一段 await 期间用户可能已经点了别的画布。
+      if (documentRef.current?.id !== canvasId) return
+      setProposals(next)
+    } catch { /* 旁路功能，静默 */ }
+  }, [api])
+
+  // 打开画布时拉一次，之后每 5 秒一次。`document?.id` 作为依赖而不是
+  // `document`：拖节点会不停地换 document 对象，用它当依赖会让定时器
+  // 每帧重建。
+  useEffect(() => {
+    const canvasId = document?.id
+    if (canvasId === undefined) { setProposals([]); return }
+    setProposals([])
+    setProposalError(null)
+    void refreshProposals()
+    const timer = window.setInterval(() => { void refreshProposals() }, 5000)
+    return () => { window.clearInterval(timer) }
+  }, [document?.id, refreshProposals])
+
+  /**
+   * 接受一条提案。
+   *
+   * 服务端会在两种情况下拒绝，两种都要说人话：
+   *  - 画布在提议之后被改动过（revision 对不上）→ 让 Agent 重新提议；
+   *  - 提案要引用的节点已经不在 → 同上。
+   * 不要把它们简化成「失败了」——用户需要知道下一步做什么。
+   */
+  const acceptProposal = useCallback(async (proposalId: string): Promise<void> => {
+    const canvasId = documentRef.current?.id
+    if (canvasId === undefined || proposalsBusy) return
+    setProposalsBusy(true); setProposalError(null)
+    try {
+      const saved = await api.canvasProposalAccept(canvasId, proposalId)
+      // 服务端返回的就是落盘后的文档，直接用它换掉本地视图，不再多跑一次读取。
+      //
+      // 但必须同时把 `syncedRef` 推进到这里，并且把保存状态标成 saved：
+      // autosave 的判据是「本地文档 ≠ 最后一次同步成功的内容」，不同步这一笔
+      // 的话，上面这行 setDocument 会被当成一次**用户编辑**，650 ms 后原样再
+      // 写一遍服务端（revision 只多不少，白写一次），写失败还会弹一条用户
+      // 根本没动手却看到的保存错误。
+      documentRef.current = saved
+      syncedRef.current = JSON.stringify(saved)
+      setDocument(saved)
+      setSaveState('saved')
+      setSelectedIds(new Set()); setSelectedConnectionId(null)
+      await refreshProposals()
+    } catch (caught) {
+      const message = caught instanceof Error ? caught.message : String(caught)
+      // 过期是一句具体的指路，其余错误原样显示。
+      setProposalError(message)
+      // 过期之后这条提案已经不可能再被接受，直接从列表里去掉，免得用户反复点。
+      await refreshProposals()
+    } finally {
+      setProposalsBusy(false)
+    }
+  }, [api, proposalsBusy, refreshProposals])
+
+  const discardProposal = useCallback(async (proposalId: string): Promise<void> => {
+    const canvasId = documentRef.current?.id
+    if (canvasId === undefined || proposalsBusy) return
+    setProposalsBusy(true); setProposalError(null)
+    try {
+      await api.canvasProposalDiscard(canvasId, proposalId)
+      await refreshProposals()
+    } catch (caught) {
+      setProposalError(caught instanceof Error ? caught.message : String(caught))
+    } finally {
+      setProposalsBusy(false)
+    }
+  }, [api, proposalsBusy, refreshProposals])
+
+  const discardAllProposals = useCallback(async (): Promise<void> => {
+    const canvasId = documentRef.current?.id
+    if (canvasId === undefined || proposalsBusy) return
+    setProposalsBusy(true); setProposalError(null)
+    try {
+      await api.canvasProposalDiscard(canvasId)
+      await refreshProposals()
+    } catch (caught) {
+      setProposalError(caught instanceof Error ? caught.message : String(caught))
+    } finally {
+      setProposalsBusy(false)
+    }
+  }, [api, proposalsBusy, refreshProposals])
+
   const channelIsConnected = useCallback((channelId: string): boolean => {
     if (connectedChannelIds !== undefined && channelId !== '') return connectedChannelIds.has(channelId)
     return connected
@@ -5138,6 +5246,15 @@ export function CanvasWorkspace(props: CanvasWorkspaceProps): React.JSX.Element 
         behind the canvas no matter how high its z-index. Keeping them inside
         the root means they ride into the top layer with it. */}
     <div ref={overlayHostRef} className={css.overlayHost} data-canvas-overlay-host="" />
+    <CanvasProposalBar
+      proposals={proposals}
+      busy={proposalsBusy}
+      error={proposalError}
+      stacked={error !== null}
+      onAccept={proposalId => { void acceptProposal(proposalId) }}
+      onDiscard={proposalId => { void discardProposal(proposalId) }}
+      onDiscardAll={() => { void discardAllProposals() }}
+    />
     <header className={css.topBar} data-canvas-no-zoom="">
       <Select
         className={css.projectSelect}

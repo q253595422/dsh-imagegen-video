@@ -27,6 +27,7 @@ import { clearVideoHistory, drainVideoPosters, listVideoHistory, readVideoFile, 
 import { appendGallery, appendGalleryVideo, clearGallery, listGallery, listGalleryTrash, purgeGallery, readGalleryImage, readGalleryVideo, removeGallery, restoreGallery, updateGalleryTags } from './gallery-store.ts'
 import { listModels, readModel, saveModel } from './model-store.ts'
 import { baseMime, canvasStore, CanvasConflictError, MAX_CANVAS_FILE_BYTES, mimeFromFileName, safeFileName, type CanvasFileInput, type CanvasImageInput, type CanvasStore } from './canvas-store.ts'
+import { ProposalStore, proposalStore } from './canvas-proposal-store.ts'
 import { buildFilePreview } from './file-preview.ts'
 import { imageDataRoot } from './image-storage-path.ts'
 import { listTemplates, readTemplateImage, refreshTemplates, sampleTemplates } from './templates-store.ts'
@@ -1951,6 +1952,58 @@ export function makeRoutes(deps: ImageGenRoutesDeps): WebRoute[] {
         else writeJson(res, 200, { ok: true, document })
       },
     },
+    // ------------------------------------------------- canvas proposals
+    // 待确认的 Agent 改动。这三个端点都不改画布——list/discard 只动
+    // proposals/ 目录，accept 走下面的 canvas/save，因此同一把乐观锁。
+    {
+      kind: 'exact',
+      path: CANVAS_API.proposals,
+      handler: async (req, res) => {
+        if (!guard(req, res, 'POST')) return
+        const body = await readJsonBody(req)
+        const canvasId = typeof body?.canvasId === 'string' ? body.canvasId.trim() : ''
+        if (canvasId === '') { writeJson(res, 200, { ok: false, code: 'bad-request', message: 'canvas id is required' }); return }
+        writeJson(res, 200, { ok: true, proposals: await proposalStore.list(canvasId) })
+      },
+    },
+    {
+      kind: 'exact',
+      path: CANVAS_API.proposalAccept,
+      handler: async (req, res) => {
+        if (!guard(req, res, 'POST')) return
+        const body = await readJsonBody(req)
+        const proposalId = typeof body?.proposalId === 'string' ? body.proposalId.trim() : ''
+        const canvasId = typeof body?.canvasId === 'string' ? body.canvasId.trim() : ''
+        if (proposalId === '' || canvasId === '') {
+          writeJson(res, 200, { ok: false, code: 'bad-request', message: 'proposalId and canvasId are required' }); return
+        }
+        const result = await proposalStore.acceptOne(canvasId, proposalId)
+        writeJson(res, 200, result.ok ? { ok: true, document: result.document } : { ok: false, code: result.code, message: result.message })
+      },
+    },
+    {
+      kind: 'exact',
+      path: CANVAS_API.proposalDiscard,
+      handler: async (req, res) => {
+        if (!guard(req, res, 'POST')) return
+        const body = await readJsonBody(req)
+        const canvasId = typeof body?.canvasId === 'string' ? body.canvasId.trim() : ''
+        const proposalId = typeof body?.proposalId === 'string' ? body.proposalId.trim() : ''
+        if (canvasId === '') { writeJson(res, 200, { ok: false, code: 'bad-request', message: 'canvas id is required' }); return }
+        if (proposalId === '') {
+          // 全部丢弃
+          const discarded = await proposalStore.clear(canvasId)
+          writeJson(res, 200, { ok: true, discarded })
+          return
+        }
+        const pending = await proposalStore.list(canvasId)
+        if (!pending.some(item => item.id === proposalId)) {
+          writeJson(res, 200, { ok: false, code: 'not-found', message: '该改动已处理或不存在' }); return
+        }
+        await proposalStore.remove(proposalId)
+        writeJson(res, 200, { ok: true, discarded: 1 })
+      },
+    },
     // ------------------------------------------------------ canvas save
     {
       kind: 'exact',
@@ -1980,7 +2033,16 @@ export function makeRoutes(deps: ImageGenRoutesDeps): WebRoute[] {
         const body = await readJsonBody(req)
         const id = typeof body?.id === 'string' ? body.id : ''
         if (id === '') { writeJson(res, 200, { ok: false, code: 'bad-request', message: 'canvas id is required' }); return }
-        try { writeJson(res, 200, { ok: true, projects: await canvas.remove(id) }) }
+        try {
+          const projects = await canvas.remove(id)
+          // 画布没了，它的待确认提案就成了孤儿：界面永远不会再展示它们（提案
+          // 按 canvasId 拉取），文件却一直躺在 canvas/proposals/ 里。用户重新
+          // 建一个同名画布也不会撞上——id 是新的——所以这些文件是纯粹的垃圾，
+          // 只会在磁盘上越积越多。清理放在删除成功之后、用 best effort：提案
+          // 清不掉不该让「画布已删除」变成一次失败。
+          await proposalStore.clear(id).catch(() => 0)
+          writeJson(res, 200, { ok: true, projects })
+        }
         catch (error) { writeJson(res, 200, { ok: false, code: 'canvas-failed', message: messageOf(error) }) }
       },
     },
