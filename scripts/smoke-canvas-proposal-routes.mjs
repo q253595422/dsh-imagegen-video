@@ -8,8 +8,10 @@
  *
  *  - `guard()` 能不能挡住非 POST；
  *  - 画布 id / 提案 id 缺失时是不是明确报错而不是 500；
- *  - **接受时是不是真的先比 revision**（这是「不覆盖用户刚做的编辑」的唯一
- *    实现处，写在路由里而不是 store 里）；
+ *  - **接受时用户的编辑不会被回退**（覆盖用户编辑由 `apply` 的增量语义与
+ *    `save` 的乐观锁分工保证，路由层不拿 baseRevision 当闸门）；
+ *  - **接受一条不会让后面几条作废**（一批提案共享同一个 baseRevision，拿它
+ *    比对会让第二三条全部失效）；
  *  - 接受成功后提案文件有没有被删掉（否则用户点一次「接受」，那条提案还会
  *    一直在条上挂着，再点一次就是重复写入）。
  *
@@ -22,6 +24,7 @@ import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import assert from 'node:assert/strict'
+import { createCheckHarness } from './lib/check-harness.mjs'
 
 // 数据根在 import 时求值，必须先指到临时目录。
 const home = mkdtempSync(join(tmpdir(), 'gal-canvas-proposal-routes-'))
@@ -98,6 +101,15 @@ async function post (path, body) {
   return out.body ?? { ok: false, code: 'no-body', message: 'handler wrote nothing' }
 }
 
+/**
+ * 判定用共享检查器，不手写驱动。
+ *
+ * 好处不是省几行：`check-harness.mjs` 的规则是「截止时间只抓卡死，不是判定」
+ * ——手写驱动会把一个只是慢的检查记成 FAIL 并置退出码，负载高的机器上于是
+ * 同一棵树连着跑先红后绿，绿也就不再说明任何事。这套用例里每条都只是同步
+ * 的文件读写加内存调用，本来快；但那个错一旦复制进来就会跟着下一次复制走。
+ */
+const results = []
 const checks = []
 const check = (name, fn) => checks.push({ name, fn })
 
@@ -302,20 +314,19 @@ check('R9 a proposal from another canvas is invisible to this one', async () => 
 
 // --------------------------------------------------------------- driver
 
-let passed = 0
-let failed = 0
-for (const { name, fn } of checks) {
-  try {
-    await fn()
-    console.log(`PASS  ${name}`)
-    passed += 1
-  } catch (error) {
-    console.error(`FAIL  ${name}: ${error instanceof Error ? error.message : String(error)}`)
-    failed += 1
-  }
+try {
+  const run = createCheckHarness({ results })
+  for (const { name, fn } of checks) await run(name, fn)
+
+  // 结果一次打完：harness 只往 `results` 里压行，打印与汇总归调用方。
+  for (const line of results) (line.startsWith('FAIL') ? console.error : console.log)(line)
+} finally {
+  // 放在 finally：某条检查意外抛出（harness 之外的错误）时也不留临时目录。
+  rmSync(home, { recursive: true, force: true })
 }
 
-rmSync(home, { recursive: true, force: true })
+const failed = results.filter(line => line.startsWith('FAIL')).length
+const passed = results.length - failed
 if (failed > 0) {
   console.error(`\ncanvas proposal routes: ${failed} failed, ${passed} passed`)
   process.exit(1)
