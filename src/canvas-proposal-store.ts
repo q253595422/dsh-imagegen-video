@@ -167,10 +167,20 @@ export class ProposalStore {
 
     const next = ProposalStore.apply(current, proposal.change)
     if (next === undefined) {
+      // 这条提案已经不可能再生效：`apply` 是纯函数，只要文档还缺它点名的
+      // 节点/连线，以后每一次都会失败。留着它没有意义——它是队列的头，而
+      // 界面只让用户点队首那一条，于是后面所有**本来能应用**的提案全被它
+      // 挡住，用户只能自己想到去点「丢弃」才能继续。探针实测过：连点三次
+      // 「接受」都是同一条 proposal-stale，队列一动不动。
+      //
+      // 删掉它而不是只报错：这也是「接受失败」与「接受成功」唯一的区别被
+      // 保留的地方——错误照旧报给用户（他需要知道这条改动没生效），但这把
+      // 卡住队列的钥匙由服务端自己收走。
+      await this.remove(proposal.id)
       return {
         ok: false,
         code: 'proposal-stale',
-        message: '这条改动引用的节点已经不在画布上了（可能被删掉了），无法应用。',
+        message: '这条改动引用的节点已经不在画布上了（可能被删掉了），无法应用。它已从待确认列表里移除，后面的改动可以继续。',
       }
     }
 

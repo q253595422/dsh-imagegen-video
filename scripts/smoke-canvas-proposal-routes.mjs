@@ -269,6 +269,48 @@ check('R5c a proposal whose node was deleted is still refused', async () => {
   assert.equal(accepted.code, 'proposal-stale')
   assert.match(accepted.message, /不在画布上|被删掉/, 'the message must say what happened')
   assert.equal((await canvasStore.read(created.id)).nodes.length, 0)
+  // 报完错还要把自己从队列里拿走：否则它永远卡在队首，而界面只让用户点队首
+  // 那一条——后面本来能应用的提案全被它挡住，用户只能自己想到去点「丢弃」。
+  const after = await post(PROPOSALS, { canvasId: created.id })
+  assert.equal(after.proposals.length, 0, 'a stale proposal is removed so it stops blocking the queue')
+})
+
+check('R5d a stale proposal no longer blocks the ones queued behind it', async () => {
+  // 探针实测过的死锁：过期提案在队首，用户连点三次「接受」都是同一条
+  // proposal-stale，队列一动不动。R5c 钉住了「它会被移除」，这里钉住那个
+  // 移除**换来**的东西：后面的提案立刻能应用。
+  const registered = new Map()
+  registerAgentCanvasTools({ tools: { register (definition) { registered.set(definition.name, definition); return () => {} } } }, () => ({ enabled: true }))
+  const created = await registered.get('create_canvas').execute({ title: '队首卡住' }, {})
+  const before = await canvasStore.read(created.id)
+  const seeded = await canvasStore.save({
+    ...before,
+    nodes: [{ id: 'doomed', type: 'text', title: '会被删掉', x: 0, y: 0, width: 200, height: 80 }],
+  }, before.revision)
+
+  // 第 1 条：改那个即将被删的节点。第 2 条：加一个新节点（本身没问题）。
+  await registered.get('update_canvas_node').execute({ canvas_id: created.id, node_id: 'doomed', title: '改过的' }, {})
+  await registered.get('add_canvas_node').execute({ canvas_id: created.id, type: 'text', title: '后来的' }, {})
+
+  // 用户删掉 doomed，第 1 条于是永远对不上。
+  await canvasStore.save({ ...seeded, nodes: [] }, seeded.revision)
+
+  const queue = (await post(PROPOSALS, { canvasId: created.id })).proposals
+  assert.equal(queue.length, 2)
+  assert.equal(queue[0].tool, 'update_canvas_node', 'the stale one is at the head')
+
+  const refused = await post(ACCEPT, { canvasId: created.id, proposalId: queue[0].id })
+  assert.equal(refused.ok, false)
+  assert.equal(refused.code, 'proposal-stale')
+
+  // 队列已经往前走了：第 2 条现在能接受，并且真的写进去了。
+  const rest = (await post(PROPOSALS, { canvasId: created.id })).proposals
+  assert.equal(rest.length, 1, 'the stale head is gone')
+  const accepted = await post(ACCEPT, { canvasId: created.id, proposalId: rest[0].id })
+  assert.equal(accepted.ok, true, `the proposal behind it must apply: ${JSON.stringify(accepted)}`)
+  const final = await canvasStore.read(created.id)
+  assert.equal(final.nodes.length, 1, 'the later proposal landed')
+  assert.equal(final.nodes[0].title, '后来的')
 })
 
 check('R6 a proposal cannot be accepted onto another canvas', async () => {
