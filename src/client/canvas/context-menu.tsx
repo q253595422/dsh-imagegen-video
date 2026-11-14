@@ -15,17 +15,18 @@
 
 import type { ReactNode } from 'react'
 import { tt } from '../helpers.ts'
-import type { CanvasDocument, CanvasNode, CanvasAssetRef, CanvasConnection, CanvasConnectionRole } from '../../protocol.ts'
+import type { CanvasDocument, CanvasNode, CanvasAssetRef, CanvasConnection, CanvasConnectionRole, CanvasGroup } from '../../protocol.ts'
 import { CONNECTION_ROLE_LABELS, CONNECTION_ROLES, roleOf } from './connection-role.ts'
 import type { Point } from './geometry.ts'
 import { ToolbarIcon, type ToolbarIconName } from './dock-controls.tsx'
 import css from '../canvas-workspace.module.css'
 
-/** 右键菜单开在哪：某个节点、某条连线，或者空白处。 */
+/** 右键菜单开在哪：某个节点、某条连线、某个分组框，或者空白处。 */
 export type CanvasContextMenuTarget =
   | { type: 'canvas'; screen: Point; world: Point }
   | { type: 'node'; screen: Point; nodeId: string }
   | { type: 'connection'; screen: Point; connectionId: string }
+  | { type: 'group'; screen: Point; groupId: string }
 
 /** 双击空白处弹出的「新建」菜单。 */
 export interface CanvasCreateMenuTarget {
@@ -41,6 +42,10 @@ export interface CanvasContextMenuState {
   nodeById: Map<string, CanvasNode>
   /** 右键菜单要读某条连线当前的用途。 */
   connectionById: Map<string, CanvasConnection>
+  /** 右键分组框时要读它的名字与成员。 */
+  groupById: Map<string, CanvasGroup>
+  /** 空白处右键是否给「成组」：不足两个节点时这个动作没有意义。 */
+  selectedCount: number
   fileUploadRef: { current: { click: () => void } | null }
   assetOf: (node: CanvasNode) => CanvasAssetRef | undefined
   videoOf: (node: CanvasNode) => { url: string } | undefined
@@ -66,6 +71,12 @@ export interface CanvasContextMenuActions {
   setCastTarget: (value: string | null) => void
   /** 设置连线用途；`'input'` 即「清除用途」（不写字段）。 */
   setConnectionRole: (connectionId: string, role: CanvasConnectionRole) => void
+  /** 把当前选中的节点圈成一个新组；不足两个成员时调用方自己会拒绝。 */
+  createGroup: () => void
+  /** 双击组标题、或菜单里选「重命名组」。 */
+  renameGroup: (groupId: string) => void
+  /** 解散一个组：成员节点原地不动，只是不再被圈着。 */
+  ungroup: (groupId: string) => void
   setPolishNode: (value: { screen: Point; nodeId: string } | null) => void
   setNotice: (message: string) => void
   openImageNode: (node: CanvasNode) => void
@@ -152,7 +163,21 @@ if (contextMenu !== null) {
         A.setSelectedConnectionId(null)
       },
     })
+  } else if (contextMenu.type === 'group') {
+    // 分组自己的两项。组名不进菜单：名字可能很长，而菜单是窄的一列；
+    // 名字就写在框上，用户的视线已经在那一带了。
+    const group = S.groupById.get(contextMenu.groupId)
+    if (group !== undefined) {
+      items.push({ label: tt('canvas.group.rename'), icon: 'text', action: () => A.renameGroup(group.id) })
+      items.push({ label: tt('canvas.group.ungroup'), icon: 'layers', action: () => A.ungroup(group.id), danger: true })
+    }
   } else {
+    // 不足两个节点时不给「成组」：一个节点的组和没成组看不出区别，却多出
+    // 一个要管理的对象。这里只由数量决定，是否已组过由调用方的 createGroup
+    // 自己处理（withGroup 会把成员从旧组里摘出来）。
+    if (S.selectedCount >= 2) {
+      items.push({ label: tt('canvas.group.create'), icon: 'layers', action: A.createGroup })
+    }
     items.push({ label: tt('canvas.addImage'), icon: 'image', action: () => A.setPickerOpen(true) })
     items.push({ label: tt('canvas.addTextNode'), icon: 'text', action: () => A.placeNewNode(S.createTextNode(contextMenu.world)) })
     items.push({ label: tt('canvas.addSketchNode'), icon: 'sketch', action: () => A.placeNewNode(S.createSketchNode(contextMenu.world)) })

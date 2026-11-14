@@ -4050,3 +4050,120 @@
   .dock::-webkit-scrollbar { display: none; }
   .dockItem, .dockDivider { flex: none; }
 }
+
+/* ------------------------------------------------------------ groups
+ *
+ * 分组框。它和连线层一样挂在 `.world` 里（世界坐标，跟着视口缩放），所以
+ * 这里的尺寸一律是世界像素，不要按屏幕像素去调。
+ *
+ * 为什么填充必须压到 4%：这一层在 `.flowRoot` 之后绘制，也就是盖在节点
+ * **上面**。它不是给节点垫底的背景，而是覆在图片上的一层薄色；再浓一点点，
+ * 用户照片的整体色偏就能看出来，而他又找不到关掉它的开关。4% 是「看得出
+ * 这块被圈起来了、认不出图片颜色变了」的量级。
+ *
+ * 为什么不给框体任何 z-index：`.world` 里的层按 DOM 顺序叠，框画在连线
+ * 之后就会盖住线的中段。留着默认顺序，接线的调用方把 GroupLayer 放在
+ * ConnectionLayer 前面即可，不需要再往 z-index 表中加一档。
+ */
+
+.groupLayer {
+  position: absolute;
+  left: 0;
+  top: 0;
+  /* 框体不吃指针：它盖在节点上，一旦拦截，框内节点的拖拽、画布平移和框选
+     就全被吞掉——而这些恰恰是成组之后最常用的三个动作。只有标题条单独
+     恢复 auto。 */
+  pointer-events: none;
+}
+
+.groupFrame {
+  position: absolute;
+  border: 1.5px dashed color-mix(in srgb, var(--dsw-alias-brand-primary) 42%, transparent);
+  background: color-mix(in srgb, var(--dsw-alias-brand-primary) 4%, transparent);
+  border-radius: var(--dsw-radius-lg);
+  pointer-events: none;
+  /* 描边跟着圆角走，不然虚线在四个角上会画到框外。 */
+  box-sizing: border-box;
+}
+
+/* 选中/悬停的组：描边实线化并提亮。虚线→实线比单纯加粗更容易在缩小的
+   画布上一眼分辨（缩到 50% 时虚线已经糊成灰线了）。 */
+.groupFrameActive {
+  border-style: solid;
+  border-color: color-mix(in srgb, var(--dsw-alias-brand-primary) 78%, transparent);
+  background: color-mix(in srgb, var(--dsw-alias-brand-primary) 7%, transparent);
+}
+
+/* 标题条：压在框的上边线上（translateY(-50%)）。放框内会盖住内容——框里的
+   每一寸都可能是节点；框外那 20px 留白本来就是空的，正好用。 */
+.groupTitleBar {
+  position: absolute;
+  left: 8px;
+  top: 0;
+  transform: translateY(-50%);
+  display: inline-flex;
+  align-items: baseline;
+  gap: 6px;
+  max-width: calc(100% - 16px);
+  padding: 2px 8px;
+  border-radius: var(--dsw-radius-sm);
+  border: 1px solid color-mix(in srgb, var(--dsw-alias-brand-primary) 28%, transparent);
+  background: var(--dsw-alias-bg-layer-1);
+  /* 整层都是 none，这里必须单独恢复：标题条是框上唯一能点到的地方，
+     右键菜单和重命名全靠它。 */
+  pointer-events: auto;
+  cursor: pointer;
+  user-select: none;
+}
+
+.groupTitleText {
+  font-family: var(--dsw-font-family);
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--dsw-alias-label-primary);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* 成员数比组名弱一档：它是注解，不是标签，抢读会让「组 3」和「5 个节点」
+   看起来同等重要。 */
+.groupCount {
+  flex: none;
+  font-family: var(--dsw-font-family);
+  font-size: 11px;
+  color: var(--dsw-alias-label-tertiary);
+  white-space: nowrap;
+}
+
+/* 组名输入框：挂在 `.world` 里，所以坐标是世界坐标、跟着画布一起缩放。
+ *
+ * 为什么不用 `.titleInput`：那一个宽 240px 且不带定位，它是画布标题栏里的
+ * 内联输入框。直接借过来需要在这里一条条覆盖 position/width/max-width，
+ * 覆盖得比新写一节还长，而两者的共同点只剩「是个输入框」。
+ *
+ * `transform-origin` 与 `.world` 对齐（左上），否则缩放到 50% 时输入框会从
+ * 组标题那里飘开。字号不小于 12px：画布缩到 50% 时字会变成 6px，再小就
+ * 认不出自己在改什么。 */
+.groupRenameInput {
+  position: absolute;
+  transform-origin: 0 0;
+  min-width: 96px;
+  max-width: 240px;
+  padding: 2px 6px;
+  border-radius: var(--dsw-radius-sm);
+  border: 1px solid var(--dsw-alias-brand-primary);
+  background: var(--dsw-alias-bg-layer-1);
+  color: var(--dsw-alias-label-primary);
+  font-family: var(--dsw-font-family);
+  font-size: 12px;
+  font-weight: 600;
+  outline: none;
+}
+
+/* 与 `.titleInput` 同一个理由：常驻品牌色描边 + `outline: none` 之后，
+   键盘焦点在这里看不见，补一圈只对键盘生效的环。 */
+.groupRenameInput:focus-visible {
+  outline: 2px solid var(--dsw-alias-brand-primary);
+  outline-offset: 2px;
+}

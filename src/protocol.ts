@@ -1807,6 +1807,28 @@ export interface CanvasConnection {
   role?: CanvasConnectionRole
 }
 
+/**
+ * A named box the user draws around a set of nodes.
+ *
+ * WHY a top-level array and not a `groupId` on each node: a group is a thing the
+ * user names and can act on as a whole ("ungroup", later "run this group"), and
+ * membership has to be readable in one place for the frame to be drawn without
+ * walking every node. It also keeps `CanvasNode` unchanged, so every canvas
+ * written before this feature loads byte-for-byte as it was.
+ *
+ * WHY `nodeIds` rather than nesting nodes: the canvas drag code moves nodes by
+ * writing `x`/`y` on the node itself. Nesting would mean a second coordinate
+ * space, and every existing reader (bounds, snap, connections) would have to
+ * learn about it. Flat membership costs one prune call at the deletion sites.
+ *
+ * A node belongs to at most one group; `withGroupSelection` enforces that.
+ */
+export interface CanvasGroup {
+  id: string
+  title: string
+  nodeIds: string[]
+}
+
 export interface CanvasDocument {
   version: 2
   id: string
@@ -1818,6 +1840,11 @@ export interface CanvasDocument {
   backgroundImage?: string
   nodes: CanvasNode[]
   connections: CanvasConnection[]
+  /**
+   * Optional so every canvas written before grouping still loads unchanged.
+   * Absent and `[]` mean the same thing; readers use `document.groups ?? []`.
+   */
+  groups?: CanvasGroup[]
   createdAt: number
   updatedAt: number
 }

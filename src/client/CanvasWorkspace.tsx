@@ -53,9 +53,13 @@ import { COMPOSE_SKILL_ID, composeGlyphs, PolishMenu, SkillConfigForm, SkillConf
 import { StoryboardBody } from './canvas/storyboard-board.tsx'
 import { CanvasMinimap } from './canvas/minimap.tsx'
 import { ConnectionLayer } from './canvas/connection-layer.tsx'
+import { GroupLayer } from './canvas/group-layer.tsx'
+import {
+  groupFrame, groupOfNode, groupsField, groupsOf, pruneGroupsField, siblingsInGroup, withGroup, withGroupTitle, withoutGroup,
+} from './canvas/group-model.ts'
 import { NodeBody, type NodeBodyActions, type NodeBodyState } from './canvas/node-body.tsx'
 import { CanvasComposer, type ComposerActions, type ComposerState } from './canvas/composer.tsx'
-import { CanvasContextMenu, type CanvasContextMenuActions, type CanvasContextMenuState } from './canvas/context-menu.tsx'
+import { CanvasContextMenu, type CanvasContextMenuActions, type CanvasContextMenuState, type CanvasContextMenuTarget } from './canvas/context-menu.tsx'
 import { ImagePicker, readImageSize, SketchBoard } from './canvas/sketch-and-picker.tsx'
 import { RUN_NODE_SIZE, runRectOf, SkillRunCard, type SkillRunTrace } from './canvas/run-card.tsx'
 import { CanvasErrorToast, CanvasNoticeToast, CanvasVideoPreviewOverlay, CanvasWorkflowProgressBar } from './canvas/overlays.tsx'
@@ -233,10 +237,15 @@ interface ResizeState {
   ratio: number | null
 }
 
-type ContextMenuState =
-  | { type: 'canvas'; screen: Point; world: Point }
-  | { type: 'node'; screen: Point; nodeId: string }
-  | { type: 'connection'; screen: Point; connectionId: string }
+/**
+ * 右键菜单开在哪。**类型只有一份**，在 `canvas/context-menu.tsx` 里。
+ *
+ * 这里原本手抄了一份三选一的 union，于是 context-menu 那边加第四种目标
+ * （分组框）时，这个文件悄悄地不认——报的还是「缺 connectionId」这种像是
+ * 写错了字段的错，指不到真正的原因。类型必须有单一来源，否则每加一种菜单
+ * 目标都要记得改两处，而忘记的那次只会以一个误导性的错误出现。
+ */
+type ContextMenuState = CanvasContextMenuTarget
 
 type ProjectSummary = Awaited<ReturnType<ImageGenApi['canvasList']>>[number]
 
@@ -1184,6 +1193,11 @@ export function CanvasWorkspace(props: CanvasWorkspaceProps): React.JSX.Element 
         ...previous,
         nodes: result.nodes,
         connections: previous.connections.filter(connection => !result.removed.has(connection.fromNodeId) && !result.removed.has(connection.toNodeId) && connection.id !== connectionId),
+        // 分组按「还剩谁」重建，而不是按「删了谁」逐个剔除：删除路径有好几条
+        // （这里、deleteNode、react-flow 的 remove 变更），每条都维护一份删除
+        // 清单迟早在某条上漏掉一个 id，而按剩余集合重算在每条路径上都是同一个
+        // 表达式。成员被删光的组顺带消失——留着只会在菜单里变成点不动的条目。
+        groups: pruneGroupsField(previous.groups, new Set(result.nodes.map(node => node.id))),
       }
     })
     // Bulk delete must clear the dead-clip marks too, exactly like deleteNode:
@@ -1210,6 +1224,8 @@ export function CanvasWorkspace(props: CanvasWorkspaceProps): React.JSX.Element 
         ...previous,
         nodes: result.nodes,
         connections: previous.connections.filter(connection => !result.removed.has(connection.fromNodeId) && !result.removed.has(connection.toNodeId)),
+        // 与 deleteSelection 同一表达式、同一个理由（见那里的注释）。
+        groups: pruneGroupsField(previous.groups, new Set(result.nodes.map(node => node.id))),
       }
     })
     setSelectedIds(previous => {
@@ -4418,6 +4434,18 @@ export function CanvasWorkspace(props: CanvasWorkspaceProps): React.JSX.Element 
       if (item === undefined || item.type !== 'image') continue
       for (const card of attachedCards(item, current.nodes)) origins.set(card.id, { x: card.x, y: card.y })
     }
+    // 分组：拖任何一个成员，整组一起走。它们**不进 selectedIds**——选择集是
+    // 用户的意思表达（composer 显示什么、成组时圈哪些都看它），让拖拽顺手
+    // 往里塞人会让「拖一下」变成「改了选择」。这里只让它们跟着位移。
+    for (const siblingId of siblingsInGroup(groupsOf(current), nodeId, new Set(origins.keys()))) {
+      const sibling = current.nodes.find(candidate => candidate.id === siblingId)
+      if (sibling === undefined) continue
+      origins.set(sibling.id, { x: sibling.x, y: sibling.y })
+      // 被带动的成员自己的标注卡也得跟上，否则整组一拖，卡片全留在原地
+      // 漂成一堆不知属于谁的便签。
+      if (sibling.type !== 'image') continue
+      for (const card of attachedCards(sibling, current.nodes)) origins.set(card.id, { x: card.x, y: card.y })
+    }
     dragRef.current = { pointerId: event.pointerId, startX: event.clientX, startY: event.clientY, moved: false, snapshot: JSON.stringify(current), origins, primaryId: nodeId }
   }, [temporaryPanTool, tool])
 
@@ -4658,6 +4686,9 @@ export function CanvasWorkspace(props: CanvasWorkspaceProps): React.JSX.Element 
   const nodeById = useMemo(() => new Map((document?.nodes ?? []).map(node => [node.id, node])), [document])
   // 右键菜单要在连线上显示/切换用途，与 nodeById 同一套读法。
   const connectionById = useMemo(() => new Map((document?.connections ?? []).map(connection => [connection.id, connection])), [document])
+  /** 分组：老画布没有这个字段，`groupsOf` 读作空数组，这里无需额外判空。 */
+  const groups = useMemo(() => groupsOf(document), [document])
+  const groupById = useMemo(() => new Map(groups.map(group => [group.id, group])), [groups])
   /** 正在设置身份参考的节点；节点被删掉时面板自然消失，不留一个悬空面板。 */
   const castNode = useMemo(() => castTarget === null ? undefined : nodeById.get(castTarget), [castTarget, nodeById])
   /** The file node whose full-screen reader is open, with its asset resolved. */
@@ -4885,12 +4916,14 @@ export function CanvasWorkspace(props: CanvasWorkspaceProps): React.JSX.Element 
 
   const contextMenuState: CanvasContextMenuState = useMemo(() => ({
     canvasDocument: document,
-    contextMenu, createMenu, nodeById, connectionById, fileUploadRef,
+    contextMenu, createMenu, nodeById, connectionById, groupById, fileUploadRef,
+    selectedCount: selectedIds.size,
     assetOf, videoOf, nodeMetadata, isAnnotationCard,
     createTextNode, createSketchNode, createStoryboardNode,
     createImageNode, createEmptyFileNode, createConfigNode,
   }), [
-    document, contextMenu, createMenu, nodeById, connectionById, fileUploadRef,
+    document, contextMenu, createMenu, nodeById, connectionById, groupById, fileUploadRef,
+    selectedIds,
     assetOf, videoOf, nodeMetadata, isAnnotationCard,
     createTextNode, createSketchNode, createStoryboardNode,
     createImageNode, createEmptyFileNode, createConfigNode,
@@ -4907,20 +4940,89 @@ export function CanvasWorkspace(props: CanvasWorkspaceProps): React.JSX.Element 
     }))
   }, [mutate])
 
+  // ------------------------------------------------------------------ 分组
+
+  /**
+   * 把当前选择圈成一个新组。
+   *
+   * 不足两个成员时什么都不做：一个节点的组与没成组看不出区别，却会多出一个
+   * 要管理的对象。这里也不弹提示——「成组」在只选了一个时本来就没有意义，
+   * 安静地不生效比跳一个解释框更少打扰。
+   */
+  const createGroup = useCallback((): void => {
+    // Set 本身已去重，所以「够不够成组」等价于成员数 >= 2。
+    if (selectedIdsRef.current.size < 2) return
+    const memberIds = [...selectedIdsRef.current]
+    mutate(previous => {
+      const result = withGroup(groupsOf(previous), memberIds, () => newId('group'))
+      // groupsField：解散光/不足两个都不会走到这里，但它保证「没有任何组」
+      // 落盘时是「没这个字段」而不是 `groups: []`。
+      return result === undefined ? previous : { ...previous, groups: groupsField(result.groups) }
+    })
+  }, [mutate])
+
+  const ungroup = useCallback((groupId: string): void => {
+    mutate(previous => ({ ...previous, groups: groupsField(withoutGroup(groupsOf(previous), groupId)) }))
+  }, [mutate])
+
+  /**
+   * 重命名输入态。不复用画布标题那套 `renamingTitle`：那一份直接改
+   * `document.title`，是「边打边存」；组的名字挂在数组元素上，边打边存会让
+   * 每个按键都进一次 undo 历史，撤销一次只退一个字符。这里攒到提交再写。
+   */
+  const [groupRename, setGroupRename] = useState<{ groupId: string; value: string } | null>(null)
+
+  /**
+   * 重命名是否还「在场」的权威判据。
+   *
+   * 不能靠闭包里的 `groupRename`：`setGroupRename(null)` 之后 React 才会重渲染，
+   * 而在同一次事件处理里紧接着触发的 blur（Enter → 提交 → 输入框消失 → blur）
+   * 读到的还是**旧的、非 null** 的 `groupRename`。于是：
+   *
+   *  - Esc 取消后，blur 仍然照旧提交一次 —— 用户明确按了「什么都不改」，
+   *    却把改动写了进去，这是最难接受的一种。
+   *  - Enter 提交后，blur 又提交一次 —— 同样的值写两遍，undo 要按两次才退回去。
+   *
+   * ref 在 `setGroupRename` 的同一个同步代码段里更新，所以它读到的永远是
+   * 「现在真正该不该写」。
+   */
+  const groupRenameRef = useRef<{ groupId: string; value: string } | null>(null)
+
+  /** 开/关重命名：ref 与 state 一起改，两者不会脱节。 */
+  const setGroupRenameBoth = useCallback((next: { groupId: string; value: string } | null): void => {
+    groupRenameRef.current = next
+    setGroupRename(next)
+  }, [])
+
+  const commitGroupRename = useCallback((): void => {
+    const target = groupRenameRef.current
+    // 先清再写：既让重复调用（Enter 后紧跟 blur）落空，也让「取消」这条路上
+    // 的 blur 看到的是 null。
+    setGroupRenameBoth(null)
+    if (target === null) return
+    mutate(previous => ({ ...previous, groups: groupsField(withGroupTitle(groupsOf(previous), target.groupId, target.value)) }))
+  }, [mutate, setGroupRenameBoth])
+
+  /** 双击组标题时开重命名：把当前名字填进输入框，而不是留空让用户重打。 */
+  const beginGroupRename = useCallback((groupId: string): void => {
+    const group = groupsOf(documentRef.current).find(candidate => candidate.id === groupId)
+    setGroupRenameBoth({ groupId, value: group?.title ?? '' })
+  }, [setGroupRenameBoth])
+
   const contextMenuActions: CanvasContextMenuActions = useMemo(() => ({
     setContextMenu, setCreateMenu, setFileTargetNodeId, setPickerOpen, setSelectedConnectionId,
     setVideoPreviewNodeId, setPosterTarget, setCastTarget, setPolishNode, setNotice,
     openImageNode, openFileNode, openSkillMenu,
     downloadNode, downloadFileNode, downloadVideoNode, continueFromClip,
     duplicateNode, deleteNode, patchNode, placeNewNode, pasteClipboard, fitView, mutate,
-    setConnectionRole,
+    setConnectionRole, createGroup, renameGroup: beginGroupRename, ungroup,
   }), [
     setContextMenu, setCreateMenu, setFileTargetNodeId, setPickerOpen, setSelectedConnectionId,
     setVideoPreviewNodeId, setPosterTarget, setCastTarget, setPolishNode, setNotice,
     openImageNode, openFileNode, openSkillMenu,
     downloadNode, downloadFileNode, downloadVideoNode, continueFromClip,
     duplicateNode, deleteNode, patchNode, placeNewNode, pasteClipboard, fitView, mutate,
-    setConnectionRole,
+    setConnectionRole, createGroup, beginGroupRename, ungroup,
   ])
 
   const renderContextMenu = (): ReactNode =>
@@ -4961,7 +5063,16 @@ export function CanvasWorkspace(props: CanvasWorkspaceProps): React.JSX.Element 
     }
     if (removes.length > 0) {
       const ids = new Set(removes.map(change => change.id))
-      mutate(previous => ({ ...previous, nodes: previous.nodes.filter(node => !ids.has(node.id)), connections: previous.connections.filter(connection => !ids.has(connection.fromNodeId) && !ids.has(connection.toNodeId)) }))
+      mutate(previous => {
+        const nodes = previous.nodes.filter(node => !ids.has(node.id))
+        return {
+          ...previous,
+          nodes,
+          connections: previous.connections.filter(connection => !ids.has(connection.fromNodeId) && !ids.has(connection.toNodeId)),
+          // 第三条删除路径，同样按「还剩谁」重算（理由见 deleteSelection）。
+          groups: pruneGroupsField(previous.groups, new Set(nodes.map(node => node.id))),
+        }
+      })
     }
   }, [updateNodes, mutate])
 
@@ -5248,6 +5359,57 @@ export function CanvasWorkspace(props: CanvasWorkspaceProps): React.JSX.Element 
         </div>
       ) : null}
       <div className={css.world} style={{ transform: `translate(${document?.viewport.x ?? 0}px, ${document?.viewport.y ?? 0}px) scale(${document?.viewport.k ?? 1})`, pointerEvents: 'none' }}>
+        {/* 框必须在连线之前：`.world` 里按 DOM 顺序叠，框画在线之后会盖住线
+            的中段，而连线恰恰是用户要看清「这张图接到了哪」的东西。 */}
+        <GroupLayer
+          groups={groups}
+          nodeById={nodeById}
+          activeGroupId={(() => {
+            // 只在「选中的节点全部属于同一个组」时高亮。选中集合为空、或跨了
+            // 两个组时不高亮任何一个：那种状态下用户做的是跨组的事（对比、
+            // 一起删），把其中某个组点亮会误导成「当前动作只作用于它」。
+            if (selectedIds.size === 0) return null
+            let found: string | null = null
+            for (const id of selectedIds) {
+              const group = groupOfNode(groups, id)
+              if (group === undefined) return null
+              if (found === null) found = group.id
+              else if (found !== group.id) return null
+            }
+            return found
+          })()}
+          onRename={beginGroupRename}
+          onContextMenu={(groupId, screen) => setContextMenu({ type: 'group', screen, groupId })}
+        />
+        {groupRename === null ? null : (() => {
+          // 输入框挂在 `.world` 里，所以直接用世界坐标：框给的就是世界坐标，
+          // 不必再为「视图已经平移缩放过」做第二次换算。缩放由 `.world` 的
+          // transform 一并带上，输入框跟着画布缩放——这是刻意的，它标的是画布
+          // 上的一个对象，不是屏幕上的一个弹窗。
+          const group = groupById.get(groupRename.groupId)
+          const frame = group === undefined ? null : groupFrame(group, nodeById)
+          // 组在这一瞬间被删掉/解散（撤销、别的窗口保存）时直接不画：
+          // 画一个飘在原地的输入框比什么都不画更让人困惑。
+          if (frame === null) return null
+          return <input
+            className={css.groupRenameInput}
+            style={{ left: frame.x + 8, top: frame.y - 12, pointerEvents: 'auto' }}
+            value={groupRename.value}
+            autoFocus
+            aria-label={tt('canvas.group.title')}
+            onChange={event => setGroupRenameBoth({ groupId: groupRename.groupId, value: event.target.value })}
+            // Enter 与 blur 都提交：用户改完名字最可能的两个动作就是回车和
+            // 点别处，只认其中一个会让他在另一半情况下以为没生效。
+            onBlur={commitGroupRename}
+            onKeyDown={event => {
+              if (event.key === 'Enter') { event.preventDefault(); commitGroupRename() }
+              // Esc 是唯一「什么都不改」的出口，所以它必须绕开 blur 的提交。
+              // 先把状态清掉再 let blur 走一遍：那时 groupRename 已是 null，
+              // commitGroupRename 读到 null 会直接返回。
+              else if (event.key === 'Escape') { event.preventDefault(); setGroupRenameBoth(null) }
+            }}
+          />
+        })()}
         <div style={{ pointerEvents: 'auto' }}><ConnectionLayer
           connections={document?.connections ?? null}
           nodeById={nodeById}

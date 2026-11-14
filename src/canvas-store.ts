@@ -445,6 +445,23 @@ function isDocument(value: unknown): value is CanvasDocument {
     && (document.backgroundImage === undefined || typeof document.backgroundImage === 'string')
     && Array.isArray(document.nodes) && document.nodes.every(isNode)
     && Array.isArray(document.connections)
+    // 老画布没有这个字段，必须继续能载入——这里只校验「有的话形状对不对」。
+    && (document.groups === undefined || (Array.isArray(document.groups) && document.groups.every(isGroup)))
+}
+
+/**
+ * 分组必须是 `{id, title, nodeIds: string[]}`。
+ *
+ * 成员 id 指向不存在的节点是**允许**的：`pruneGroups` 会在下一次删除时收拾，
+ * 而一份成员的节点刚好在别处被删掉的画布不该变成打不开的画布。真正要拦的是
+ * 形状错（`nodeIds` 不是数组、id 不是字符串）——那种数据会让 `groupFrame`
+ * 在渲染时抛，而抛在渲染里的错误用户只会看到一片空白。
+ */
+function isGroup(value: unknown): boolean {
+  if (value === null || typeof value !== 'object') return false
+  const group = value as Record<string, unknown>
+  return typeof group.id === 'string' && typeof group.title === 'string'
+    && Array.isArray(group.nodeIds) && group.nodeIds.every(id => typeof id === 'string')
 }
 
 /** Upgrade a v1 (image/text/annotation + edges) document to the v2 node-graph model.
