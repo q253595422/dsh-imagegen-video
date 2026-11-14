@@ -39,6 +39,14 @@ export interface CanvasProposalBarProps {
    * 没有判别力，等于把规则排除在测试之外。调用方本来就知 error 是不是非空。
    */
   stacked?: boolean
+  /**
+   * 顶栏实测高度（px）。提案条在它下面，不压顶栏。
+   *
+   * 顶栏高度不是常量：窄面板（< 760px）下 `.topBar` 会 `flex-wrap`，标题与
+   * 七个图标按钮换成两行，高度从 ~47px 长到 ~83px。写死一个 `top` 就会在
+   * 恰恰最窄的面板上盖住第二行按钮。为零（尚未量到）时用样式表里的默认值。
+   */
+  belowTopBar?: number
   onAccept: (proposalId: string) => void
   onDiscard: (proposalId: string) => void
   onDiscardAll: () => void
@@ -55,6 +63,7 @@ export function CanvasProposalBar({
   busy = false,
   error = null,
   stacked = false,
+  belowTopBar = 0,
   onAccept,
   onDiscard,
   onDiscardAll,
@@ -68,6 +77,7 @@ export function CanvasProposalBar({
     role="status"
     data-canvas-proposal-bar=""
     data-stacked={stacked ? '' : undefined}
+    style={belowTopBar > 0 ? { '--proposal-top-bar': `${belowTopBar}px` } as React.CSSProperties : undefined}
   >
     <div className={css.proposalHead}>
       <span className={css.proposalTitle}>{tt('canvas.proposal.title')}</span>

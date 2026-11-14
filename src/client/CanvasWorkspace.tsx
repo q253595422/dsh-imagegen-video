@@ -592,6 +592,7 @@ export function CanvasWorkspace(props: CanvasWorkspaceProps): React.JSX.Element 
    *  panel breathes taller while hovered to make room for the labels. */
   const dockOuterRef = useRef<HTMLDivElement>(null)
   const dockRef = useRef<HTMLDivElement>(null)
+  const topBarRef = useRef<HTMLElement>(null)
   useEffect(() => {
     const outer = dockOuterRef.current
     const dock = dockRef.current
@@ -989,6 +990,20 @@ export function CanvasWorkspace(props: CanvasWorkspaceProps): React.JSX.Element 
    * is one row on a wide panel and two on the three-column studio.
    */
   const [chromeHeight, setChromeHeight] = useState(0)
+  /**
+   * How tall the floating top bar currently is, in pixels.
+   *
+   * The proposal bar sits directly under it, and the bar's height is not a
+   * constant: on a panel narrower than 760px `.topBar` switches to
+   * `flex-wrap`, so the title and the seven icon buttons take two rows and the
+   * bar grows from ~47px to ~83px. A fixed `top` therefore covers the top
+   * bar's second row on exactly the narrow panels where the buttons are
+   * smallest and easiest to hit by accident.
+   *
+   * Measured, not assumed, for the same reason as `chromeHeight` below: the
+   * row count depends on the host's width, which the stylesheet cannot know.
+   */
+  const [topBarHeight, setTopBarHeight] = useState(0)
   /**
    * Where every canvas-owned overlay mounts. See the host div in the render:
    * portals to <body> are invisible while the canvas is fullscreen, because the
@@ -4167,6 +4182,17 @@ export function CanvasWorkspace(props: CanvasWorkspaceProps): React.JSX.Element 
     return () => { observer.disconnect() }
   }, [])
 
+  useEffect(() => {
+    const bar = topBarRef.current
+    if (bar === null) return
+    // 内容是按钮与标题，换行只改变高度——按行量，不按行数猜。
+    const measure = (): void => { setTopBarHeight(Math.round(bar.getBoundingClientRect().height)) }
+    measure()
+    const observer = new ResizeObserver(measure)
+    observer.observe(bar)
+    return () => { observer.disconnect() }
+  }, [])
+
   const temporaryPanTool = spacePressed || ctrlPressed
 
   /**
@@ -5251,11 +5277,12 @@ export function CanvasWorkspace(props: CanvasWorkspaceProps): React.JSX.Element 
       busy={proposalsBusy}
       error={proposalError}
       stacked={error !== null}
+      belowTopBar={topBarHeight}
       onAccept={proposalId => { void acceptProposal(proposalId) }}
       onDiscard={proposalId => { void discardProposal(proposalId) }}
       onDiscardAll={() => { void discardAllProposals() }}
     />
-    <header className={css.topBar} data-canvas-no-zoom="">
+    <header ref={topBarRef} className={css.topBar} data-canvas-no-zoom="">
       <Select
         className={css.projectSelect}
         value={document?.id ?? ''}

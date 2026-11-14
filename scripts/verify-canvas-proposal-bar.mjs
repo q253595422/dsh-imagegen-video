@@ -66,6 +66,21 @@ html, body { margin: 0; }
 <style>${css}</style></head><body>
 <div class="canvas" id="canvas">
   <div class="node" id="node"></div>
+  <!-- 画布顶栏：真实结构 + 真实样式。提案条在 52px，顶栏是 8px padding 加
+       30px 内容（≈47px）——但窄屏下 topBar 会 flex-wrap 变成两行、长得更高。
+       提案条的 z 档（--z-notice）高于顶栏（--z-topbar），所以它一旦压上去，
+       压住的是标题按钮这类可点区域，而不是被顶栏盖住。这条只有真实布局能测。 -->
+  <div class="topBar" id="topBar">
+    <select class="projectSelect" id="topProject"><option>项目</option></select>
+    <span class="iconButton"></span>
+    <span class="iconButton"></span>
+    <span class="iconButton"></span>
+    <button type="button" class="titleButton" id="topTitle">画布标题</button>
+    <span class="topBarSpacer"></span>
+    <span class="iconButton"></span>
+    <button type="button" class="iconButton" id="topDownload">⤓</button>
+    <span class="iconButton"></span>
+  </div>
   <!-- 画布自己的错误提示。它会和提案条同时出现：接受一条提案失败时，提案条上
        有失败原因，旁边可能还挂着这条。两者不能叠在一起。 -->
   <div class="errorToast" id="toast" role="alert">保存失败</div>
@@ -117,7 +132,15 @@ assertFixtureClasses({
   stylesheetName: 'canvas-workspace.module.css',
   // `errorToast` 不是提案条渲染的——它是画布自己的错误提示，这里摆出来只是因为
   // 「两者不会叠在一起」这条断言需要它。`canvas` / `node` 同理。
-  scaffold: new Set(['canvas', 'node', 'errorToast', 'bar', 'title', 'count', 'summary', 'hint', 'error', 'accept', 'discard', 'discardAll']),
+  // `topBar` 那一组同样是脚手架：它们是画布自己的顶栏，来自
+  // CanvasWorkspace.tsx 而不是提案条。断言用的是它们在真实样式表里的规则。
+  //
+  // 里面塞了选择器、标题和七个 30px 图标按钮，与真实顶栏同规模——只放两个
+  // 按钮的话，探头量下来任何宽度都不换行，那条「窄屏换行后提案条压住顶栏」
+  // 的断言就在测一个不会发生的场景。
+  scaffold: new Set(['canvas', 'node', 'errorToast', 'topBar', 'projectSelect', 'iconButton',
+    'titleButton', 'topBarSpacer',
+    'bar', 'title', 'count', 'summary', 'hint', 'error', 'accept', 'discard', 'discardAll']),
   selfTest: ['proposalThisClassDoesNotExist', 'proposalBar'],
 })
 for (const name of PROPOSAL_CLASSES) {
@@ -145,11 +168,16 @@ const MEASURE_SOURCE = String.raw`JSON.stringify((() => {
     const el = document.elementFromPoint(x, y)
     return el === null ? null : { tag: el.tagName, id: el.id || null }
   }
-  const canvas = box('canvas'), bar = box('bar'), node = box('node'), toast = box('toast')
+  const canvas = box('canvas'), bar = box('bar'), node = box('node')
+  const topBar = box('topBar'), topTitle = box('topTitle'), topDownload = box('topDownload'), toast = box('toast')
   const accept = box('accept'), discard = box('discard'), discardAll = box('discardAll')
   return {
     canvas: { x: canvas.left, y: canvas.top, w: canvas.width, h: canvas.height },
     bar: { x: bar.left, y: bar.top, w: bar.width, h: bar.height },
+    topBar: { x: topBar.left, y: topBar.top, w: topBar.width, h: topBar.height },
+    // 顶栏里两个可点元素的命中：提案条压上来时，压住的正是这些。
+    onTopTitle: hit(topTitle.left + topTitle.width / 2, topTitle.top + topTitle.height / 2),
+    onTopDownload: hit(topDownload.left + topDownload.width / 2, topDownload.top + topDownload.height / 2),
     node: { x: node.left, y: node.top, w: node.width, h: node.height },
     toast: { x: toast.left, y: toast.top, w: toast.width, h: toast.height },
     accept: { x: accept.left, y: accept.top, w: accept.width, h: accept.height },
@@ -181,6 +209,23 @@ const clickAndRead = async (id) => {
   return await evaluate('window.__clicked')
 }
 
+/**
+ * 组件在运行时会把**量到的顶栏高度**写进 `--proposal-top-bar`（见
+ * proposal-bar.tsx 的 `belowTopBar`）。静态页里没有 React，所以这里照做一遍：
+ * 先量顶栏，再把它写成 inline 变量，然后重新量。少了这一步，量的就是样式表
+ * 里那个 47px 的初始值，而那正是「窄屏顶栏换成两行」时会错的条件。
+ */
+const syncMeasuredTopBar = async () => {
+  await evaluate(`(() => {
+    const bar = document.getElementById('bar')
+    const topBar = document.getElementById('topBar')
+    const height = Math.round(topBar.getBoundingClientRect().height)
+    if (height > 0) bar.style.setProperty('--proposal-top-bar', height + 'px')
+  })()`)
+  await new Promise(resolve => setTimeout(resolve, 60))
+}
+
+await syncMeasuredTopBar()
 const m = await measure()
 
 // 1. 真的画出来了，并且在自己的容器里
@@ -213,6 +258,22 @@ for (const [name, target, id] of [['接受', m.onAccept, 'accept'], ['丢弃', m
 // 4. 不挡画布：下面的节点仍然命中节点本身
 if (m.onNode === null || m.onNode.id !== 'node') {
   failures.push(`画布节点上的命中是 ${JSON.stringify(m.onNode)}，提案条挡住了画布`)
+}
+
+// 4a. 不压顶栏。
+//
+// WHY：提案条 52px 起、z 档 --z-notice 高于顶栏 --z-topbar。顶栏平时是
+// 8px padding + 30px 内容（≈47px），刚好让开；但窄屏下 `.topBar` 会
+// `flex-wrap`，标题与按钮换成两行，顶栏长到 60px 以上——提案条就压住它的
+// 下半部分。它压住的是标题、导出这些按钮，而不是被顶栏盖住：没量过就不知道
+// 谁在上面，只能靠布局引擎。
+for (const [what, hitPoint] of [['标题', m.onTopTitle], ['导出', m.onTopDownload]]) {
+  if (hitPoint === null || hitPoint.id === null || !hitPoint.id.startsWith('top')) {
+    failures.push(`提案条压住了顶栏的「${what}」按钮（该处命中 ${JSON.stringify(hitPoint)}）`)
+  }
+}
+if (m.bar.y < m.topBar.y + m.topBar.h - 0.5) {
+  failures.push(`提案条顶边 ${m.bar.y.toFixed(1)} 落在顶栏底边 ${(m.topBar.y + m.topBar.h).toFixed(1)} 之内`)
 }
 
 // 4b. 与错误提示不重叠。
@@ -260,9 +321,20 @@ await send('Emulation.setDeviceMetricsOverride', { width: 420, height: 700, devi
 await new Promise(resolve => setTimeout(resolve, 150))
 await evaluate(`document.getElementById('canvas').style.width = '400px'`)
 await new Promise(resolve => setTimeout(resolve, 100))
+await syncMeasuredTopBar()
 const narrow = await measure()
 if (narrow.bar.x < narrow.canvas.x - 0.5 || narrow.bar.x + narrow.bar.w > narrow.canvas.x + narrow.canvas.w + 0.5) {
   failures.push(`窄视口下提案条越出画布：bar ${narrow.bar.x.toFixed(1)}..${(narrow.bar.x + narrow.bar.w).toFixed(1)}，画布宽 ${narrow.canvas.w.toFixed(1)}`)
+}
+// 窄屏顶栏会 flex-wrap 换行变高（@media max-width:760px），这是提案条最可能
+// 压住它的地方，宽屏那一遍永远测不到。同一组命中断言在这里再走一次。
+if (narrow.bar.y < narrow.topBar.y + narrow.topBar.h - 0.5) {
+  failures.push(`窄屏换行后提案条压住顶栏：bar 顶边 ${narrow.bar.y.toFixed(1)}，顶栏底边 ${(narrow.topBar.y + narrow.topBar.h).toFixed(1)}（顶栏高 ${narrow.topBar.h.toFixed(1)}）`)
+}
+for (const [what, hitPoint] of [['标题', narrow.onTopTitle], ['导出', narrow.onTopDownload]]) {
+  if (hitPoint === null || hitPoint.id === null || !hitPoint.id.startsWith('top')) {
+    failures.push(`窄屏下提案条压住了顶栏的「${what}」按钮（该处命中 ${JSON.stringify(hitPoint)}）`)
+  }
 }
 
 // 7. 缺省 props 要有默认值：这是本轮真实踩过的白屏。
