@@ -70,23 +70,41 @@ export class ProposalStore {
 
   /** 一份画布上所有待确认的提案，按提议顺序。 */
   async list(canvasId: string): Promise<CanvasProposal[]> {
+    return (await this.scan(canvasId)).proposals
+  }
+
+  /**
+   * 读一遍 proposals/ 目录，同时给出「这份画布的提案」与「每份画布各几条」。
+   *
+   * WHY 合并：画布每 5 秒轮询一次本画布的提案，而项目下拉又要每份画布的
+   * 条数；两者分开写就是每轮把同一个目录和同一批 JSON 读两遍。提案是个小
+   * 旁路目录，但它会在每次轮询里被读，重复读的代价是持续的。
+   *
+   * 一次遍历里两件事一起攒：`proposals` 只收集 `canvasId` 命中的那些，
+   * `counts` 收集全部。读不懂的文件跳过，不猜——一条坏文件不该让整份列表消
+   * 失，也不该让计数变成 NaN。
+   */
+  async scan(canvasId: string): Promise<{ proposals: CanvasProposal[]; counts: Record<string, number> }> {
     let names: string[]
     try {
       names = await fs.readdir(this.dir())
     } catch {
-      return []
+      // 目录还不存在：没有提案。这是常态，不是错误。
+      return { proposals: [], counts: {} }
     }
     const found: CanvasProposal[] = []
+    const counts: Record<string, number> = {}
     for (const name of names) {
       if (!name.endsWith('.json')) continue
-      const value = await readJson(path.join(this.dir(), name))
-      const proposal = coerceProposal(value)
-      // 读不懂的提案直接跳过，不猜。一条坏文件不该让整份列表消失。
-      if (proposal !== undefined && proposal.canvasId === canvasId) found.push(proposal)
+      const proposal = coerceProposal(await readJson(path.join(this.dir(), name)))
+      if (proposal === undefined) continue
+      counts[proposal.canvasId] = (counts[proposal.canvasId] ?? 0) + 1
+      if (proposal.canvasId === canvasId) found.push(proposal)
     }
     // 目录顺序由文件系统决定，必须自己排；同一毫秒内的两条提案用 id 兜底，
     // 否则叠加顺序会随机器而变。
-    return found.sort((left, right) => left.createdAt - right.createdAt || left.id.localeCompare(right.id))
+    found.sort((left, right) => left.createdAt - right.createdAt || left.id.localeCompare(right.id))
+    return { proposals: found, counts }
   }
 
   /**
@@ -96,20 +114,7 @@ export class ProposalStore {
    * 读上千遍；这里只走一次 readdir。
    */
   async countByCanvas(): Promise<Record<string, number>> {
-    let names: string[]
-    try {
-      names = await fs.readdir(this.dir())
-    } catch {
-      return {}
-    }
-    const counts: Record<string, number> = {}
-    for (const name of names) {
-      if (!name.endsWith('.json')) continue
-      const proposal = coerceProposal(await readJson(path.join(this.dir(), name)))
-      if (proposal === undefined) continue
-      counts[proposal.canvasId] = (counts[proposal.canvasId] ?? 0) + 1
-    }
-    return counts
+    return (await this.scan('')).counts
   }
 
   async add(proposal: Omit<CanvasProposal, 'id' | 'createdAt'>): Promise<CanvasProposal> {

@@ -1975,8 +1975,14 @@ export function makeRoutes(deps: ImageGenRoutesDeps): WebRoute[] {
         if (!guard(req, res, 'POST')) return
         const body = await readJsonBody(req)
         const canvasId = typeof body?.canvasId === 'string' ? body.canvasId.trim() : ''
-        if (canvasId === '') { writeJson(res, 200, { ok: false, code: 'bad-request', message: 'canvas id is required' }); return }
-        writeJson(res, 200, { ok: true, proposals: await proposalStore.list(canvasId) })
+        // 空 id 是允许的：客户端在一份画布都没打开时也要拿 counts 去标下拉。
+        // 它只会得到一个空 proposals 列表，没有别的副作用。
+        //
+        // 一次遍历同时给出本画布的提案与各画布的条数：客户端每 5 秒轮询一次
+        // 本画布，项目下拉里的「有 N 条待确认」也就能跟着更新。拆成两个接口
+        // 会让同一批文件每轮被读两遍。
+        const { proposals, counts } = await proposalStore.scan(canvasId)
+        writeJson(res, 200, { ok: true, proposals, counts })
       },
     },
     {

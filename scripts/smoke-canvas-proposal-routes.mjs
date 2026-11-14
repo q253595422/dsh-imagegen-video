@@ -139,10 +139,21 @@ check('R1 list returns the pending change and nothing has been written', async (
   assert.equal((await canvasStore.read(canvasId)).nodes.length, 0, 'listing must not touch the canvas')
 })
 
-check('R2 a missing canvas id is a readable error, not a crash', async () => {
-  const listed = await post(PROPOSALS, {})
-  assert.equal(listed.ok, false)
-  assert.equal(listed.code, 'bad-request')
+check('R2 an empty canvas id yields only the counts, never someone else\'s proposals', async () => {
+  // 曾经的断言是「空 id 报 bad-request」。改成允许它是为了一个具体场景：
+  // 用户一份画布都没打开时，下拉仍要显示「有 N 条待确认」——那些计数跟当前
+  // 打开的是哪一本无关。允许空 id 的代价必须钉住：不能顺便把别的画布的提案
+  // 一起交出去。
+  const { canvasId, proposalId } = await seed('空 id 对照')
+  const empty = await post(PROPOSALS, {})
+  assert.equal(empty.ok, true, `an empty id is allowed now: ${JSON.stringify(empty)}`)
+  assert.equal(empty.proposals.length, 0, 'no proposals are returned for an empty id')
+  assert.equal(empty.counts[canvasId], 1, 'but the per-canvas counts are still there')
+
+  // 空 id 不能当通配符用：接受请求里的 id 对不上就什么都不该发生。
+  const accepted = await post(ACCEPT, { canvasId: '', proposalId })
+  assert.equal(accepted.ok, false, 'accepting with an empty canvas id must fail')
+  assert.equal((await post(PROPOSALS, { canvasId })).proposals.length, 1, 'the proposal is untouched')
 })
 
 check('R3 accept writes the node, then the proposal is gone', async () => {

@@ -512,10 +512,17 @@ export class ImageGenApi {
     return (await readEnvelope<{ ok: true; document: CanvasDocument }>(response)).document
   }
 
-  /** Pending Agent changes on one canvas, oldest first. */
-  async canvasProposals(canvasId: string): Promise<CanvasProposal[]> {
+  /**
+   * Pending Agent changes on one canvas (oldest first), plus how many each
+   * canvas in the library is holding.
+   *
+   * One response for both: the project dropdown needs the second number to mark
+   * canvases with work waiting, and the poll that fetches the first already
+   * reads the whole directory.
+   */
+  async canvasProposals(canvasId: string): Promise<{ proposals: CanvasProposal[]; counts: Record<string, number> }> {
     const response = await fetch(CANVAS_API.proposals, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ canvasId }) })
-    return (await readEnvelope<{ ok: true; proposals: CanvasProposal[] }>(response)).proposals
+    return await readEnvelope<{ ok: true; proposals: CanvasProposal[]; counts: Record<string, number> }>(response)
   }
 
   /** Accept one pending change. Fails with a readable code when it went stale. */

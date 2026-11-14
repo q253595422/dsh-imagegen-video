@@ -819,23 +819,50 @@ export function CanvasWorkspace(props: CanvasWorkspaceProps): React.JSX.Element 
    */
   const refreshProposals = useCallback(async (): Promise<void> => {
     const canvasId = documentRef.current?.id
-    if (canvasId === undefined) { setProposals([]); return }
     try {
-      const next = await api.canvasProposals(canvasId)
-      // 再确认一次画布没换：这一段 await 期间用户可能已经点了别的画布。
-      if (documentRef.current?.id !== canvasId) return
-      setProposals(next)
+      // 没有打开的画布时不能直接返回：`counts` 覆盖全部画布，而下拉在「一份
+      // 都没打开」的时候同样需要那些标记。空 id 让服务端只算计数、不返回任
+      // 何提案。
+      const answer = await api.canvasProposals(canvasId ?? '')
+      const next = answer.proposals ?? []
+      // A host that predates the counts field (or a stub in a test) answers with
+      // just `proposals`. Treating that as "no counts" leaves the dropdown
+      // unmarked instead of throwing on the first `counts[id]`.
+      const counts = answer.counts ?? {}
+      if (canvasId === undefined) { setProposals([]) }
+      else {
+        // 再确认一次画布没换：这一段 await 期间用户可能已经点了别的画布。
+        if (documentRef.current?.id !== canvasId) return
+        setProposals(next)
+      }
+      // 下拉里的「有 N 条待确认」也在这里刷新。只靠切画布时刷是不够的：用户
+      // 停在画布 B 上，Agent 在画布 A 上提了改动，不刷新就永远看不到那条提示，
+      // 而提案条只显示当前这本画布。计数跟提案来自同一次目录遍历，不额外读盘。
+      setProjects(previous => {
+        let changed = false
+        const nextProjects = previous.map(project => {
+          const count = counts[project.id] ?? 0
+          const current = project.proposalCount ?? 0
+          if (count === current) return project
+          changed = true
+          if (count === 0) { const { proposalCount: _drop, ...rest } = project; return rest }
+          return { ...project, proposalCount: count }
+        })
+        // 没变就返回原数组：每 5 秒换一个新数组会让整份下拉重渲染。
+        return changed ? nextProjects : previous
+      })
     } catch { /* 旁路功能，静默 */ }
   }, [api])
 
   // 打开画布时拉一次，之后每 5 秒一次。`document?.id` 作为依赖而不是
   // `document`：拖节点会不停地换 document 对象，用它当依赖会让定时器
   // 每帧重建。
+  //
+  // 一份画布都没打开时也照常轮询：提案条没有内容可显示，但下拉里的「有 N 条
+  // 待确认」不依赖当前打开的是哪一本。
   useEffect(() => {
-    const canvasId = document?.id
-    if (canvasId === undefined) { setProposals([]); return }
     setProposals([])
-    setProposalError(null)
+    if (document?.id !== undefined) setProposalError(null)
     void refreshProposals()
     const timer = window.setInterval(() => { void refreshProposals() }, 5000)
     return () => { window.clearInterval(timer) }
