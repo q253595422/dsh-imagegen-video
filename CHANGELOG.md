@@ -5,6 +5,12 @@ Attribution for third-party code is in [NOTICE](./NOTICE).
 
 ## Releases
 
+### 未发布
+
+- **侧栏切换器重新独占一行（DSH 0.2.2-rc.3 回归）**：rc.3 给「新会话」按钮套了一层 `div.newSessionRow`（`display:flex; gap:6px`，同时是新的 `sidebar.session.action` 槽位出口），并把行缩进从按钮搬到了这层。插件仍按「插到按钮前面」落位，于是切换器进了那个 flex 行——会话 / 生图 / 新会话 三个按钮挤在同一行。现在落位对象改为「承载该动作的 root 级块」，缩进也对这一层量（rc.3 里按钮自身的 `margin` 是 `0`，量按钮会两边各宽 4px）。块里含品牌行时退回旧行为，不把切换器抬到 logo 上方。
+- **测试**：`smoke.mjs` 新增 D3c，按 rc.3 的真实结构（`root > newSessionRow > button`）挂载并断言切换器是 `newSessionRow` 的前一个兄弟、`parentElement` 是列而非动作行。原有 D3/D3b 的 fixture 都是旧结构（按钮直接挂在列上），看不见这个回归。反向验证过：把落点改回「按钮本身」，D3 与 D3c 各自变红。
+- **本版不发**：等本地真机确认后再合并进下一个版本号。
+
 ### 1.30.3 — 接通 Nbility 的 MiniMax-H3（768P + 参考图上传）
 
 - **`minimax` 协议族**：`MiniMax-H3` 此前被归进通用的 `openai-video` 族，只提供 480P/720P/1080P 三档；而上游只认 **768P**，720P / 1080P 一律 400（`MiniMax-H3 supports only 768P at normalizeRequest`）——每个请求都注定失败。补上 768P 档位后，图生视频仍然失败：参考图必须是公网 HTTPS URL，而插件只会发 data URI。官方契约的 `POST /v1/media/uploads` 正是把本地图换成公网 URL 的那条腿。
