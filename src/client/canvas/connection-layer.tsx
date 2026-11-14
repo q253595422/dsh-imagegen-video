@@ -18,12 +18,15 @@
 
 import type {
   CanvasConnection,
+  CanvasConnectionRole,
   CanvasNode,
 } from '../../protocol.ts'
 import type { Point } from './geometry.ts'
 import { bezierPath, isAnnotationCard, nodeAnchor } from './node-model.ts'
+import { roleBadgeKey, roleOf } from './connection-role.ts'
 import { WORLD_PAD } from './constants.ts'
 import type { SkillRunTrace } from './run-card.tsx'
+import { tt } from '../helpers.ts'
 import css from '../canvas-workspace.module.css'
 
 /** 拖拽中的连线状态，与 CanvasWorkspace 里那份 `ConnectState` 同形。 */
@@ -93,6 +96,23 @@ export function ConnectionLayer({
     </linearGradient>
   }
 
+  /**
+   * 贝塞尔中点：cubic 在 t=0.5 处就是 (P0 + 3·P1 + 3·P2 + P3) / 8。
+   * 控制点与 `bezierPath` 保持同一套算法——两边各算一次比让 bezierPath
+   * 多返回一个对象更省事，但改一处必须改另一处，否则徽标会飘离线。
+   */
+  const midPointOf = (from: CanvasNode, to: CanvasNode): Point => {
+    const start = nodeAnchor(from, 'right')
+    const end = nodeAnchor(to, 'left')
+    const bend = Math.max(Math.abs(end.x - start.x) * 0.5, 50)
+    const c1 = { x: start.x + bend, y: start.y }
+    const c2 = { x: end.x - bend, y: end.y }
+    return {
+      x: (start.x + 3 * c1.x + 3 * c2.x + end.x) / 8,
+      y: (start.y + 3 * c1.y + 3 * c2.y + end.y) / 8,
+    }
+  }
+
   return <svg
     className={css.connectionLayer}
     width={WORLD_PAD * 2}
@@ -107,6 +127,10 @@ export function ConnectionLayer({
       <marker id="conn-arrow-active" viewBox="0 0 10 10" refX="8.5" refY="5" markerWidth="7.5" markerHeight="7.5" orient="auto-start-reverse">
         <path d="M 0 1.6 L 8.4 5 L 0 8.4 Z" fill="var(--dsw-alias-brand-primary)" />
       </marker>
+      {/* 角色边的箭头降一档：它们不是默认路径，抢不过默认连线。 */}
+      <marker id="conn-arrow-role" viewBox="0 0 10 10" refX="8.5" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+        <path d="M 0 1.6 L 8.4 5 L 0 8.4 Z" fill="color-mix(in srgb, var(--dsw-alias-brand-primary) 78%, transparent)" />
+      </marker>
       {visible.map(gradientOf)}
     </defs>
     <g transform={`translate(${WORLD_PAD},${WORLD_PAD})`}>
@@ -115,6 +139,18 @@ export function ConnectionLayer({
         const to = nodeById.get(connection.toNodeId)!
         const path = bezierPath(nodeAnchor(from, 'right'), nodeAnchor(to, 'left'))
         const active = connection.id === selectedConnectionId
+        const role: CanvasConnectionRole = roleOf(connection)
+        // 未标注角色的连线走原来那三个 path，属性一个都不改：老画布看起来
+        // 必须和加这个功能之前**完全一样**，否则等于偷偷改了所有人的画布。
+        const decorated = role !== 'input'
+        const badge = roleBadgeKey(role)
+        const roleClass = role === 'first' ? css.connectionRoleFirst
+          : role === 'last' ? css.connectionRoleLast
+            : role === 'reference' ? css.connectionRoleReference
+              : ''
+        const dotAt = role === 'first' ? nodeAnchor(from, 'right')
+          : role === 'last' ? nodeAnchor(to, 'left')
+            : undefined
         return <g key={connection.id}>
           {/* 透明的粗线只用来接指针：细线上的点击几乎点不中。 */}
           <path
@@ -134,11 +170,30 @@ export function ConnectionLayer({
           <path
             d={path}
             stroke={`url(#conn-g-${connection.id})`}
-            className={css.connectionPath}
-            markerEnd={active ? 'url(#conn-arrow-active)' : 'url(#conn-arrow)'}
+            className={[css.connectionPath, decorated ? roleClass : '', active ? css.connectionActive : ''].filter(Boolean).join(' ')}
+            markerEnd={decorated
+              ? active ? 'url(#conn-arrow-active)' : 'url(#conn-arrow-role)'
+              : active ? 'url(#conn-arrow-active)' : 'url(#conn-arrow)'}
           />
-          {/* 一条柔和的光带沿着路径流动（从源到目标）。 */}
-          <path d={path} className={`${css.connectionFlow} ${active ? css.connectionFlowActive : ''}`} />
+          {/* 一条柔和的光带沿着路径流动（从源到目标）。参考图只送素材、不占
+              帧位，用更弱的一条，一眼能看出它不是决定成片的那条边。 */}
+          <path d={path} className={`${css.connectionFlow} ${active ? css.connectionFlowActive : ''} ${role === 'reference' ? css.connectionFlowMuted : ''}`} />
+          {/* 首/尾帧在「哪一端进门」处画实心点：箭头说方向，圆点说这一端被
+              当成帧用。虚线 + 无圆点 = 参考图。 */}
+          {dotAt !== undefined ? <circle cx={dotAt.x} cy={dotAt.y} r={4.5} className={css.connectionRoleDot} /> : null}
+          {badge !== undefined ? (() => {
+            const mid = midPointOf(from, to)
+            // 不做药丸底：底框宽度要靠字体度量去猜，而中文 11px 一个字、西里尔
+            // 一个词能差一倍，猜窄了就裁字、猜宽了就成了大枕头。用 `paint-order:
+            // stroke` 在文字背后描一圈底色（见 CSS），宽度交给排版决定，任何
+            // 语言都不会错位，线从字下穿过也被挡住。
+            return <text
+              x={mid.x}
+              y={mid.y + 4}
+              textAnchor="middle"
+              className={css.connectionRoleBadgeText}
+            >{tt(badge)}</text>
+          })() : null}
         </g>
       })}
       {draft !== null ? (() => {

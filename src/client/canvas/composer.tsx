@@ -37,6 +37,8 @@ export interface ComposerState {
   composerRenderer: 'model' | 'code'
   composerBusy: boolean
   composerReferenceCount: number
+  /** 就在旁边、提交时会被自动连进来的图片张数（预告，未产生任何改动）。 */
+  composerAutoLinkCount: number
   composerTextCount: number
   composerAnnotationTexts: string[]
   composerChannelConnected: boolean
@@ -118,8 +120,9 @@ return <div className={css.composer} data-canvas-no-zoom="" style={{ left: clamp
       }
     }}
   />
-  {linkedCount > 0 ? <div className={css.composerMeta}>
-    <span className={css.composerChip}>{tt('canvas.composerLinked', { count: linkedCount })}</span>
+  {linkedCount > 0 || S.composerAutoLinkCount > 0 ? <div className={css.composerMeta}>
+    {linkedCount > 0 ? <span className={css.composerChip}>{tt('canvas.composerLinked', { count: linkedCount })}</span> : null}
+    {S.composerAutoLinkCount > 0 ? <span className={css.composerChip} data-auto-link="">{tt('canvas.composerAutoLink', { count: S.composerAutoLinkCount })}</span> : null}
   </div> : null}
   <div className={css.composerControls}>
     {/* The kind toggle normally needs a video catalog to be useful. The code

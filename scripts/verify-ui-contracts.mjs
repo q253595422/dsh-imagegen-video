@@ -98,6 +98,25 @@ for (const node of roundTripNodes) {
 if ('metadata' in flowAdapter.nodeFromFlow(flowAdapter.nodeToFlow(roundTripNodes[3]))) adapterProblems.push('a node without metadata grew one on the way back')
 const roundTripConnection = { id: 'e1', fromNodeId: 'i1', toNodeId: 'v1' }
 if (JSON.stringify(flowAdapter.edgeToConnection(flowAdapter.connectionToEdge(roundTripConnection))) !== JSON.stringify(roundTripConnection)) adapterProblems.push('the connection shape changed (workflow/compose read {fromNodeId,toNodeId} directly)')
+// A connection role has to survive the same boundary. Every autosave crosses it,
+// so a dropped role silently un-labels the user's first/last frame and the next
+// video interpolates between two pictures they never picked.
+for (const role of ['first', 'last', 'reference', 'input']) {
+  const labelled = { id: `e-${role}`, fromNodeId: 'i1', toNodeId: 'v1', role }
+  const back = flowAdapter.edgeToConnection(flowAdapter.connectionToEdge(labelled))
+  if (JSON.stringify(back) !== JSON.stringify(labelled)) adapterProblems.push(`connection role "${role}" was lost on the way back: ${JSON.stringify(back)}`)
+}
+// Absent must stay absent: growing a field would rewrite all 1400+ old canvases.
+for (const connection of [roundTripConnection, { id: 'e2', fromNodeId: 'i1', toNodeId: 'v1' }]) {
+  if ('role' in flowAdapter.edgeToConnection(flowAdapter.connectionToEdge(connection))) adapterProblems.push('a connection without a role grew one on the way back')
+}
+// Garbage (hand-edited JSON, a role from a future version) must not reach the
+// document: an unreadable string there is worse than a label that did not stick.
+for (const junk of ['First', '', 42, null, {}, []]) {
+  const edge = flowAdapter.connectionToEdge(roundTripConnection)
+  edge.data = { role: junk }
+  if ('role' in flowAdapter.edgeToConnection(edge)) adapterProblems.push(`a bogus role ${JSON.stringify(junk)} survived the boundary`)
+}
 for (const viewport of [{ x: 0, y: 0, k: 1 }, { x: -120, y: 88, k: 0.37 }]) {
   if (JSON.stringify(flowAdapter.viewportFromFlow(flowAdapter.viewportToFlow(viewport))) !== JSON.stringify(viewport)) adapterProblems.push(`viewport ${JSON.stringify(viewport)} changed`)
 }

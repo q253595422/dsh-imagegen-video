@@ -15,7 +15,8 @@
 
 import type { ReactNode } from 'react'
 import { tt } from '../helpers.ts'
-import type { CanvasDocument, CanvasNode, CanvasAssetRef } from '../../protocol.ts'
+import type { CanvasDocument, CanvasNode, CanvasAssetRef, CanvasConnection, CanvasConnectionRole } from '../../protocol.ts'
+import { CONNECTION_ROLE_LABELS, CONNECTION_ROLES, roleOf } from './connection-role.ts'
 import type { Point } from './geometry.ts'
 import { ToolbarIcon, type ToolbarIconName } from './dock-controls.tsx'
 import css from '../canvas-workspace.module.css'
@@ -38,6 +39,8 @@ export interface CanvasContextMenuState {
   contextMenu: CanvasContextMenuTarget | null
   createMenu: CanvasCreateMenuTarget | null
   nodeById: Map<string, CanvasNode>
+  /** 右键菜单要读某条连线当前的用途。 */
+  connectionById: Map<string, CanvasConnection>
   fileUploadRef: { current: { click: () => void } | null }
   assetOf: (node: CanvasNode) => CanvasAssetRef | undefined
   videoOf: (node: CanvasNode) => { url: string } | undefined
@@ -61,6 +64,8 @@ export interface CanvasContextMenuActions {
   setVideoPreviewNodeId: (value: string | null) => void
   setPosterTarget: (value: { canvasId: string; nodeId: string } | null) => void
   setCastTarget: (value: string | null) => void
+  /** 设置连线用途；`'input'` 即「清除用途」（不写字段）。 */
+  setConnectionRole: (connectionId: string, role: CanvasConnectionRole) => void
   setPolishNode: (value: { screen: Point; nodeId: string } | null) => void
   setNotice: (message: string) => void
   openImageNode: (node: CanvasNode) => void
@@ -126,6 +131,20 @@ if (contextMenu !== null) {
     if (node === undefined || !S.isAnnotationCard(node)) items.push({ label: tt('canvas.duplicate'), icon: 'duplicate', action: () => A.duplicateNode(contextMenu.nodeId) })
     items.push({ label: tt('canvas.delete'), icon: 'trash', action: () => A.deleteNode(contextMenu.nodeId), danger: true })
   } else if (contextMenu.type === 'connection') {
+    // 连线的用途。首帧/尾帧只对视频有意义，但这里不按下游节点类型过滤：
+    // 用户先标好再改节点类型是常态，藏起来反而让人以为这个功能不存在。
+    const connection = document === null ? undefined : S.connectionById.get(contextMenu.connectionId)
+    const currentRole = connection === undefined ? 'input' as const : roleOf(connection)
+    for (const role of CONNECTION_ROLES) {
+      if (role === 'input') continue
+      items.push({
+        label: currentRole === role
+          ? tt('canvas.connection.clearRole')
+          : tt('canvas.connection.setRole', { role: tt(CONNECTION_ROLE_LABELS[role]) }),
+        icon: role === 'reference' ? 'image' : 'layers',
+        action: () => A.setConnectionRole(contextMenu.connectionId, currentRole === role ? 'input' : role),
+      })
+    }
     items.push({
       label: tt('canvas.deleteConnection'), icon: 'close', danger: true,
       action: () => {

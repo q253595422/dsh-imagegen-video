@@ -17,7 +17,9 @@
 import type { Context } from '@deepseek-ai/cordis'
 import { defineTool } from '@deepseek-ai/dsh-tools'
 import { canvasStore, CanvasConflictError } from './canvas-store.ts'
+import { CONNECTION_ROLES, roleOf, withRole } from './client/canvas/connection-role.ts'
 import type {
+  CanvasConnectionRole,
   CanvasDocument,
   CanvasNode,
   CanvasNodeMetadata,
@@ -71,6 +73,13 @@ interface AgentEdge {
   id: string
   from: string
   to: string
+  /**
+   * Absent means the historical 「just an input」 meaning. Only video
+   * generation reads it: `first` / `last` decide which two pictures the
+   * interpolation uses, so a graph can finally say that out loud instead of
+   * relying on the order of the connections array.
+   */
+  role?: CanvasConnectionRole
 }
 
 interface AgentCanvasView {
@@ -119,6 +128,7 @@ const canvasViewSchema = {
           id: { type: 'string', required: true },
           from: { type: 'string', required: true },
           to: { type: 'string', required: true },
+          role: { type: 'string' },
         },
       },
     },
@@ -183,7 +193,13 @@ function viewOf(document: CanvasDocument): AgentCanvasView {
     title: document.title,
     revision: document.revision,
     nodes: document.nodes.map(projectNode),
-    connections: document.connections.map(edge => ({ id: edge.id, from: edge.fromNodeId, to: edge.toNodeId })),
+    connections: document.connections.map((edge): AgentEdge => {
+      const role = roleOf(edge)
+      const projected: AgentEdge = { id: edge.id, from: edge.fromNodeId, to: edge.toNodeId }
+      // Only echo a role that was actually written: a canvas with no roles
+      // must come back identical, and `input` is what absence already means.
+      return role === 'input' ? projected : { ...projected, role }
+    }),
     ...note === undefined ? {} : { note },
   }
 }
@@ -195,7 +211,9 @@ function renderCanvasView(value: AgentCanvasView): Array<{ type: 'text'; text: s
     const detail = node.prompt !== undefined ? ` — prompt: ${node.prompt}` : node.text !== undefined ? ` — text: ${node.text}` : ''
     lines.push(`- ${node.id} [${label}] ${node.title} @ (${node.x}, ${node.y})${detail}`)
   }
-  for (const edge of value.connections) lines.push(`- ${edge.from} → ${edge.to}`)
+  for (const edge of value.connections) {
+    lines.push(`- ${edge.from} → ${edge.to}${edge.role === undefined ? '' : ` (${edge.role})`}`)
+  }
   if (value.note !== undefined) lines.push(value.note)
   lines.push('Nothing here starts a render: open the canvas and press run when you are happy with the graph.')
   return [{ type: 'text', text: lines.join('\n') }]
@@ -212,6 +230,22 @@ function rethrowConflict(error: unknown): never {
     throw new Error('The canvas changed since it was read (someone edited it in the canvas window). Read it again and retry the edit.')
   }
   throw error instanceof Error ? error : new Error(String(error))
+}
+
+/**
+ * Validate a role that arrived from the model.
+ *
+ * The JSON Schema enum already rejects typos, but a tool call is not guaranteed
+ * to be schema-checked by every host path, and writing an unknown string into
+ * the document would make that canvas unreadable only on machines that later
+ * tighten the parser. Reject it here, with the allowed values in the message.
+ */
+function parseRole(value: string): CanvasConnectionRole {
+  const role = (CONNECTION_ROLES as readonly string[]).find(candidate => candidate === value)
+  if (role === undefined) {
+    throw new Error(`Unknown connection role "${value}". Use one of: ${CONNECTION_ROLES.join(', ')}.`)
+  }
+  return role as CanvasConnectionRole
 }
 
 /**
@@ -294,7 +328,7 @@ export function registerAgentCanvasTools(ctx: Context, config: () => { enabled: 
       parameters: { canvas_id: { type: 'string', required: true, description: 'Canvas id from list_canvases.' } },
       output: {
         schema: canvasViewSchema,
-        render: (_args, value) => renderCanvasView(value),
+        render: (_args, value) => renderCanvasView(value as unknown as AgentCanvasView),
       },
       async execute(args) {
         ensureEnabled()
@@ -307,7 +341,7 @@ export function registerAgentCanvasTools(ctx: Context, config: () => { enabled: 
       parameters: { title: { type: 'string', description: 'Canvas title. Defaults to a generic name.' } },
       output: {
         schema: canvasViewSchema,
-        render: (_args, value) => renderCanvasView(value),
+        render: (_args, value) => renderCanvasView(value as unknown as AgentCanvasView),
       },
       async execute(args) {
         ensureEnabled()
@@ -329,7 +363,7 @@ export function registerAgentCanvasTools(ctx: Context, config: () => { enabled: 
       },
       output: {
         schema: canvasViewSchema,
-        render: (_args, value) => renderCanvasView(value),
+        render: (_args, value) => renderCanvasView(value as unknown as AgentCanvasView),
       },
       async execute(args) {
         ensureEnabled()
@@ -355,7 +389,7 @@ export function registerAgentCanvasTools(ctx: Context, config: () => { enabled: 
       },
       output: {
         schema: canvasViewSchema,
-        render: (_args, value) => renderCanvasView(value),
+        render: (_args, value) => renderCanvasView(value as unknown as AgentCanvasView),
       },
       async execute(args) {
         ensureEnabled()
@@ -382,7 +416,7 @@ export function registerAgentCanvasTools(ctx: Context, config: () => { enabled: 
       },
       output: {
         schema: canvasViewSchema,
-        render: (_args, value) => renderCanvasView(value),
+        render: (_args, value) => renderCanvasView(value as unknown as AgentCanvasView),
       },
       async execute(args) {
         ensureEnabled()
@@ -401,10 +435,15 @@ export function registerAgentCanvasTools(ctx: Context, config: () => { enabled: 
         canvas_id: { type: 'string', required: true, description: 'Canvas id.' },
         from_node_id: { type: 'string', required: true, description: 'Upstream node id (the producer).' },
         to_node_id: { type: 'string', required: true, description: 'Downstream node id (the consumer).' },
+        role: {
+          type: 'string',
+          enum: CONNECTION_ROLES,
+          description: 'What this connection carries. Default `input`, the plain 「feed this downstream」 meaning. `first` / `last` only matter when the downstream node is a video config: they pick which two pictures the interpolation runs between, instead of relying on the order the connections happen to sit in. `reference` means the picture is material, never a frame slot.',
+        },
       },
       output: {
         schema: canvasViewSchema,
-        render: (_args, value) => renderCanvasView(value),
+        render: (_args, value) => renderCanvasView(value as unknown as AgentCanvasView),
       },
       async execute(args) {
         ensureEnabled()
@@ -414,11 +453,12 @@ export function registerAgentCanvasTools(ctx: Context, config: () => { enabled: 
           if (!ids.has(args.from_node_id)) throw new Error(`Node ${args.from_node_id} was not found.`)
           if (!ids.has(args.to_node_id)) throw new Error(`Node ${args.to_node_id} was not found.`)
           if (document.connections.some(edge => edge.fromNodeId === args.from_node_id && edge.toNodeId === args.to_node_id)) return
-          document.connections.push({
+          const role = args.role === undefined ? 'input' : parseRole(args.role)
+          document.connections.push(withRole({
             id: `edge-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 7)}`,
             fromNodeId: args.from_node_id,
             toNodeId: args.to_node_id,
-          })
+          }, role))
         })
       },
     })),
@@ -432,7 +472,7 @@ export function registerAgentCanvasTools(ctx: Context, config: () => { enabled: 
       },
       output: {
         schema: canvasViewSchema,
-        render: (_args, value) => renderCanvasView(value),
+        render: (_args, value) => renderCanvasView(value as unknown as AgentCanvasView),
       },
       async execute(args) {
         ensureEnabled()

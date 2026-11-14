@@ -1783,10 +1783,28 @@ export interface CanvasNode {
   metadata?: CanvasNodeMetadata
 }
 
+/**
+ * What an upstream node supplies to its downstream node.
+ *
+ * `input` is the historical meaning and the default: the downstream node just
+ * receives it. The other three only matter to video generation, where the
+ * order of the references decides which picture becomes the first frame and
+ * which becomes the last — an order that used to be "whatever the connections
+ * array happened to hold", so deleting and re-drawing one wire silently
+ * swapped the two frames.
+ *
+ * Absent means `input`. Old documents never carry this field and must keep
+ * loading unchanged; see `canvas/connection-role.ts` for the one place that
+ * resolves it.
+ */
+export type CanvasConnectionRole = 'input' | 'first' | 'last' | 'reference'
+
 export interface CanvasConnection {
   id: string
   fromNodeId: string
   toNodeId: string
+  /** Optional so every canvas written before this field still loads. */
+  role?: CanvasConnectionRole
 }
 
 export interface CanvasDocument {

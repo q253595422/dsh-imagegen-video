@@ -12,12 +12,14 @@ import {
   GitBranch, Keyboard, Layers, Magnet, Map as MapIcon, Maximize, Maximize2, MousePointer2, Palette, Pencil, Plus, Redo2, Scissors, SendHorizonal, Share2, Sparkles, Star,
   Shrink, SquareDashedMousePointer, Trash2, Type, Undo2, Upload, Video, Wand2, Wallpaper,
 } from 'lucide-react'
-import type { CanvasAnnotation, CanvasAssetRef, CanvasConnection, CanvasDocument, CanvasFileKind, CanvasLayerInfo, CanvasLayerPlanItem, CanvasNode, CanvasRect, CanvasStoryboard, CanvasVideoRef, CanvasSkillConfigApplyResult, CanvasSkillConfigField, CanvasSkillConfigSaveResult, CanvasSkillConfigStep, CanvasSkillConfigView, CanvasSkillDescriptor, CanvasSkillLibrary, CanvasSkillOutput, CanvasSkillRunRequest, CanvasSkillTask, CanvasSketchStroke, GenerateRequest, GenerationTask, HistoryEntry, VideoGenerateRequest, VideoTaskSummary, VideoMode, VideoResolution } from '../protocol.ts'
+import type { CanvasAnnotation, CanvasAssetRef, CanvasConnection, CanvasConnectionRole, CanvasDocument, CanvasFileKind, CanvasLayerInfo, CanvasLayerPlanItem, CanvasNode, CanvasRect, CanvasStoryboard, CanvasVideoRef, CanvasSkillConfigApplyResult, CanvasSkillConfigField, CanvasSkillConfigSaveResult, CanvasSkillConfigStep, CanvasSkillConfigView, CanvasSkillDescriptor, CanvasSkillLibrary, CanvasSkillOutput, CanvasSkillRunRequest, CanvasSkillTask, CanvasSketchStroke, GenerateRequest, GenerationTask, HistoryEntry, VideoGenerateRequest, VideoTaskSummary, VideoMode, VideoResolution } from '../protocol.ts'
 import type { CanvasBundleUnresolved } from '../canvas-bundle.ts'
 import { describeVideoModel, durationsOf, VIDEO_RESOLUTIONS } from '../video-model-catalog.ts'
 // The stitch order is a SHARED rule: the host builds its ffmpeg concat list with
 // the same function, so the numbers on the badges are the order of the file.
 import { TimelinePanel, type TimelineClipView } from './TimelinePanel.tsx'
+import { framePair, orderedUpstream, roleOf, withRole } from './canvas/connection-role.ts'
+import { autoLinkCandidates, keyframeRoles } from './canvas/auto-link.ts'
 import type { Timeline } from './timeline.ts'
 import { CastDialog, castLine } from './CastDialog.tsx'
 import { castMembers, castPromptLines, castReferenceIds, ROLE_LABELS } from './cast.ts'
@@ -949,7 +951,7 @@ export function CanvasWorkspace(props: CanvasWorkspaceProps): React.JSX.Element 
   /** Video tasks this canvas already resolved into a node. */
   const processedVideoTasks = useRef(new Set<string>())
   const mountedAtRef = useRef(Date.now())
-  const internalClipboard = useRef<{ nodes: CanvasNode[]; connections: Array<{ fromNodeId: string; toNodeId: string }> } | null>(null)
+  const internalClipboard = useRef<{ nodes: CanvasNode[]; connections: Array<{ fromNodeId: string; toNodeId: string; role?: CanvasConnectionRole }> } | null>(null)
   const pastRef = useRef<string[]>([])
   const futureRef = useRef<string[]>([])
   const composerTargetRef = useRef<string | null>(null)
@@ -1240,7 +1242,7 @@ export function CanvasWorkspace(props: CanvasWorkspaceProps): React.JSX.Element 
     if (clones.length === 0) return
     const connections = current.connections
       .filter(connection => idMap.has(connection.fromNodeId) && idMap.has(connection.toNodeId))
-      .map(connection => ({ id: newId('edge'), fromNodeId: idMap.get(connection.fromNodeId)!, toNodeId: idMap.get(connection.toNodeId)! }))
+      .map(connection => ({ id: newId('edge'), fromNodeId: idMap.get(connection.fromNodeId)!, toNodeId: idMap.get(connection.toNodeId)!, ...(connection.role === undefined ? {} : { role: connection.role }) }))
     mutate(previous => ({ ...previous, nodes: [...previous.nodes, ...clones], connections: [...previous.connections, ...connections] }))
     setSelectedIds(new Set(clones.map(node => node.id)))
   }, [mutate])
@@ -1254,7 +1256,9 @@ export function CanvasWorkspace(props: CanvasWorkspaceProps): React.JSX.Element 
     const nodes = [...selected, ...cards.filter(card => !selectedIdsRef.current.has(card.id))]
     internalClipboard.current = {
       nodes: nodes.map(node => ({ ...node, metadata: { ...nodeMetadata(node) } })),
-      connections: current.connections.filter(connection => selectedIdsRef.current.has(connection.fromNodeId) && selectedIdsRef.current.has(connection.toNodeId)).map(connection => ({ fromNodeId: connection.fromNodeId, toNodeId: connection.toNodeId })),
+      // 角色跟着走：复制一个标了首帧的画布片段，粘出来还该是同一条语义，
+      // 而不是默默降级成普通输入。
+      connections: current.connections.filter(connection => selectedIdsRef.current.has(connection.fromNodeId) && selectedIdsRef.current.has(connection.toNodeId)).map(connection => ({ fromNodeId: connection.fromNodeId, toNodeId: connection.toNodeId, ...(connection.role === undefined ? {} : { role: connection.role }) })),
     }
   }, [])
 
@@ -1266,17 +1270,19 @@ export function CanvasWorkspace(props: CanvasWorkspaceProps): React.JSX.Element 
     const dx = target.x - (bounds.minX + (bounds.maxX - bounds.minX) / 2)
     const dy = target.y - (bounds.minY + (bounds.maxY - bounds.minY) / 2)
     const { clones, idMap } = cloneNodesWithCards(clipboard.nodes, clipboard.nodes, dx, dy)
-    const connections = clipboard.connections.map(connection => ({ id: newId('edge'), fromNodeId: idMap.get(connection.fromNodeId)!, toNodeId: idMap.get(connection.toNodeId)! }))
+    const connections = clipboard.connections.map(connection => ({ id: newId('edge'), fromNodeId: idMap.get(connection.fromNodeId)!, toNodeId: idMap.get(connection.toNodeId)!, ...(connection.role === undefined ? {} : { role: connection.role }) }))
     mutate(previous => ({ ...previous, nodes: [...previous.nodes, ...clones], connections: [...previous.connections, ...connections] }))
     setSelectedIds(new Set(clones.map(node => node.id)))
   }, [canvasCenter, mutate])
 
-  const connectNodes = useCallback((fromNodeId: string, toNodeId: string): void => {
+  const connectNodes = useCallback((fromNodeId: string, toNodeId: string, role?: CanvasConnectionRole): void => {
     if (fromNodeId === toNodeId) return
     const current = documentRef.current
     if (current === null) return
     if (current.connections.some(connection => connection.fromNodeId === fromNodeId && connection.toNodeId === toNodeId)) return
-    mutate(previous => ({ ...previous, connections: [...previous.connections, { id: newId('edge'), fromNodeId, toNodeId }] }))
+    // 拖线的手势不猜角色：新边就是普通输入。角色要么由用户从菜单里设，
+    // 要么由生成前的补边按「首帧/尾帧/参考」自己标。
+    mutate(previous => ({ ...previous, connections: [...previous.connections, { id: newId('edge'), fromNodeId, toNodeId, ...(role === undefined || role === 'input' ? {} : { role }) }] }))
   }, [mutate])
 
   /** Dify-style quick add: create a node to the right of `sourceId`, vertically
@@ -2391,7 +2397,21 @@ export function CanvasWorkspace(props: CanvasWorkspaceProps): React.JSX.Element 
     const groups = videoGroups ?? []
     if (!codeRenderer && groups.length === 0) { setError(tt('canvas.videoNoModel')); onOpenSettings?.(); return }
     const inputs = target === null ? [] : upstreamNodes(current, target.id)
-    const referenceImages = inputs.filter(node => node.type === 'image' && usableAsset(node) !== undefined)
+    const usableImage = (node: CanvasNode): boolean => node.type === 'image' && usableAsset(node) !== undefined
+    // 连线语义角色：首帧/尾帧由连线上的 role 决定，不再靠 connections 数组
+    // 恰好排成什么样——删一条边再重连顺序就变了，画布上却看不出来。
+    // 没标过角色的画布 orderedUpstream 保持原数组顺序，行为与今天逐条一致。
+    const wiredImages = target === null
+      ? []
+      : orderedUpstream(current.connections, target.id)
+        .map(connection => current.nodes.find(node => node.id === connection.fromNodeId))
+        .filter((node): node is CanvasNode => node !== undefined && usableImage(node))
+    // 拖到节点旁边却没连过来的图：提交这一刻补上。看得见、删得掉、一步能撤销；
+    // 拖拽过程中不猜，那是替用户做决定而用户没法拒绝。
+    const nearbyImages = target === null
+      ? []
+      : autoLinkCandidates(current.nodes, current.connections, target, usableImage)
+    const referenceImages = [...wiredImages, ...nearbyImages]
     const upstreamText = inputs
       .filter(node => node.type === 'text' && nodeMetadata(node).annotation === undefined && (nodeMetadata(node).text ?? '').trim() !== '')
       .map(node => nodeMetadata(node).text!.trim())
@@ -2505,6 +2525,19 @@ export function CanvasWorkspace(props: CanvasWorkspaceProps): React.JSX.Element 
           },
         })
         if (anchor !== undefined) connections.push({ id: newId('edge'), fromNodeId: anchor.id, toNodeId: placeholderId })
+        // 补边在这里做，与占位节点同一个 mutate：一次进历史，撤销一次就回到
+        // 生成前的画布。keyframe 模式下按 first/last/reference 标角色，让画布
+        // 上看得见哪张当了首帧、哪张当了尾帧；其余模式补的就是普通输入。
+        // 角色只在没人占的时候才给：连线上已经有人标了 first，再给近邻图一个
+        // first 就会出现两个首帧，生成时按文档顺序取谁都不对。
+        const takenRoles = new Set(previous.connections.filter(connection => connection.toNodeId === placeholderId || connection.toNodeId === target?.id).map(connection => roleOf(connection)))
+        const freeRoles = effective === 'keyframe'
+          ? keyframeRoles(nearbyImages.length + takenRoles.size).filter(role => role !== undefined && !takenRoles.has(role))
+          : []
+        nearbyImages.forEach((node, index) => {
+          const role = freeRoles[index]
+          connections.push({ id: newId('edge'), fromNodeId: node.id, toNodeId: placeholderId, ...(role === undefined || role === 'input' ? {} : { role }) })
+        })
         return { ...previous, nodes, connections }
       })
       setComposerPrompt('')
@@ -2661,12 +2694,22 @@ export function CanvasWorkspace(props: CanvasWorkspaceProps): React.JSX.Element 
     const frame = metadata.sourceNodeId === undefined
       ? undefined
       : current.nodes.find(item => item.id === metadata.sourceNodeId)
+    // 首尾帧重试：sourceNodeId 只记得住「当时的第一张」，标成 last 的那张重试时
+    // 会丢，两条不同成片被当成同一次运行重放。所以按连线上的角色重新解析一遍
+    // ——连线还在就照角色取，连线被删了才退回 sourceNodeId。
+    const retryPair = (codeRenderer ? 'text' : metadata.videoMode ?? 'text') === 'keyframe'
+      ? framePair(current.connections, id => current.nodes.find(item => item.id === id), node.id, item => item.type === 'image' && usableAsset(item) !== undefined)
+      : {}
     try {
       const frames: { image?: string; firstFrame?: string; lastFrame?: string; refName?: string } = {}
       const mode: VideoMode = codeRenderer ? 'text' : metadata.videoMode ?? 'text'
-      if (mode === 'keyframe' && frame !== undefined && frame.type === 'image') {
-        const asset = usableAsset(frame)
-        if (asset !== undefined) frames.firstFrame = await assetToDataUrl(asset)
+      if (mode === 'keyframe') {
+        const firstNode = retryPair.first ?? (frame?.type === 'image' ? frame : undefined)
+        const lastNode = retryPair.last
+        const firstAsset = firstNode === undefined ? undefined : usableAsset(firstNode)
+        if (firstAsset !== undefined) frames.firstFrame = await assetToDataUrl(firstAsset)
+        const lastAsset = lastNode === undefined ? undefined : usableAsset(lastNode)
+        if (lastAsset !== undefined) frames.lastFrame = await assetToDataUrl(lastAsset)
       } else if (mode === 'image' && frame !== undefined && frame.type === 'image') {
         const asset = usableAsset(frame)
         if (asset !== undefined) { frames.image = await assetToDataUrl(asset); frames.refName = 'canvas-reference.png' }
@@ -3798,6 +3841,12 @@ export function CanvasWorkspace(props: CanvasWorkspaceProps): React.JSX.Element 
     [composerTarget, document, upstreamNodes],
   )
   const composerReferenceCount = composerInputs.filter(node => node.type === 'image' && usableAsset(node) !== undefined).length
+  // 就在旁边、提交时会被自动连进来的图。先让人看见「还会带上这几张」，
+  // 而不是生成完才发现多用了图——预告和实际用的是同一个函数算出来的。
+  const composerAutoLinkCount = useMemo(() => {
+    if (composerTarget === null || document === null) return 0
+    return autoLinkCandidates(document.nodes, document.connections, composerTarget, node => node.type === 'image' && usableAsset(node) !== undefined).length
+  }, [composerTarget, document])
   const composerTextCount = composerInputs.filter(node => node.type === 'text' && (nodeMetadata(node).text ?? '').trim() !== '').length
   // Prompt cards hanging off the upstream images count as prompt input too, so
   // the send button is live once a box carries a prompt (no graph edge needed).
@@ -4607,6 +4656,8 @@ export function CanvasWorkspace(props: CanvasWorkspaceProps): React.JSX.Element 
   // -------------------------------------------------------------- derived
 
   const nodeById = useMemo(() => new Map((document?.nodes ?? []).map(node => [node.id, node])), [document])
+  // 右键菜单要在连线上显示/切换用途，与 nodeById 同一套读法。
+  const connectionById = useMemo(() => new Map((document?.connections ?? []).map(connection => [connection.id, connection])), [document])
   /** 正在设置身份参考的节点；节点被删掉时面板自然消失，不留一个悬空面板。 */
   const castNode = useMemo(() => castTarget === null ? undefined : nodeById.get(castTarget), [castTarget, nodeById])
   /** The file node whose full-screen reader is open, with its asset resolved. */
@@ -4796,7 +4847,7 @@ export function CanvasWorkspace(props: CanvasWorkspaceProps): React.JSX.Element 
     viewportSize, viewportRef,
     modelGroups, videoGroups,
     composerVisible, composerTarget, composerKind, composerPrompt, composerRenderer,
-    composerBusy, composerReferenceCount, composerTextCount, composerAnnotationTexts,
+    composerBusy, composerReferenceCount, composerTextCount, composerAnnotationTexts, composerAutoLinkCount,
     composerChannelConnected, composerChannelId, composerModel,
     composerVideoChannelId, composerVideoModel, composerVideoConnected, composerVideoMode,
     composerAspect, composerAspectOptions, composerSeconds, composerDurationOptions,
@@ -4805,7 +4856,7 @@ export function CanvasWorkspace(props: CanvasWorkspaceProps): React.JSX.Element 
   }), [
     document, viewportSize, viewportRef, modelGroups, videoGroups,
     composerVisible, composerTarget, composerKind, composerPrompt, composerRenderer,
-    composerBusy, composerReferenceCount, composerTextCount, composerAnnotationTexts,
+    composerBusy, composerReferenceCount, composerTextCount, composerAnnotationTexts, composerAutoLinkCount,
     composerChannelConnected, composerChannelId, composerModel,
     composerVideoChannelId, composerVideoModel, composerVideoConnected, composerVideoMode,
     composerAspect, composerAspectOptions, composerSeconds, composerDurationOptions,
@@ -4834,16 +4885,27 @@ export function CanvasWorkspace(props: CanvasWorkspaceProps): React.JSX.Element 
 
   const contextMenuState: CanvasContextMenuState = useMemo(() => ({
     canvasDocument: document,
-    contextMenu, createMenu, nodeById, fileUploadRef,
+    contextMenu, createMenu, nodeById, connectionById, fileUploadRef,
     assetOf, videoOf, nodeMetadata, isAnnotationCard,
     createTextNode, createSketchNode, createStoryboardNode,
     createImageNode, createEmptyFileNode, createConfigNode,
   }), [
-    document, contextMenu, createMenu, nodeById, fileUploadRef,
+    document, contextMenu, createMenu, nodeById, connectionById, fileUploadRef,
     assetOf, videoOf, nodeMetadata, isAnnotationCard,
     createTextNode, createSketchNode, createStoryboardNode,
     createImageNode, createEmptyFileNode, createConfigNode,
   ])
+
+  /**
+   * 给一条连线设角色。`input` 走 `withRole` 会删字段，等于「清除用途」，
+   * 所以菜单里那两项其实是同一个动作的两个入口。
+   */
+  const setConnectionRole = useCallback((connectionId: string, role: CanvasConnectionRole): void => {
+    mutate(previous => ({
+      ...previous,
+      connections: previous.connections.map(connection => connection.id === connectionId ? withRole(connection, role) : connection),
+    }))
+  }, [mutate])
 
   const contextMenuActions: CanvasContextMenuActions = useMemo(() => ({
     setContextMenu, setCreateMenu, setFileTargetNodeId, setPickerOpen, setSelectedConnectionId,
@@ -4851,12 +4913,14 @@ export function CanvasWorkspace(props: CanvasWorkspaceProps): React.JSX.Element 
     openImageNode, openFileNode, openSkillMenu,
     downloadNode, downloadFileNode, downloadVideoNode, continueFromClip,
     duplicateNode, deleteNode, patchNode, placeNewNode, pasteClipboard, fitView, mutate,
+    setConnectionRole,
   }), [
     setContextMenu, setCreateMenu, setFileTargetNodeId, setPickerOpen, setSelectedConnectionId,
     setVideoPreviewNodeId, setPosterTarget, setCastTarget, setPolishNode, setNotice,
     openImageNode, openFileNode, openSkillMenu,
     downloadNode, downloadFileNode, downloadVideoNode, continueFromClip,
     duplicateNode, deleteNode, patchNode, placeNewNode, pasteClipboard, fitView, mutate,
+    setConnectionRole,
   ])
 
   const renderContextMenu = (): ReactNode =>
