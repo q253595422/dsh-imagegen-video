@@ -214,6 +214,29 @@ const CASES = [
     expect: /marquee must ignore no-zoom surfaces/,
   },
   {
+    // 1.30.x 的真机回归：按住空格/Control 时框选分支照样在 pointerdown 上
+    // preventDefault + 抓指针。浏览器因此不再派发兼容 mousedown，而 d3-zoom
+    // 只靠 mousedown 起平移——画布拖不动，节点拖动（自定义引擎）却正常。
+    // 把让路条件去掉，正好恢复那个缺陷，两条断言必须变红。
+    name: 'the marquee steals the pointer back from the pan gesture',
+    runner: 'smoke',
+    file: 'src/client/canvas',
+    from: "tool === 'select' && !temporaryPanTool",
+    to: "tool === 'select'",
+    expect: /holding Space leaves the pointer to d3-zoom|marquee yields the pointer/,
+  },
+  {
+    // d3-zoom 默认拒绝带 ctrlKey 的拖拽（当成捏合缩放），所以 Control 必须
+    // 出现在 panActivationKeyCode 里，快捷键表的「Ctrl/⌘ + Space」才成立。
+    // 退回只写 Space，源码不变式必须变红。
+    name: 'the pan activation keys forget Control',
+    runner: 'smoke',
+    file: 'src/client/canvas',
+    from: "panActivationKeyCode={['Space', 'Control']}",
+    to: 'panActivationKeyCode="Space"',
+    expect: /both Space and Control as pan activation keys/,
+  },
+  {
     // 去掉外壳的 pointer-events:auto：react-flow wrapper 的 none 继承下来，
     // 卡片本体收不到真指针。契约的 PE 不变式必须变红。
     name: 'node cards stop receiving real pointers',

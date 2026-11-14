@@ -4082,7 +4082,13 @@ export function CanvasWorkspace(props: CanvasWorkspaceProps): React.JSX.Element 
     // no-zoom 面（空态快捷卡等可点控件）不算空白：否则框选会 preventDefault +
     // 抓取指针，把控件的 click 抢走（真机实测卡片点不动）。
     const isBackground = closestOf(target, '[data-node-id],[data-connection-hit],[data-canvas-no-zoom]') === null
-    if (event.button === 0 && isBackground && tool === 'select' && event.pointerType !== 'touch') {
+    // 临时平移（空格 / Control）期间这块地属于 d3-zoom，框选必须让路。
+    // 它对 pointerdown 的 preventDefault 会掐掉浏览器随后派发的兼容 mousedown，
+    // 而 d3-zoom 正是靠 mousedown 起拖动（真 Chromium 实测：有 preventDefault
+    // 时祖先收不到 mousedown）；setPointerCapture 还会把指针从 d3 手里夺走。
+    // 节点拖动与框选走自定义指针引擎，所以这条竞争只打断平移——正是
+    // 「节点能拖、框选能用，画布拖不动」的形状。
+    if (event.button === 0 && isBackground && tool === 'select' && !temporaryPanTool && event.pointerType !== 'touch') {
       event.preventDefault()
       event.currentTarget.setPointerCapture(event.pointerId)
       const world = screenToWorld(event.clientX, event.clientY)
@@ -5160,7 +5166,13 @@ export function CanvasWorkspace(props: CanvasWorkspaceProps): React.JSX.Element 
                 elementsSelectable={false}
                 nodesDraggable={false}
                 nodesConnectable={false}
-                panActivationKeyCode="Space"
+                // 空格是主路径；Ctrl 是快捷键表里「Ctrl/⌘ + Space」那条的第二枚键。
+                // 必须显式列出 Ctrl：d3-zoom 默认拒绝带 ctrlKey 的拖拽（它把
+                // Ctrl+拖当成捏合缩放），只有 panActivationKeyPressed 为真才放行。
+                // 故意不收 Meta：在 macOS 上 ⌘ 已是「拖节点 = 移动并加减选」的
+                // 修饰键，再当作平移激活键会让 ⌘+拖节点直接失效；而按住 ⌘ 再按
+                // 空格本来就能平移，表里那个组合照旧成立。
+                panActivationKeyCode={['Space', 'Control']}
                 zoomOnDoubleClick={false}
                 zoomOnPinch={false}
                 deleteKeyCode={null}

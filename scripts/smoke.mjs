@@ -9698,6 +9698,59 @@ await check('E1 client apply mounts the sidebar entry and studio (jsdom)', async
     viewportEl.dispatchEvent(backgroundProbe)
     assert.equal(backgroundProbe.defaultPrevented, true, 'Space on the canvas background still arms the pan tool')
 
+    // Holding Space must hand the pointer to the zoom engine instead of starting
+    // a marquee. jsdom cannot reproduce the browser behaviour that actually
+    // breaks the drag — preventDefault() on pointerdown suppresses the compat
+    // mousedown that d3-zoom starts from (measured in a real Chromium, where the
+    // ancestor saw pointerdown but no mousedown) — so the observable proxy here
+    // is defaultPrevented: the marquee path calls it, the pan path must not.
+    //
+    // Baseline first, with no pan key held: if a plain background drag stopped
+    // starting a marquee, the "pan must not preventDefault" case below would
+    // pass for the wrong reason.
+    jsdomWindow.dispatchEvent(new jsdomWindow.KeyboardEvent('keyup', { key: ' ', code: 'Space', bubbles: true }))
+    await new Promise(resolve => setTimeout(resolve, 40))
+    const marqueeDown = new jsdomWindow.MouseEvent('pointerdown', { bubbles: true, cancelable: true, button: 0, clientX: 300, clientY: 300 })
+    viewportEl.dispatchEvent(marqueeDown)
+    assert.equal(marqueeDown.defaultPrevented, true, 'a plain background drag still starts the marquee')
+    viewportEl.dispatchEvent(new jsdomWindow.MouseEvent('pointerup', { bubbles: true, button: 0, clientX: 300, clientY: 300 }))
+    await new Promise(resolve => setTimeout(resolve, 40))
+    // Now hold Space, exactly as a user does before dragging the canvas.
+    viewportEl.dispatchEvent(new jsdomWindow.KeyboardEvent('keydown', { key: ' ', code: 'Space', bubbles: true, cancelable: true }))
+    await new Promise(resolve => setTimeout(resolve, 40))
+    const panDown = new jsdomWindow.MouseEvent('pointerdown', { bubbles: true, cancelable: true, button: 0, clientX: 300, clientY: 300 })
+    viewportEl.dispatchEvent(panDown)
+    assert.equal(panDown.defaultPrevented, false, 'holding Space leaves the pointer to d3-zoom, so the canvas can actually be dragged')
+    viewportEl.dispatchEvent(new jsdomWindow.MouseEvent('pointerup', { bubbles: true, button: 0, clientX: 300, clientY: 300 }))
+    jsdomWindow.dispatchEvent(new jsdomWindow.KeyboardEvent('keyup', { key: ' ', code: 'Space', bubbles: true }))
+    await new Promise(resolve => setTimeout(resolve, 40))
+    // ...and the same for Control, the second key the legend promises
+    // ("Ctrl/⌘ + Space"). It needs its own probe because the two are tracked in
+    // separate state: a fix that only special-cases Space would leave Ctrl+
+    // drag dead while this suite stayed green.
+    viewportEl.dispatchEvent(new jsdomWindow.KeyboardEvent('keydown', { key: 'Control', code: 'ControlLeft', bubbles: true, cancelable: true }))
+    await new Promise(resolve => setTimeout(resolve, 40))
+    const ctrlDown = new jsdomWindow.MouseEvent('pointerdown', { bubbles: true, cancelable: true, button: 0, clientX: 300, clientY: 300 })
+    viewportEl.dispatchEvent(ctrlDown)
+    assert.equal(ctrlDown.defaultPrevented, false, 'holding Control leaves the pointer to d3-zoom too')
+    viewportEl.dispatchEvent(new jsdomWindow.MouseEvent('pointerup', { bubbles: true, button: 0, clientX: 300, clientY: 300 }))
+    jsdomWindow.dispatchEvent(new jsdomWindow.KeyboardEvent('keyup', { key: 'Control', code: 'ControlLeft', bubbles: true }))
+    await new Promise(resolve => setTimeout(resolve, 40))
+    // The source invariants behind the behaviour above, so a refactor cannot
+    // quietly drop either half: the marquee has to yield, and d3-zoom has to be
+    // told about Control (d3 rejects ctrl-modified drags unless the activation
+    // key matches, and the legend promises "Ctrl/⌘ + Space").
+    assert.match(
+      canvasSourceText(),
+      /tool === 'select' && !temporaryPanTool/,
+      'the marquee yields the pointer while a temporary pan key is held',
+    )
+    assert.match(
+      canvasSourceText(),
+      /panActivationKeyCode=\{\['Space', 'Control'\]\}/,
+      'd3-zoom recognises both Space and Control as pan activation keys',
+    )
+
     // (4) Esc must close the in-canvas overlays rather than silently reset the
     // selection behind them. The video preview is the clearest case: its only
     // other exit is the × button.
