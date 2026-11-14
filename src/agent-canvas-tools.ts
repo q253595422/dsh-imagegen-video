@@ -328,7 +328,7 @@ export function registerAgentCanvasTools(ctx: Context, config: () => { enabled: 
       parameters: { canvas_id: { type: 'string', required: true, description: 'Canvas id from list_canvases.' } },
       output: {
         schema: canvasViewSchema,
-        render: (_args, value) => renderCanvasView(value),
+        render: (_args, value) => renderCanvasView(value as unknown as AgentCanvasView),
       },
       async execute(args) {
         ensureEnabled()
@@ -341,7 +341,7 @@ export function registerAgentCanvasTools(ctx: Context, config: () => { enabled: 
       parameters: { title: { type: 'string', description: 'Canvas title. Defaults to a generic name.' } },
       output: {
         schema: canvasViewSchema,
-        render: (_args, value) => renderCanvasView(value),
+        render: (_args, value) => renderCanvasView(value as unknown as AgentCanvasView),
       },
       async execute(args) {
         ensureEnabled()
@@ -363,7 +363,7 @@ export function registerAgentCanvasTools(ctx: Context, config: () => { enabled: 
       },
       output: {
         schema: canvasViewSchema,
-        render: (_args, value) => renderCanvasView(value),
+        render: (_args, value) => renderCanvasView(value as unknown as AgentCanvasView),
       },
       async execute(args) {
         ensureEnabled()
@@ -389,7 +389,7 @@ export function registerAgentCanvasTools(ctx: Context, config: () => { enabled: 
       },
       output: {
         schema: canvasViewSchema,
-        render: (_args, value) => renderCanvasView(value),
+        render: (_args, value) => renderCanvasView(value as unknown as AgentCanvasView),
       },
       async execute(args) {
         ensureEnabled()
@@ -416,7 +416,7 @@ export function registerAgentCanvasTools(ctx: Context, config: () => { enabled: 
       },
       output: {
         schema: canvasViewSchema,
-        render: (_args, value) => renderCanvasView(value),
+        render: (_args, value) => renderCanvasView(value as unknown as AgentCanvasView),
       },
       async execute(args) {
         ensureEnabled()
@@ -443,7 +443,7 @@ export function registerAgentCanvasTools(ctx: Context, config: () => { enabled: 
       },
       output: {
         schema: canvasViewSchema,
-        render: (_args, value) => renderCanvasView(value),
+        render: (_args, value) => renderCanvasView(value as unknown as AgentCanvasView),
       },
       async execute(args) {
         ensureEnabled()
@@ -472,7 +472,7 @@ export function registerAgentCanvasTools(ctx: Context, config: () => { enabled: 
       },
       output: {
         schema: canvasViewSchema,
-        render: (_args, value) => renderCanvasView(value),
+        render: (_args, value) => renderCanvasView(value as unknown as AgentCanvasView),
       },
       async execute(args) {
         ensureEnabled()
