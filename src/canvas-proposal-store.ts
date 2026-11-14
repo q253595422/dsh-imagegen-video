@@ -34,7 +34,7 @@
 import { promises as fs } from 'node:fs'
 import { randomUUID } from 'node:crypto'
 import path from 'node:path'
-import type { CanvasDocument, CanvasProposal, CanvasProposalChange } from './protocol.ts'
+import type { CanvasDocument, CanvasNode, CanvasProposal, CanvasProposalChange, CanvasProposalNodeUpdate } from './protocol.ts'
 import { canvasStore, CanvasConflictError, coerceDocument, readJson, safeId, writeJsonAtomic, type CanvasStore } from './canvas-store.ts'
 import { imageDataRoot } from './image-storage-path.ts'
 
@@ -208,7 +208,9 @@ export class ProposalStore {
       // 提案要改的节点已经不在了（被用户删了）：让调用方明确报错，而不是
       // 假装这条提案生效了。
       if (index < 0) return undefined
-      nodes[index] = update
+      // 字段补丁，不是整份替换：用户在提议之后拖过的坐标、改过的标题要留着。
+      // 只覆盖提案点名的键，其余读**当前文档**里的值。
+      nodes[index] = mergeNodePatch(nodes[index]!, update)
     }
     const removed = new Set(change.removedNodeIds ?? [])
     const kept = removed.size === 0 ? nodes : nodes.filter(node => !removed.has(node.id))
@@ -217,6 +219,13 @@ export class ProposalStore {
     let connections = [...document.connections]
     for (const connection of change.addedConnections ?? []) {
       if (connections.some(existing => existing.id === connection.id)) return undefined
+      // 端点是提案起草时点名的节点。用户在提议之后删掉其中任何一个，这条连线
+      // 就没有意义了——旧实现只查 id 重复，于是能把一条**指向不存在节点**的
+      // 边写进文档（探针实测：删掉下游节点后接受连线提案仍然成功）。画布自己
+      // 的删除语义是「删节点连带删连线」，这里必须一致，否则用户看到一条
+      // 「缺少端点」的幽灵边，它还会在每次渲染时被跳过、永远连不上任何东西。
+      const endpoints = new Set(nodes.map(node => node.id))
+      if (!endpoints.has(connection.fromNodeId) || !endpoints.has(connection.toNodeId)) return undefined
       connections.push(connection)
     }
     const droppedEdges = new Set(change.removedConnectionIds ?? [])
@@ -241,6 +250,70 @@ export class ProposalStore {
   }
 }
 
+/**
+ * 把一份字段补丁合到一个现有节点上。
+ *
+ * 只覆盖补丁里出现过的键——`fields` 里的顶层字段，以及 `metadata` 里的逐键。
+ * `metadata` 是整体替换里最危险的一处：整份替换会连带把用户在这次提议之后写
+ * 上去的其它 metadata（换过的模型、刚点上的 cast）抹掉，所以必须逐键合。
+ */
+function mergeNodePatch(node: CanvasNode, update: CanvasProposalNodeUpdate): CanvasNode {
+  const merged: CanvasNode = { ...node, ...update.fields ?? {} }
+  const removedKeys = new Set(update.removedMetadataKeys ?? [])
+  const metadata: Record<string, unknown> = { ...node.metadata, ...update.metadata ?? {} }
+  for (const key of removedKeys) delete metadata[key]
+  if (Object.keys(metadata).length === 0) delete merged.metadata
+  else merged.metadata = metadata
+  return merged
+}
+
+/** 新格式：`{id, fields?, metadata?, removedMetadataKeys?}`。 */
+function isPatchShape(patch: Record<string, unknown>): boolean {
+  for (const field of ['fields', 'metadata'] as const) {
+    if (patch[field] !== undefined && (patch[field] === null || typeof patch[field] !== 'object')) return false
+  }
+  if (patch.removedMetadataKeys !== undefined
+    && (!Array.isArray(patch.removedMetadataKeys) || !patch.removedMetadataKeys.every(key => typeof key === 'string'))) return false
+  return true
+}
+
+/**
+ * 旧格式：整份节点（改造前 `updatedNodes` 存的就是它）。
+ *
+ * 至少要认出 `type` 与几何，否则一个形状坏掉的补丁也会被当成旧节点放过去。
+ * 旧文件是真实存在的：`proposals/` 是旁路目录，没有任何清理逻辑，用户机器上
+ * 可能躺着改造前的提案。
+ */
+function isLegacyNodeShape(node: Record<string, unknown>): boolean {
+  return typeof node.type === 'string' && typeof node.title === 'string'
+    && typeof node.x === 'number' && typeof node.y === 'number'
+    && typeof node.width === 'number' && typeof node.height === 'number'
+}
+
+/**
+ * 把 `updatedNodes` 统一成补丁数组。
+ *
+ * 旧格式保留它当初想改的字段（`title`/`x`/`y`/`width`/`height` 与整份
+ * `metadata`），丢掉 `type`/`id`：改节点的类型不是这套工具做过的事，拿它当
+ * 补丁应用反而可能让一条旧提案把一个节点变成另一种东西。
+ */
+function normalizeNodeUpdates(raw: unknown[] | undefined): CanvasProposalNodeUpdate[] | undefined {
+  if (raw === undefined) return undefined
+  return raw.map(entry => {
+    const value = entry as Record<string, unknown> & Partial<CanvasNode> & { id: string }
+    if (isPatchShape(value) && !isLegacyNodeShape(value)) return value as CanvasProposalNodeUpdate
+    const fields: Record<string, unknown> = {}
+    for (const key of ['title', 'x', 'y', 'width', 'height'] as const) {
+      if (value[key] !== undefined) fields[key] = value[key]
+    }
+    return {
+      id: value.id,
+      ...Object.keys(fields).length === 0 ? {} : { fields },
+      ...value.metadata === undefined ? {} : { metadata: value.metadata },
+    } as CanvasProposalNodeUpdate
+  })
+}
+
 function coerceProposal(value: unknown): CanvasProposal | undefined {
   if (value === null || typeof value !== 'object') return undefined
   const raw = value as Record<string, unknown>
@@ -258,6 +331,15 @@ function coerceProposal(value: unknown): CanvasProposal | undefined {
     const probe = { version: 2, id: '__probe__', title: '', revision: 1, viewport: { x: 0, y: 0, k: 1 }, background: 'lines', nodes: [node], connections: [], createdAt: 0, updatedAt: 0 }
     if (coerceDocument(probe) === undefined) return undefined
   }
+  // 补丁只要 `id` 是字符串就必须认，其余字段可选；`fields`/`metadata` 若
+  // 出现必须是对象。形状在这里挡，`apply` 那边只做合并。
+  for (const update of (change.updatedNodes as unknown[] | undefined) ?? []) {
+    if (update === null || typeof update !== 'object') return undefined
+    const patch = update as Record<string, unknown>
+    if (typeof patch.id !== 'string' || patch.id === '') return undefined
+    if (!isPatchShape(patch) && !isLegacyNodeShape(patch)) return undefined
+  }
+  const updatedNodes = normalizeNodeUpdates(change.updatedNodes as unknown[] | undefined)
   return {
     id: raw.id,
     canvasId: raw.canvasId,
@@ -265,7 +347,12 @@ function coerceProposal(value: unknown): CanvasProposal | undefined {
     summary: raw.summary,
     baseRevision: raw.baseRevision,
     createdAt: raw.createdAt,
-    change: raw.change as CanvasProposalChange,
+    // 归一在读取时做，`apply` 于是只有一种形状要处理。旧提案（整份节点）
+    // 不会被当成坏文件丢掉，也不会「接受成功但什么都没改」。
+    change: {
+      ...raw.change as CanvasProposalChange,
+      ...updatedNodes === undefined ? {} : { updatedNodes },
+    },
   }
 }
 

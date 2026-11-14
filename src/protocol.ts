@@ -411,8 +411,16 @@ export const GALLERY_API = {
 export interface CanvasProposalChange {
   /** 新建的节点（整份，接受时直接并入）。 */
   addedNodes?: CanvasNode[]
-  /** 被改的节点，整份改后的节点。 */
-  updatedNodes?: CanvasNode[]
+  /**
+   * 被改的节点，**只带 Agent 真正改过的字段**。
+   *
+   * WHY 不是整份节点：提案是起草时算出来的，用户可能在这之后自己拖过这个
+   * 节点。整份替换会把用户的坐标一并回退——这是上线前探针实测到的真实缺陷
+   * （节点被拖到 1234,567，接受一条「改标题」的提案后回到 100,100），而且
+   * 静默发生：界面说「接受之前画布不会变化」，用户没法预料一次改标题会把
+   * 刚摆好的位置也改回去。字段补丁只碰提案点名的那些键。
+   */
+  updatedNodes?: CanvasProposalNodeUpdate[]
   /** 被删的节点 id。 */
   removedNodeIds?: string[]
   /** 新建的连线。 */
@@ -421,6 +429,24 @@ export interface CanvasProposalChange {
   removedConnectionIds?: string[]
   /** 画布标题改成什么。 */
   title?: string
+}
+
+/**
+ * 提案里对某个节点的字段补丁。
+ *
+ * WHY 不叫 `CanvasNodePatch`：客户端 `canvas-flow-context.tsx` 已经有一个同名
+ * 类型，但它把 metadata 键平铺在顶层（`patchNode` 的入参形状）。这里是明确的
+ * 两层：顶层几何/标题、metadata 逐键。两者形状不同，同名会让人读错。
+ */
+export interface CanvasProposalNodeUpdate {
+  /** 要改的节点 id。 */
+  id: string
+  /** 顶层字段的补丁：只有出现过的键会被覆盖，其余保持文档当前值。 */
+  fields?: Partial<Pick<CanvasNode, 'title' | 'x' | 'y' | 'width' | 'height'>>
+  /** metadata 的逐键补丁。未出现的键保持文档当前值。 */
+  metadata?: CanvasNodeMetadata
+  /** metadata 里要删掉的键（今天的工具都不删键，但补丁语义得自己站得住）。 */
+  removedMetadataKeys?: string[]
 }
 
 export interface CanvasProposal {

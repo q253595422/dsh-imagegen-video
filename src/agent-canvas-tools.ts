@@ -38,6 +38,7 @@ import type {
   CanvasNode,
   CanvasNodeMetadata,
   CanvasNodeType,
+  CanvasProposalNodeUpdate,
   CanvasSummary,
 } from './protocol.ts'
 
@@ -220,17 +221,27 @@ const AUTO_APPLY = process.env.DSH_CANVAS_AGENT_AUTO_APPLY === '1'
  * 比的是节点 id 集合与每个节点的**内容**，不是引用：`edit` 可能重建了整个
  * 数组，只要内容一样就不该算一次改动。排序稳定，免得同一份内容因为数组顺序
  * 不同被判成变了。
+ *
+ * ## 改过的节点记成字段补丁，不是整份节点
+ *
+ * 这是本轮修掉的一个真实缺陷：整份节点意味着接受时用「起草那一刻的完整
+ * 节点」替换文档里的节点，用户在这之后拖过的坐标会被一起回退。探针实测过：
+ * 节点被拖到 1234,567，接受一条「改标题」的提案后回到 100,100——静默发生，
+ * 而界面还写着「接受之前画布不会有任何变化」。
+ *
+ * 补丁只点名 Agent 真正改过的键。`metadata` 也逐键比：整份 `metadata` 会把
+ * 用户之后写上去的其它字段（换过的模型、刚点上的 cast）抹掉。
  */
 function diffOf(before: CanvasDocument, after: CanvasDocument): CanvasProposalChange | undefined {
-  const sameNode = (left: CanvasNode, right: CanvasNode): boolean => JSON.stringify(left) === JSON.stringify(right)
-
   const beforeById = new Map(before.nodes.map(node => [node.id, node]))
   const afterById = new Map(after.nodes.map(node => [node.id, node]))
 
   const addedNodes = after.nodes.filter(node => !beforeById.has(node.id))
-  const updatedNodes = after.nodes.filter(node => {
+  const updatedNodes = after.nodes.flatMap(node => {
     const original = beforeById.get(node.id)
-    return original !== undefined && !sameNode(original, node)
+    if (original === undefined) return []
+    const patch = nodePatchOf(original, node)
+    return patch === undefined ? [] : [patch]
   })
   const removedNodeIds = before.nodes.filter(node => !afterById.has(node.id)).map(node => node.id)
 
@@ -252,6 +263,34 @@ function diffOf(before: CanvasDocument, after: CanvasDocument): CanvasProposalCh
     ...addedConnections.length === 0 ? {} : { addedConnections },
     ...removedConnectionIds.length === 0 ? {} : { removedConnectionIds },
     ...title === undefined ? {} : { title },
+  }
+}
+
+/**
+ * 两个节点之间的字段补丁；没有差异返回 `undefined`。
+ *
+ * `metadata` 逐键比，不整体比：把整个对象塞进补丁等于让「改一个 prompt」
+ * 顺带覆盖用户之后在这个节点上写的所有其它元数据。
+ */
+function nodePatchOf(before: CanvasNode, after: CanvasNode): CanvasProposalNodeUpdate | undefined {
+  const fields: NonNullable<CanvasProposalNodeUpdate['fields']> = {}
+  for (const key of ['title', 'x', 'y', 'width', 'height'] as const) {
+    if (before[key] !== after[key]) (fields as Record<string, unknown>)[key] = after[key]
+  }
+
+  const metadata: Record<string, unknown> = {}
+  for (const [key, value] of Object.entries(after.metadata ?? {})) {
+    const previous = (before.metadata ?? {})[key as never] as unknown
+    if (JSON.stringify(previous) !== JSON.stringify(value)) metadata[key] = value
+  }
+  const removedMetadataKeys = Object.keys(before.metadata ?? {}).filter(key => !(key in (after.metadata ?? {})))
+
+  if (Object.keys(fields).length === 0 && Object.keys(metadata).length === 0 && removedMetadataKeys.length === 0) return undefined
+  return {
+    id: after.id,
+    ...Object.keys(fields).length === 0 ? {} : { fields },
+    ...Object.keys(metadata).length === 0 ? {} : { metadata: metadata as CanvasNodeMetadata },
+    ...removedMetadataKeys.length === 0 ? {} : { removedMetadataKeys },
   }
 }
 

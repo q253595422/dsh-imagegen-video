@@ -544,6 +544,113 @@ check('F9 accepting right after an unsaved edit keeps that edit (the 650 ms wind
   assert.equal(latest.revision, flushed.revision + 1, 'exactly one write for the accept, none for a phantom autosave')
 })
 
+check('F10 accepting an edit proposal keeps the position the user dragged to after it was proposed', async () => {
+  // 本轮修掉的真实缺陷。改造前 `diffOf` 把改过的节点记成**整份节点**，
+  // `apply` 也是整份替换，于是：
+  //
+  //   提议「把标题改成 X」时节点在 100,100 → 用户把它拖到 1234,567 →
+  //   接受 → 节点回到 100,100。
+  //
+  // 静默发生，而界面写着「接受之前画布不会有任何变化」——用户没法预料到
+  // 一次改标题会把刚摆好的位置也改回去。修法是字段补丁：只覆盖提案点名的键。
+  //
+  // 反向证明：把 `nodePatchOf` 换回整份节点，这条立刻变成 100 而不是 1234。
+  const stub = stubContext()
+  registerAgentCanvasTools(stub.ctx, enabledConfig)
+  const created = await stub.registered.get('create_canvas').execute({ title: '拖动不该被回退' }, {})
+
+  await stub.registered.get('add_canvas_node').execute({ canvas_id: created.id, type: 'text', title: '原文', x: 100, y: 100 }, {})
+  const [seedProposal] = await proposalStore.list(created.id)
+  const seeded = await proposalStore.acceptOne(created.id, seedProposal.id)
+  assert.equal(seeded.ok, true, `seeding failed: ${seeded.ok ? '' : seeded.message}`)
+  const nodeId = seeded.document.nodes[0].id
+
+  // Agent 提议改标题（这是这条提案唯一改的字段）。
+  await stub.registered.get('update_canvas_node').execute({ canvas_id: created.id, node_id: nodeId, title: '改过的标题' }, {})
+  const [pending] = await proposalStore.list(created.id)
+  assert.equal(pending.change.updatedNodes?.[0]?.id, nodeId)
+
+  // 用户在接受之前把它拖走。
+  const dragged = { ...seeded.document, nodes: seeded.document.nodes.map(node => node.id === nodeId ? { ...node, x: 1234, y: 567 } : node) }
+  await canvasStore.save(dragged, seeded.document.revision)
+
+  const accepted = await proposalStore.acceptOne(created.id, pending.id)
+  assert.equal(accepted.ok, true, `accepting must work: ${accepted.ok ? '' : accepted.message}`)
+  const after = accepted.document.nodes.find(node => node.id === nodeId)
+  assert.equal(after?.title, '改过的标题', 'the proposed title landed')
+  assert.equal(after?.x, 1234, 'the drag the user made after the proposal was never touched by it')
+  assert.equal(after?.y, 567)
+})
+
+check('F11 a patch only touches the metadata keys the Agent changed', async () => {
+  // 整份 `metadata` 替换同一个毛病的另一半：Agent 只改 prompt，用户之后在这个
+  // 节点上换的模型、点上的 cast 不该被抹掉。
+  const stub = stubContext()
+  registerAgentCanvasTools(stub.ctx, enabledConfig)
+  const created = await stub.registered.get('create_canvas').execute({ title: '元数据补丁' }, {})
+  await stub.registered.get('add_canvas_node').execute({ canvas_id: created.id, type: 'config', title: '出图', prompt: '旧提示词' }, {})
+  const [seedProposal] = await proposalStore.list(created.id)
+  const seeded = await proposalStore.acceptOne(created.id, seedProposal.id)
+  assert.equal(seeded.ok, true)
+  const nodeId = seeded.document.nodes[0].id
+
+  await stub.registered.get('update_canvas_node').execute({ canvas_id: created.id, node_id: nodeId, prompt: '新提示词' }, {})
+  const [pending] = await proposalStore.list(created.id)
+  // 提案只点名 prompt，不该把整个 metadata 一起带过来。
+  assert.deepEqual(Object.keys(pending.change.updatedNodes?.[0]?.metadata ?? {}), ['prompt'],
+    'the patch names only the key the Agent changed')
+
+  // 用户在接受之前给同一个节点换了个模型。
+  const edited = {
+    ...seeded.document,
+    nodes: seeded.document.nodes.map(node => node.id === nodeId
+      ? { ...node, metadata: { ...node.metadata, model: 'user-picked-model' } }
+      : node),
+  }
+  await canvasStore.save(edited, seeded.document.revision)
+
+  const accepted = await proposalStore.acceptOne(created.id, pending.id)
+  assert.equal(accepted.ok, true)
+  const after = accepted.document.nodes.find(node => node.id === nodeId)
+  assert.equal(after?.metadata?.prompt, '新提示词', 'the proposed prompt landed')
+  assert.equal(after?.metadata?.model, 'user-picked-model', 'the model the user picked afterwards survived')
+})
+
+check('F12 a wire whose endpoint was deleted cannot be written by accepting it', async () => {
+  // 第二条真实缺陷。`apply` 加连线时只查了 id 是否重复，没查端点还在不在。
+  // 用户在提议之后删掉下游节点，接受照样成功，文档里于是留下一条指向不存在
+  // 节点的边——画布自己的删除语义是「删节点连带删连线」，这里必须一致，
+  // 否则渲染时那条边被跳过，用户会看到一个连不上任何东西的幽灵。
+  const stub = stubContext()
+  registerAgentCanvasTools(stub.ctx, enabledConfig)
+  const created = await stub.registered.get('create_canvas').execute({ title: '端点没了' }, {})
+
+  const a = await stub.registered.get('add_canvas_node').execute({ canvas_id: created.id, type: 'text', title: 'A' }, {})
+  await proposalStore.acceptOne(created.id, a.proposalId)
+  const b = await stub.registered.get('add_canvas_node').execute({ canvas_id: created.id, type: 'text', title: 'B' }, {})
+  await proposalStore.acceptOne(created.id, b.proposalId)
+
+  const current = await canvasStore.read(created.id)
+  const aId = current.nodes.find(node => node.title === 'A').id
+  const bId = current.nodes.find(node => node.title === 'B').id
+
+  const wire = await stub.registered.get('connect_canvas_nodes').execute({
+    canvas_id: created.id, from_node_id: aId, to_node_id: bId,
+  }, {})
+  const [pending] = await proposalStore.list(created.id)
+  assert.equal(pending.id, wire.proposalId)
+
+  // 用户在接受之前把下游节点删了。
+  await canvasStore.save({ ...current, nodes: current.nodes.filter(node => node.id !== bId) }, current.revision)
+
+  const accepted = await proposalStore.acceptOne(created.id, pending.id)
+  assert.equal(accepted.ok, false, 'the proposal cannot be applied once its endpoint is gone')
+  assert.equal(accepted.code, 'proposal-stale')
+  const after = await canvasStore.read(created.id)
+  assert.equal(after.connections.length, 0, 'no dangling wire was written')
+  assert.equal(after.nodes.length, 1)
+})
+
 check('F6 the auto-apply escape hatch is not reachable from a tool argument', async () => {
   const stub = stubContext()
   registerAgentCanvasTools(stub.ctx, enabledConfig)
