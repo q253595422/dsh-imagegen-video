@@ -5,6 +5,17 @@ Attribution for third-party code is in [NOTICE](./NOTICE).
 
 ## Releases
 
+### 未发布
+
+- **非 JSON 响应不再是一句「（HTTP 404）」（#48）**：此前生图链路上 9 处 `JSON.parse` 失败分支各自拼一句 `上游接口返回了非 JSON 响应（HTTP 404）`，既不带请求地址，也没说返回的其实是一页 HTML。事后形态最难查：网关把 `/models` 挂在根上（「检测模型」绿灯），而 `/images/generations` 只在 `/v1` 下（每次生成必失败），用户拿不到任何自查线索。现在报错形如 `上游接口返回了非 JSON 响应（HTTP 404, text/html）：https://host/images/generations —— 返回的是网页而不是接口响应，通常说明渠道的 API 地址少了路径（例如末尾缺 /v1）或填成了站点首页`。空响应体、二进制响应体、纯文本各有对应的一句，纯文本给截断摘要而不是把整页 markup 贴进来。
+- **同一句判定只写一处**：新增 `src/upstream-diagnosis.ts`（`bodyShapeOf` / `diagnoseNonJsonBody` / `requestAddress`）。视频引擎 1.30.x 已经单独修过这个 HTML 判定并留了内联正则——同一件事第二份实现，正是这次三条链路各说各话的原因。现在视频引擎的 `readJsonWithText` 也改用共享判定。
+- **错误码一律不变**（仍 `upstream-invalid` / `video-submit-failed` / `video-upload-failed` 等）：这次改的是那句话，不是失败分类，面板与诊断按码分组的行为不动。**不做 `/v1` 自动回退**——那会静默改写用户填的地址语义，且无真网关可验；把地址与原因说清楚比替用户猜更诚实。
+- **Magpie 网关能发现图像模型了（#47）**：Magpie 的 `/v1/models` 只返回聊天模型，图像条目在 `?kind=image` 后面（老版本认 `X-Magpie-Drawers: 1` 头）。旧实现「第一个返回记录的候选就赢」，普通列表必然先命中，于是「检测模型」绿灯、图像模型恒为 0。现在图像发现自己走一遍带 `kind=image` 的候选并带头，且兼容 Magpie 两种私有形状（`kind:"image"`、嵌套 `modalities.output:["image"]`）。
+- **回退有两条，不止一条**：`?kind=image` 报错或 404 要退回普通候选；**作用域列表返回 200 但里面认不出图像模型**（网关静默忽略未知参数）时也要回退再合并。少了后一条，结果就是「检测成功但一个模型都没有」。聊天模型列表不受影响：不请求 `kind=image`、不带 Magpie 头。
+- **测试**：新增 `scripts/smoke-upstream-diagnosis.mjs`（7 组，驱动真实生成路径断地址与成因、且断言 markup 不进来）与 `scripts/smoke-magpie-discovery.mjs`（10 组）。均已接入 `pnpm test` 与 `test:negative`（新组 `magpie` / `diagnosis`）。反向用例实测能打红：magpie 4/4、diagnosis 3/3，各自因**目标断言**变红。
+- **反向用例本身踩到的两个坑**（都已修）：① 把两种 Magpie 形状的注入写成「全部条目标成图像」，会先撞上另一条用例的断言，报成「RED but wrong reason」；并列的识别条件必须各自独立注入。② 注入 HTML 判定时若连 `/v1` 那句一起删，会先命中 `/v1/` 断言——注入要只摘掉它要证明的那一个条件。
+- **边界如实说明**：没有对真实 Magpie 实例发起过调用，全部基于 issue 里用户实测的接口行为与桩 fetch；`?kind=all` 未实现（issue 标为「必要时」）。
+
 ### 1.30.4 — 接通 Nbility 的 MiniMax-H3；修好 DSH 0.2.2-rc.3 的侧栏回归
 
 - **版本说明**：1.30.1 与 1.30.3 这两个号从未打过 tag。1.30.1 的内容随 1.30.2 一起发过；1.30.3 那次 Release 在跑之前被取消，仓库里没有 `v1.30.3`，npm 上也没有。为避免复用已被占用的号，本次以 **1.30.4** 发出，**包含 1.30.3 说明页里的全部内容**，外加 `v1.30.2` 之后完成的侧栏修复。

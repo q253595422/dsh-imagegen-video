@@ -14,6 +14,7 @@ import { clampGifFrameCount, clampGifFrameDurationMs, modelFamily, promptCharLim
 import { bodyByteLength, excerptOf, networkErrorFields, readResponseExcerpt, readResponseText, recordDiagnostic, type DiagnosticPhase } from './diagnostics-store.ts'
 import { recordSignal } from './signal-store.ts'
 import { googleNativeUrl } from './prompt-enhancer.ts'
+import { diagnoseNonJsonBody } from './upstream-diagnosis.ts'
 
 /** The upstream credentials the panel's settings card configures. */
 export interface UpstreamConfig {
@@ -995,7 +996,7 @@ async function pollAsyncTask(
       } catch (error) {
         const failure = isBudgetTimeout(error)
           ? new ImageGenError('上游异步任务轮询超时', 'upstream-timeout')
-          : new ImageGenError(`上游任务接口返回了非 JSON 响应（HTTP ${response.status}）`, 'upstream-invalid')
+          : nonJsonFailure('上游任务接口', pollUrl, response, responseText)
         recordFailure(context, failure, { status: response.status, bodyExcerpt: responseText })
         throw failure
       }
@@ -1205,7 +1206,7 @@ async function requestOneImage(
         ? new ImageGenError('上游接口响应超时（240 秒）', 'upstream-timeout')
         : signal?.aborted === true
           ? new ImageGenError('任务已取消', 'cancelled')
-          : new ImageGenError(`上游接口返回了非 JSON 响应（HTTP ${response.status}）`, 'upstream-invalid')
+          : nonJsonFailure('上游接口', requestUrl, response, responseText)
       recordFailure(context, failure, { status: response.status, bodyExcerpt: responseText })
       throw failure
     }
@@ -1370,7 +1371,7 @@ async function requestOneGoogleNativeImage(
         ? new ImageGenError('上游接口响应超时（240 秒）', 'upstream-timeout')
         : signal?.aborted === true
           ? new ImageGenError('任务已取消', 'cancelled')
-          : new ImageGenError(`上游接口返回了非 JSON 响应（HTTP ${response.status}）`, 'upstream-invalid')
+          : nonJsonFailure('上游接口', requestUrl, response, responseText)
       recordFailure(context, failure, { status: response.status, bodyExcerpt: responseText })
       throw failure
     }
@@ -1482,7 +1483,7 @@ async function generateQwenImage(
         ? new ImageGenError('上游接口响应超时（240 秒）', 'upstream-timeout')
         : options.signal?.aborted === true
           ? new ImageGenError('任务已取消', 'cancelled')
-          : new ImageGenError(`上游接口返回了非 JSON 响应（HTTP ${response.status}）`, 'upstream-invalid')
+          : nonJsonFailure('上游接口', requestUrl, response, responseText)
       recordFailure(context, failure, { status: response.status, bodyExcerpt: responseText })
       throw failure
     }
@@ -1584,7 +1585,7 @@ async function pollQwenDrawJob(
       } catch (error) {
         const failure = isBudgetTimeout(error)
           ? new ImageGenError('千问生图 API 轮询超时', 'upstream-timeout')
-          : new ImageGenError(`千问生图 API 任务接口返回了非 JSON 响应（HTTP ${response.status}）`, 'upstream-invalid')
+          : nonJsonFailure('千问生图 API 任务接口', pollUrl, response, responseText)
         recordFailure(context, failure, { status: response.status, bodyExcerpt: responseText })
         throw failure
       }
@@ -1675,7 +1676,7 @@ async function uploadQwenDrawReference(
     } catch (error) {
       const failure = isBudgetTimeout(error)
         ? new ImageGenError('千问生图 API 参考图上传超时（240 秒）', 'upstream-timeout')
-        : new ImageGenError(`千问生图 API 参考图上传返回了非 JSON 响应（HTTP ${response.status}）`, 'upstream-invalid')
+        : nonJsonFailure('千问生图 API 参考图上传', uploadUrl, response, responseText)
       recordFailure(context, failure, { status: response.status, bodyExcerpt: responseText })
       throw failure
     }
@@ -1775,7 +1776,7 @@ async function generateQwenDrawImages(
       } catch (error) {
         const failure = isBudgetTimeout(error)
           ? new ImageGenError('千问生图 API 提交超时（240 秒）', 'upstream-timeout')
-          : new ImageGenError(`千问生图 API 返回了非 JSON 响应（HTTP ${response.status}）`, 'upstream-invalid')
+          : nonJsonFailure('千问生图 API', drawUrl, response, responseText)
         recordFailure(context, failure, { status: response.status, bodyExcerpt: responseText })
         throw failure
       }
@@ -1894,7 +1895,7 @@ async function generateMiniMaxImage(
         ? new ImageGenError('上游接口响应超时（240 秒）', 'upstream-timeout')
         : options.signal?.aborted === true
           ? new ImageGenError('任务已取消', 'cancelled')
-          : new ImageGenError(`上游接口返回了非 JSON 响应（HTTP ${response.status}）`, 'upstream-invalid')
+          : nonJsonFailure('上游接口', requestUrl, response, responseText)
       recordFailure(context, failure, { status: response.status, bodyExcerpt: responseText })
       throw failure
     }
@@ -2012,7 +2013,7 @@ async function requestOneChatImage(
         ? new ImageGenError('上游接口响应超时（240 秒）', 'upstream-timeout')
         : signal?.aborted === true
           ? new ImageGenError('任务已取消', 'cancelled')
-          : new ImageGenError(`上游接口返回了非 JSON 响应（HTTP ${response.status}）`, 'upstream-invalid')
+          : nonJsonFailure('上游接口', requestUrl, response, responseText)
       recordFailure(context, failure, { status: response.status, bodyExcerpt: responseText })
       throw failure
     }
@@ -2123,6 +2124,32 @@ function displayUrl(url: string): string {
   } catch {
     return url.split('?')[0] ?? url
   }
+}
+
+/**
+ * The failure for a body that would not parse as JSON, with the address and
+ * the body's shape in the message (#48).
+ *
+ * Every parse site used to hand-build `（HTTP 404）`, which named neither the
+ * URL that was called nor the fact that an HTML page came back — so a channel
+ * whose base URL omitted `/v1` reported "non-JSON response" with nothing the
+ * user could act on. The wording lives in `upstream-diagnosis.ts` so the image
+ * engine, the video engine and model discovery cannot drift apart again.
+ *
+ * The error CODE stays `upstream-invalid`: callers and the diagnostics panel
+ * key off it, and this change is about the sentence, not the classification.
+ */
+function nonJsonFailure(label: string, url: string, response: Response, body: string): ImageGenError {
+  return new ImageGenError(
+    diagnoseNonJsonBody({
+      label,
+      url,
+      status: response.status,
+      contentType: response.headers.get('content-type') ?? '',
+      text: body,
+    }),
+    'upstream-invalid',
+  )
 }
 
 /**

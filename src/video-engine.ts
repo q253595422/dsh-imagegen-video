@@ -46,6 +46,7 @@ import {
   type DiagnosticPhase,
 } from './diagnostics-store.ts'
 import { recordSignal } from './signal-store.ts'
+import { bodyShapeOf, diagnoseNonJsonBody } from './upstream-diagnosis.ts'
 import type { VideoGenerateRequest, VideoMode, VideoResolution } from './protocol.ts'
 
 /** A video generation failure with a user-presentable message. */
@@ -432,31 +433,59 @@ function errorTextOf(payload: Record<string, unknown>, fallback: string): string
  * same text. Reading it twice would silently return an empty excerpt for every
  * non-2xx response, which is exactly the case the record exists for.
  */
-async function readJsonWithText(response: Response): Promise<{ payload: Record<string, unknown>; text: string }> {
+async function readJsonWithText(response: Response): Promise<{ payload: Record<string, unknown>; text: string; bodyIsJson: boolean }> {
   const text = await readResponseText(response)
-  if (text.trim() === '') return { payload: {}, text }
+  if (text.trim() === '') return { payload: {}, text, bodyIsJson: true }
   try {
     const parsed: unknown = JSON.parse(text)
     return {
       payload: parsed !== null && typeof parsed === 'object' ? parsed as Record<string, unknown> : {},
       text,
+      bodyIsJson: true,
     }
   } catch {
     // A non-JSON body is either an HTML error page or — the case measured
     // against a gateway whose base URL omitted `/v1` — the site's own homepage
-    // served with 200. Saying "HTML" and naming the likely cause is far more
-    // actionable than echoing 300 characters of `<meta charset>` markup, and it
-    // is what turns "submit failed" into "your base URL is wrong".
-    const looksHtml = /^\s*<(?:!doctype|html|head|body|meta)/i.test(text)
+    // served with 200. The shape comes from the shared classifier so this engine
+    // cannot disagree with the image engine on what "HTML" means; the message
+    // below keeps the paragraph for the generic error path, while
+    // `nonJsonVideoFailure` builds the full sentence (with the address) for
+    // callers that know which URL they called (#48).
+    const shape = bodyShapeOf(text, response.headers.get('content-type') ?? '')
     return {
       payload: {
-        message: looksHtml
+        message: shape === 'html'
           ? '返回的是网页而不是接口响应，通常是渠道的 API 地址少了路径（例如末尾缺 /v1）'
           : text.slice(0, 300),
       },
       text,
+      bodyIsJson: false,
     }
   }
+}
+
+/**
+ * The failure for a body that is not JSON, naming the address and the shape.
+ *
+ * Video is the pipeline where a wrong base URL is easiest to mistake for a
+ * provider fault: the submit answers 200 with the site's homepage, so nothing
+ * looks broken until the task id is missing. `code` stays the caller's —
+ * "the render never started" and "the status endpoint stopped answering" are
+ * different conversations and the panel groups by them.
+ */
+function nonJsonVideoFailure(attempt: VideoAttempt, response: Response, text: string, code: string, label: string, retryable = false): VideoGenError {
+  return new VideoGenError(
+    diagnoseNonJsonBody({
+      label,
+      url: attempt.url,
+      status: response.status,
+      contentType: response.headers.get('content-type') ?? '',
+      text,
+    }),
+    code,
+    retryable,
+    response.status,
+  )
 }
 
 /** The URL actually handed to fetch, with any query string dropped (#38). */
@@ -635,7 +664,19 @@ async function postJson(attempt: VideoAttempt, request: VideoGenerateRequest, ur
     recordVideoFailure(attempt, failure, { requestExcerpt: excerpt })
     throw failure
   }
-  const { payload, text } = await readJsonWithText(response)
+  const { payload, text, bodyIsJson } = await readJsonWithText(response)
+  // A body that is not JSON never contains a task id, so the generic
+  // "未返回任务 ID" is the wrong conversation: it hides that the address
+  // answered with a webpage (#48).
+  if (!bodyIsJson) {
+    const failure = nonJsonVideoFailure(attempt, response, text, 'video-submit-failed', '视频接口')
+    recordVideoFailure(attempt, failure, {
+      status: response.status,
+      requestExcerpt: excerpt,
+      bodyExcerpt: excerptOf(text),
+    })
+    throw failure
+  }
   if (!response.ok) {
     const failure = new VideoGenError(
       `${errorTextOf(payload, `视频提交失败（HTTP ${response.status}）`)}（HTTP ${response.status} · ${attempt.url}）`,
@@ -670,7 +711,28 @@ async function getJson(attempt: VideoAttempt, url: string, apiKey: string, signa
     headers: { authorization: `Bearer ${apiKey}` },
     signal,
   })
-  const { payload, text } = await readJsonWithText(response)
+  const { payload, text, bodyIsJson } = await readJsonWithText(response)
+  if (!bodyIsJson) {
+    // Keep the retry semantics: a 429/5xx that also answers with an HTML page
+    // is still worth another try within the same deadline.
+    const retryable = RETRYABLE_STATUS.has(response.status)
+    const failure = nonJsonVideoFailure(
+      attempt,
+      response,
+      text,
+      retryable ? 'video-status-transient' : 'video-status-failed',
+      '视频状态查询接口',
+      retryable,
+    )
+    if (!retryable) {
+      recordVideoFailure(attempt, failure, {
+        status: response.status,
+        bodyExcerpt: excerptOf(text),
+        responseBytes: Buffer.byteLength(text, 'utf8'),
+      })
+    }
+    throw failure
+  }
   if (!response.ok) {
     const retryable = RETRYABLE_STATUS.has(response.status)
     const failure = new VideoGenError(
@@ -1114,7 +1176,12 @@ async function uploadMinimaxMedia(
     recordVideoFailure(attempt, failure)
     throw failure
   }
-  const { payload, text } = await readJsonWithText(response)
+  const { payload, text, bodyIsJson } = await readJsonWithText(response)
+  if (!bodyIsJson) {
+    const failure = nonJsonVideoFailure(attempt, response, text, 'video-upload-failed', '参考图片上传接口')
+    recordVideoFailure(attempt, failure, { status: response.status, bodyExcerpt: excerptOf(text) })
+    throw failure
+  }
   const uploaded = typeof payload.url === 'string' ? payload.url.trim() : ''
   if (!response.ok || uploaded === '') {
     const failure = new VideoGenError(

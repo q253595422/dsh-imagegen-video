@@ -2,6 +2,7 @@
 
 import { isLikelyImageModelId } from './model-catalog.ts'
 import { isChatCompletionsUrl, qwenDrawBaseUrl, resolveChannelProtocol, type ChannelProtocolPreference } from './protocol.ts'
+import { diagnoseNonJsonBody } from './upstream-diagnosis.ts'
 
 /** Bounded wait for one chat completion. A hung chat endpoint would otherwise
  *  leave prompt enhancement (and the canvas light tier) pending forever. */
@@ -29,7 +30,7 @@ function endpoint(base: string, suffix: string): string {
   return `${base.replace(/\/+$/, '')}${suffix}`
 }
 
-function headers(apiKey: string): HeadersInit {
+function headers(apiKey: string): Record<string, string> {
   return {
     'content-type': 'application/json',
     ...apiKey.trim() === '' ? {} : { authorization: `Bearer ${apiKey.trim()}` },
@@ -110,6 +111,37 @@ function modelListUrls(config: ModelListConfig): string[] {
   return [...new Set(urls)]
 }
 
+/** The same URL with one query parameter set, leaving existing ones intact. */
+function withSearchParam(value: string, key: string, parameter: string): string {
+  try {
+    const url = new URL(value)
+    url.searchParams.set(key, parameter)
+    return url.toString()
+  } catch {
+    // A bare path (qwen-draw's `/api/models` fallback) cannot carry a query;
+    // image scoping never asks for one there anyway.
+    return value
+  }
+}
+
+/**
+ * Image-scoped `/models` candidates: the normal walk with `kind=image` added.
+ *
+ * Magpie's `/v1/models` returns chat models only — its image entries are behind
+ * `?kind=image` (#47). Other gateways ignore an unknown query parameter, so
+ * asking costs them nothing, and a gateway that rejects it outright falls back
+ * to the plain walk in `listImageRecords`.
+ *
+ * google-native and qwen-draw already list image models only, so their single
+ * candidate is returned untouched.
+ */
+function imageModelListUrls(config: ModelListConfig): string[] {
+  const urls = modelListUrls(config)
+  const protocol = resolveChannelProtocol(config.apiUrl.trim(), config.protocol)
+  if (protocol === 'google-native' || protocol === 'qwen-draw') return urls
+  return urls.map(url => withSearchParam(url, 'kind', 'image'))
+}
+
 function errorMessageOf(body: unknown, fallback: string): string {
   if (body === null || typeof body !== 'object') return fallback
   const record = body as Record<string, unknown>
@@ -148,10 +180,18 @@ interface ModelListAttempt {
   retryable: boolean
 }
 
-async function fetchModelRecords(url: string, apiKey: string, googleNative = false): Promise<ModelListAttempt> {
-  const response = await fetch(url, {
+async function fetchModelRecords(url: string, apiKey: string, googleNative = false, drawers = false): Promise<ModelListAttempt> {
+  const requestHeaders = googleNative
     // Google's native list authenticates with x-goog-api-key, not Bearer.
-    headers: googleNative ? { 'x-goog-api-key': apiKey.trim() } : headers(apiKey),
+    ? { 'x-goog-api-key': apiKey.trim() }
+    : headers(apiKey)
+  if (drawers) {
+    // Older Magpie builds honour this header instead of the query parameter
+    // (#47). Harmless elsewhere: no other gateway reads it.
+    requestHeaders['X-Magpie-Drawers'] = '1'
+  }
+  const response = await fetch(url, {
+    headers: requestHeaders,
     signal: AbortSignal.timeout(MODELS_TIMEOUT_MS),
   })
   const text = await response.text().catch(() => '')
@@ -161,19 +201,28 @@ async function fetchModelRecords(url: string, apiKey: string, googleNative = fal
   } catch {
     body = undefined
   }
+  // A body that is not JSON is diagnosed BEFORE the status is considered: the
+  // reported failure (#48) was exactly this — a 404 whose body is the site's
+  // HTML, where `HTTP 404` alone names neither the address nor the cause.
+  if (body === undefined) {
+    return {
+      error: new Error(diagnoseNonJsonBody({
+        url,
+        status: response.status,
+        contentType: response.headers.get('content-type') ?? '',
+        text,
+        label: '模型接口',
+      })),
+      // A 404/405 here is still "this address is not a models route", so the
+      // walk moves on to the next candidate exactly as before.
+      retryable: !response.ok ? response.status === 404 || response.status === 405 : true,
+    }
+  }
   if (!response.ok) {
     const fallback = `HTTP ${response.status}`
     return {
       error: new Error(errorMessageOf(body, fallback)),
       retryable: response.status === 404 || response.status === 405,
-    }
-  }
-  if (body === undefined) {
-    const type = response.headers.get('content-type') ?? 'unknown content-type'
-    const sample = text.replace(/\s+/g, ' ').trim().slice(0, 160)
-    return {
-      error: new Error(`模型接口返回了非 JSON 响应（HTTP ${response.status}, ${type}）${sample === '' ? '' : `：${sample}`}`),
-      retryable: true,
     }
   }
   const records = modelRecordsOf(body)
@@ -186,14 +235,13 @@ async function fetchModelRecords(url: string, apiKey: string, googleNative = fal
   return { records, retryable: false }
 }
 
-async function listModelRecords(config: ModelListConfig): Promise<ModelRecord[]> {
-  const urls = modelListUrls(config)
+async function listModelRecordsFrom(config: ModelListConfig, urls: string[], drawers: boolean): Promise<ModelRecord[]> {
   const googleNative = resolveChannelProtocol(config.apiUrl.trim(), config.protocol) === 'google-native'
   let lastError: Error | undefined
   for (const url of urls) {
     let attempt: ModelListAttempt
     try {
-      attempt = await fetchModelRecords(url, config.apiKey, googleNative)
+      attempt = await fetchModelRecords(url, config.apiKey, googleNative, drawers)
     } catch (error) {
       lastError = error instanceof Error ? error : new Error(String(error))
       continue
@@ -205,6 +253,10 @@ async function listModelRecords(config: ModelListConfig): Promise<ModelRecord[]>
   throw lastError ?? new Error('模型接口不可用')
 }
 
+async function listModelRecords(config: ModelListConfig): Promise<ModelRecord[]> {
+  return listModelRecordsFrom(config, modelListUrls(config), false)
+}
+
 function textOf(value: unknown): string[] {
   if (typeof value === 'string') return [value]
   if (!Array.isArray(value)) return []
@@ -212,6 +264,11 @@ function textOf(value: unknown): string[] {
 }
 
 function hasImageGenerationCapability(record: ModelRecord): boolean | undefined {
+  // Magpie tags its own catalogue entries with `kind` (#47). Nothing else is
+  // inferred from the field: a gateway that uses `kind` for something else
+  // keeps falling through to the heuristics below rather than being vetoed.
+  if (typeof record.kind === 'string' && record.kind.trim().toLowerCase() === 'image') return true
+
   const capability = record.capabilities
   if (capability !== null && typeof capability === 'object') {
     const values = capability as Record<string, unknown>
@@ -240,6 +297,12 @@ function hasImageGenerationCapability(record: ModelRecord): boolean | undefined 
     const modalities = textOf(record[key]).map(value => value.toLowerCase())
     if (modalities.length > 0) return modalities.includes('image')
   }
+  // Magpie's nested shape: `modalities: { input: [...], output: ["image"] }`.
+  const modalities = record.modalities
+  if (modalities !== null && typeof modalities === 'object') {
+    const outputs = textOf((modalities as Record<string, unknown>).output).map(value => value.toLowerCase())
+    if (outputs.length > 0) return outputs.includes('image')
+  }
   return undefined
 }
 
@@ -253,9 +316,39 @@ export async function listOpenAIModels(config: ModelListConfig): Promise<string[
     .sort((a, b) => a.localeCompare(b))
 }
 
+/**
+ * Records for image discovery, asking the image-scoped list first when the
+ * gateway has one.
+ *
+ * Magpie serves chat models at `/v1/models` and its image entries only under
+ * `?kind=image` (#47), so the plain walk turns discovery permanently green with
+ * zero image models. The scoped walk is an enhancement, never a hard failure:
+ * if it errors at all, discovery falls back to the historical candidates rather
+ * than breaking for every gateway that does not recognise the parameter.
+ *
+ * google-native and qwen-draw already list image models only, so they keep the
+ * single unscoped candidate.
+ */
+async function listImageRecords(config: ModelListConfig): Promise<ModelRecord[]> {
+  const protocol = resolveChannelProtocol(config.apiUrl.trim(), config.protocol)
+  if (protocol === 'google-native' || protocol === 'qwen-draw') return listModelRecords(config)
+  let scoped: ModelRecord[]
+  try {
+    scoped = await listModelRecordsFrom(config, imageModelListUrls(config), true)
+  } catch {
+    return listModelRecords(config)
+  }
+  if (scoped.some(isImageModelRecord)) return scoped
+  // A gateway that ignores the parameter answered with the plain list. Walking
+  // the ordinary candidates restores what discovery did before this change,
+  // including ids only the naming heuristic recognises.
+  const plain = await listModelRecordsFrom(config, modelListUrls(config), false)
+  return [...plain, ...scoped]
+}
+
 /** List only models that advertise or conventionally represent image generation. */
 export async function listImageModels(config: ModelListConfig): Promise<string[]> {
-  const records = await listModelRecords(config)
+  const records = await listImageRecords(config)
   // The 千问生图 API's /api/models lists image models only; its ids
   // (qwen-turbo / qwen-gguf / krea2-turbo / sdxl) do not follow the usual
   // image-model naming conventions, so the capability heuristic would drop

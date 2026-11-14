@@ -1975,6 +1975,79 @@ const CASES = [
     to: "    lifecycle: entry.lifecycle ?? 'deprecated',",
     expect: /未记录的模型一律 active，不误报弃用/,
   },
+  // ------------------------------------------- #47 Magpie 图像模型发现
+  {
+    // issue #47 的核心：Magpie 的 /v1/models 只给聊天模型，图像条目在
+    // `?kind=image` 后面。退回「图像发现复用普通列表」——也就是它修掉的那个
+    // 缺陷——图像恒为 0，「检测模型」绿灯但一个生图模型都列不出来。
+    name: 'image discovery falls back to the plain model list',
+    runner: 'magpie',
+    file: 'src/prompt-enhancer.ts',
+    from: '  const protocol = resolveChannelProtocol(config.apiUrl.trim(), config.protocol)\n  if (protocol === \'google-native\' || protocol === \'qwen-draw\') return listModelRecords(config)',
+    to: '  const protocol = resolveChannelProtocol(config.apiUrl.trim(), config.protocol)\n  if (protocol !== \'__never__\') return listModelRecords(config)',
+    expect: /图像发现先问图像作用域的列表|Magpie 的 kind:image 条目应被发现/,
+  },
+  {
+    // 老版本 Magpie 认这个头，不看查询参数。去掉它，那批版本上图像发现仍然为 0，
+    // 而新版本照常工作——回归会只在老网关上出现，最难被发现。
+    name: 'the legacy Magpie drawer header disappears',
+    runner: 'magpie',
+    file: 'src/prompt-enhancer.ts',
+    from: "    requestHeaders['X-Magpie-Drawers'] = '1'",
+    to: "    requestHeaders['X-Magpie-Drawers-Disabled'] = '1'",
+    expect: /老版本 Magpie 靠这个头返回图像条目/,
+  },
+  {
+    // Magpie 的图像条目不带标准 output_modalities，只带 kind 或嵌套 modalities。
+    // 去掉 kind 判定，只留标准字段的网关不再被发现。
+    name: 'the Magpie kind:image shape stops being recognised',
+    runner: 'magpie',
+    file: 'src/prompt-enhancer.ts',
+    from: "  if (typeof record.kind === 'string' && record.kind.trim().toLowerCase() === 'image') return true",
+    to: "  if (typeof record.kind === 'string' && record.kind.trim().toLowerCase() === '__image__') return true",
+    expect: /kind:"image" 单独就能识别/,
+  },
+  {
+    // 网关静默忽略未知参数时，作用域列表会原样返回全量（且可能一条图像模型都
+    // 认不出）。不回退到普通候选，结果就是空列表——「检测成功但 0 个模型」。
+    name: 'a gateway that ignores kind=image yields an empty list',
+    runner: 'magpie',
+    file: 'src/prompt-enhancer.ts',
+    from: '  if (scoped.some(isImageModelRecord)) return scoped',
+    to: '  return scoped',
+    expect: /作用域列表返回空数组时回退/,
+  },
+  // ------------------------------------------- #48 非 JSON 报错可诊断
+  {
+    // issue #48：旧文案只有 `（HTTP 404）`，既没有请求地址，也没说返回的是网页。
+    // 换成一句只有状态码的话，用户拿不到任何自查线索。
+    name: 'a non-JSON failure loses the request address',
+    runner: 'diagnosis',
+    file: 'src/upstream-diagnosis.ts',
+    from: '  const address = requestAddress(input.url)\n  const head = `${input.label}返回了非 JSON 响应（HTTP ${input.status}, ${type}）：${address}`',
+    to: '  const address = requestAddress(input.url)\n  const head = `${input.label}返回了非 JSON 响应（HTTP ${input.status}）：${address.replace(/.*/, \'\')}`',
+    expect: /消息要点名实际请求的地址/,
+  },
+  {
+    // HTML 被当成普通文本时，最可操作的那句「少了 /v1」不会出现，
+    // 用户看到的只是一段被截断的网页源码。
+    name: 'an HTML body stops being named as a webpage',
+    runner: 'diagnosis',
+    file: 'src/upstream-diagnosis.ts',
+    from: '    return `${head} —— 返回的是网页而不是接口响应，通常说明渠道的 API 地址少了路径（例如末尾缺 /v1）或填成了站点首页`',
+    to: '    return `${head} —— 返回的内容无法解析，通常说明渠道的 API 地址少了路径（例如末尾缺 /v1）或填成了站点首页`',
+    expect: /要点出返回的是网页/,
+  },
+  {
+    // query 里可能带密钥（`?api_key=`）。把它拼回报错，等于把凭据写进截图和
+    // issue 正文。
+    name: 'the request address keeps its query string',
+    runner: 'diagnosis',
+    file: 'src/upstream-diagnosis.ts',
+    from: '    return `${parsed.origin}${parsed.pathname}`',
+    to: '    return parsed.toString()',
+    expect: /query 里可能有密钥，报错不带/,
+  },
 ]
 
 const RUNNERS = {
@@ -2016,6 +2089,10 @@ const RUNNERS = {
   'qwen-draw': { script: 'scripts/smoke-qwen-draw.mjs', build: false },
   // 内置模型基线表：纯函数，直接 import src，零网络零构建。
   baseline: { script: 'scripts/smoke-model-baseline.mjs', build: false },
+  // Magpie 的图像发现（#47）：桩 fetch，直接 import src，零网络零构建。
+  magpie: { script: 'scripts/smoke-magpie-discovery.mjs', build: false },
+  // 非 JSON 报错的可诊断性（#48）：桩 fetch 驱动真实生成路径，零网络零构建。
+  diagnosis: { script: 'scripts/smoke-upstream-diagnosis.mjs', build: false },
   // The archive rule, run against a real `pnpm pack`. No rebuild: the archive
   // contents depend on package.json and the tree, not on the built output.
   pack: { script: 'scripts/verify-pack.mjs', build: false },
