@@ -882,8 +882,8 @@ const CASES = [
     name: 'the switcher trusts a paint inset the shell never defines',
     runner: 'contracts',
     file: 'src/client/sidebar-entry.ts',
-    from: '  const style = getComputedStyle(button)\n  const left = style.marginLeft\n  const right = style.marginRight\n',
-    to: "  const style = getComputedStyle(button)\n  const inset = style.getPropertyValue('--dsh-sidebar-paint-inset').trim() || '3px'\n  const left = inset === '3px' ? '4px' : inset\n  const right = inset === '3px' ? '4px' : inset\n",
+    from: '  const style = getComputedStyle(seat)\n  const left = style.marginLeft\n  const right = style.marginRight\n',
+    to: "  const style = getComputedStyle(seat)\n  const inset = style.getPropertyValue('--dsh-sidebar-paint-inset').trim() || '3px'\n  const left = inset === '3px' ? '4px' : inset\n  const right = inset === '3px' ? '4px' : inset\n",
     expect: /does not line up with the shell button/,
   },
   {

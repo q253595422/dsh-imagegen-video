@@ -502,10 +502,16 @@ function createTabs(
  * shell is free to change the number without telling anyone, and a stylesheet
  * cannot see a sibling's used value. Both edges are taken separately: a shell
  * that insets asymmetrically still lines up.
+ *
+ * The element measured is the SEAT the switcher was inserted before, not the
+ * New Session button: since 0.2.2-rc.3 the inset lives on the row that wraps
+ * the button (`newSessionRow` carries `--dsh-sidebar-paint-inset + 1px`, the
+ * button's own margin is `0`). Measuring the button would leave the switcher
+ * 4px wider than the action row on both edges.
  */
-function alignToSeat(tabs: HTMLElement, button: HTMLElement): void {
+function alignToSeat(tabs: HTMLElement, seat: HTMLElement): void {
   if (typeof globalThis.getComputedStyle !== 'function') return
-  const style = getComputedStyle(button)
+  const style = getComputedStyle(seat)
   const left = style.marginLeft
   const right = style.marginRight
   // An unparsed value ('auto', '') would break the box; fall back to the
@@ -522,6 +528,32 @@ function alignToSeat(tabs: HTMLElement, button: HTMLElement): void {
 /** Seat marker for a switcher that had to fall back to the column itself. */
 const FALLBACK_SEAT_ATTR = 'dshImagegenTabsSeat'
 const FALLBACK_SEAT_VALUE = 'top'
+
+/**
+ * The element the switcher is inserted BEFORE.
+ *
+ * Up to 0.2.2-rc.2 the New Session button was a direct child of the sidebar
+ * column, so "the seat" and "the button" were the same element. 0.2.2-rc.3 gave
+ * the button a wrapper row (`newSessionRow` — a `display: flex; gap: 6px` row
+ * that also hosts the new `sidebar.session.action` slot outlet) and moved the
+ * row inset onto it. Inserting before the BUTTON then put the switcher inside
+ * that flex row — 会话 / 生图 / 新会话 side by side — which is the layout this
+ * rule exists to prevent.
+ *
+ * So the seat is the root-level block that owns the action ({@link
+ * newSessionBlock}, the same block `markBlocks` spares), read from the row
+ * instead of guessed from wrappers. The block is only used when it holds
+ * nothing but this action: a shell that wraps the brand row and the action in
+ * one header must keep the old behaviour (insert before the button itself)
+ * rather than get the switcher hoisted above the logo.
+ */
+function actionSeat(root: HTMLElement, button: HTMLElement): HTMLElement {
+  const block = newSessionBlock(root, button)
+  if (block === undefined) return button
+  // The brand row is the tell for "this block is a header, not the action row".
+  if (block.querySelector(`${BRAND_MARK_ANCHOR}, ${BRAND_NAME_ANCHOR}`) !== null) return button
+  return block
+}
 
 /**
  * Mount or repair the two-tab switcher.
@@ -547,19 +579,21 @@ function placeTabs(
   imageTooltip: string,
 ): HTMLDivElement {
   const existing = root.querySelector<HTMLDivElement>(ENTRY_SELECTOR)
+  const seat = button === undefined ? undefined : actionSeat(root, button)
 
-  if (button !== undefined) {
-    if (existing !== null && existing.parentElement === button.parentElement) {
-      // Same seat, but the shell may have re-rendered its button with a new
+  if (seat !== undefined) {
+    if (existing !== null && existing.parentElement === seat.parentElement
+      && existing.nextElementSibling === seat) {
+      // Same seat, but the shell may have re-rendered its row with a new
       // inset; re-measure rather than keep a value that was true once.
-      alignToSeat(existing, button)
+      alignToSeat(existing, seat)
       return existing
     }
     existing?.remove()
     const tabs = createTabs(controller, sessionLabel, sessionTooltip, imageLabel, imageTooltip)
-    // The shell button keeps its own slot below the switcher, untouched.
-    button.parentElement?.insertBefore(tabs, button)
-    alignToSeat(tabs, button)
+    // The shell action keeps its own slot below the switcher, untouched.
+    seat.parentElement?.insertBefore(tabs, seat)
+    alignToSeat(tabs, seat)
     return tabs
   }
 

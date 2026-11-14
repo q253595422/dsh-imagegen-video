@@ -1153,10 +1153,16 @@ const sourceTabsPage = `<!doctype html><html><head><style>
  * whole point: the check must fail when the shipped logic changes, not when a
  * copy of it drifts. If the function is renamed or removed this throws instead,
  * so the check cannot silently stop covering it.
+ *
+ * Its second parameter is the SEAT the switcher was inserted before, which is
+ * the New Session button only in shells that do not wrap the action. This page
+ * reproduces the unwrapped 0.2.1 arrangement, so it passes the button; the
+ * wrapped 0.2.2-rc.3 arrangement is covered by smoke D3c, which mounts the real
+ * entry instead of lifting one function out of it.
  */
 const sidebarAlignScript = (() => {
   const source = read('sidebar-entry.ts')
-  const match = source.match(/function alignToSeat\(tabs: HTMLElement, button: HTMLElement\): void \{[\s\S]*?\n\}/)
+  const match = source.match(/function alignToSeat\(tabs: HTMLElement, seat: HTMLElement\): void \{[\s\S]*?\n\}/)
   if (match === null) {
     console.error('\nFAIL: alignToSeat is gone from sidebar-entry.ts.')
     console.error('The sidebar alignment check lifts that function into the page; without it there is')
@@ -1164,7 +1170,7 @@ const sidebarAlignScript = (() => {
     process.exit(1)
   }
   return match[0]
-    .replace(/\(tabs: HTMLElement, button: HTMLElement\): void/, '(tabs, button)')
+    .replace(/\(tabs: HTMLElement, seat: HTMLElement\): void/, '(tabs, seat)')
     .replace(/\/\*\*[\s\S]*?\*\//g, '')
     .replace(/\/\/[^\n]*/g, '')
 })()

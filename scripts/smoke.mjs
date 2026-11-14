@@ -5564,7 +5564,13 @@ await check('D3 sidebar entry mounts inside desktop and unknown sidebar shells, 
   actionWrapper.append(unknownButton)
   await new Promise(resolve => setTimeout(resolve, 20))
   assert.equal(jsdomDocument.querySelectorAll('[data-dsh-imagegen-session-tabs]').length, 1, 'repairing a wrapped action never duplicates the switcher')
-  assert.equal(unknownButton.previousElementSibling?.hasAttribute('data-dsh-imagegen-session-tabs'), true, 'the switcher follows the wrapped action')
+  // The contract is "immediately above the action", not "immediately above the
+  // button": since 0.2.2-rc.3 the shell wraps the button in its own row, and a
+  // switcher inserted inside that row would sit beside the action instead of
+  // over it. The seat is therefore the outermost wrapper that holds only this
+  // action.
+  assert.equal(actionWrapper.previousElementSibling?.hasAttribute('data-dsh-imagegen-session-tabs'), true, 'the switcher sits above the wrapped action row')
+  assert.equal(unknownButton.previousElementSibling, null, 'the switcher never lands inside the action wrapper')
   jsdomDocument.documentElement.setAttribute('data-dsh-imagegen-active', '')
   assert.notEqual(jsdomWindow.getComputedStyle(actionWrapper).display, 'none', 'a wrapper around the native action stays visible')
   assert.notEqual(jsdomWindow.getComputedStyle(unknownButton).display, 'none', 'an action found only by its accessible name stays visible')
@@ -5665,6 +5671,10 @@ await check('D3b sidebar entry mounts above the shell action when the workspace 
     document: jsdomDocument,
     MutationObserver: jsdomWindow.MutationObserver,
     HTMLElement: jsdomWindow.HTMLElement,
+    // The real entry measures boxes (`isVisible`, `boxAncestor`, `alignToSeat`).
+    // Without this the sandbox takes every "no computed style" early return and
+    // the inset assertions below would prove nothing.
+    getComputedStyle: jsdomWindow.getComputedStyle.bind(jsdomWindow),
     console,
   }
   const stubs = {
@@ -5749,6 +5759,126 @@ await check('D3b sidebar entry mounts above the shell action when the workspace 
   assert.equal(jsdomDocument.querySelector('[data-dsh-imagegen-session-tabs]'), null)
   assert.equal(scrollRegion.hasAttribute('data-dsh-imagegen-sidebar-block'), false)
   assert.equal(panelList.hasAttribute('data-dsh-imagegen-sidebar-hide'), false)
+  jsdomWindow.setTimeout = realSetTimeout
+})
+
+// ------------------------------- D3c sidebar entry in the 0.2.2-rc.3 action row
+await check('D3c the switcher stays on its own line when the shell wraps the action in a row (0.2.2-rc.3)', async () => {
+  // WHY: rc.3 gave the New Session button a wrapper (`div.newSessionRow`, a
+  // `display:flex; gap:6px` row that also hosts the `sidebar.session.action`
+  // slot outlet) and moved the row inset onto it. The old rule inserted the
+  // switcher before the BUTTON, which put it INSIDE that flex row: 会话 / 生图
+  // / 新会话 rendered side by side on one line. Nothing in D3 or D3b notices,
+  // because both fixtures keep the button as a direct child of the column.
+  const { JSDOM } = await import('jsdom')
+  const dom = new JSDOM(
+    '<!doctype html><html lang="zh-CN"><head></head><body>'
+    + '<div data-sidebar-drawer="true"><div class="shellRoot" style="display:flex;flex-direction:column">'
+    + '<div class="logoRow"><span class="brandMark"><span data-slot="sidebar.brand.mark" style="display: contents"></span></span>'
+    + '<span class="brandName"><span data-slot="sidebar.brand.name" style="display: contents"></span></span></div>'
+    // The rc.3 shape: the action is wrapped, and the wrapper carries the inset
+    // (the button's own margin is 0).
+    // Longhand on purpose: jsdom does not expand the `margin` shorthand into
+    // the used `margin-left`/`margin-right` that `alignToSeat` reads.
+    + '<div class="newSessionRow" style="display:flex;gap:6px;margin-left:4px;margin-right:4px">'
+    + '<div data-slot="sidebar.session.action" style="display: contents"></div>'
+    + '<button class="newSession" aria-label="New session" style="margin:0">New session</button>'
+    + '</div>'
+    + '<button data-sidebar-toggle aria-label="收起侧边栏">toggle</button>'
+    + '<div class="scrollRegion"><div class="scrollArea" style="display:grid">'
+    + '<nav class="panelList"><button>Plugins</button></nav>'
+    + '<div class="regionArea"><div data-slot="sidebar.workspaces" style="display: contents"></div></div>'
+    + '</div></div>'
+    + '<div class="footArea"><div data-slot="sidebar.footer.action" style="display: contents"></div>'
+    + '<div data-slot="sidebar.settings" style="display: contents"></div></div>'
+    + '</div></div></body></html>',
+    { pretendToBeVisual: true },
+  )
+  const jsdomWindow = dom.window
+  const jsdomDocument = jsdomWindow.document
+  const realSetTimeout = jsdomWindow.setTimeout.bind(jsdomWindow)
+  jsdomWindow.setTimeout = (fn, delay, ...args) => realSetTimeout(fn, Math.min(Number(delay) || 0, 20), ...args)
+  const sandbox = {
+    window: jsdomWindow,
+    document: jsdomDocument,
+    MutationObserver: jsdomWindow.MutationObserver,
+    HTMLElement: jsdomWindow.HTMLElement,
+    // The real entry measures boxes (`isVisible`, `boxAncestor`, `alignToSeat`).
+    // Without this the sandbox takes every "no computed style" early return and
+    // the inset assertions below would prove nothing.
+    getComputedStyle: jsdomWindow.getComputedStyle.bind(jsdomWindow),
+    console,
+  }
+  const stubs = {
+    'react': {
+      Fragment: 'Fragment',
+      createContext: (value) => ({ Provider: () => null, Consumer: () => null, _currentValue: value }),
+      createElement: () => null,
+      forwardRef: (render) => ({ $$typeof: Symbol.for('react.forward_ref'), render }),
+      memo: (fn) => ({ $$typeof: Symbol.for('react.memo'), type: fn }),
+      useContext: () => ({}),
+      useMemo: (factory) => factory(),
+      useRef: () => ({ current: null }),
+      useState: (initial) => [typeof initial === 'function' ? initial() : initial, () => {}],
+    },
+    'react/jsx-runtime': { jsx: () => null, jsxs: () => null },
+    'react-dom': {},
+    'react-dom/client': { createRoot: () => ({ render: () => {}, unmount: () => {} }) },
+    '@deepseek-ai/dsh-client-ui-primitives': {},
+    '@deepseek-ai/dsh-client-store': { createSnapshotStore: (initial) => ({
+      getSnapshot: () => initial,
+      set: () => {},
+      update: () => {},
+      subscribe: () => () => {},
+    }) },
+  }
+  let handoff
+  sandbox.window.__ModuleLoader__ = { load: (h) => { handoff = h } }
+  const source = readFileSync(new URL('../lib/client.js', import.meta.url), 'utf8')
+  vm.runInNewContext(source, sandbox, { filename: 'client.js' })
+  const exportsOf = handoff.factory((spec) => {
+    const stub = stubs[spec]
+    if (stub === undefined) throw new Error('unexpected require: ' + spec)
+    return stub
+  })
+  const { mount } = exportsOf.sidebarEntryTestHooks
+  let panelOpen = false
+  const controller = {
+    getSnapshot: () => ({ panelOpen }),
+    open: () => { panelOpen = true },
+    close: () => { panelOpen = false },
+    subscribe: () => () => {},
+  }
+  const dispose = mount(controller, '会话', '回到当前对话', '生图', '打开生图工作室')
+  const tabs = jsdomDocument.querySelector('[data-dsh-imagegen-session-tabs]')
+  const row = jsdomDocument.querySelector('.newSessionRow')
+  const button = jsdomDocument.querySelector('.newSession')
+  const shellRoot = jsdomDocument.querySelector('.shellRoot')
+
+  assert.ok(tabs !== null, 'the switcher mounts against a wrapped action')
+  // The three assertions that pin the reported regression.
+  assert.equal(tabs.parentElement, shellRoot, 'the switcher is a child of the column, NOT of the action row')
+  assert.equal(row.contains(tabs), false, 'the switcher never lands inside the flex row that holds the action')
+  assert.equal(row.previousElementSibling, tabs, 'the switcher sits directly above the action row')
+  assert.equal(button.previousElementSibling.hasAttribute('data-slot'), true, 'the action keeps its slot outlet as its sibling')
+  // The inset is measured off the row (4px), not off the button (which is 0 in
+  // rc.3), so both edges line up with the action row.
+  assert.equal(tabs.style.marginLeft, '4px', 'the switcher copies the inset of the seat it sits above')
+  assert.equal(tabs.style.marginRight, '4px', 'both edges are taken from the same seat')
+
+  // A shell that puts the brand row and the action in one block must keep the
+  // old behaviour: hoisting the switcher above that block would put it above
+  // the logo. Re-query because a re-seat replaces the node.
+  const brandAndAction = jsdomDocument.querySelector('.logoRow')
+  brandAndAction.append(row)
+  await new Promise(resolve => setTimeout(resolve, 30))
+  const reseated = jsdomDocument.querySelectorAll('[data-dsh-imagegen-session-tabs]')
+  assert.equal(reseated.length, 1, 're-seating never duplicates the switcher')
+  assert.equal(brandAndAction.firstElementChild.hasAttribute('data-dsh-imagegen-session-tabs'), false, 'the switcher is never hoisted above the logo')
+  assert.equal(reseated[0].closest('.newSessionRow') !== null, true, 'a shared header block is not treated as the action row')
+
+  dispose()
+  assert.equal(jsdomDocument.querySelector('[data-dsh-imagegen-session-tabs]'), null)
   jsdomWindow.setTimeout = realSetTimeout
 })
 
