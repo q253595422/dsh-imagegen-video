@@ -89,7 +89,12 @@ export class ProposalStore {
     return found.sort((left, right) => left.createdAt - right.createdAt || left.id.localeCompare(right.id))
   }
 
-  /** 一份画布上所有画布的提案条数（一次读目录，给列表页用）。 */
+  /**
+   * 每份画布各有多少条待确认提案（一次读目录，给列表页用）。
+   *
+   * 返回的键是 canvasId。项目下拉有上千份画布，逐画布调 `list()` 会把目录
+   * 读上千遍；这里只走一次 readdir。
+   */
   async countByCanvas(): Promise<Record<string, number>> {
     let names: string[]
     try {

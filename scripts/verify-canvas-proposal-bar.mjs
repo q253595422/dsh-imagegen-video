@@ -29,6 +29,12 @@ if (CHROME === null) skipWithoutChrome('the canvas proposal-bar guard did NOT ru
 
 const css = readFileSync(new URL('../src/client/canvas-workspace.module.css', import.meta.url), 'utf8')
 const componentSource = readFileSync(new URL('../src/client/canvas/proposal-bar.tsx', import.meta.url), 'utf8')
+/**
+ * 画布本身（不是提案条）。这里只读它的源码、不渲染它：要断言的是
+ * `acceptProposal` 里那**两行的先后顺序**，而那件事浏览器量不出来——
+ * 它取决于调用序列，不取决于布局。
+ */
+const workspaceSource = readFileSync(new URL('../src/client/CanvasWorkspace.tsx', import.meta.url), 'utf8')
 
 /** 本组件拿到并渲染的类名；每一个都必须在真实组件源码里出现过。 */
 const PROPOSAL_CLASSES = [
@@ -350,6 +356,28 @@ if (!/Partial<CanvasProposalBarProps>/.test(componentSource)) {
 // `stacked` 必须真的落到 DOM 上，否则样式没有挂靠点。
 if (!componentSource.includes('data-stacked')) {
   failures.push('组件没有把 stacked 写进 data-stacked，那条样式规则永远不会生效')
+}
+
+// 8. 接受提案前必须先落盘本地未同步的编辑。
+//
+// 用户在拖动节点之后 650 ms 内点「接受」时，那笔拖动只在浏览器内存里。accept
+// 接口只带 canvasId + proposalId，服务端基于**它自己**那份文档应用提案并返回
+// 整份新文档；客户端直接拿它替换本地 document，拖动就被静默抹掉（且因为同时
+// 推进了 syncedRef，autosave 也不会补写）。服务端那一半由 smoke-canvas-agent
+// 的 F9 钉住，这里钉的是客户端的调用顺序。
+//
+// 断言的是顺序，不是「有没有调用」：两行都在、但顺序反了，一样会丢数据。
+{
+  const body = workspaceSource.slice(workspaceSource.indexOf('const acceptProposal'))
+  const flushAt = body.indexOf('flushPendingRef.current()')
+  const acceptAt = body.indexOf('api.canvasProposalAccept(')
+  if (flushAt < 0) {
+    failures.push('acceptProposal 没有先 flush 本地未同步的编辑——用户刚做的拖动会被服务端返回值覆盖')
+  } else if (acceptAt < 0) {
+    failures.push('找不到 acceptProposal 里的 canvasProposalAccept 调用，这条断言的前提已失效')
+  } else if (flushAt > acceptAt) {
+    failures.push('acceptProposal 里 flush 排在 accept 之后——等 accept 返回时本地编辑已经被覆盖，再写就是对着一份丢过数据的文档写')
+  }
 }
 
 session.close()

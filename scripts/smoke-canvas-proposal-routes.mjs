@@ -45,6 +45,7 @@ for (const route of routes) {
   if (typeof route.path === 'string') byPath.set(route.path, route)
 }
 
+const LIST = '/api/dsh-imagegen/canvas/list'
 const PROPOSALS = '/api/dsh-imagegen/canvas/proposals'
 const ACCEPT = '/api/dsh-imagegen/canvas/proposal/accept'
 const DISCARD = '/api/dsh-imagegen/canvas/proposal/discard'
@@ -310,6 +311,33 @@ check('R9 a proposal from another canvas is invisible to this one', async () => 
   assert.notEqual(listA.proposals[0].id, listB.proposals[0].id)
   assert.equal(listA.proposals[0].canvasId, a.canvasId)
   assert.equal(listB.proposals[0].canvasId, b.canvasId)
+})
+
+check('R10 the project list carries how many changes are waiting per canvas', async () => {
+  // 提案条只显示**当前打开**那本画布的待确认改动。Agent 在别的画布上提了改动、
+  // 用户切走之后就再也看不见它们——列表接口把这个数带出来，下拉里才能标一句
+  // 「有 N 条待确认」。计数必须来自一次 readdir，且不该把没提案的画布写上 0。
+  const { canvasId } = await seed('待确认计数')
+  // 对照组必须是**真的一点提案都没有**的画布。不能用 seed()：它为了拿到提案
+  // 会先提一条，于是「安静」的画布自己就带着 1 条。用工具直接建一个空画布。
+  const quietRegistered = new Map()
+  registerAgentCanvasTools({ tools: { register (definition) { quietRegistered.set(definition.name, definition); return () => {} } } }, () => ({ enabled: true }))
+  const quiet = await quietRegistered.get('create_canvas').execute({ title: '安静的' }, {})
+
+  const listed = await post(LIST, {})
+  assert.equal(listed.ok, true, `list should succeed: ${JSON.stringify(listed)}`)
+  const busy = listed.projects.find(project => project.id === canvasId)
+  const calm = listed.projects.find(project => project.id === quiet.id)
+  assert.ok(busy !== undefined && calm !== undefined, 'both canvases are in the list')
+  assert.equal(busy.proposalCount, 1, 'the canvas with a pending change says so')
+  assert.equal(calm.proposalCount, undefined, 'a canvas with nothing waiting carries no count at all')
+
+  // 接受之后计数要回到「没有」——否则下拉会一直留着一个已经处理完的标记。
+  const accepted = await post(ACCEPT, { canvasId, proposalId: busy.proposalCount === undefined ? '' : (await post(PROPOSALS, { canvasId })).proposals[0].id })
+  assert.equal(accepted.ok, true, `accept should succeed: ${JSON.stringify(accepted)}`)
+  const after = await post(LIST, {})
+  const cleaned = after.projects.find(project => project.id === canvasId)
+  assert.equal(cleaned.proposalCount, undefined, 'the count disappears once nothing is waiting')
 })
 
 // --------------------------------------------------------------- driver

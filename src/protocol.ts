@@ -1899,6 +1899,14 @@ export interface CanvasSummary {
   updatedAt: number
   /** User pinned this canvas to the favorites group. */
   favorite?: boolean
+  /**
+   * Agent 在这份画布上还等着用户点头的改动条数。
+   *
+   * 有它，用户才能在下拉里看出「哪个画布上有人在等我」——否则切到别的画布
+   * 之后，那条提案条就再也看不到了（提案按 canvasId 拉取）。省略或 0 都
+   * 表示没有；列表页不会为它多读一遍磁盘。
+   */
+  proposalCount?: number
 }
 
 /** Workflow metadata carried by generated results across task, history and gallery. */

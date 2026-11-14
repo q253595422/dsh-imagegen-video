@@ -1923,7 +1923,20 @@ export function makeRoutes(deps: ImageGenRoutesDeps): WebRoute[] {
       path: CANVAS_API.list,
       handler: async (req, res) => {
         if (!guard(req, res, 'POST')) return
-        try { writeJson(res, 200, { ok: true, projects: await canvas.list() }) }
+        try {
+          const projects = await canvas.list()
+          // 一次读目录就能拿到全部画布的提案数（`countByCanvas` 不逐画布读）。
+          // 失败就让列表照常返回：提案是旁路功能，它的目录读不出来不该让用户
+          // 连项目列表都打不开。
+          const counts = await proposalStore.countByCanvas().catch(() => ({}) as Record<string, number>)
+          writeJson(res, 200, {
+            ok: true,
+            projects: projects.map(project => {
+              const count = counts[project.id] ?? 0
+              return count === 0 ? project : { ...project, proposalCount: count }
+            }),
+          })
+        }
         catch (error) { writeJson(res, 200, { ok: false, code: 'canvas-failed', message: messageOf(error) }) }
       },
     },

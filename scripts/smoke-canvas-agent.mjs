@@ -497,6 +497,53 @@ check('F8 accepting onto a canvas the user edited keeps the user\'s edit', async
   assert.equal(result.document.revision, edited.revision + 1)
 })
 
+check('F9 accepting right after an unsaved edit keeps that edit (the 650 ms window)', async () => {
+  // 用户在拖动节点之后、autosave 的 650 ms 计时器到期之前点了「接受」。
+  //
+  // accept 接口只带 canvasId + proposalId：服务端基于**它自己**那份文档应用
+  // 提案，返回整份新文档。用户那笔拖动此刻只在浏览器内存里。客户端若直接拿
+  // 返回值替换本地 document（并把 syncedRef 推上去），拖动就被静默抹掉，而且
+  // 不会再补写——这是「接受提案」这条最常用的路径上的数据丢失。
+  //
+  // 修法在客户端：接受前先 `flushPendingCanvas()`。这里按那条顺序写，用真实
+  // 的 store 证明「先写、再接受」之后，文档里两样都在。
+  //
+  // 反向证明：如果跳过写这一步，acceptOne 返回的文档里那个节点仍是旧坐标——
+  // scripts/probe-proposal-races-local-edit.mjs 就是按后者构造的，它打红过。
+  const stub = stubContext()
+  registerAgentCanvasTools(stub.ctx, enabledConfig)
+  const created = await stub.registered.get('create_canvas').execute({ title: '未同步编辑' }, {})
+
+  // 画布上先有一个用户自己的节点（走提案接受，于是它真的在 pages/ 里）。
+  await stub.registered.get('add_canvas_node').execute({ canvas_id: created.id, type: 'text', title: '要拖的' }, {})
+  const [first] = await proposalStore.list(created.id)
+  const seeded = await proposalStore.acceptOne(created.id, first.id)
+  assert.equal(seeded.ok, true, `seeding the canvas failed: ${seeded.ok ? '' : seeded.message}`)
+  const target = seeded.document.nodes[0]
+  assert.ok(target !== undefined)
+
+  // Agent 又提了一条，用户还没点。
+  await stub.registered.get('add_canvas_node').execute({ canvas_id: created.id, type: 'text', title: 'Agent 加的' }, {})
+  const [pending] = await proposalStore.list(created.id)
+
+  // 用户把它拖到别处——只在本地，尚未写出去。
+  const dragged = seeded.document.nodes.map(node =>
+    node.id === target.id ? { ...node, x: 1234, y: 567 } : node)
+  const flushed = await canvasStore.save({ ...seeded.document, nodes: dragged }, seeded.document.revision)
+
+  // 现在接受。服务端读到的是刚写出去的那份，于是拖动与提案的节点都在。
+  const accepted = await proposalStore.acceptOne(created.id, pending.id)
+  assert.equal(accepted.ok, true, `accepting must work: ${accepted.ok ? '' : accepted.message}`)
+  const after = accepted.document.nodes.find(node => node.id === target.id)
+  assert.equal(after?.x, 1234, 'the drag that was flushed just before the accept is still there')
+  assert.equal(after?.y, 567)
+  assert.ok(accepted.document.nodes.some(node => node.title === 'Agent 加的'), 'and the proposal landed too')
+  // 客户端的 syncedRef 推进到这份文档之后 autosave 不该再写一次：这里断言
+  // 服务端的 revision 就是 accepted 的那一个，没有被额外写乱。
+  const latest = await canvasStore.read(created.id)
+  assert.equal(latest.revision, flushed.revision + 1, 'exactly one write for the accept, none for a phantom autosave')
+})
+
 check('F6 the auto-apply escape hatch is not reachable from a tool argument', async () => {
   const stub = stubContext()
   registerAgentCanvasTools(stub.ctx, enabledConfig)

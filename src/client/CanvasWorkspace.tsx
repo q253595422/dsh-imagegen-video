@@ -327,6 +327,19 @@ function countUnresolved(unresolved: readonly CanvasBundleUnresolved[]): { video
   return { video, asset }
 }
 
+/**
+ * 下拉里的一行项目：标题，外加「有 N 条待确认」。
+ *
+ * 为什么需要这一行：提案条只显示**当前打开**那本画布的待确认改动（提案按
+ * canvasId 拉取）。Agent 在别的画布上提了改动、用户切走之后，界面就再没有
+ * 任何地方能看见它们——那些提案只能等着用户自己想起来切回去。下拉里标一下
+ * 就补上了这个洞，而计数来自列表接口那次 readdir，不额外读盘。
+ */
+function projectLabel(project: ProjectSummary): string {
+  const count = project.proposalCount ?? 0
+  return count > 0 ? `${project.title} · ${tt('canvas.proposal.pending', { count })}` : project.title
+}
+
 function summaryOf(document: CanvasDocument, favorite = false): ProjectSummary {
   return {
     id: document.id,
@@ -831,16 +844,36 @@ export function CanvasWorkspace(props: CanvasWorkspaceProps): React.JSX.Element 
   /**
    * 接受一条提案。
    *
-   * 服务端会在两种情况下拒绝，两种都要说人话：
-   *  - 画布在提议之后被改动过（revision 对不上）→ 让 Agent 重新提议；
-   *  - 提案要引用的节点已经不在 → 同上。
-   * 不要把它们简化成「失败了」——用户需要知道下一步做什么。
+   * ## 先把本地未同步的编辑写出去，再接受
+   *
+   * 用户在拖动节点之后 650 ms 内点了「接受」时，那一笔拖动只在浏览器内存里，
+   * 服务端一无所知。accept 接口只带 canvasId + proposalId，服务端基于**它
+   * 自己**那份文档应用提案，返回整份新文档——里面那个节点还在旧坐标。
+   * 若客户端直接拿它替换本地 document，用户刚拖的位置被静默抹掉，而且因为
+   * `syncedRef` 同时被推进，autosave 也不会再补写一次。
+   *
+   * 两条断言各钉一端：`scripts/smoke-canvas-agent.mjs` 的 F9 证明「先写、再
+   * 接受」之后文档里两样都在；`scripts/verify-canvas-proposal-bar.mjs` 断言这
+   * 里两行的先后顺序（顺序反了，写得再对也没用）。缺陷本身是先写一个探针实测
+   * 出来的——不先写就接受时，服务端返回的节点仍停在 0,0 而不是 1234,567。
+   *
+   * `flushPendingCanvas` 会走与 autosave 同一条写入路径（含冲突读回重试），
+   * 所以这里等它完成再接受，服务端就有了用户最新的编辑。
+   *
+   * ## 服务端会拒绝的两种情况
+   *
+   *  - 画布在其他窗口被改过（乐观锁）→ `canvas-conflict`，让用户重试；
+   *  - 提案要引用的节点已经不在 → `proposal-stale`，这条提案不可能再生效。
+   *
+   * 两者都不简化成「失败了」：用户需要知道下一步做什么。
    */
   const acceptProposal = useCallback(async (proposalId: string): Promise<void> => {
     const canvasId = documentRef.current?.id
     if (canvasId === undefined || proposalsBusy) return
     setProposalsBusy(true); setProposalError(null)
     try {
+      // 见上：不先把这笔写出去，下面那份返回值会带走用户的编辑。
+      await flushPendingRef.current()
       const saved = await api.canvasProposalAccept(canvasId, proposalId)
       // 服务端返回的就是落盘后的文档，直接用它换掉本地视图，不再多跑一次读取。
       //
@@ -1004,6 +1037,16 @@ export function CanvasWorkspace(props: CanvasWorkspaceProps): React.JSX.Element 
    * row count depends on the host's width, which the stylesheet cannot know.
    */
   const [topBarHeight, setTopBarHeight] = useState(0)
+  /**
+   * 把「写入本地未同步的编辑」这件事转给下面的 `flushPendingCanvas`。
+   *
+   * 为什么是一个 ref：接受提案（本函数上方）必须在调用接口前先把用户那笔
+   * 还没 autosave 的编辑写出去，否则服务端返回的文档会把它抹掉。但
+   * `flushPendingCanvas` 要等 `writeCanvas` 先定义，而那一段在四千行以下—
+   * —直接把函数写进依赖数组，等于让上面这个回调依赖下面整条链。ref 是这里
+   * 唯一不需要搬家就能表达的依赖：它在挂载后总是最新的那个闭包。
+   */
+  const flushPendingRef = useRef<() => Promise<void>>(async () => {})
   /**
    * Where every canvas-owned overlay mounts. See the host div in the render:
    * portals to <body> are invisible while the canvas is fullscreen, because the
@@ -3832,6 +3875,10 @@ export function CanvasWorkspace(props: CanvasWorkspaceProps): React.JSX.Element 
     try { await writeCanvas(live) } finally { flushRef.current = false }
   }, [writeCanvas])
 
+  // 接受提案前要用到它（见 `acceptProposal`）。在这里接上：这一行运行的
+  // 时候 `flushPendingCanvas` 已经有值，而 ref 的读取总是发生在那之后。
+  flushPendingRef.current = flushPendingCanvas
+
   useEffect(() => {
     if (document === null || saveState === 'loading') return
     // A failed write leaves the document unsynced, so the plain 650 ms debounce
@@ -4624,6 +4671,10 @@ export function CanvasWorkspace(props: CanvasWorkspaceProps): React.JSX.Element 
       setDocument(normalizeConfigNodeSizes(next)); setSelectedIds(new Set()); setSelectedConnectionId(null)
       syncedRef.current = JSON.stringify(next); setSaveState('saved')
       pastRef.current = []; futureRef.current = []; setHistoryVersion(version => version + 1)
+      // 下拉里那份「有 N 条待确认」是拉列表那一刻的快照。用户切一次画布正好
+      // 是 Agent 最可能刚提过改动的时刻，所以在这里刷新一次；失败静默——
+      // 计数是提示，不该让切换本身报错。
+      void api.canvasList().then(setProjects).catch(() => {})
     } catch (caught) { setError(caught instanceof Error ? caught.message : String(caught)) }
   }, [api, flushPendingCanvas])
 
@@ -5298,10 +5349,10 @@ export function CanvasWorkspace(props: CanvasWorkspaceProps): React.JSX.Element 
         onChange={value => { void selectProject(value) }}
       >
         {favoriteProjects.length > 0 ? <optgroup label={tt('canvas.favoriteProjects', { count: favoriteProjects.length })}>
-          {favoriteProjects.map(project => <option key={project.id} value={project.id}>★ {project.title}</option>)}
+          {favoriteProjects.map(project => <option key={project.id} value={project.id}>★ {projectLabel(project)}</option>)}
         </optgroup> : null}
         {otherProjects.length > 0 ? <optgroup label={tt('canvas.allProjects', { count: otherProjects.length })}>
-          {otherProjects.map(project => <option key={project.id} value={project.id}>{project.title}</option>)}
+          {otherProjects.map(project => <option key={project.id} value={project.id}>{projectLabel(project)}</option>)}
         </optgroup> : null}
       </Select>
       <IconButton name="new" label={tt('canvas.newCanvas')} onClick={() => { void newCanvas() }} />
