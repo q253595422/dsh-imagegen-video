@@ -117,8 +117,6 @@ function composeClipIds(nodes: readonly CanvasNode[], selected: ReadonlySet<stri
     && (nodeMetadata(node).video?.url ?? '') !== ''))
 }
 
-
-
 interface CanvasWorkspaceProps {
   api: ImageGenApi
   modelGroups: ImageModelGroup[]
@@ -166,7 +164,6 @@ interface CanvasWorkspaceProps {
   onOpenSettings?: (kind?: 'generation' | 'enhancement') => void
 }
 
-
 interface NodeDragState {
   pointerId: number
   startX: number
@@ -178,7 +175,6 @@ interface NodeDragState {
    *  drag cannot be pulled apart by two of its members snapping elsewhere. */
   primaryId: string
 }
-
 
 interface PanState {
   startX: number
@@ -249,11 +245,6 @@ type ContextMenuState = CanvasContextMenuTarget
 
 type ProjectSummary = Awaited<ReturnType<ImageGenApi['canvasList']>>[number]
 
-
-
-
-
-
 /**
  * `target.closest(selector)` without an `instanceof` check.
  *
@@ -290,10 +281,6 @@ function pinchStateFrom(
     startCenter: { x: (first.x + second.x) / 2, y: (first.y + second.y) / 2 },
   }
 }
-
-
-
-
 
 /**
  * A file name the browser and the three target OSes all accept, derived from
@@ -415,27 +402,6 @@ function WorkflowOptionsMenu(props: {
   </div>
 }
 
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
 /** Extensions the file picker refuses before a byte leaves the browser; the
  *  host refuses them again, so this is only a fast, friendly guard. */
 const BLOCKED_UPLOAD_EXTENSIONS = new Set([
@@ -448,7 +414,7 @@ const BLOCKED_UPLOAD_EXTENSIONS = new Set([
 const MAX_UPLOAD_BYTES = 50 * 1024 * 1024
 
 /**
- * Caps for a canvas drop of images.
+ * Caps for a canvas drop of images: how many per drop, and how large each may be.
  *
  * Images take the base64 data-URL path (they double as generation references),
  * so every file is read fully into memory and then re-encoded ~33% larger for
@@ -457,26 +423,10 @@ const MAX_UPLOAD_BYTES = 50 * 1024 * 1024
  * concurrent FileReaders plus their data URLs. Both caps exist in the sibling
  * drop paths already (ecommerce: 10 MB / 4 files; file nodes: 50 MB) — the
  * canvas was the one entry that had neither.
- */
-/** Per-drop cap; anything beyond is reported, not silently discarded. */
-const DROP_IMAGE_MAX_COUNT = 20
-
-/**
- * A control's label with the key that does the same thing appended, e.g.
- * `撤销 (Ctrl/⌘+Z)`.
  *
- * The dock is where a user looks for undo, and a tooltip that names the key is
- * how they find out the key exists without opening the legend. Actions with no
- * binding come back unchanged rather than with empty brackets.
- * @param key - the action's translation key.
- * @returns the label for `aria-label` / `title`.
+ * Anything past the count cap is reported, not silently discarded.
  */
-
-
-
-
-
-
+const DROP_IMAGE_MAX_COUNT = 20
 
 export function CanvasWorkspace(props: CanvasWorkspaceProps): React.JSX.Element {
   const { api, modelGroups, defaultChannelId, connected, connectedChannelIds, promptReady = connected, history, gallery, tasks, videoGroups, videoTasks, importRequest, onImportRequestHandled, onClipStored, onOpenSettings, active } = props
@@ -2158,7 +2108,6 @@ export function CanvasWorkspace(props: CanvasWorkspaceProps): React.JSX.Element 
     })
   }, [api, mutate, withNodeBusy])
 
-
   /** Compose the 标注 edit reference: the source image plus numbered boxes,
    *  together with the constraint text that pins the edit to those boxes. */
   const annotatedReference = useCallback(async (
@@ -2391,7 +2340,6 @@ export function CanvasWorkspace(props: CanvasWorkspaceProps): React.JSX.Element 
       setNotice(tt('canvas.layerSplitDone', { count: created.length }))
     })
   }, [api, mutate, onOpenSettings, promptReady, withNodeBusy])
-
 
   // ------------------------------------------------------------- video runs
 
@@ -2687,8 +2635,6 @@ export function CanvasWorkspace(props: CanvasWorkspaceProps): React.JSX.Element 
 
   // ---------------------------------------------------------- task intake
 
-  /** Re-run a failed image node's generation from its recorded prompt/model,
-   * re-deriving the edit base from the connected source config node. */
   /** Retry one failed video node by resubmitting its stored run parameters. */
   const retryVideoGeneration = useCallback(async (node: CanvasNode): Promise<void> => {
     const current = documentRef.current
@@ -5897,5 +5843,4 @@ export function CanvasWorkspace(props: CanvasWorkspaceProps): React.JSX.Element 
     {shortcutHelpOpen ? <ShortcutHelp onClose={() => setShortcutHelpOpen(false)} /> : null}
   </section>
 }
-
 
