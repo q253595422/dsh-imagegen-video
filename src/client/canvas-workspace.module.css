@@ -3562,12 +3562,26 @@
   flex-direction: column;
   gap: 6px;
   padding: 0 10px 8px;
+  /* 节点可以被拖到任意尺寸，面板不能跟着溢出：底部的「重置」是最后一行，
+     溢出节点就再也点不到。纵向滚动是可接受的退路，横向不滚。 */
+  overflow-y: auto;
+  overflow-x: hidden;
 }
 
-/* 预览：正方形、可拖动环绕。cursor 明示「这里能转视角」。 */
+/*
+ * 预览：正方形、可拖动环绕。cursor 明示「这里能转视角」。
+ */
 .posePreview {
+  /* 正方形预览，宽度跟着节点走（100% 减去面板内边距）。
+     `aspect-ratio: 1` 在这里以宽度为基准定高；不给 height/max-height，
+     因为在 flex 列里 `max-height: 100%` 解析不出确定值，反而会把预览拉成
+     比宽还高（实测 300×325）。高度留给 aspect-ratio 一处决定。 */
   flex: none;
+  width: 100%;
+  min-width: 0;
   aspect-ratio: 1;
+  margin-inline: auto;
+
   border-radius: var(--dsw-radius-md);
   background: var(--dsw-alias-bg-layer-2);
   box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--dsw-alias-label-primary) 12%, transparent);

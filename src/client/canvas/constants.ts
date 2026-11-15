@@ -29,7 +29,14 @@ export const SKETCH_NODE_SIZE = { width: 300, height: 396 }
 /** 姿势节点：上排是方形预览，下排是关节滑杆。高度按「预览 296 + 三段控件」
  *  定死，让面板里的滑杆行位置固定——它会随关节换行变高变矮，节点跟着跳
  *  是最难受的一种抖动。 */
-export const POSE_NODE_SIZE = { width: 320, height: 470 }
+/**
+ * 新建姿势节点的尺寸。
+ *
+ * 470 是按「预览 300 + 预设条 + 三行轴 + 底行」量出来的，但真机上少了 15px：
+ * 预览与控件之间的 6px 间隙累加、以及标题栏高度都比估算大。520 留出余量，
+ * 用户把节点拖小也不会溢出（预览可收缩）。
+ */
+export const POSE_NODE_SIZE = { width: 320, height: 520 }
 /** 姿势参考图导出边长。与 sketch 的 1024 一致：都是给模型当参考的图，不需要
  *  更高；再大只是让上传慢。 */
 export const POSE_EXPORT_SIZE = 1024

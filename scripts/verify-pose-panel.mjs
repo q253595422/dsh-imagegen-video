@@ -31,8 +31,14 @@ const css = readFileSync(new URL('../src/client/canvas-workspace.module.css', im
 const componentSource = canvasSourceText()
 const poseBoard = readFileSync(new URL('../src/client/canvas/pose-board.tsx', import.meta.url), 'utf8')
 
-/** 节点宽度的实测点：默认 320、拖窄到 260，以及能放下一行滑杆的下限附近。 */
-const NODE_WIDTHS = [320, 260, 220]
+/**
+ * 实测点：[宽, 高]。高度必须跟着真实尺寸走——此前夹具一律给 470，而创建
+ * 节点用的是 `POSE_NODE_SIZE`（520）：夹具比真的矮 50px，于是它一边报「预览
+ * 不是正方形」一边放过了一个真的装不下的面板。这是夹具骗了自己的那种错。
+ *
+ * 第三组是「用户把节点拖得很矮」：那时允许纵向滚动，但不许有控件被裁掉。
+ */
+const NODE_SIZES = [[320, 520], [260, 520], [220, 420]]
 
 const tokens = [...new Set(css.match(/var\(--dsw-[a-z0-9-]+\)/g) ?? [])]
   .map(token => `${token.slice(4, -1)}: #8a8a8a`).join('; ')
@@ -133,21 +139,26 @@ const MEASURE = `JSON.stringify((() => {
     overflowX,
     previewSquare: Math.abs(preview.width - preview.height) <= 1 ? 1 : 0,
     previewWidth: Math.round(preview.width),
+    previewHeight: Math.round(preview.height),
     // 导出按钮必须完全在节点里：它是这块面板唯一的出口。
     exportInside: exportBtn.left >= node.left - 1 && exportBtn.right <= node.right + 1
       && exportBtn.top >= node.top - 1 && exportBtn.bottom <= node.bottom + 1,
     minSlider: Math.min(...sliderWidths),
     minNumber: Math.min(...numberWidths),
     presetsScrollable: presets.scrollWidth > presets.clientWidth,
+    // 高度维度：面板是 flex 列，底部「重置」是最后一行。真机上它溢出了节点
+    // 15px 被裁掉——宽度断言全绿也发现不了，因为溢出发生在纵向。
+    poseBottom: Math.round(poseEl.getBoundingClientRect().bottom - node.bottom),
+    bodyOverflowsY: poseEl.scrollHeight > poseEl.clientHeight + 1,
   }
 })())`
 
 const failures = []
-for (const width of NODE_WIDTHS) {
+for (const [width, height] of NODE_SIZES) {
   await evaluate(`(() => {
     const node = document.getElementById('node')
     node.style.width = '${width}px'
-    node.style.height = '470px'
+    node.style.height = '${height}px'
     return true
   })()`)
   await new Promise(resolve => setTimeout(resolve, 200))
@@ -156,16 +167,21 @@ for (const width of NODE_WIDTHS) {
   const problems = []
   if (!measured.poseInsideNodeX || !measured.poseInsideNodeY) problems.push('the body paints outside the node box')
   if (measured.overflowX > 0) problems.push(`the body overflows its own box by ${measured.overflowX}px`)
-  if (measured.previewSquare === 0) problems.push(`the preview is not square (${measured.previewWidth}px wide)`)
+  if (measured.previewSquare === 0) problems.push(`the preview is not square (${measured.previewWidth}x${measured.previewHeight})`)
   if (!measured.exportInside) problems.push('the export button is outside the node')
   // 40px 是拇指还能被按住的宽度；再窄就只剩数字框，滑杆形同虚设。
   if (measured.minSlider < 40) problems.push(`a slider shrank to ${measured.minSlider}px`)
   if (measured.minNumber < 34) problems.push(`an angle field shrank to ${measured.minNumber}px`)
+  // 面板底部不得越过节点底部。允许 1px 的舍入；超出就是「重置」被裁。
+  if (measured.poseBottom > 1) problems.push(`the panel runs ${measured.poseBottom}px past the bottom of the node`)
+  // 滚动本身是合法退路（拖得很矮时）；但底部被裁穿到节点外不行。
+  // 面板内滚动时内容都在，用户滚得到——这一项因此只是提示不是失败。
 
-  console.log(`node ${String(width).padStart(3)}px  preview ${String(measured.previewWidth).padStart(3)}px`
-    + `  overflowX ${measured.overflowX}px  slider ${measured.minSlider}px  number ${measured.minNumber}px`
+  console.log(`node ${width}x${height}  preview ${String(measured.previewWidth).padStart(3)}px`
+    + `  overflowX ${measured.overflowX}px  bottom +${measured.poseBottom}px  overflowY ${measured.bodyOverflowsY ? 'yes' : 'no'}`
+    + `  slider ${measured.minSlider}px  number ${measured.minNumber}px`
     + `  presets scroll ${measured.presetsScrollable ? 'yes' : 'no'}`)
-  for (const problem of problems) failures.push(`${width}px: ${problem}`)
+  for (const problem of problems) failures.push(`${width}x${height}: ${problem}`)
 }
 
 // 预设条横向滚动之后，最后一个预设必须真的滚进视野——否则「跑步」这类排在末尾
@@ -173,6 +189,7 @@ for (const width of NODE_WIDTHS) {
 await evaluate(`(() => {
   const node = document.getElementById('node')
   node.style.width = '220px'
+  node.style.height = '520px'
   const presets = document.getElementById('presets')
   presets.scrollLeft = presets.scrollWidth
   return true
