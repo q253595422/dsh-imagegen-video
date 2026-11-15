@@ -113,6 +113,17 @@ const launched = await launchChrome({ chrome: CHROME, name: 'dsh-pose-panel' })
 const session = await openPage(launched.port, `http://127.0.0.1:${serverPort}/`)
 const { send, evaluate } = session
 
+// 等页面真的渲染完再量。`openPage` 把 target 建出来就返回，且不会等导航完成
+// ——本地静态页通常已经就绪，但 CI 上（尤其并行跑整条测试链时）会抢在 DOM
+// 建好之前求值，`document.getElementById('node')` 拿到 null，报的是
+// 「Cannot read properties of null」，看起来像夹具坏了，其实是竞态。
+for (let attempt = 0; attempt < 100; attempt += 1) {
+  const ready = JSON.parse(await evaluate(`JSON.stringify(document.readyState === 'complete' && document.getElementById('node') !== null && document.getElementById('pose') !== null)`))
+  if (ready) break
+  if (attempt === 99) throw new Error('the pose-panel fixture never finished rendering')
+  await new Promise(resolve => setTimeout(resolve, 50))
+}
+
 const MEASURE = `JSON.stringify((() => {
   const node = document.getElementById('node').getBoundingClientRect()
   const pose = document.getElementById('pose').getBoundingClientRect()
