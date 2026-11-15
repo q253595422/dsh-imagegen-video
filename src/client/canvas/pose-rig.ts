@@ -57,36 +57,81 @@ export const JOINT_PARENT: Readonly<Record<PoseJoint, PoseJoint | null>> = {
 
 /** 每个关节相对父关节的静止偏移（米），站立姿态下的骨架尺寸。 */
 export const JOINT_REST: Readonly<Record<PoseJoint, [number, number, number]>> = {
+  /* 标准人形比例：约 7.3 头身，无性别。
+   *
+   * 这里每一项都是**相对父节点的偏移**，注释写的是它的绝对含义
+   * （以地面 0.02、头高 H=0.2 计，单位是世界坐标）。
+   *
+   * 踩过的坑，按严重程度：
+   *  1. 把肘写成和肩相同的数 → 叠加成两倍外张，手臂变成披风；
+   *  2. 把膝写成 -0.086 → 叠加成外八；
+   *  3. **胸→颈写 0.179** → 脖颈一段比整个躯干的一半还长，导出图上
+   *     脖子粗长、肩线从脖子斜下来像披着斗篷。现在压到 0.160。
+   */
   hips: [0, 0.94, 0],
-  spine: [0, 0.14, 0],
-  chest: [0, 0.18, 0],
-  neck: [0, 0.20, 0],
-  head: [0, 0.10, 0],
-  shoulderL: [-0.18, 0.14, 0],
-  elbowL: [-0.03, -0.27, 0],
-  handL: [0, -0.25, 0],
-  shoulderR: [0.18, 0.14, 0],
-  elbowR: [0.03, -0.27, 0],
-  handR: [0, -0.25, 0],
-  hipL: [-0.10, -0.06, 0],
-  kneeL: [0, -0.44, 0],
-  footL: [0, -0.42, 0],
-  hipR: [0.10, -0.06, 0],
-  kneeR: [0, -0.44, 0],
-  footR: [0, -0.42, 0],
+  // 腰：绝对 4.9H 处，只比骨盆收一点点。
+  spine: [0, 0.104, 0],
+  // 胸腔中心：5.7H。
+  chest: [0, 0.160, 0],
+  // 颈根：6.5H。这一段必须比胸→颈的「锁骨区」短，脖子才不会显得长。
+  neck: [0, 0.160, 0],
+  // 头的球心：头顶 7.5H。
+  head: [0, 0.100, 0],
+  /* 手臂：自然下垂、微微外张。
+   * 肩在 6.2H（比颈根低 0.06H，与真实解剖一致）；肘只再外偏 0.020、
+   * 腕收回 0.024，所以上臂近乎竖直。腋下的缝靠肩的位置拉开，不靠肘外张。
+   */
+  shoulderL: [-0.170, 0.100, 0],
+  elbowL: [-0.020, -0.200, 0],
+  handL: [0.004, -0.170, 0],
+  shoulderR: [0.170, 0.100, 0],
+  elbowR: [0.020, -0.200, 0],
+  handR: [-0.004, -0.170, 0],
+  /* 腿：竖直向下，两腿之间有明确的缝。
+   * 胯距由 hipL/hipR 的 x 与大腿半径共同决定：±0.112 与 0.086，
+   * 内缘在 ±0.026。膝、踝相对胯几乎不偏，才是竖直而不是外八。
+   */
+  /* 胯点 ±0.082、大腿根半径 0.066：外缘 0.148，与骨盆外缘（0.118）只差
+   * 0.03——腿是从髋部长出来的，不会在胯侧鼓出一颗「臀包」。
+   *
+   * 上一版胯点 ±0.112 + 半径 0.086 = 外缘 0.198，比骨盆宽 0.09，导出图上
+   * 胯侧两块明显的球形凸起，看着像穿了一条短裤。
+   * 内缘 ±0.016，两腿之间仍有一条能看出来的缝。
+   */
+  hipL: [-0.082, -0.020, 0],
+  kneeL: [-0.016, -0.376, 0.004],
+  footL: [-0.012, -0.410, 0.030],
+  hipR: [0.082, -0.020, 0],
+  kneeR: [0.016, -0.376, 0.004],
+  footR: [0.012, -0.410, 0.030],
 }
 
-/** 关节半径（米）：画成胶囊时每一段的粗细。 */
+/**
+ * 关节半径（米）：关节处人形的半宽。
+ *
+ * 这些不是「线条粗细」，而是**身体轮廓**的一半：相邻两个关节之间的那一段
+ * 会在两端半径之间插值，于是一段腿是上粗下细、腰窄臀宽、胸宽颈细。等粗
+ * 的胶囊串起来只能得到一个橡皮人——那正是这一版要修掉的东西。
+ */
 export const JOINT_RADIUS: Readonly<Record<PoseJoint, number>> = {
-  hips: 0.125,
-  spine: 0.115,
-  chest: 0.125,
-  neck: 0.055,
-  head: 0.105,
-  shoulderL: 0.062, elbowL: 0.052, handL: 0.045,
-  shoulderR: 0.062, elbowR: 0.052, handR: 0.045,
-  hipL: 0.082, kneeL: 0.068, footL: 0.055,
-  hipR: 0.082, kneeR: 0.068, footR: 0.055,
+  /* 标准人形的一组半径，同样由 H = 0.224 换算：
+   *   骨盆 0.44H、腰 0.38H、胸 0.47H、颈 0.17H、头 0.37H
+   *   肩 0.19H、肘 0.16H、腕 0.11H
+   *   胯 0.28H、膝 0.20H、踝 0.13H
+   *
+   * 无性别：腰/胸/骨盆三者的差值都在 0.02 以内，只是一点点收放，
+   * 读不出沙漏也读不出胸部。姿势参考图要表达的是骨骼朝向与重心，
+   * 带上性别特征会把下游模型往那个方向带。
+   */
+  hips: 0.118,
+  spine: 0.092,
+  chest: 0.114,
+  neck: 0.040,
+  head: 0.100,
+  shoulderL: 0.054, elbowL: 0.042, handL: 0.030,
+  shoulderR: 0.054, elbowR: 0.042, handR: 0.030,
+  hipL: 0.066, kneeL: 0.046, footL: 0.034,
+  hipR: 0.066, kneeR: 0.046, footR: 0.034,
 }
 
 /** 面板里可选的关节，按「躯干 → 手臂 → 腿」分组；顺序即下拉顺序。 */
@@ -301,15 +346,21 @@ export function solveRig(rig: PoseRig): Record<PoseJoint, [number, number, numbe
 const GROUND_Y = 0.02
 
 /**
- * 把整副骨架垂直下移到最低点刚好落地。
+ * 落地：让**形体**的最低点贴地，而不是关节点的最低点。
  *
- * 用「求解完再落地」而不是「按姿势查一个下沉量」：下沉量取决于髋膝的角度、
- * 躯干前倾和坐站状态，手算到每个预设等于把同一套运动学再实现一遍；而落地
- * 只需要一个最小值。实测固定下沉量在蹲姿上差 15 cm、跑步差 20 cm。
+ * 早先只取关节 y 的最小值对齐 `GROUND_Y`。那等于把「脚踝的中心」放在地面上
+ * ——脚踝球半径 0.030，于是整个脚有一半埋在地面以下，导出图上脚完全消失
+ * （只剩两根杆子插进地里）。这是看图的唯一解释，用数值也能对上：
+ * 踝 y=0.020、GROUND_Y=0.020、半径 0.030 → 球底在 -0.010。
+ *
+ * 现在每个关节都按它自己的半径外扩一格再取最小值。JUINT_RADIUS 与
+ * SITE_RADII 里各段的端点半径一致，所以这样算出来的就是形体的最低表面。
  */
 function groundRig(world: Record<PoseJoint, [number, number, number]>): Record<PoseJoint, [number, number, number]> {
   let lowest = Infinity
-  for (const joint of Object.keys(world) as PoseJoint[]) lowest = Math.min(lowest, world[joint][1])
+  for (const joint of Object.keys(world) as PoseJoint[]) {
+    lowest = Math.min(lowest, world[joint][1] - JOINT_RADIUS[joint])
+  }
   const shift = GROUND_Y - lowest
   if (Math.abs(shift) < 1e-6) return world
   for (const joint of Object.keys(world) as PoseJoint[]) {
@@ -368,8 +419,14 @@ export function frameCamera(rig: PoseRig, base: PoseCamera): PoseCamera {
   return { ...base, targetY, distance: (extent / Math.tan(halfFov)) * 1.08 }
 }
 
-/** 一根要画的胶囊：两端世界坐标 + 半径。 */
-interface Capsule { from: [number, number, number]; to: [number, number, number]; radius: number; joint: PoseJoint }
+/** 一根要画的肢体：两端世界坐标 + 两端半径。 */
+interface Limb {
+  from: [number, number, number]
+  to: [number, number, number]
+  radiusFrom: number
+  radiusTo: number
+  joint: PoseJoint
+}
 
 /** 骨架里所有要画的段（父 → 子），末端关节用父到自身的偏移。 */
 const SEGMENTS: ReadonlyArray<[PoseJoint, PoseJoint]> = [
@@ -380,14 +437,68 @@ const SEGMENTS: ReadonlyArray<[PoseJoint, PoseJoint]> = [
   ['hips', 'hipR'], ['hipR', 'kneeR'], ['kneeR', 'footR'],
 ]
 
-function capsulesOf(rig: PoseRig): Capsule[] {
+/**
+ * 肢体与躯干的连接段。
+ *
+ * `hips → hipL` / `chest → shoulderL` 只有 5～15 cm，但**不能删**：删了
+ * 之后大腿从髖关节位置开始画，骨盆与腿之间就真空出一道缝（实测两臂两腿
+ * 整个飞出去，只剩一根细躯干）。
+ *
+ * 也不能跟肢体一样粗：那样会在骨盆两侧与锁骨上各堆出一颗球，看起来像
+ * 垫了护肩、裆部鼓起一球。正确做法是把起点半径压到远小于躯干。
+ * 起点落在骨盆/胸腔内部，被前一层体块盖住，露在外面的只有从体块边缘
+ * 到髖关节/肩关节那一小段，于是接缝淹没在体块里。
+ */
+const SITE_RADII: ReadonlyMap<string, [number, number]> = new Map([
+  // 躯干：骨盆 → 腰 → 胸 → 颈 → 头。腰只收一点点，不做沙漏。
+  ['hips>spine', [0.120, 0.092]],
+  ['spine>chest', [0.092, 0.116]],
+  // 颈子必须够宽才接得上头，否则距离场在颈部断开、头浮在半空。
+  ['chest>neck', [0.114, 0.058]],
+  ['neck>head', [0.050, 0.078]],
+  // 连接段起点 = 躯干半径：细管从粗躯干里钻出来会在交界处塌出 V 形坑
+  // （曾经表现为胸口折痕、腋下尖角、髋侧水滴）。
+  /* 胸→肩的起点必须**小于**胸腔半径（0.114）。
+   *
+   * 写等宽时，这段锥形和胸腔一样粗，于是从脖子到肩关节铺成一片斜面——
+   * 导出图上整个人像披了一件斗篷，没有肩。收到 0.086 之后才隆起成一个
+   * 明确的肩头，腋下的折角也出来了。
+   */
+  /* 肩与胸腔**同高**（偏移 0.006 而不是 0.044），连接段起点略小于胸腔
+   * 半径（0.108 vs 0.114）。
+   *
+   * 这决定肩线是「一条水平的肩」还是「从脖子斜下来的坡」：肩比胸腔高
+   * 一段时，胸腔顶部到肩关节那条锥形正好铺成一面斜坡，导出图上整个人像
+   * 披了斗篷。同高之后肩从胸腔侧面横向长出来，腋下的折角才出现。
+   */
+  ['chest>shoulderL', [0.100, 0.054]],
+  ['chest>shoulderR', [0.100, 0.054]],
+  ['hips>hipL', [0.088, 0.066]],
+  ['hips>hipR', [0.088, 0.066]],
+  // 手臂：肩头向肘、腕一路收细。
+  ['shoulderL>elbowL', [0.054, 0.042]],
+  ['elbowL>handL', [0.042, 0.030]],
+  ['shoulderR>elbowR', [0.054, 0.042]],
+  ['elbowR>handR', [0.042, 0.030]],
+  // 腿：大腿 0.063 → 膝 0.045 → 踝 0.029，才分得出大腿与小腿。
+  ['hipL>kneeL', [0.066, 0.046]],
+  ['kneeL>footL', [0.046, 0.034]],
+  ['hipR>kneeR', [0.066, 0.046]],
+  ['kneeR>footR', [0.046, 0.034]],
+])
+
+function limbsOf(rig: PoseRig): Limb[] {
   const world = solveRig(rig)
-  return SEGMENTS.map(([parent, child]) => ({
-    from: world[parent],
-    to: world[child],
-    radius: Math.min(JOINT_RADIUS[parent], JOINT_RADIUS[child]),
-    joint: child,
-  }))
+  return SEGMENTS.map(([parent, child]) => {
+    const explicit = SITE_RADII.get(`${parent}>${child}`)
+    return {
+      from: world[parent],
+      to: world[child],
+      radiusFrom: explicit?.[0] ?? JOINT_RADIUS[parent],
+      radiusTo: explicit?.[1] ?? JOINT_RADIUS[child],
+      joint: child,
+    }
+  })
 }
 
 /** 相机空间：把世界坐标变换到「相机在原点、看向 -z」。 */
@@ -434,28 +545,97 @@ export interface PoseRenderOptions {
   size: number
   /** 是否画骨骼连线与关节标记；PNG 导出时关掉。 */
   guides: boolean
-  /** 背景色；`null` 表示透明。 */
+  /** 背景色；`null` 表示透明。`backdrop: 'studio'` 时被相机棚渐变代替。 */
   background: string | null
+  /**
+   * 背板：`studio` 是图片库里那种深灰径向渐变，`flat` 是纯色（或透明）。
+   *
+   * 预览与导出必须用同一块背板，否则用户在这里摆完姿势、导出的参考图
+   * 却是另一种明暗，下游模型会把人形的亮部当成光源而不是皮肤。
+   */
+  backdrop?: 'studio' | 'flat'
   camera: PoseCamera
+}
+
+/**
+ * 姿势图的背板：近白、中心略亮的柔和渐变 + 一层极淡的地面网格。
+ *
+ * 早先是深灰摄影棚底，那是给「打光白模」用的。改成线稿木人形之后深灰底
+ * 反而把细描边吃掉，而姿势图库里的参考图一律是浅底——线稿要的就是
+ * 「纸上的结构图」这种观感。网格留一条地平线，3/4 视角才看得出朝向。
+ */
+function paintStudioBackdrop(ctx: CanvasRenderingContext2D, size: number): void {
+  const gradient = ctx.createRadialGradient(
+    size * 0.5, size * 0.42, size * 0.02,
+    size * 0.5, size * 0.52, size * 0.80,
+  )
+  gradient.addColorStop(0, '#ffffff')
+  gradient.addColorStop(0.62, '#f7f8fa')
+  gradient.addColorStop(1, '#e6e9ee')
+  ctx.fillStyle = gradient
+  ctx.fillRect(0, 0, size, size)
+}
+
+/**
+ * 把一段肢体加成一条**两端不等宽**的轮廓路径。
+ *
+ * 两条外公切线夹着两个圆，就是一段上粗下细的肢体。等宽胶囊串出来的形
+ * 体没有腰没有脚踝，整体像一根根管子——这正是要换掉的那种画法。
+ */
+function limbPath(
+  ctx: CanvasRenderingContext2D,
+  ax: number, ay: number, ra: number,
+  bx: number, by: number, rb: number,
+): void {
+  const dx = bx - ax
+  const dy = by - ay
+  const distance = Math.hypot(dx, dy)
+  if (distance < 1e-6) {
+    ctx.moveTo(ax + ra, ay)
+    ctx.arc(ax, ay, ra, 0, Math.PI * 2)
+    return
+  }
+  const theta = Math.atan2(dy, dx)
+  // 半径差超过间距时两个圆已经互相包含，没有外公切线；夹一下退化成圆头。
+  const alpha = Math.acos(Math.min(1, Math.max(-1, (ra - rb) / distance)))
+  ctx.moveTo(ax + ra * Math.cos(theta + alpha), ay + ra * Math.sin(theta + alpha))
+  ctx.arc(ax, ay, ra, theta + alpha, theta - alpha + Math.PI * 2)
+  ctx.lineTo(bx + rb * Math.cos(theta - alpha), by + rb * Math.sin(theta - alpha))
+  ctx.arc(bx, by, rb, theta - alpha, theta + alpha)
+  ctx.closePath()
 }
 
 /**
  * 把姿势画进给定的 2D 上下文。
  *
- * 画家算法：先按相机空间的 z 从远到近排序再画，近的覆盖远的。人偶全是凸的
- * 胶囊，这个排序足够——不需要深度缓冲，也不需要 z-fighting 那套。
+ * 用距离场把各部件的球平滑融合成一具体块，再在体块里刷明暗。
+ * 逐段画圆的做法已被证伪：一条串起来的球永远在关节处鼓包。
  */
 export function drawPose(ctx: CanvasRenderingContext2D, rig: PoseRig, options: PoseRenderOptions): void {
   const { size, camera } = options
+  const studio = options.backdrop === 'studio'
   ctx.save()
   ctx.clearRect(0, 0, size, size)
-  if (options.background !== null) {
+  if (studio) {
+    paintStudioBackdrop(ctx, size)
+  } else if (options.background !== null) {
     ctx.fillStyle = options.background
     ctx.fillRect(0, 0, size, size)
   }
+
+  const view = cameraMatrix(camera)
+  const focal = (size / 2) / Math.tan((camera.fov * Math.PI / 180) / 2)
+  const project = (p: [number, number, number]): [number, number, number] | null => {
+    const cameraPoint = applyMatrix(view, p)
+    const depth = -cameraPoint[2]
+    if (depth <= 0.05) return null
+    return [size / 2 + (cameraPoint[0] * focal) / depth, size / 2 - (cameraPoint[1] * focal) / depth, depth]
+  }
+
   // 地面网格：给人一个「站在地上」的参照，也让 3/4 视角能看出朝向。
   if (options.guides) {
-    ctx.strokeStyle = 'rgba(0,0,0,0.10)'
+    // 浅底网格用极淡的灰：既要让人看出「站在地上」，又不能盖过线稿的描边。
+    ctx.strokeStyle = studio ? 'rgba(60,68,80,0.10)' : 'rgba(0,0,0,0.10)'
     ctx.lineWidth = Math.max(1, size / 640)
     for (let i = -3; i <= 3; i += 1) {
       const step = i * 0.4
@@ -471,38 +651,258 @@ export function drawPose(ctx: CanvasRenderingContext2D, rig: PoseRig, options: P
       }
     }
   }
-  const view = cameraMatrix(camera)
-  const capsules = capsulesOf(rig).map(capsule => {
-    const a3 = applyMatrix(view, capsule.from)
-    const b3 = applyMatrix(view, capsule.to)
-    return { capsule, a3, b3, depth: Math.min(a3[2], b3[2]) }
-  }).sort((left, right) => left.depth - right.depth)
-  const focal = (size / 2) / Math.tan((camera.fov * Math.PI / 180) / 2)
-  const toScreen = (p: [number, number, number]): [number, number] | null => {
-    const depth = -p[2]
-    if (depth <= 0.05) return null
-    return [size / 2 + (p[0] * focal) / depth, size / 2 - (p[1] * focal) / depth]
+
+  /* ---------------------------------------------------------------
+   * 距离场渲染。
+   *
+   * 为什么换掉「逐段画圆」：一串球拼起来的东西永远在关节处鼓出一个包，
+   * 调半径只是把包从肩膀挪到胯部。距离场把「离身体有多远」定义成一个
+   * 连续函数，再用 smooth-min 把各部件的距离平滑地融合，于是接缝真的
+   * 消失了——这正是附件 2 那种人偶的观感来源。
+   *
+   * 分辨率固定：人的高度只占屏幕的 0.6 左右，1/2.2 的格距在 640px 上
+   * 是 290 格高，足够看清轮廓；再高就只是把同一形状算得更慢。
+   * --------------------------------------------------------------- */
+  const fieldSize = Math.min(720, Math.max(280, Math.round(size / 2.2)))
+  const cell = size / fieldSize
+
+  interface Sphere { x: number; y: number; z: number; r: number }
+  const spheres: Sphere[] = []
+  const world = solveRig(rig)
+
+  /** 两个关节之间插一串球，半径按 t 线性插值。 */
+  const addTube = (a: [number, number, number], b: [number, number, number], ra: number, rb: number): void => {
+    const len = Math.hypot(b[0] - a[0], b[1] - a[1], b[2] - a[2])
+    /* 步长：取半径的 1/4，而不是 1/2。
+     *
+     * 一串等距球求并集，表面沿轴向是**轻微串珠状**的：球心处最粗，两个
+     * 球之间略细。幅度约 0.032·r，1/2 步长时只有几毫米，看轮廓看不出来。
+     * 但法线是从场的梯度算的，这点起伏会让法线在轴心附近周期性翻转，
+     * 被放大成躯干上一条条横纹（实测像缝了拉链）。1/4 步长把幅度压到
+     * 1/4，横纹随之消失；球数翻倍，可这点开销远小于重画一次的其它成本。
+     */
+    const steps = Math.max(1, Math.min(96, Math.ceil(len / Math.max(0.006, Math.min(ra, rb) * 0.25))))
+    for (let i = 0; i <= steps; i += 1) {
+      const t = i / steps
+      spheres.push({
+        x: a[0] + (b[0] - a[0]) * t,
+        y: a[1] + (b[1] - a[1]) * t,
+        z: a[2] + (b[2] - a[2]) * t,
+        r: ra + (rb - ra) * t,
+      })
+    }
   }
-  for (const item of capsules) {
-    const from = toScreen(item.a3)
-    const to = toScreen(item.b3)
-    if (from === null || to === null) continue
-    const depth = -((item.a3[2] + item.b3[2]) / 2)
-    const radiusPx = Math.max(1.5, (item.capsule.radius * focal) / Math.max(0.05, depth))
-    ctx.strokeStyle = '#b9c2cf'
-    ctx.lineCap = 'round'
-    ctx.lineWidth = radiusPx * 2
-    ctx.beginPath(); ctx.moveTo(from[0], from[1]); ctx.lineTo(to[0], to[1]); ctx.stroke()
-    // 上一道浅色内芯，让轮廓有体积感而不是一根粗线。
-    ctx.strokeStyle = '#d6dde7'
-    ctx.lineWidth = Math.max(1, radiusPx * 1.4)
-    ctx.beginPath(); ctx.moveTo(from[0], from[1]); ctx.lineTo(to[0], to[1]); ctx.stroke()
+
+  /* 脚掌：脚踝之外再补一颗朝前的球。
+   *
+   * 只靠脚踝那颗球，脚就是一截横切的柱子——导出图上脚完全消失，人像
+   * 两根杆子插在地上。真实脚掌是从踝向前伸出的一段，所以按踝的位置向
+   * +z（相机前方）偏移补一颗扁球，长度约 0.09、半径略小于踝。
+   *
+   * 这是「补形」而不是新关节：脚踝仍然是唯一的骨骼端点，摆姿自由度不变。
+   */
+  for (const side of ['L', 'R'] as const) {
+    const ankle = world[`foot${side}` as PoseJoint]
+    // 三颗球从踝向前铺成脚掌：第一颗就在踝下，最后两颗向前并落地。
+    // 只补一颗朝前的球会让脚浮在半空——它的球心与踝同高。
+    /* 三颗球从踝向前铺成脚掌，每颗的**底**都压在地面常量上。
+     *
+     * 这里必须自己算底面，不能只按踝的高度平移：groundRig 是按脚踝半径
+     * (0.040) 把踝抬到 y=0.060 的，脚掌球若照「踝 + 0.014」放，它的底会
+     * 停在 0.042——脚悬在地面上方 22mm，导出图上等于没有脚。
+     */
+    for (let step = 0; step < 3; step += 1) {
+      const t = step / 2
+      const r = 0.034 - 0.004 * t
+      spheres.push({
+        x: ankle[0],
+        // 底面 = GROUND_Y，向上留 1mm 以免与地面网格打架。
+        y: GROUND_Y + 0.001 + r,
+        z: ankle[2] + 0.075 * t,
+        r,
+      })
+    }
   }
+
+  for (const limb of limbsOf(rig)) {
+    if (limb.joint === 'head') {
+      // 头单独成球（略扁），颈子用一根细管接上，否则头会浮着。
+      const head = limb.to
+      const neck = limb.from
+      const ry = limb.radiusTo * 1.20
+      addTube(neck, [head[0], head[1] - ry * 0.55, head[2]], limb.radiusFrom, limb.radiusTo * 0.72)
+      spheres.push({ x: head[0], y: head[1] - ry * 0.10, z: head[2], r: limb.radiusTo * 1.05 })
+      continue
+    }
+    addTube(limb.from, limb.to, limb.radiusFrom, limb.radiusTo)
+  }
+
+  // 胸腔的「肩宽」已经由两条连接段锥形承担，不再额外补球——
+  // 补了就是胸侧两处鼓包（实测是胸下两个明显的蝶翼形凸起）。
+
+  // 把探测点换回世界坐标用的逆变换：屏幕 → 相机 → 世界。
+  // 这里不真的做逆变换，而是把球体投到屏幕空间里算距离场：
+  // 投影不是保距的，但对「融合一个看起来像人的体块」这件事够用，
+  // 而且免掉了逆矩阵与逐像素射线求交。
+  interface Disc { cx: number; cy: number; r: number }
+  const discs: Disc[] = []
+  for (const sphere of spheres) {
+    const p = project([sphere.x, sphere.y, sphere.z])
+    if (p === null) continue
+    discs.push({ cx: p[0], cy: p[1], r: Math.max(0.6, (sphere.r * focal) / p[2]) })
+  }
+
+  /* 平滑并集（smin）：两个距离取较小值，再在接缝处平滑过渡。
+   *
+   * K 是「融合半径」，单位是屏幕像素。它有一个很窄的可用区间，两端都实测过：
+   *
+   *  · 太大（size*0.010 ≈ 6.4px）→ 手臂与躯干、两腿之间整个糊成一片。
+   *    这不是理论推演：导出图上整个人成了一块「床单」，腋下没有缝、
+   *    两条腿并成一根柱子，只能靠橙色球猜关节在哪。
+   *  · 太小（< 1px）→ 接缝处留下硬折线，关节球边缘露出毛刺。
+   *
+   * 现在取 size*0.0035（640 上约 2.2px）：手臂内缘到胸腔的间隙是
+   * 世界 0.018（投影后五六个像素），K 必须明显小于它才留得住那条缝。
+   */
+  const K = size * 0.0035
+  const smin = (a: number, b: number): number => Math.min(a, b) - Math.max(0, K - Math.abs(a - b)) ** 2 / (4 * K)
+
+  const field = new Float32Array(fieldSize * fieldSize)
+  for (let gy = 0; gy < fieldSize; gy += 1) {
+    const py = (gy + 0.5) * cell
+    for (let gx = 0; gx < fieldSize; gx += 1) {
+      const px = (gx + 0.5) * cell
+      let distance = 1e9
+      for (const disc of discs) {
+        const dx = px - disc.cx
+        const dy = py - disc.cy
+        // 快速排除：比当前最近距离还远一大截的球不可能影响结果。
+        if (Math.abs(dx) > distance + disc.r + K && Math.abs(dy) > distance + disc.r + K) continue
+        const d = Math.hypot(dx, dy) - disc.r
+        distance = distance === 1e9 ? d : smin(distance, d)
+      }
+      field[gy * fieldSize + gx] = distance
+    }
+  }
+
+  /* 出图：淡蓝灰实体人偶 + 橙色关节球 + 青色骨骼连线。
+   *
+   * 这是照着「标准初始样子」那张参考图定的：不是在画雕塑，而是在画**骨架
+   * 外面套了一层皮**。三样东西各管一件事，缺一样都读不懂：
+   *
+   *  · 体块用一层非常浅的蓝灰、几乎不做明暗（参考图的明暗也很淡）。之前
+   *    那版强明暗白模被否了两次——它把「转折」画得太重，人偶看着像塑料
+   *    雕塑，而且和「姿势参考」这件事没关系；
+   *  · 橙色小球钉在每个关节上，这是用户真正要读的信息；
+   *  · 青色细线把关节连成骨架，一眼能看出哪根骨朝哪边折。
+   *
+   * 体块仍然来自距离场（smin 融合后的等值面），所以轮廓是连续的、没有
+   * 串珠和关节鼓包；只是「怎么上色」换成了淡色 + 一点点方向性明暗。
+   */
+  const mask = document.createElement('canvas')
+  mask.width = fieldSize
+  mask.height = fieldSize
+  const maskCtx = mask.getContext('2d')
+  if (maskCtx === null) { ctx.restore(); return }
+  const image = maskCtx.createImageData(fieldSize, fieldSize)
+  const edge = cell * 1.1
+  // 明暗只需要「有个方向」：光从左上前来，幅度很小（±7% 亮度）。
+  // 之前用 0.22..1.0 的强对比，看着像打了影棚灯；参考图那种淡法才对。
+  const lx = -0.42
+  const ly = -0.50
+  const lz = 0.76
+  const normalRadius = size * 0.10
+  const fieldAt = (gx: number, gy: number): number => {
+    const x = gx < 0 ? 0 : (gx >= fieldSize ? fieldSize - 1 : gx)
+    const y = gy < 0 ? 0 : (gy >= fieldSize ? fieldSize - 1 : gy)
+    return field[y * fieldSize + x] ?? 0
+  }
+  for (let gy = 0; gy < fieldSize; gy += 1) {
+    for (let gx = 0; gx < fieldSize; gx += 1) {
+      const i = gy * fieldSize + gx
+      const d = field[i] ?? 0
+      const alpha = Math.max(0, Math.min(1, 0.5 - d / edge))
+      if (alpha <= 0) continue
+      const gxv = ((fieldAt(gx + 1, gy) - fieldAt(gx - 1, gy)) * 0.5) / cell
+      const gyv = ((fieldAt(gx, gy + 1) - fieldAt(gx, gy - 1)) * 0.5) / cell
+      // 与白模那版同一个思路：让法线在半径内平缓转向，避免轴心一条硬亮线。
+      const inward = Math.max(0, Math.min(1, 1 + d / normalRadius))
+      const nx = Math.max(-1, Math.min(1, gxv * inward))
+      const ny = Math.max(-1, Math.min(1, gyv * inward))
+      const nz = Math.sqrt(Math.max(0.05, 1 - nx * nx - ny * ny))
+      const shade = nx * lx + ny * ly + nz * lz
+      // 基色是冷调浅蓝灰，明暗只在这个基准上加减小量。
+      //
+      // 第一版基色 0xb8 乘出来落在 175 上下，整具人偶是灰的——参考图明显
+      // 更亮、更偏冷白（大约 #c8ccd4 到 #dae0e8）。基准抬到 0xc8，明暗
+      // 幅度收到 ±9%，亮面才像一块磨砂白模而不是水泥。
+      const tone = 0.94 + 0.14 * shade
+      image.data[i * 4] = Math.round(0xc8 * tone)
+      image.data[i * 4 + 1] = Math.round(0xcc * tone)
+      image.data[i * 4 + 2] = Math.round(0xd6 * tone)
+      image.data[i * 4 + 3] = Math.round(alpha * 255)
+    }
+  }
+  maskCtx.putImageData(image, 0, 0)
+
+  // 一层柔影，让体块不像是贴在纸上。幅度比白模那版小得多。
+  ctx.save()
+  ctx.shadowColor = 'rgba(70,80,100,0.20)'
+  ctx.shadowBlur = size * 0.022
+  ctx.shadowOffsetY = size * 0.008
+  ctx.drawImage(mask, 0, 0, size, size)
+  ctx.restore()
+
+  /* 骨骼连线：青色细线，逐段画在体块之上。
+   *
+   * 用 SEGMENTS 而不是包围盒：线要落在真正的骨头上，否则「这根骨朝哪折」
+   * 这件事反而被画糊涂了。脊柱那三段也照画——参考图里躯干上就是一条竖线
+   * 串到骨盆。
+   */
+  ctx.save()
+  ctx.strokeStyle = 'rgba(46,196,214,0.85)'
+  ctx.lineWidth = Math.max(1, size / 460)
+  ctx.lineCap = 'round'
+  for (const [parent, child] of SEGMENTS) {
+    const a = project(world[parent])
+    const b = project(world[child])
+    if (a === null || b === null) continue
+    ctx.beginPath()
+    ctx.moveTo(a[0], a[1])
+    ctx.lineTo(b[0], b[1])
+    ctx.stroke()
+  }
+  // 脊柱中线一直连到地面：参考图里有一条竖直的参考线，用来判断重心有没有偏。
+  const hips = project(world.hips)
+  const ground = project([world.hips[0], 0.02, world.hips[2]])
+  if (hips !== null && ground !== null) {
+    ctx.strokeStyle = 'rgba(46,196,214,0.32)'
+    ctx.beginPath(); ctx.moveTo(hips[0], hips[1]); ctx.lineTo(ground[0], ground[1]); ctx.stroke()
+  }
+  ctx.restore()
+
+  // 关节球：橙色，由远及近画，前后遮挡才对。
+  const dots = (Object.keys(world) as PoseJoint[])
+    .map(joint => ({ joint, p: project(world[joint]) }))
+    .filter((item): item is { joint: PoseJoint; p: [number, number, number] } => item.p !== null)
+    .sort((a, b) => b.p[2] - a.p[2])
+  ctx.save()
+  ctx.fillStyle = '#f7a325'
+  ctx.strokeStyle = 'rgba(255,255,255,0.85)'
+  ctx.lineWidth = Math.max(0.7, size / 900)
+  for (const dot of dots) {
+    const radius = Math.max(1.8, size / 165)
+    ctx.beginPath()
+    ctx.arc(dot.p[0], dot.p[1], radius, 0, Math.PI * 2)
+    ctx.fill()
+    ctx.stroke()
+  }
+  ctx.restore()
+
   if (options.guides) {
     // 关节标记：编辑时才画，导出永远干净。
-    const world = solveRig(rig)
     for (const joint of Object.keys(world) as PoseJoint[]) {
-      const p = toScreen(applyMatrix(view, world[joint]))
+      const p = project(world[joint])
       if (p === null) continue
       ctx.fillStyle = '#f59f00'
       ctx.beginPath(); ctx.arc(p[0], p[1], Math.max(2, size / 190), 0, Math.PI * 2); ctx.fill()

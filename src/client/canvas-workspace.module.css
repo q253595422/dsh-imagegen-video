@@ -3669,14 +3669,20 @@
   width: 10px;
   font-weight: 600;
   text-align: center;
+  color: var(--dsw-alias-label-primary);
 }
 
+/*
+ * 滑杆配色跟随宿主：DSH 原生的勾选框与滑杆都只写
+ * `accent-color: var(--dsw-alias-brand-primary)`（浅色主题近黑、深色主题近白），
+ * 没有任何按轴分色的写法。这里早先按轴给红/绿/蓝，用户一眼就看出「不像原生的」。
+ */
 .poseAxis input[type='range'] {
   flex: 1;
   min-width: 0;
   height: 14px;
   margin: 0;
-  accent-color: currentColor;
+  accent-color: var(--dsw-alias-brand-primary);
   cursor: pointer;
 }
 
@@ -3719,6 +3725,7 @@
   min-width: 0;
   height: 14px;
   margin: 0;
+  accent-color: var(--dsw-alias-brand-primary);
   cursor: pointer;
 }
 

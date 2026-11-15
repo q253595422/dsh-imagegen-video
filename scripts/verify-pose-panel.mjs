@@ -109,6 +109,28 @@ for (const name of ['posePreview', 'posePresets', 'poseAxis', 'poseNumber', 'pos
   assert(poseBoard.includes(`css.${name}`), `pose-board.tsx no longer renders .${name} — the fixture would measure a component that does not exist`)
 }
 
+// 夹具是手写的，量不到「组件又给滑杆内联了一个颜色」——那条回归是内联样式
+// 直接盖过样式表，夹具里根本没这段内联。所以配色同时钉两条源码不变量：
+//  1. 组件里不许再出现 accentColor / 按轴着色；
+//  2. 样式表里三轴与朝向两条滑杆都必须写宿主的 brand-primary。
+// 命中第 1 条就是回到了「红绿蓝不像原生」的版本。
+const inlineAccent = /accentColor|style=\{\{\s*color/.test(poseBoard)
+if (inlineAccent) {
+  console.error('\nFAIL: pose-board.tsx paints a slider inline again.')
+  console.error('The host styles every slider and checkbox with a single')
+  console.error('`accent-color: var(--dsw-alias-brand-primary)`; a per-axis color is what')
+  console.error('made this panel look foreign.')
+  process.exit(1)
+}
+for (const selector of ['.poseAxis input[type=\'range\']', '.poseFacing input[type=\'range\']']) {
+  const rule = css.slice(css.indexOf(selector))
+  const body = rule.slice(rule.indexOf('{'), rule.indexOf('}') + 1)
+  assert(
+    body.includes('accent-color: var(--dsw-alias-brand-primary)'),
+    `${selector} must set accent-color to the host brand token — the host has exactly one accent, not one per axis`,
+  )
+}
+
 const launched = await launchChrome({ chrome: CHROME, name: 'dsh-pose-panel' })
 const session = await openPage(launched.port, `http://127.0.0.1:${serverPort}/`)
 const { send, evaluate } = session
@@ -132,6 +154,19 @@ const MEASURE = `JSON.stringify((() => {
   const exportBtn = document.getElementById('export').getBoundingClientRect()
   const ranges = [...document.querySelectorAll('.poseAxis input[type=range]')]
   const numbers = [...document.querySelectorAll('.poseNumber')]
+  // 滑杆配色：早先按轴内联了红/绿/蓝，朝向那条干脆没写（浏览器给默认蓝），
+  // 用户一眼就看出来「不是原生的」。宿主自己的勾选框只用
+  // accent-color: var(--dsw-alias-brand-primary)，这里量计算值来钉住它。
+  const accentOf = el => getComputedStyle(el).accentColor
+  const facingRange = document.querySelector('.poseFacing input[type=range]')
+  const accents = ranges.map(accentOf)
+  // accent-color 的计算值是 rgb()，而变量本身可能是 hex 或另一个 var()：
+  // 借一个探针元素让浏览器把变量解析成同一种颜色写法再比。
+  const probe = document.createElement('span')
+  probe.style.color = 'var(--dsw-alias-brand-primary)'
+  document.body.appendChild(probe)
+  const brandAccent = getComputedStyle(probe).color
+  probe.remove()
   // clientWidth / scrollWidth: a NaN would make the subtraction null and the
   // log would measure nothing, so guard before subtracting.
 
@@ -156,6 +191,11 @@ const MEASURE = `JSON.stringify((() => {
       && exportBtn.top >= node.top - 1 && exportBtn.bottom <= node.bottom + 1,
     minSlider: Math.min(...sliderWidths),
     minNumber: Math.min(...numberWidths),
+    // 三轴滑杆与朝向滑杆必须同一个强调色，且不是浏览器默认（未设 accent-color
+    // 时计算值是 'auto'）。按轴分色正是用户指出的「不符合原生」。
+    axisAccents: accents,
+    facingAccent: facingRange === null ? null : accentOf(facingRange),
+    brandAccent,
     presetsScrollable: presets.scrollWidth > presets.clientWidth,
     // 高度维度：面板是 flex 列，底部「重置」是最后一行。真机上它溢出了节点
     // 15px 被裁掉——宽度断言全绿也发现不了，因为溢出发生在纵向。
@@ -185,12 +225,23 @@ for (const [width, height] of NODE_SIZES) {
   if (measured.minNumber < 34) problems.push(`an angle field shrank to ${measured.minNumber}px`)
   // 面板底部不得越过节点底部。允许 1px 的舍入；超出就是「重置」被裁。
   if (measured.poseBottom > 1) problems.push(`the panel runs ${measured.poseBottom}px past the bottom of the node`)
+  // 滑杆配色：三轴必须同色、必须等于宿主 brand-primary，朝向那条也一样。
+  // 按轴红/绿/蓝与浏览器默认蓝都是用户一眼能看出来的「不是原生的」。
+  const distinct = new Set(measured.axisAccents)
+  if (distinct.size !== 1) problems.push(`the axis sliders use ${distinct.size} different accent colors (${[...distinct].join(', ')})`)
+  if (measured.axisAccents.some(color => color !== measured.brandAccent)) {
+    problems.push(`an axis slider's accent is ${measured.axisAccents[0]} instead of the host brand color ${measured.brandAccent}`)
+  }
+  if (measured.facingAccent !== measured.brandAccent) {
+    problems.push(`the facing slider's accent is ${measured.facingAccent} instead of the host brand color ${measured.brandAccent}`)
+  }
   // 滚动本身是合法退路（拖得很矮时）；但底部被裁穿到节点外不行。
   // 面板内滚动时内容都在，用户滚得到——这一项因此只是提示不是失败。
 
   console.log(`node ${width}x${height}  preview ${String(measured.previewWidth).padStart(3)}px`
     + `  overflowX ${measured.overflowX}px  bottom +${measured.poseBottom}px  overflowY ${measured.bodyOverflowsY ? 'yes' : 'no'}`
     + `  slider ${measured.minSlider}px  number ${measured.minNumber}px`
+    + `  accent ${measured.axisAccents[0] ?? 'none'} (brand ${measured.brandAccent})`
     + `  presets scroll ${measured.presetsScrollable ? 'yes' : 'no'}`)
   for (const problem of problems) failures.push(`${width}x${height}: ${problem}`)
 }

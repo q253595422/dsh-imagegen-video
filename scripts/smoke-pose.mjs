@@ -118,8 +118,15 @@ await check('H4 a node without a pose stays a plain image node', async () => {
 
 const rig = await import(new URL('../src/client/canvas/pose-rig.ts', import.meta.url).href)
 
-/** 每副骨架的最低点。脚踩空是最刺眼的一种错：人物浮在空中读起来就是跳跃。 */
-const lowest = world => Math.min(...Object.values(world).map(p => p[1]))
+/**
+ * 每副骨架的**形体**最低点，不是关节点的最低点。
+ *
+ * 只取关节 y 会把地面对齐到「脚踝球心」，半个脚就埋在地面以下——导出图上
+ * 脚完全消失，只剩两根杆子戳进地里。所以要按每个关节自己的半径外扩一格再
+ * 取最小值：形体的最低表面贴地才是对的。
+ */
+const lowest = world => Math.min(...Object.entries(world)
+  .map(([joint, p]) => p[1] - (rig.JOINT_RADIUS[joint] ?? 0)))
 
 await check('P1 every preset stands on the ground', async () => {
   for (const preset of rig.POSE_PRESETS) {
@@ -167,7 +174,9 @@ await check('P4 an emptied rig is a standing figure, not a collapsed one', async
   const world = rig.solveRig(rig.emptyRig())
   // 空姿势是用户点「重置」后的状态，也是新建节点前的默认值。它必须是一副能看
   // 的骨架：约 1.5 m 高、双脚落地。
-  const height = world.head[1] - lowest(world)
+  // 身高要量到**头顶**，不是头心：`lowest` 已经包含各关节半径，头心再减
+  // 地面得到的是「头心到地」，会比真实身高少一个头半径（0.1 m）。
+  const height = world.head[1] + rig.JOINT_RADIUS.head - lowest(world)
   assert.ok(height > 1.4 && height < 1.7, `empty rig is ${height.toFixed(2)} m tall`)
   assert.ok(Math.abs(world.handL[0] - world.handR[0]) > 0.3, 'the arms are not apart in the empty rig')
 })

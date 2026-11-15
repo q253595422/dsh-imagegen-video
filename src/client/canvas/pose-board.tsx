@@ -20,7 +20,7 @@ import {
   DEFAULT_CAMERA, POSE_JOINT_GROUPS, POSE_PRESETS, drawPose, emptyRig, frameCamera,
   type PoseAngles, type PoseCamera, type PoseJoint, type PoseRig,
 } from './pose-rig.ts'
-import { POSE_AXIS_COLORS, POSE_EXPORT_SIZE, POSE_NODE_SIZE } from './constants.ts'
+import { POSE_EXPORT_SIZE, POSE_NODE_SIZE } from './constants.ts'
 import css from '../canvas-workspace.module.css'
 
 /** 一个关节的某一轴改了多少度，收进 [-180, 180]，避免滑杆把角度绕到看不清。 */
@@ -41,7 +41,7 @@ export function poseOf(node: CanvasNode): PoseRig {
  * 抽出来是因为预览和导出画的是同一张图，只是辅助线开关与尺寸不同；分两份
  * 实现迟早会出现「预览里看着对，导出来不对劲」。
  */
-function paint(canvas: HTMLCanvasElement, rig: PoseRig, size: number, guides: boolean, background: string | null, camera: PoseCamera): void {
+function paint(canvas: HTMLCanvasElement, rig: PoseRig, size: number, guides: boolean, camera: PoseCamera): void {
   if (canvas.width !== size || canvas.height !== size) {
     canvas.width = size
     canvas.height = size
@@ -51,7 +51,11 @@ function paint(canvas: HTMLCanvasElement, rig: PoseRig, size: number, guides: bo
   ctx.setTransform(1, 0, 0, 1, 0, 0)
   // 取景在画之前统一算：调用方只关心「从哪个角度看」，不关心站多远。固定距离
   // 会让蹲姿缩成画面中央一小团、举手被裁掉——这是参考图最不该出现的两种构图。
-  drawPose(ctx, rig, { size, guides, background, camera: frameCamera(rig, camera) })
+  //
+  // 背板固定是 `studio`（深灰径向渐变）。白模靠明暗才读得出体积，铺在白底
+  // 或透明底上时高光与背景贴成一片，人形会退化成一张白剪影；导出图也是同一
+  // 块背板，下游模型才拿到与预览一致的明暗关系。
+  drawPose(ctx, rig, { size, guides, background: null, backdrop: 'studio', camera: frameCamera(rig, camera) })
 }
 
 export function PoseBoard(props: {
@@ -79,7 +83,7 @@ export function PoseBoard(props: {
     const canvas = canvasRef.current
     if (canvas === null) return
     const box = Math.max(120, Math.round(canvas.clientWidth * (window.devicePixelRatio || 1)))
-    paint(canvas, rigRef.current, box, true, null, cameraRef.current)
+    paint(canvas, rigRef.current, box, true, cameraRef.current)
   }, [])
 
   useEffect(() => { repaint() }, [repaint, rig, camera])
@@ -132,9 +136,9 @@ export function PoseBoard(props: {
     void (async () => {
       try {
         const canvas = document.createElement('canvas')
-        // 导出铺白底：不少图生模型会把透明区域补成黑或杂色，那样这张参考图
-        // 的明暗关系就和预览里看到的不是一回事了。白底是可预期的。
-        paint(canvas, rigRef.current, POSE_EXPORT_SIZE, false, '#ffffff', cameraRef.current)
+        // 导出与预览用同一块深灰背板：白模的明暗只有在这种底色上才读得出
+        // 体积，铺白底会把它压成一张白剪影。
+        paint(canvas, rigRef.current, POSE_EXPORT_SIZE, false, cameraRef.current)
         const dataUrl = canvas.toDataURL('image/png')
         const asset = await props.api.canvasUpload(dataUrl, POSE_EXPORT_SIZE, POSE_EXPORT_SIZE, { origin: 'upload', originId: `pose-${node.id}` })
         props.onAssetChange(asset)
@@ -147,7 +151,7 @@ export function PoseBoard(props: {
   }
 
   const angles = rig.joints[joint] ?? { x: 0, y: 0, z: 0 }
-  const axes = [['x', 'X', POSE_AXIS_COLORS.x], ['y', 'Y', POSE_AXIS_COLORS.y], ['z', 'Z', POSE_AXIS_COLORS.z]] as const
+  const axes = [['x', 'X'], ['y', 'Y'], ['z', 'Z']] as const
 
   return <div className={css.pose} data-canvas-no-zoom="">
     <div
@@ -194,8 +198,8 @@ export function PoseBoard(props: {
         ><ToolbarIcon name="image" size={13} />{busy ? tt('canvas.pose.exporting') : tt('canvas.pose.export')}</button>
       </div>
 
-      {axes.map(([axis, label, color]) => <label key={axis} className={css.poseAxis}>
-        <span className={css.poseAxisLabel} style={{ color }}>{label}</span>
+      {axes.map(([axis, label]) => <label key={axis} className={css.poseAxis}>
+        <span className={css.poseAxisLabel}>{label}</span>
         <input
           type="range"
           min={-180}
@@ -203,7 +207,6 @@ export function PoseBoard(props: {
           step={1}
           value={angles[axis]}
           aria-label={`${tt(`canvas.pose.joint.${joint}` as ImageGenKey)} ${label}`}
-          style={{ accentColor: color }}
           onChange={event => patchAngle(axis, Number(event.target.value))}
         />
         {/* 数字框与滑杆同一状态：滑杆给手感，数字给精度。只给滑杆是这个面板

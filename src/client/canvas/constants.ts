@@ -40,9 +40,6 @@ export const POSE_NODE_SIZE = { width: 320, height: 520 }
 /** 姿势参考图导出边长。与 sketch 的 1024 一致：都是给模型当参考的图，不需要
  *  更高；再大只是让上传慢。 */
 export const POSE_EXPORT_SIZE = 1024
-/** 三轴的固定配色。与画布预览里关节轴的着色一致，用户靠颜色把滑杆和画面
- *  对上，不必读轴名。 */
-export const POSE_AXIS_COLORS = { x: '#e03131', y: '#2f9e44', z: '#1971c2' } as const
 export const SKETCH_EXPORT_WIDTH = 1024
 export const SKETCH_COLORS = ['#1f2328', '#e03131', '#1971c2', '#2f9e44', '#f59f00', '#9c36b5', '#0ca678', '#f06595']
 export const SKETCH_WIDTHS = [3, 6, 12]
