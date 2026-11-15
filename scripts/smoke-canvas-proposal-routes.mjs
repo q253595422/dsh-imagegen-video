@@ -503,6 +503,31 @@ check('F20 the size arguments the node builder honours are declared in the schem
   assert.equal(view.nodes[0].height, 600)
 })
 
+check('F21 a config node says what it produces, and the Agent can make a video one', async () => {
+  // config 节点的 `mode` 决定按 run 出什么（image / video / text）。两处缺口：
+  // 投影不带给模型（它只看到「这是个 config」），以及 `createNode` 里那句
+  // 「metadata.mode 没设就写成 image」——`metadata.mode` 此前从来没被赋过值，
+  // 于是恒为真，Agent 根本造不出视频配置节点。
+  const registered = new Map()
+  registerAgentCanvasTools({ tools: { register (definition) { registered.set(definition.name, definition); return () => {} } } }, () => ({ enabled: true }))
+  const created = await registered.get('create_canvas').execute({ title: '模式' }, {})
+
+  const plain = await registered.get('add_canvas_node').execute({ canvas_id: created.id, type: 'config', title: '出图', prompt: '灯塔' }, {})
+  assert.equal(plain.nodes[0].mode, 'image', 'the default still reads as image')
+
+  const video = await registered.get('add_canvas_node').execute({ canvas_id: created.id, type: 'config', title: '插帧', mode: 'video' }, {})
+  assert.equal(video.nodes.find(node => node.title === '插帧').mode, 'video', 'a video config node is expressible')
+  assert.equal((await registered.get('read_canvas').execute({ canvas_id: created.id }, {})).nodes.find(node => node.title === '插帧').mode, 'video',
+    'and read_canvas reports it back')
+
+  // 非法值由参数 schema 的 enum 挡下（宿主在调用前就拒），比工具里再校验
+  // 更早。这里断言的是「有东西挡住了」，具体措辞交给框架。
+  await assert.rejects(
+    async () => await registered.get('add_canvas_node').execute({ canvas_id: created.id, type: 'config', title: '错的', mode: 'audio' }, {}),
+    /mode.*(image|enum)|Unknown config mode/,
+  )
+})
+
 check('R5e proposals made back to back come back in the order they were proposed', async () => {
   // 探针实测过的重排：Agent 一次任务连发几条提案，它们常落在同一毫秒里，
   // 而 `scan` 的 tie-break 是 `id.localeCompare`——uuid 是随机的，于是顺序

@@ -103,6 +103,8 @@ interface AgentNode {
   model?: string
   text?: string
   status?: string
+  /** config 节点：它会产出什么（image / video / text）。 */
+  mode?: string
 }
 
 interface AgentEdge {
@@ -146,6 +148,7 @@ const nodeSchema = {
     model: { type: 'string' },
     text: { type: 'string' },
     status: { type: 'string' },
+    mode: { type: 'string' },
   },
 } as const
 
@@ -206,6 +209,10 @@ function projectNode(node: CanvasNode): AgentNode {
     ...metadata.model === undefined ? {} : { model: metadata.model },
     ...metadata.text === undefined ? {} : { text: metadata.text },
     ...metadata.status === undefined ? {} : { status: metadata.status },
+    // config 节点靠 `mode` 决定它产出什么（出图 / 出视频 / 纯写作）。不投影
+    // 它，模型只看到「这是个 config」，判断不出按 run 会得到图片还是视频——
+    // 而这正是它接下来要不要连线、要不要写 prompt 的依据。
+    ...metadata.mode === undefined ? {} : { mode: metadata.mode },
   }
 }
 
@@ -396,7 +403,9 @@ function viewOf(document: CanvasDocument): AgentCanvasView {
 function renderCanvasView(value: AgentCanvasView): Array<{ type: 'text'; text: string }> {
   const lines = [`Canvas ${value.id}「${value.title}」 revision ${value.revision}: ${value.nodes.length} node(s), ${value.connections.length} connection(s).`]
   for (const node of value.nodes) {
-    const label = node.type === 'config' ? 'config' : node.type
+    // config 节点把 mode 并进标签：`[config:video]` 比 `[config]` 多说的是
+    // 「这个节点会产出视频」，而模型正是靠它判断该不该往这里连图片。
+    const label = node.type === 'config' ? (node.mode === undefined ? 'config' : `config:${node.mode}`) : node.type
     const detail = node.prompt !== undefined ? ` — prompt: ${node.prompt}` : node.text !== undefined ? ` — text: ${node.text}` : ''
     lines.push(`- ${node.id} [${label}] ${node.title} @ (${node.x}, ${node.y})${detail}`)
   }
@@ -552,7 +561,17 @@ export function registerAgentCanvasTools(ctx: Context, config: () => { enabled: 
     if (typeof args.prompt === 'string') metadata.prompt = args.prompt
     if (typeof args.model === 'string') metadata.model = args.model
     if (typeof args.text === 'string') metadata.text = args.text
-    if (type === 'config' && metadata.mode === undefined) metadata.mode = 'image'
+    if (type === 'config') {
+      // `metadata.mode` 此前从来没被赋过值，所以原来那句
+      // `if (metadata.mode === undefined) metadata.mode = 'image'` 恒为真：
+      // Agent 造不出视频配置节点，而视频配置正是「往这里连两张图做插帧」的
+      // 那个节点。传了就用传的，没传才默认出图。
+      const mode = typeof args.mode === 'string' ? args.mode : 'image'
+      if (mode !== 'image' && mode !== 'video' && mode !== 'text') {
+        throw new Error(`Unknown config mode "${mode}". Use one of: image, video, text.`)
+      }
+      metadata.mode = mode
+    }
     return {
       id,
       type,
@@ -645,6 +664,7 @@ export function registerAgentCanvasTools(ctx: Context, config: () => { enabled: 
         prompt: { type: 'string', description: 'Prompt to store on the node (config/image nodes).' },
         model: { type: 'string', description: 'Model id to preselect on the node; the canvas default is used when omitted.' },
         text: { type: 'string', description: 'Body text for a text node.' },
+        mode: { type: 'string', enum: ['image', 'video', 'text'], description: 'config nodes only: what pressing run should produce. Default `image`.' },
         x: { type: 'number', description: 'Canvas x. Defaults to a free spot.' },
         y: { type: 'number', description: 'Canvas y. Defaults to a free spot.' },
         // `createNode` 一直在读这两个键，但 schema 里没声明——模型无从得知能设，
