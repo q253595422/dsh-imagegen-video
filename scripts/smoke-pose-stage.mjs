@@ -23,12 +23,14 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import assert from 'node:assert/strict'
+import { createCheckHarness } from './lib/check-harness.mjs'
 
+// 共用的 runner，不是本地手写的一份：手写的那些在「检查超时」这件事上会把
+// 一次跑得慢但结果正确的检查记成 FAIL，于是一个正确的套件在负载高的机器上
+// 时绿时红，绿也就不再说明任何事。这份 harness 把超时当挂起守卫，settle 之后
+// 按真实结果记账。
 const results = []
-const checks = []
-function check(name, fn) {
-  checks.push({ name, fn })
-}
+const check = createCheckHarness({ results })
 
 const root = mkdtempSync(join(tmpdir(), 'gal-pose-stage-'))
 // 这个模块本身不碰磁盘，但保持与 smoke-pose 一样的隔离：将来它若间接引入
@@ -350,20 +352,14 @@ await check('S9 every actor lands inside the framed view', async () => {
   }
 })
 
-// ------------------------------------------------------------------ runner
-
-for (const { name, fn } of checks) {
-  try {
-    await fn()
-    results.push({ name, ok: true })
-    console.log(`ok   ${name}`)
-  } catch (error) {
-    results.push({ name, ok: false })
-    console.log(`FAIL ${name}\n     ${error.message}`)
-  }
-}
+// ------------------------------------------------------------------ 汇总
 
 rmSync(root, { recursive: true, force: true })
-const failed = results.filter(result => !result.ok).length
-console.log(`\n${results.length - failed}/${results.length} pose stage checks passed`)
-process.exit(failed === 0 ? 0 : 1)
+process.stdout.write(`${results.join('\n')}\n`)
+const failed = results.filter(line => line.startsWith('FAIL')).length
+if (failed > 0) {
+  process.stderr.write(`\npose stage: ${failed} failed, ${results.length - failed} passed\n`)
+  process.exitCode = 1
+} else {
+  process.stdout.write(`\npose stage: ${results.length} passed\n`)
+}
