@@ -12,7 +12,7 @@ import {
   GitBranch, Keyboard, Layers, Magnet, Map as MapIcon, Maximize, Maximize2, MousePointer2, Palette, Pencil, Plus, Redo2, Scissors, SendHorizonal, Share2, Sparkles, Star,
   Shrink, SquareDashedMousePointer, Trash2, Type, Undo2, Upload, Video, Wand2, Wallpaper,
 } from 'lucide-react'
-import type { CanvasAnnotation, CanvasAssetRef, CanvasConnection, CanvasConnectionRole, CanvasDocument, CanvasProposal, CanvasFileKind, CanvasLayerInfo, CanvasLayerPlanItem, CanvasNode, CanvasRect, CanvasStoryboard, CanvasVideoRef, CanvasSkillConfigApplyResult, CanvasSkillConfigField, CanvasSkillConfigSaveResult, CanvasSkillConfigStep, CanvasSkillConfigView, CanvasSkillDescriptor, CanvasSkillLibrary, CanvasSkillOutput, CanvasSkillRunRequest, CanvasSkillTask, CanvasSketchStroke, GenerateRequest, GenerationTask, HistoryEntry, VideoGenerateRequest, VideoTaskSummary, VideoMode, VideoResolution } from '../protocol.ts'
+import type { CanvasAnnotation, CanvasAssetRef, CanvasConnection, CanvasConnectionRole, CanvasDocument, CanvasProposal, CanvasFileKind, CanvasLayerInfo, CanvasLayerPlanItem, CanvasNode, CanvasRect, CanvasStoryboard, CanvasVideoRef, CanvasSkillConfigApplyResult, CanvasSkillConfigField, CanvasSkillConfigSaveResult, CanvasSkillConfigStep, CanvasSkillConfigView, CanvasSkillDescriptor, CanvasSkillLibrary, CanvasSkillOutput, CanvasSkillRunRequest, CanvasSkillTask, CanvasSketchStroke, CanvasPoseStage, GenerateRequest, GenerationTask, HistoryEntry, VideoGenerateRequest, VideoTaskSummary, VideoMode, VideoResolution } from '../protocol.ts'
 import type { CanvasBundleUnresolved } from '../canvas-bundle.ts'
 import { describeVideoModel, durationsOf, VIDEO_RESOLUTIONS } from '../video-model-catalog.ts'
 // The stitch order is a SHARED rule: the host builds its ffmpeg concat list with
@@ -52,6 +52,7 @@ import { ComposerSelect, IconButton, labelWithKeys, ToolbarIcon, type ToolbarIco
 import { COMPOSE_SKILL_ID, composeGlyphs, PolishMenu, SkillConfigForm, SkillConfirmDialog, SkillLibraryDialog, SkillPicker, tierLabel } from './canvas/skill-dialogs.tsx'
 import { StoryboardBody } from './canvas/storyboard-board.tsx'
 import { PoseBoard, poseOf } from './canvas/pose-board.tsx'
+import { PoseStagePanel } from './canvas/pose-stage-panel.tsx'
 import { CanvasMinimap } from './canvas/minimap.tsx'
 import { ConnectionLayer } from './canvas/connection-layer.tsx'
 import { GroupLayer } from './canvas/group-layer.tsx'
@@ -71,6 +72,7 @@ import {
 } from './canvas/node-model.ts'
 import { CONFIG_NODE_SIZE, DROP_IMAGE_MAX_BYTES, WORLD_PAD, POSE_NODE_SIZE, SKETCH_ERASER_RADIUS, SKETCH_WIDTH_DOTS, FILE_NODE_SIZE, GRID_SIZE, IMAGE_NODE_SIZE, LEGACY_CONFIG_NODE_SIZE, MAX_SCALE, MIN_SCALE, PICKER_TABS, SKETCH_COLORS, SKETCH_EXPORT_WIDTH, SKETCH_NODE_SIZE, SKETCH_WIDTHS, STORYBOARD_NODE_SIZE, TEXT_NODE_SIZE } from './canvas/constants.ts'
 import { POSE_PRESETS } from './canvas/pose-rig.ts'
+import { emptyStage, stagePatch, stageOf } from './canvas/pose-stage.ts'
 
 type CanvasTool = 'select' | 'pan'
 type BackgroundMode = CanvasDocument['background']
@@ -592,6 +594,8 @@ export function CanvasWorkspace(props: CanvasWorkspaceProps): React.JSX.Element 
   /** 打开时间线时选定的片段，按画布顺序。面板只认这一份列表：框选两段就
    *  是两段，不会把画布上其它成片也拖进来。 */
   const [timelineNodeIds, setTimelineNodeIds] = useState<string[]>([])
+  /** 正在编辑的导演台节点；null = 面板关闭。 */
+  const [stageNodeId, setStageNodeId] = useState<string | null>(null)
   const [timelineBusy, setTimelineBusy] = useState(false)
   /** 正在设置身份参考的图片节点；面板关掉时清空。 */
   const [castTarget, setCastTarget] = useState<string | null>(null)
@@ -1328,11 +1332,16 @@ export function CanvasWorkspace(props: CanvasWorkspaceProps): React.JSX.Element 
    */
   const createPoseNode = useCallback((position?: Point): CanvasNode => {
     const center = position ?? canvasCenter()
+    // 新节点直接带一份完整舞台（一个角色 + 一台机位 + 默认场景）：卡片与
+    // 全屏面板都按 `stageOf` 读，少一个字段就要多一处 `?? 默认值`。
+    // `pose` 同时写上，老版本插件打开这份画布仍然看得到人偶。
+    const stage = emptyStage()
+    stage.actors[0] = { ...stage.actors[0]!, rig: POSE_PRESETS[0]!.rig }
     return {
       id: newId('node'), type: 'image', title: tt('canvas.poseNode'),
       x: Math.round(center.x - POSE_NODE_SIZE.width / 2), y: Math.round(center.y - POSE_NODE_SIZE.height / 2),
       width: POSE_NODE_SIZE.width, height: POSE_NODE_SIZE.height,
-      metadata: { pose: POSE_PRESETS[0]!.rig, status: 'idle' },
+      metadata: { pose: POSE_PRESETS[0]!.rig, stage, status: 'idle' },
     }
   }, [canvasCenter])
 
@@ -1396,6 +1405,42 @@ export function CanvasWorkspace(props: CanvasWorkspaceProps): React.JSX.Element 
 
   const patchSketchAsset = useCallback((nodeId: string, asset: CanvasAssetRef | undefined): void => {
     patchNode(nodeId, { asset, status: asset === undefined ? 'idle' : 'success' })
+  }, [patchNode])
+
+  /**
+   * 导演台写盘：`stage` 与 `pose` 必须一起写。
+   *
+   * `pose` 是旧版本插件认得的那一个字段（它只镜像第一个角色的姿势）。只写
+   * `stage` 会让一份带三个角色的文档在旧版本里变成一张读不懂的空白图片；
+   * 只写 `pose` 则丢掉其余两个角色。这条规则收在 `pose-stage.ts` 的
+   * `stagePatch` 里，这里只是照它写。
+   */
+  const patchStage = useCallback((nodeId: string, stage: CanvasPoseStage): void => {
+    patchNode(nodeId, stagePatch(stage))
+  }, [patchNode])
+
+  /** 正在编辑的导演台节点。节点被删掉时这里自然变 undefined，面板随之关闭。 */
+  const stageNode = stageNodeId === null ? undefined : document?.nodes.find(node => node.id === stageNodeId)
+
+  /**
+   * 导演台左侧输入口接的全景图。
+   *
+   * 只认**直接连到本节点**的第一张图：LibTV 也是这个口径（「请将图片节点
+   * 连接到导演台左侧输入口」）。顺着上游再往上找会把一串生成链的中间产物
+   * 也当成背景，用户看到的东西和他连的线对不上。
+   */
+  const stagePanoUrl: string | null = (() => {
+    if (stageNode === undefined || document === null) return null
+    const incoming = document.connections.find(connection => connection.toNodeId === stageNode.id)
+    if (incoming === undefined) return null
+    const source = document.nodes.find(node => node.id === incoming.fromNodeId)
+    return source === undefined ? null : assetOf(source)?.url ?? null
+  })()
+
+  /** 机位截图落成节点资产。与姿势面板走同一条路：截出一张普通图片，下游的
+   *  生成、标注、图库、导出都不必知道「导演台」存在。 */
+  const patchStageAsset = useCallback((nodeId: string, asset: CanvasAssetRef): void => {
+    patchNode(nodeId, { asset, status: 'success' })
   }, [patchNode])
 
   const deleteSelection = useCallback((): void => {
@@ -5093,6 +5138,7 @@ export function CanvasWorkspace(props: CanvasWorkspaceProps): React.JSX.Element 
     toggleAnnotate, removeNodeBackground, splitLayers, retryGeneration, retryVideoGeneration,
     grabVideoFrame, continueFromClip, favoriteVideoNode, runStoryboard, submitShot,
     startStoryboardStitch, clearBrokenVideo, patchSketchStrokes, patchSketchAsset,
+    openStage: (nodeId: string) => { setStageNodeId(nodeId) },
     reportError: (message: string) => { setError(message) },
     setColorPickerNodeId, setVideoPreviewNodeId, setFilePreviewNodeId, setFileTargetNodeId,
     setPosterTarget, setPolishNode, setBrokenVideoIds, setAnnotationDraft,
@@ -6015,6 +6061,23 @@ export function CanvasWorkspace(props: CanvasWorkspaceProps): React.JSX.Element 
       onClipBroken={nodeId => setBrokenVideoIds(previous => previous.has(nodeId) ? previous : new Set(previous).add(nodeId))}
     /> : null}
     {libraryOpen ? <TemplateLibrary api={api} container={overlayHostRef.current} onClose={() => setLibraryOpen(false)} onUse={prompt => { applyTemplate(prompt); setLibraryOpen(false) }} /> : null}
+    {stageNode !== undefined ? <PoseStagePanel
+      stage={stageOf(stageNode.metadata)}
+      onStageChange={next => patchStage(stageNode.id, next)}
+      pano={stagePanoUrl === null ? null : { url: stagePanoUrl }}
+      onCapture={async (dataUrl, size) => {
+        try {
+          const asset = await api.canvasUpload(dataUrl, size, size, { origin: 'upload', originId: `stage-${stageNode.id}` })
+          patchStageAsset(stageNode.id, asset)
+        } catch (caught) {
+          setError(caught instanceof Error ? caught.message : String(caught))
+        }
+      }}
+      onPrompt={text => patchStage(stageNode.id, { ...stageOf(stageNode.metadata), prompt: text })}
+      container={overlayHostRef.current}
+      onClose={() => setStageNodeId(null)}
+      onError={message => setError(message)}
+    /> : null}
     {skillLibraryOpen ? <SkillLibraryDialog
       library={skillLibrary}
       loading={libraryLoading}

@@ -8,7 +8,7 @@
 export const IMAGEGEN_SETTINGS_NAMESPACE = 'dsh-imagegen'
 
 /** Published package version shared by the host updater and the client UI. */
-export const PLUGIN_VERSION = '1.31.0'
+export const PLUGIN_VERSION = '1.32.0'
 
 /** Same-origin route family (loopback-only, mirroring the dsh-ssh fence). */
 export const SETTINGS_API = {
@@ -1765,6 +1765,96 @@ export interface CanvasPoseRig {
   facing: number
 }
 
+/**
+ * 导演台里的一个角色：一套姿势 + 它在世界里的站位。
+ *
+ * `id` 是稳定的引用键（机位、面板选中态、将来 Agent 的工具调用都指向它），
+ * 不用数组下标——删掉一个角色之后，下标会把所有人的选中态错位一格。
+ */
+export interface CanvasPoseActor {
+  id: string
+  /** 显示名，也画在角色头顶（`scene.labels` 打开时）。 */
+  name: string
+  rig: CanvasPoseRig
+  /** 站位：世界坐标（米），x 右、z 朝相机。y 由落地自动决定，不存。 */
+  x: number
+  z: number
+  /** 整体缩放，1 = 标准身高。可以拿来做「远处的路人」。 */
+  scale?: number
+  /** 绕 y 轴额外旋转（度），叠加在 `rig.facing` 之上。 */
+  rotation?: number
+}
+
+/**
+ * 一台机位：显式视点 + 注视点 + 视场角。
+ *
+ * 故意不用 yaw/pitch/distance：机位是「摆在哪、看向哪」，和环绕相机的参数
+ * 不是同一件事。用环绕参数存机位，用户拖动视点时会看到视场角跟着一起变。
+ */
+export interface CanvasPoseCamera {
+  id: string
+  name: string
+  /** 视点（米）。 */
+  x: number
+  y: number
+  z: number
+  /** 注视点（米）。 */
+  targetX: number
+  targetY: number
+  targetZ: number
+  /** 竖直视场角（度）。 */
+  fov: number
+}
+
+/**
+ * 场景：地面、天空、全景球与整组变换。
+ *
+ * 变换（平移/旋转/缩放）是**整组**施加在角色与地面上的，不是单独挪相机：
+ * 用户说「场景缩放 300%」时，期望的是人变大、地面跟着变大，而不是相机
+ * 凑近——后者会把地面网格拉成一片放射线。
+ */
+export interface CanvasPoseScene {
+  /** 天空（上半）颜色，CSS 颜色字符串。 */
+  sky: string
+  /** 地面颜色；缺省由天空色推出来。 */
+  ground?: string
+  /** 整组平移（米）。 */
+  translate: [number, number, number]
+  /** 整组绕 y 旋转（度）。 */
+  rotateY: number
+  /** 整组缩放。 */
+  scale: number
+  /** 全景球水平旋转（度）与半径（米）。半径只影响采样时的映射强度。 */
+  panoYaw: number
+  panoRadius: number
+  /** 角色头顶的名字标签。 */
+  labels: boolean
+}
+
+/**
+ * 导演台：多角色 + 多机位 + 场景。
+ *
+ * 与 `pose` 的关系是**并列而非替代**：老文档只有 `pose`，读的时候按单角色
+ * 舞台合成（见 `pose-stage.ts` 的 `stageOf`），不写盘、不改字节；一旦用户
+ * 在导演台里动了任何东西，写 `stage` 的同时把 `actors[0].rig` 镜像回 `pose`
+ * ——这样同一份文档在旧版本插件里仍然是一张姿势人偶，不是一张空白图片。
+ */
+export interface CanvasPoseStage {
+  actors: CanvasPoseActor[]
+  cameras: CanvasPoseCamera[]
+  /** 当前选中的机位；缺省用第一台。 */
+  cameraId?: string
+  scene: CanvasPoseScene
+  /**
+   * 底部那一行「描述想要搭建的场景」。
+   *
+   * 它只是节点上的一句话，**不是**一条生成指令：这一版还没有把导演台接到
+   * Agent 上，静默丢掉用户敲的字比留着一个不触发的字段更糟。写成可选字段，
+   * 缺项照旧合法。
+   */
+  prompt?: string
+}
+
 export interface CanvasViewport {
   x: number
   y: number
@@ -1899,6 +1989,14 @@ export interface CanvasNodeMetadata {
    * 变成一份读不懂的文档。
    */
   pose?: CanvasPoseRig
+  /**
+   * 导演台：多角色 + 多机位 + 场景。
+   *
+   * 与 `pose` 并存（不是替代）。`pose` 始终镜像 `stage.actors[0].rig`，于是
+   * 一份带舞台的文档在只认 `pose` 的旧版本里仍然是一张可用的姿势人偶。
+   * 只写 `pose` 的旧文档读出来是一个单角色、单机位的舞台。
+   */
+  stage?: CanvasPoseStage
   /** File nodes: coarse bucket driving the icon and preview branch. */
   fileKind?: CanvasFileKind
   /** Skill-produced nodes: which skill produced this and from what. */

@@ -404,6 +404,64 @@ function isPoseRig(value: unknown): boolean {
   return true
 }
 
+/**
+ * 导演台舞台的存储形状。
+ *
+ * 和 `isPoseRig` 同一条取舍：只拒绝「有但类型不对」的值，缺项一律放行。
+ * 这份校验失败会让**整份画布存不下去**，代价远大于放行一个不完整的舞台
+ * ——渲染侧对缺项全部有默认值。
+ */
+function isPoseStage(value: unknown): boolean {
+  if (value === null || typeof value !== 'object') return false
+  const stage = value as Record<string, unknown>
+  const finiteTuple3 = (raw: unknown): boolean =>
+    Array.isArray(raw) && raw.length === 3 && raw.every(item => typeof item === 'number' && Number.isFinite(item))
+  if (stage.actors !== undefined) {
+    if (!Array.isArray(stage.actors)) return false
+    for (const raw of stage.actors) {
+      if (raw === null || typeof raw !== 'object') return false
+      const actor = raw as Record<string, unknown>
+      if (typeof actor.id !== 'string' || actor.id === '') return false
+      if (actor.name !== undefined && typeof actor.name !== 'string') return false
+      // 角色可以暂时没有姿势（刚加进来还没摆），渲染时按空骨架处理。
+      if (actor.rig !== undefined && !isPoseRig(actor.rig)) return false
+      for (const key of ['x', 'z', 'scale', 'rotation']) {
+        const number = actor[key]
+        if (number !== undefined && (typeof number !== 'number' || !Number.isFinite(number))) return false
+      }
+    }
+  }
+  if (stage.cameras !== undefined) {
+    if (!Array.isArray(stage.cameras)) return false
+    for (const raw of stage.cameras) {
+      if (raw === null || typeof raw !== 'object') return false
+      const camera = raw as Record<string, unknown>
+      if (typeof camera.id !== 'string' || camera.id === '') return false
+      if (camera.name !== undefined && typeof camera.name !== 'string') return false
+      for (const key of ['x', 'y', 'z', 'targetX', 'targetY', 'targetZ', 'fov']) {
+        const number = camera[key]
+        if (number !== undefined && (typeof number !== 'number' || !Number.isFinite(number))) return false
+      }
+    }
+  }
+  if (stage.cameraId !== undefined && typeof stage.cameraId !== 'string') return false
+  // 一句话场景描述：只拒类型错的值。缺项、空串都是合法状态。
+  if (stage.prompt !== undefined && typeof stage.prompt !== 'string') return false
+  if (stage.scene !== undefined) {
+    if (stage.scene === null || typeof stage.scene !== 'object') return false
+    const scene = stage.scene as Record<string, unknown>
+    if (scene.sky !== undefined && typeof scene.sky !== 'string') return false
+    if (scene.ground !== undefined && typeof scene.ground !== 'string') return false
+    if (scene.translate !== undefined && !finiteTuple3(scene.translate)) return false
+    for (const key of ['rotateY', 'scale', 'panoYaw', 'panoRadius']) {
+      const number = scene[key]
+      if (number !== undefined && (typeof number !== 'number' || !Number.isFinite(number))) return false
+    }
+    if (scene.labels !== undefined && typeof scene.labels !== 'boolean') return false
+  }
+  return true
+}
+
 function isNode(value: unknown): value is CanvasNode {
   if (value === null || typeof value !== 'object') return false
   const node = value as Record<string, unknown>
@@ -438,6 +496,8 @@ function isNode(value: unknown): value is CanvasNode {
     // 空姿势。校验器在这里过严的代价不是「拒收这次请求」，而是**这份文档再也
     // 存不下去**，因为 `coerceDocument` 变 undefined、`save()` 直接抛。
     if (state.pose !== undefined && !isPoseRig(state.pose)) return false
+    // 导演台与姿势同一类：它是 image 节点上的一份活数据，缺项合法、类型错必须拒。
+    if (state.stage !== undefined && !isPoseStage(state.stage)) return false
     return state.status === undefined || state.status === 'idle' || state.status === 'generating' || state.status === 'success' || state.status === 'error'
   }
   if (node.type === 'video') {

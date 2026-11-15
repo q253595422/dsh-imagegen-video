@@ -27,19 +27,21 @@ export const STORYBOARD_NODE_SIZE = { width: 380, height: 420 }
  *  so the normalized strokes always map onto the same rect. */
 export const SKETCH_NODE_SIZE = { width: 300, height: 396 }
 /**
- * 新建姿势节点的尺寸。
+ * 新建导演台节点的尺寸。
  *
- * 高度按「预览 + 三段控件」定死，让面板里的滑杆行位置固定——它会随关节
- * 换行变高变矮，节点跟着跳是最难受的一种抖动。
+ * 高度按「场景预览 + 机位条 + 预设条 + 导出」四段定。关节滑杆已经搬进
+ * 全屏面板，卡片里只剩「看一眼整台戏」这件事，所以 360 就够：预览吃掉
+ * 剩余高度（约 200px），三行控件各 24px，加上 6px 间隙与标题栏。
  *
- * 470 是按「预览 300 + 预设条 + 三行轴 + 底行」量出来的，但真机上少了 15px：
- * 预览与控件之间的 6px 间隙累加、以及标题栏高度都比估算大。520 留出余量，
- * 用户把节点拖小也不会溢出（预览可收缩）。
+ * 之前是 520——那是给 51 个关节滑杆留的位置；留着它只会让新建的卡片里
+ * 一大片空白，用户还得先把节点拖小。
  */
-export const POSE_NODE_SIZE = { width: 320, height: 520 }
+export const POSE_NODE_SIZE = { width: 320, height: 360 }
 /** 姿势参考图导出边长。与 sketch 的 1024 一致：都是给模型当参考的图，不需要
  *  更高；再大只是让上传慢。 */
 export const POSE_EXPORT_SIZE = 1024
+/** 导演台全屏面板导出的长边。与 pose 参考图同一档：都是给模型/人看的场景快照。 */
+export const STAGE_CAPTURE_SIZE = 1280
 export const SKETCH_EXPORT_WIDTH = 1024
 export const SKETCH_COLORS = ['#1f2328', '#e03131', '#1971c2', '#2f9e44', '#f59f00', '#9c36b5', '#0ca678', '#f06595']
 export const SKETCH_WIDTHS = [3, 6, 12]

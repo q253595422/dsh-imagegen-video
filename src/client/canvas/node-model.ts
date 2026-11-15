@@ -142,9 +142,15 @@ export function isSketchNode(node: CanvasNode): boolean {
 }
 
 /** 姿势人偶节点。与草图板一样是 image 节点的一种「带活数据」的形态：有
- *  `pose` 就画人偶，导出后 `asset` 就是它成为普通参考图的方式。 */
+ *  `pose` 就画人偶，导出后 `asset` 就是它成为普通参考图的方式。
+ *
+ * 导演台是同一个节点的升级形态：带 `stage` 时它是多角色多机位的一台戏。
+ * 两个字段都要认——只看 `pose` 会让一份刚加了第二个角色的文档掉回普通图片，
+ * 因为那一刻 `pose` 只镜像第一个角色（见 `pose-stage.ts` 的 `stagePatch`）。 */
 export function isPoseNode(node: CanvasNode): boolean {
-  return node.type === 'image' && nodeMetadata(node).pose !== undefined
+  if (node.type !== 'image') return false
+  const metadata = nodeMetadata(node)
+  return metadata.pose !== undefined || metadata.stage !== undefined
 }
 
 /** Letterboxed rect of an `object-fit: contain` image inside its container. */

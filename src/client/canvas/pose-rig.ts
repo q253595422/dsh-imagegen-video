@@ -373,7 +373,14 @@ function groundRig(world: Record<PoseJoint, [number, number, number]>): Record<P
 /* ---------------------------------------------------------------- 渲染 */
 
 /** 相机：位置、看向的目标、竖直视场角。 */
-export interface PoseCamera { yaw: number; pitch: number; distance: number; fov: number; targetY: number }
+export interface PoseCamera {
+  yaw: number; pitch: number; distance: number; fov: number; targetY: number
+  /** 注视点的水平位置。缺省 0 = 原点，姿势面板从来只照一个人，不需要挪。
+   *  导演台里三个人并排时，相机必须能把画面中心挪到人群中间，否则只调距离
+   *  的话第三人会被裁在画外。 */
+  targetX?: number
+  targetZ?: number
+}
 
 /**
  * 默认 3/4 视角，不是正面。
@@ -487,8 +494,8 @@ const SITE_RADII: ReadonlyMap<string, [number, number]> = new Map([
   ['kneeR>footR', [0.046, 0.034]],
 ])
 
-function limbsOf(rig: PoseRig): Limb[] {
-  const world = solveRig(rig)
+function limbsOf(rig: PoseRig, solved?: Record<PoseJoint, [number, number, number]>): Limb[] {
+  const world = solved ?? solveRig(rig)
   return SEGMENTS.map(([parent, child]) => {
     const explicit = SITE_RADII.get(`${parent}>${child}`)
     return {
@@ -505,7 +512,7 @@ function limbsOf(rig: PoseRig): Limb[] {
 function cameraMatrix(camera: PoseCamera): Mat4 {
   const yaw = camera.yaw * Math.PI / 180
   const pitch = camera.pitch * Math.PI / 180
-  const target: [number, number, number] = [0, camera.targetY, 0]
+  const target: [number, number, number] = [camera.targetX ?? 0, camera.targetY, camera.targetZ ?? 0]
   const eye: [number, number, number] = [
     target[0] + Math.sin(yaw) * Math.cos(pitch) * camera.distance,
     target[1] + Math.sin(pitch) * camera.distance,
@@ -606,6 +613,120 @@ function limbPath(
   ctx.closePath()
 }
 
+/** 一个世界坐标球体：多角色合成时逐角色生成一批，再按深度排队。 */
+export interface PoseSphere { x: number; y: number; z: number; r: number }
+
+/**
+ * 世界坐标 → 屏幕投影 + 屏幕深度。
+ *
+ * 导演台与姿势面板必须用同一套投影：两块界面各写一遍透视，迟早出现
+ * 「导演台里人和地面错位、姿势面板里对得上」。深度是相机空间的 -z，世界
+ * 单位，供画家算法排序。
+ */
+export function makeProjector(size: number, camera: PoseCamera): {
+  focal: number
+  project: (point: [number, number, number]) => [number, number, number] | null
+} {
+  const view = cameraMatrix(camera)
+  const focal = (size / 2) / Math.tan((camera.fov * Math.PI / 180) / 2)
+  return {
+    focal,
+    project: (point) => {
+      const cameraPoint = applyMatrix(view, point)
+      const depth = -cameraPoint[2]
+      if (depth <= 0.05) return null
+      return [size / 2 + (cameraPoint[0] * focal) / depth, size / 2 - (cameraPoint[1] * focal) / depth, depth]
+    },
+  }
+}
+
+/**
+ * 骨架 → 一串世界坐标球体。
+ *
+ * 从 `drawPose` 里抽出来供导演台复用：每个角色各自生成一批球，之后按整组
+ * 变换搬到场景坐标、各自算一张遮罩再按深度合成。**不能**把多个角色的球体
+ * 并进同一个距离场——那会让两个人在屏幕空间糊成一团，谁在前面都看不出来。
+ */
+export function buildSpheres(rig: PoseRig, world: Record<PoseJoint, [number, number, number]> = solveRig(rig)): PoseSphere[] {
+  const spheres: PoseSphere[] = []
+
+  /** 两个关节之间插一串球，半径按 t 线性插值。 */
+  const addTube = (a: [number, number, number], b: [number, number, number], ra: number, rb: number): void => {
+    const len = Math.hypot(b[0] - a[0], b[1] - a[1], b[2] - a[2])
+    /* 步长：取半径的 1/4，而不是 1/2。
+     *
+     * 一串等距球求并集，表面沿轴向是**轻微串珠状**的：球心处最粗，两个
+     * 球之间略细。幅度约 0.032·r，1/2 步长时只有几毫米，看轮廓看不出来。
+     * 但法线是从场的梯度算的，这点起伏会让法线在轴心附近周期性翻转，
+     * 被放大成躯干上一条条横纹（实测像缝了拉链）。1/4 步长把幅度压到
+     * 1/4，横纹随之消失；球数翻倍，可这点开销远小于重画一次的其它成本。
+     */
+    const steps = Math.max(1, Math.min(96, Math.ceil(len / Math.max(0.006, Math.min(ra, rb) * 0.25))))
+    for (let i = 0; i <= steps; i += 1) {
+      const t = i / steps
+      spheres.push({
+        x: a[0] + (b[0] - a[0]) * t,
+        y: a[1] + (b[1] - a[1]) * t,
+        z: a[2] + (b[2] - a[2]) * t,
+        r: ra + (rb - ra) * t,
+      })
+    }
+  }
+
+  /* 脚掌：脚踝之外再补一颗朝前的球。
+   *
+   * 只靠脚踝那颗球，脚就是一截横切的柱子——导出图上脚完全消失，人像
+   * 两根杆子插在地上。真实脚掌是从踝向前伸出的一段，所以按踝的位置向
+   * +z（相机前方）偏移补一颗扁球，长度约 0.09、半径略小于踝。
+   *
+   * 这是「补形」而不是新关节：脚踝仍然是唯一的骨骼端点，摆姿自由度不变。
+   */
+  for (const side of ['L', 'R'] as const) {
+    const ankle = world[`foot${side}` as PoseJoint]
+    /* 三颗球从踝向前铺成脚掌，每颗的**底**都压在地面常量上。
+     *
+     * 这里必须自己算底面，不能只按踝的高度平移：groundRig 是按脚踝半径
+     * (0.040) 把踝抬到 y=0.060 的，脚掌球若照「踝 + 0.014」放，它的底会
+     * 停在 0.042——脚悬在地面上方 22mm，导出图上等于没有脚。
+     */
+    for (let step = 0; step < 3; step += 1) {
+      const t = step / 2
+      const r = 0.034 - 0.004 * t
+      spheres.push({
+        x: ankle[0],
+        // 底面 = GROUND_Y，向上留 1mm 以免与地面网格打架。
+        y: GROUND_Y + 0.001 + r,
+        z: ankle[2] + 0.075 * t,
+        r,
+      })
+    }
+  }
+
+  for (const limb of limbsOf(rig, world)) {
+    if (limb.joint === 'head') {
+      // 头单独成球（略扁），颈子用一根细管接上，否则头会浮着。
+      const head = limb.to
+      const neck = limb.from
+      const ry = limb.radiusTo * 1.20
+      addTube(neck, [head[0], head[1] - ry * 0.55, head[2]], limb.radiusFrom, limb.radiusTo * 0.72)
+      spheres.push({ x: head[0], y: head[1] - ry * 0.10, z: head[2], r: limb.radiusTo * 1.05 })
+      continue
+    }
+    addTube(limb.from, limb.to, limb.radiusFrom, limb.radiusTo)
+  }
+
+  // 胸腔的「肩宽」已经由两条连接段锥形承担，不再额外补球——
+  // 补了就是胸侧两处鼓包（实测是胸下两个明显的蝶翼形凸起）。
+
+  return spheres
+}
+
+/** 骨架里的父子段，供导演台画青色骨骼线。 */
+export const POSE_SEGMENTS: ReadonlyArray<[PoseJoint, PoseJoint]> = SEGMENTS
+
+/** 地面高度常量，供场景画网格与角色落地对齐。 */
+export const POSE_GROUND_Y = GROUND_Y
+
 /**
  * 把姿势画进给定的 2D 上下文。
  *
@@ -667,80 +788,10 @@ export function drawPose(ctx: CanvasRenderingContext2D, rig: PoseRig, options: P
   const fieldSize = Math.min(720, Math.max(280, Math.round(size / 2.2)))
   const cell = size / fieldSize
 
-  interface Sphere { x: number; y: number; z: number; r: number }
-  const spheres: Sphere[] = []
+  // 球体构建抽到 `buildSpheres`：导演台要按角色各生成一批再合成，两块
+  // 界面必须用同一份形体定义，否则同一个人在两处长得不一样。
   const world = solveRig(rig)
-
-  /** 两个关节之间插一串球，半径按 t 线性插值。 */
-  const addTube = (a: [number, number, number], b: [number, number, number], ra: number, rb: number): void => {
-    const len = Math.hypot(b[0] - a[0], b[1] - a[1], b[2] - a[2])
-    /* 步长：取半径的 1/4，而不是 1/2。
-     *
-     * 一串等距球求并集，表面沿轴向是**轻微串珠状**的：球心处最粗，两个
-     * 球之间略细。幅度约 0.032·r，1/2 步长时只有几毫米，看轮廓看不出来。
-     * 但法线是从场的梯度算的，这点起伏会让法线在轴心附近周期性翻转，
-     * 被放大成躯干上一条条横纹（实测像缝了拉链）。1/4 步长把幅度压到
-     * 1/4，横纹随之消失；球数翻倍，可这点开销远小于重画一次的其它成本。
-     */
-    const steps = Math.max(1, Math.min(96, Math.ceil(len / Math.max(0.006, Math.min(ra, rb) * 0.25))))
-    for (let i = 0; i <= steps; i += 1) {
-      const t = i / steps
-      spheres.push({
-        x: a[0] + (b[0] - a[0]) * t,
-        y: a[1] + (b[1] - a[1]) * t,
-        z: a[2] + (b[2] - a[2]) * t,
-        r: ra + (rb - ra) * t,
-      })
-    }
-  }
-
-  /* 脚掌：脚踝之外再补一颗朝前的球。
-   *
-   * 只靠脚踝那颗球，脚就是一截横切的柱子——导出图上脚完全消失，人像
-   * 两根杆子插在地上。真实脚掌是从踝向前伸出的一段，所以按踝的位置向
-   * +z（相机前方）偏移补一颗扁球，长度约 0.09、半径略小于踝。
-   *
-   * 这是「补形」而不是新关节：脚踝仍然是唯一的骨骼端点，摆姿自由度不变。
-   */
-  for (const side of ['L', 'R'] as const) {
-    const ankle = world[`foot${side}` as PoseJoint]
-    // 三颗球从踝向前铺成脚掌：第一颗就在踝下，最后两颗向前并落地。
-    // 只补一颗朝前的球会让脚浮在半空——它的球心与踝同高。
-    /* 三颗球从踝向前铺成脚掌，每颗的**底**都压在地面常量上。
-     *
-     * 这里必须自己算底面，不能只按踝的高度平移：groundRig 是按脚踝半径
-     * (0.040) 把踝抬到 y=0.060 的，脚掌球若照「踝 + 0.014」放，它的底会
-     * 停在 0.042——脚悬在地面上方 22mm，导出图上等于没有脚。
-     */
-    for (let step = 0; step < 3; step += 1) {
-      const t = step / 2
-      const r = 0.034 - 0.004 * t
-      spheres.push({
-        x: ankle[0],
-        // 底面 = GROUND_Y，向上留 1mm 以免与地面网格打架。
-        y: GROUND_Y + 0.001 + r,
-        z: ankle[2] + 0.075 * t,
-        r,
-      })
-    }
-  }
-
-  for (const limb of limbsOf(rig)) {
-    if (limb.joint === 'head') {
-      // 头单独成球（略扁），颈子用一根细管接上，否则头会浮着。
-      const head = limb.to
-      const neck = limb.from
-      const ry = limb.radiusTo * 1.20
-      addTube(neck, [head[0], head[1] - ry * 0.55, head[2]], limb.radiusFrom, limb.radiusTo * 0.72)
-      spheres.push({ x: head[0], y: head[1] - ry * 0.10, z: head[2], r: limb.radiusTo * 1.05 })
-      continue
-    }
-    addTube(limb.from, limb.to, limb.radiusFrom, limb.radiusTo)
-  }
-
-  // 胸腔的「肩宽」已经由两条连接段锥形承担，不再额外补球——
-  // 补了就是胸侧两处鼓包（实测是胸下两个明显的蝶翼形凸起）。
-
+  const spheres = buildSpheres(rig, world)
   // 把探测点换回世界坐标用的逆变换：屏幕 → 相机 → 世界。
   // 这里不真的做逆变换，而是把球体投到屏幕空间里算距离场：
   // 投影不是保距的，但对「融合一个看起来像人的体块」这件事够用，

@@ -1,61 +1,59 @@
 /**
- * 画布上的姿势人偶节点：一块方形预览 + 预设条 + 逐关节的三轴滑杆。
+ * 画布上的导演台节点卡片：一块场景预览 + 机位名/打开入口 + 预设条 + 导出。
  *
- * 与草图画板同一个路子：节点本体只是一份数据（`metadata.pose`），预览在这里
- * 用 Canvas 2D 画出来，导出时再画一张不带辅助线的 PNG 交给
- * `onAssetChange` 落成节点的普通图片资产。这样下游的生成、标注、图库、
- * 导出全都不需要知道「姿势」这件事存在——它就是一个 image 节点。
+ * 与草图画板同一个路子：节点本体只是一份数据（`metadata.stage`，老文档是
+ * `metadata.pose`），预览在这里用 Canvas 2D 画出来，导出时再画一张不带辅助线
+ * 的 PNG 交给 `onAssetChange` 落成节点的普通图片资产。这样下游的生成、标注、
+ * 图库、导出全都不需要知道「导演台」这件事存在——它就是一个 image 节点。
+ *
+ * 这块卡片已经不负责摆姿势了：17 个关节的三轴滑杆搬进了全屏导演台面板
+ * （`pose-stage-panel.tsx`）。卡片只留四样东西——能看见整台戏的预览、当前
+ * 机位、一个打开全屏编辑的入口、以及导出当前机位快照。原因很直接：320×520
+ * 的卡片里塞 51 个滑杆时，预览被挤成一条缝，用户看不到自己摆的是什么。
+ *
+ * 样式全部复用 `canvas-workspace.module.css` 里既有的 `.pose*` 类；只有
+ * 「预览改成非正方形、吃掉剩余高度」这一处用内联 style——它是一条几何覆盖，
+ * 不值得为它新增一个只在两个类之间差一个 aspect-ratio 的类名。
  *
  * 这里只接 props、回回调，不读画布 document、不发请求。撤销/重做、自动保存、
  * 多窗口版本检查因此都看不见它。
  */
 
-import { useCallback, useEffect, useRef, useState } from 'react'
-import type { CanvasAssetRef, CanvasNode } from '../../protocol.ts'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import type { CanvasAssetRef, CanvasNode, CanvasPoseStage } from '../../protocol.ts'
 import { tt } from '../helpers.ts'
 import type { ImageGenKey } from '../locales.ts'
 import { ToolbarIcon } from './dock-controls.tsx'
 import type { ImageGenApi } from '../api.ts'
-import {
-  DEFAULT_CAMERA, POSE_JOINT_GROUPS, POSE_PRESETS, drawPose, emptyRig, frameCamera,
-  type PoseAngles, type PoseCamera, type PoseJoint, type PoseRig,
-} from './pose-rig.ts'
+import { DEFAULT_CAMERA, POSE_PRESETS, emptyRig, type PoseCamera, type PoseRig } from './pose-rig.ts'
+import { renderSceneToCanvas } from './pose-scene-render.ts'
+import { currentCamera, stageOf } from './pose-stage.ts'
 import { POSE_EXPORT_SIZE, POSE_NODE_SIZE } from './constants.ts'
 import css from '../canvas-workspace.module.css'
 
-/** 一个关节的某一轴改了多少度，收进 [-180, 180]，避免滑杆把角度绕到看不清。 */
-function clampAngle(value: number): number {
-  const wrapped = ((value + 180) % 360 + 360) % 360 - 180
-  return Math.round(wrapped)
-}
-
-/** 从节点 metadata 里读姿势；缺省给一份空骨架，老节点因此照样打得开。 */
+/** 从节点 metadata 里读姿势；缺省给一份空骨架，老节点因此照样打得开。
+ *
+ * 保留这个名字与签名：`node-body.tsx` 与 `CanvasWorkspace.tsx` 都引用它，
+ * 而它现在的含义收窄成「第一个角色的姿势」——`stageOf` 才是完整舞台的入口。 */
 export function poseOf(node: CanvasNode): PoseRig {
   const pose = node.metadata?.pose
   return pose === undefined ? emptyRig() : pose
 }
 
 /**
- * 把姿势画进一个 canvas 元素，按设备像素比放大。
+ * 卡片要画的舞台。
  *
- * 抽出来是因为预览和导出画的是同一张图，只是辅助线开关与尺寸不同；分两份
- * 实现迟早会出现「预览里看着对，导出来不对劲」。
+ * `stageOf` 优先读 `stage`，但这里再用 `rig` 覆盖第一个角色：父组件把改姿
+ * 势的请求写回磁盘之前，`metadata.stage.actors[0].rig` 还是旧值，直接读它
+ * 会让「点了预设、预览没动」。覆盖是安全的——`stagePatch` 的契约就是
+ * `pose` 恒等于 `actors[0].rig`，稳定态下两者本来就相同。
  */
-function paint(canvas: HTMLCanvasElement, rig: PoseRig, size: number, guides: boolean, camera: PoseCamera): void {
-  if (canvas.width !== size || canvas.height !== size) {
-    canvas.width = size
-    canvas.height = size
-  }
-  const ctx = canvas.getContext('2d')
-  if (ctx === null) return
-  ctx.setTransform(1, 0, 0, 1, 0, 0)
-  // 取景在画之前统一算：调用方只关心「从哪个角度看」，不关心站多远。固定距离
-  // 会让蹲姿缩成画面中央一小团、举手被裁掉——这是参考图最不该出现的两种构图。
-  //
-  // 背板固定是 `studio`（近白柔和径向渐变）。人偶是淡蓝灰的，必须配浅底——
-  // 深色底会把体块压成一块发亮的剪影，关节球与骨骼线也就叠在一片黑上。
-  // 导出图用同一块背板，下游模型才拿到与预览一致的明暗关系。
-  drawPose(ctx, rig, { size, guides, background: null, backdrop: 'studio', camera: frameCamera(rig, camera) })
+function stageForCard(node: CanvasNode, rig: PoseRig): CanvasPoseStage {
+  const stage = stageOf(node.metadata)
+  const [first, ...rest] = stage.actors
+  return first === undefined
+    ? stage
+    : { ...stage, actors: [{ ...first, rig }, ...rest] }
 }
 
 export function PoseBoard(props: {
@@ -65,30 +63,71 @@ export function PoseBoard(props: {
   onRigChange: (next: PoseRig) => void
   onAssetChange: (asset: CanvasAssetRef | undefined) => void
   onError: (message: string) => void
+  /** 打开全屏导演台。可选：父组件还没接线时卡片仍可用。 */
+  onOpenStage?: () => void
 }): React.JSX.Element {
   const { node, rig } = props
   const canvasRef = useRef<HTMLCanvasElement>(null)
+  // 拖动预览 = 环绕相机（只转视角，不改舞台数据）。初值取当前机位，
+  // 于是卡片一开始看到的就是用户在机位里摆好的那一个角度。
   const [camera, setCamera] = useState<PoseCamera>(DEFAULT_CAMERA)
-  // 默认选中的关节跟着最近一次编辑的组走，用户切轴时不必每次重挑。
-  const [joint, setJoint] = useState<PoseJoint>('shoulderR')
   const [busy, setBusy] = useState(false)
-  const rigRef = useRef(rig)
-  rigRef.current = rig
+  // 每次渲染都新建舞台对象的话，下面那个 `[repaint, stage, camera]` 的副作用
+  // 会在任何一次父组件重渲染后重画整台戏（离屏画布 + 逐角色距离场）。
+  // 舞台只依赖这两个来源，按它们记忆即可。
+  const stage = useMemo(() => stageForCard(node, rig), [node.metadata, rig])
+  // 离屏正方形画布：预览不是正方形，见 `repaint`。放 ref 里是为了跨帧复用，
+  // 避免每帧 allocate 一张新 canvas。
+  const offscreenRef = useRef<HTMLCanvasElement | null>(null)
+  if (offscreenRef.current === null && typeof document !== 'undefined') {
+    offscreenRef.current = document.createElement('canvas')
+  }
+  const offscreen = offscreenRef.current ?? document.createElement('canvas')
+  const stageRef = useRef(stage)
+  stageRef.current = stage
   const cameraRef = useRef(camera)
   cameraRef.current = camera
-  const callbacks = useRef({ onRigChange: props.onRigChange, onAssetChange: props.onAssetChange, onError: props.onError })
-  callbacks.current = { onRigChange: props.onRigChange, onAssetChange: props.onAssetChange, onError: props.onError }
 
   const repaint = useCallback((): void => {
     const canvas = canvasRef.current
     if (canvas === null) return
-    const box = Math.max(120, Math.round(canvas.clientWidth * (window.devicePixelRatio || 1)))
-    paint(canvas, rigRef.current, box, true, cameraRef.current)
+    const cssWidth = canvas.clientWidth
+    const cssHeight = canvas.clientHeight
+    if (cssWidth < 8 || cssHeight < 8) return
+    const ratio = window.devicePixelRatio || 1
+    // 按设备像素比放大 backing store：卡片在 2x 屏上按 CSS 像素画会明显发糊，
+    // 而场景里的地面网格与细骨骼线正是最先糊掉的东西。
+    const width = Math.max(64, Math.round(cssWidth * ratio))
+    const height = Math.max(64, Math.round(cssHeight * ratio))
+    if (canvas.width !== width || canvas.height !== height) {
+      canvas.width = width
+      canvas.height = height
+    }
+    const context = canvas.getContext('2d')
+    if (context === null) return
+    // `drawScene` 只接受正方形边长（投影以它定焦距、画家算法按中心深度排序，
+    // 宽高比会破坏取景假设）。卡片里的预览不是正方形，所以先画进一张正方形
+    // 的离屏画布，再居中贴到节点画布上，长边方向由天空色续铺。
+    //
+    // 不能直接 `renderSceneToCanvas(canvas, size, …)`：那个函数在尺寸不符时
+    // 会把传入的画布重设成 size×size，于是刚设好的 backing store 与平移一起
+    // 被抹掉，预览会跳成一张贴着左上角的正方形小图。
+    const size = Math.min(width, height)
+    offscreen.width = size
+    offscreen.height = size
+    renderSceneToCanvas(offscreen, size, stageRef.current, { camera: cameraRef.current })
+    context.setTransform(1, 0, 0, 1, 0, 0)
+    // 天空色铺满整块：短边出图在长边方向会留边，节点背景是浅色的，
+    // 透出去就是一圈白边。
+    context.fillStyle = stageRef.current.scene.sky
+    context.fillRect(0, 0, width, height)
+    context.drawImage(offscreen, Math.round((width - size) / 2), Math.round((height - size) / 2))
   }, [])
 
-  useEffect(() => { repaint() }, [repaint, rig, camera])
+  useEffect(() => { repaint() }, [repaint, stage, camera])
 
-  // 尺寸变了要重画：画布靠 clientWidth 定 backing store，缩放画布时它才变。
+  // 尺寸变了要重画：预览按 clientWidth/clientHeight 定 backing store，
+  // 拖动节点边缘、缩放画布时它才变。
   useEffect(() => {
     const canvas = canvasRef.current
     if (canvas === null || typeof ResizeObserver === 'undefined') return
@@ -97,10 +136,11 @@ export function PoseBoard(props: {
     return () => { observer.disconnect() }
   }, [repaint])
 
-  /** 拖动预览 = 环绕相机（只转视角，不改姿势）。 */
   const dragRef = useRef<{ x: number; y: number; yaw: number; pitch: number } | null>(null)
   const onPreviewPointerDown = (event: React.PointerEvent<HTMLDivElement>): void => {
     if (event.button !== 0) return
+    // 不拦下来的话，画布的框选会用同一个 pointerdown 抢走这次手势
+    // （`isBackground` 只看目标是不是背景，卡片本体是节点内容）。
     event.stopPropagation()
     event.currentTarget.setPointerCapture(event.pointerId)
     dragRef.current = { x: event.clientX, y: event.clientY, yaw: camera.yaw, pitch: camera.pitch }
@@ -115,20 +155,11 @@ export function PoseBoard(props: {
   }
   const onPreviewPointerUp = (): void => { dragRef.current = null }
 
-  const patchAngle = (axis: keyof PoseAngles, value: number): void => {
-    const current = rigRef.current.joints[joint] ?? { x: 0, y: 0, z: 0 }
-    const next: PoseRig = {
-      ...rigRef.current,
-      joints: { ...rigRef.current.joints, [joint]: { ...current, [axis]: clampAngle(value) } },
-    }
-    callbacks.current.onRigChange(next)
-  }
-
   /**
-   * 导出：按 POSE_EXPORT_SIZE 画一张不带辅助线的 PNG，上传成普通图片资产。
+   * 导出：按 POSE_EXPORT_SIZE 画一张当前机位的场景快照，上传成普通图片资产。
    *
-   * 辅助线、关节标记、地面网格一律不画——那张图是给模型看的参考图，不是给
-   * 人看的界面。预览与输出分离是这块面板唯一必须做对的事。
+   * 辅助线、关节标记、地面网格的编辑态、视锥一律不画——那张图是给模型看的
+   * 参考图，不是给人看的界面。预览与输出分离是这块面板唯一必须做对的事。
    */
   const exportPng = (): void => {
     if (busy) return
@@ -136,9 +167,9 @@ export function PoseBoard(props: {
     void (async () => {
       try {
         const canvas = document.createElement('canvas')
-        // 导出与预览用同一块浅色背板：人偶的淡蓝灰只有在这种底色上才分得
-        // 出轮廓，铺深底会压成剪影。
-        paint(canvas, rigRef.current, POSE_EXPORT_SIZE, false, cameraRef.current)
+        // 导出用舞台自己的机位，不用预览里那个自由环绕相机：用户要的是
+        // 「机位拍到的那一帧」，而拖动预览只是临时看一眼。
+        renderSceneToCanvas(canvas, POSE_EXPORT_SIZE, stageRef.current)
         const dataUrl = canvas.toDataURL('image/png')
         const asset = await props.api.canvasUpload(dataUrl, POSE_EXPORT_SIZE, POSE_EXPORT_SIZE, { origin: 'upload', originId: `pose-${node.id}` })
         props.onAssetChange(asset)
@@ -150,12 +181,14 @@ export function PoseBoard(props: {
     })()
   }
 
-  const angles = rig.joints[joint] ?? { x: 0, y: 0, z: 0 }
-  const axes = [['x', 'X'], ['y', 'Y'], ['z', 'Z']] as const
+  const cameraIndex = Math.max(1, stage.cameras.findIndex(item => item.id === currentCamera(stage).id) + 1)
 
   return <div className={css.pose} data-canvas-no-zoom="">
     <div
       className={css.posePreview}
+      // 几何覆盖：预览不再是正方形，而是吃掉卡片的剩余高度——矮卡片里
+      // 一个正方形预览会把下面的工具栏与导出按钮挤出去。
+      style={{ aspectRatio: 'auto', flex: '1 1 auto', minHeight: 96 }}
       onPointerDown={onPreviewPointerDown}
       onPointerMove={onPreviewPointerMove}
       onPointerUp={onPreviewPointerUp}
@@ -165,6 +198,23 @@ export function PoseBoard(props: {
       <canvas ref={canvasRef} className={css.poseCanvas} />
     </div>
 
+    <div className={css.poseRow} onPointerDown={event => event.stopPropagation()}>
+      {/* 机位名用内联几何而不是新类名：它只是一段 11px 的次要文字，
+          样式表由另一处统一维护，为一个只差一行字号/颜色的芯片新增类不值得。 */}
+      <span style={{ fontSize: 11, color: 'var(--dsw-alias-label-tertiary)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+        {tt('canvas.stage.cameraN', { index: cameraIndex })}
+      </span>
+      <span className={css.poseSpacer} />
+      <button
+        type="button"
+        className={css.poseAction}
+        disabled={props.onOpenStage === undefined}
+        aria-label={tt('canvas.stage.open')}
+        title={tt('canvas.stage.open')}
+        onClick={() => props.onOpenStage?.()}
+      ><ToolbarIcon name="expand" size={13} />{tt('canvas.stage.title')}</button>
+    </div>
+
     <div className={css.posePresets} onPointerDown={event => event.stopPropagation()} role="group" aria-label={tt('canvas.pose.presets')}>
       {POSE_PRESETS.map(preset => <button
         key={preset.id}
@@ -172,81 +222,18 @@ export function PoseBoard(props: {
         className={css.posePreset}
         aria-label={tt(preset.labelKey as ImageGenKey)}
         title={tt(preset.labelKey as ImageGenKey)}
-        onClick={() => callbacks.current.onRigChange({ ...preset.rig, joints: { ...preset.rig.joints } })}
+        onClick={() => props.onRigChange({ ...preset.rig, joints: { ...preset.rig.joints } })}
       >{tt(preset.labelKey as ImageGenKey)}</button>)}
     </div>
 
-    <div className={css.poseControls} onPointerDown={event => event.stopPropagation()}>
-      <div className={css.poseRow}>
-        <select
-          className={css.poseSelect}
-          value={joint}
-          aria-label={tt('canvas.pose.joint')}
-          onChange={event => setJoint(event.target.value as PoseJoint)}
-        >
-          {POSE_JOINT_GROUPS.map(group => <optgroup key={group.labelKey} label={tt(group.labelKey as ImageGenKey)}>
-            {group.joints.map(item => <option key={item} value={item}>{tt(`canvas.pose.joint.${item}` as ImageGenKey)}</option>)}
-          </optgroup>)}
-        </select>
-        <span className={css.poseSpacer} />
-        <button
-          type="button"
-          className={css.poseAction}
-          disabled={busy}
-          title={tt('canvas.pose.exportHint', { size: POSE_EXPORT_SIZE })}
-          onClick={exportPng}
-        ><ToolbarIcon name="image" size={13} />{busy ? tt('canvas.pose.exporting') : tt('canvas.pose.export')}</button>
-      </div>
-
-      {axes.map(([axis, label]) => <label key={axis} className={css.poseAxis}>
-        <span className={css.poseAxisLabel}>{label}</span>
-        <input
-          type="range"
-          min={-180}
-          max={180}
-          step={1}
-          value={angles[axis]}
-          aria-label={`${tt(`canvas.pose.joint.${joint}` as ImageGenKey)} ${label}`}
-          onChange={event => patchAngle(axis, Number(event.target.value))}
-        />
-        {/* 数字框与滑杆同一状态：滑杆给手感，数字给精度。只给滑杆是这个面板
-            最容易踩的坑——200px 走完 360°，一格 1.8°，用户根本调不到 45°。 */}
-        <input
-          type="number"
-          className={css.poseNumber}
-          min={-180}
-          max={180}
-          step={1}
-          value={angles[axis]}
-          aria-label={`${tt(`canvas.pose.joint.${joint}` as ImageGenKey)} ${label}°`}
-          onChange={event => {
-            const value = Number(event.target.value)
-            if (Number.isFinite(value)) patchAngle(axis, value)
-          }}
-        />
-      </label>)}
-    </div>
-
     <div className={css.poseFoot} onPointerDown={event => event.stopPropagation()}>
-      <label className={css.poseFacing}>
-        <span>{tt('canvas.pose.facing')}</span>
-        <input
-          type="range"
-          min={-180}
-          max={180}
-          step={5}
-          value={rig.facing}
-          aria-label={tt('canvas.pose.facing')}
-          onChange={event => callbacks.current.onRigChange({ ...rigRef.current, facing: Number(event.target.value) })}
-        />
-        <span className={css.poseFacingValue}>{Math.round(rig.facing)}°</span>
-      </label>
       <button
         type="button"
         className={css.poseAction}
-        title={tt('canvas.pose.reset')}
-        onClick={() => callbacks.current.onRigChange(emptyRig())}
-      >{tt('canvas.pose.reset')}</button>
+        disabled={busy}
+        title={tt('canvas.pose.exportHint', { size: POSE_EXPORT_SIZE })}
+        onClick={exportPng}
+      ><ToolbarIcon name="image" size={13} />{busy ? tt('canvas.pose.exporting') : tt('canvas.pose.export')}</button>
     </div>
     <span hidden data-pose-node-size={`${POSE_NODE_SIZE.width}x${POSE_NODE_SIZE.height}`} />
   </div>

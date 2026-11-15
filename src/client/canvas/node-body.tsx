@@ -151,6 +151,8 @@ export interface NodeBodyActions {
   clearBrokenVideo: (nodeId: string) => void
   patchSketchStrokes: (nodeId: string, strokes: CanvasSketchStroke[]) => void
   patchSketchAsset: (nodeId: string, asset: CanvasAssetRef | undefined) => void
+  /** 打开该节点的全屏导演台。父组件负责选中与挂载面板。 */
+  openStage: (nodeId: string) => void
   /** 画布的错误横幅：节点体自己弹不了提示，所有失败都往这里报。 */
   reportError: (message: string) => void
   setColorPickerNodeId: (nodeId: string | null) => void
@@ -327,6 +329,7 @@ return <>
         rig={S.poseOf(node)}
         onRigChange={next => A.patchNode(node.id, { pose: next })}
         onAssetChange={asset => A.patchSketchAsset(node.id, asset)}
+        onOpenStage={() => A.openStage(node.id)}
         onError={A.reportError}
       />
     : isSketch

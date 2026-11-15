@@ -1,0 +1,625 @@
+/* ------------------------------------------------------------ 导演台面板 ---
+   全屏三栏：左栏排角色与机位、中间正方形视口、右栏调场景。
+   所有颜色都走宿主 token，不写死任何十六进制值——深色主题下才能自动跟随。
+   层次用 --z-scrim / --z-popover-raised 两档，与画布其它浮层同一张 z 表。 */
+
+.root {
+  position: fixed;
+  inset: 0;
+  z-index: var(--z-popover-raised);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  pointer-events: none;
+}
+
+/* scrim 单独一层：它要盖住画布，又要能被点中关闭。 */
+.scrim {
+  position: fixed;
+  inset: 0;
+  z-index: var(--z-scrim);
+  background: color-mix(in srgb, var(--dsw-alias-label-primary) 28%, transparent);
+  pointer-events: auto;
+}
+
+/* 面板本体接近满屏：这是一个「进去干活」的界面，不是对话框。
+   留 2vh/2vw 是给底下的画布一点存在感，也让用户随时想起自己在哪。 */
+.shell {
+  position: relative;
+  z-index: var(--z-popover-raised);
+  width: min(1600px, 96vw);
+  height: min(980px, 94vh);
+  display: flex;
+  align-items: stretch;
+  gap: 0;
+  border-radius: var(--dsw-radius-lg);
+  border: 1px solid var(--dsw-alias-border-l1);
+  background: var(--dsw-alias-bg-layer-1);
+  box-shadow: var(--dsw-shadow-lv3);
+  overflow: hidden;
+  pointer-events: auto;
+}
+
+/* ------------------------------------------------------------- 左栏 */
+
+.sidebar {
+  flex: none;
+  width: 240px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 10px 10px 12px;
+  background: var(--dsw-alias-bg-layer-2);
+  border-inline-end: 1px solid var(--dsw-alias-border-l1);
+  min-width: 0;
+}
+
+.sidebarCollapsed {
+  width: 44px;
+  padding-inline: 6px;
+}
+
+.sideHeader {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 26px;
+}
+
+.sideTitle {
+  flex: 1;
+  min-width: 0;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--dsw-alias-label-primary);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.sidebarCollapsed .sideTitle { display: none; }
+
+.iconButton {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  padding: 0;
+  border: none;
+  border-radius: var(--dsw-radius-sm);
+  background: transparent;
+  color: var(--dsw-alias-label-secondary);
+  cursor: pointer;
+}
+
+.iconButton:hover {
+  background: var(--dsw-alias-bg-layer-3);
+  color: var(--dsw-alias-label-primary);
+}
+
+.sideSection {
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--dsw-alias-label-tertiary);
+  padding-inline: 2px;
+}
+
+.search { min-width: 0; }
+
+.searchInput {
+  width: 100%;
+  height: 28px;
+  padding: 0 8px;
+  border: none;
+  border-radius: var(--dsw-radius-sm);
+  background: var(--dsw-alias-bg-layer-3);
+  color: var(--dsw-alias-label-primary);
+  font-size: 11px;
+  box-sizing: border-box;
+}
+
+.searchInput::placeholder { color: var(--dsw-alias-label-tertiary); }
+
+.searchInput:focus-visible {
+  outline: 2px solid var(--dsw-alias-brand-primary);
+  outline-offset: -1px;
+}
+
+/* 列表自己滚：角色一多不能让左栏长到吃掉整块面板。 */
+.list {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  overflow-y: auto;
+  overflow-x: hidden;
+}
+
+.row {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  min-width: 0;
+  height: 28px;
+  padding: 0 5px;
+  border-radius: var(--dsw-radius-sm);
+  color: var(--dsw-alias-label-secondary);
+  font-size: 11px;
+  cursor: pointer;
+}
+
+.row:hover { background: var(--dsw-alias-bg-layer-3); }
+
+.rowActive {
+  background: color-mix(in srgb, var(--dsw-alias-brand-primary) 12%, transparent);
+  color: var(--dsw-alias-label-primary);
+}
+
+.rowIcon {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  color: var(--dsw-alias-label-tertiary);
+}
+
+.rowName {
+  flex: 1;
+  min-width: 0;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* 删除键：默认不显形，hover 或键盘聚焦时才出现——一个常驻的红叉会让
+   「点一下切过去」变成一件需要瞄准的事。 */
+.rowDelete {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 20px;
+  height: 20px;
+  padding: 0;
+  border: none;
+  border-radius: var(--dsw-radius-sm);
+  background: transparent;
+  color: var(--dsw-alias-label-tertiary);
+  opacity: 0;
+  cursor: pointer;
+}
+
+.row:hover .rowDelete,
+.rowDelete:focus-visible { opacity: 1; }
+
+.rowDelete:hover:not(:disabled) { color: var(--dsw-alias-state-error-primary); }
+.rowDelete:disabled { opacity: 0; cursor: default; }
+
+.empty {
+  margin: 4px 2px;
+  font-size: 11px;
+  color: var(--dsw-alias-label-tertiary);
+}
+
+.sideActions {
+  flex: none;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.sideButton {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 5px;
+  height: 26px;
+  padding: 0 8px;
+  border: 1px dashed var(--dsw-alias-border-l1);
+  border-radius: var(--dsw-radius-sm);
+  background: transparent;
+  color: var(--dsw-alias-label-secondary);
+  font-size: 11px;
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+.sideButton:hover {
+  background: var(--dsw-alias-bg-layer-3);
+  color: var(--dsw-alias-label-primary);
+}
+
+/* ------------------------------------------------------------- 中间 */
+
+.stage {
+  flex: 1;
+  min-width: 320px;
+  display: flex;
+  flex-direction: column;
+  position: relative;
+  background: var(--dsw-alias-bg-layer-1);
+  overflow: hidden;
+}
+
+.stageTop {
+  position: absolute;
+  top: 10px;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: var(--z-content-raised);
+}
+
+.segmented {
+  display: inline-flex;
+  gap: 2px;
+  padding: 2px;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--dsw-alias-bg-layer-1) 78%, transparent);
+  border: 1px solid var(--dsw-alias-border-l1);
+}
+
+.segment {
+  height: 24px;
+  padding: 0 12px;
+  border: none;
+  border-radius: 999px;
+  background: transparent;
+  color: var(--dsw-alias-label-secondary);
+  font-size: 11px;
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+.segment[aria-pressed='true'] {
+  background: var(--dsw-alias-brand-primary);
+  color: var(--dsw-alias-label-primary-foreground, var(--dsw-alias-bg-layer-1));
+}
+
+.axisCorner {
+  position: absolute;
+  top: 10px;
+  right: 12px;
+  z-index: var(--z-content-raised);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+}
+
+/* 轴示意：三个字母点，不画真 3D 罗盘——用户要的是「我知道哪边是 X」，
+   一个会随视角转的罗盘反而要多一次读图。 */
+.axisDial {
+  position: relative;
+  width: 44px;
+  height: 44px;
+  border-radius: 50%;
+  background: color-mix(in srgb, var(--dsw-alias-bg-layer-1) 72%, transparent);
+  border: 1px solid var(--dsw-alias-border-l1);
+  /* 10px 是宿主字号档位的最小一档（9px 不在档位上，native-UI 契约会拦）。
+     罗盘里的 X/Y/Z 是单字符，10px 在一个 44px 的圆里仍然读得清。 */
+  font-size: 10px;
+  font-weight: 600;
+}
+
+.axisDotX,
+.axisDotY,
+.axisDotZ {
+  position: absolute;
+  line-height: 1;
+}
+.axisDotY { top: 5px; left: 50%; transform: translateX(-50%); color: var(--dsw-static-green-400, var(--dsw-alias-label-primary)); }
+.axisDotX { right: 6px; bottom: 7px; color: var(--dsw-static-red-400, var(--dsw-alias-label-primary)); }
+.axisDotZ { left: 7px; bottom: 7px; color: var(--dsw-static-blue-400, var(--dsw-alias-label-primary)); }
+
+.resetButton {
+  height: 22px;
+  padding: 0 8px;
+  border: 1px solid var(--dsw-alias-border-l1);
+  border-radius: var(--dsw-radius-sm);
+  background: color-mix(in srgb, var(--dsw-alias-bg-layer-1) 76%, transparent);
+  color: var(--dsw-alias-label-secondary);
+  font-size: 10px;
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+.resetButton:hover { color: var(--dsw-alias-label-primary); }
+
+/* 视口：正方形居中。拉伸会把地面网格与人形一起拉扁，用户会照着它判断站位。 */
+.viewport {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  overflow: hidden;
+}
+
+.stageCanvas {
+  display: block;
+  touch-action: none;
+  cursor: grab;
+}
+
+.stageCanvas:active { cursor: grabbing; }
+
+.stageBottom {
+  position: absolute;
+  left: 50%;
+  bottom: 12px;
+  transform: translateX(-50%);
+  z-index: var(--z-content-raised);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+  width: min(460px, calc(100% - 24px));
+}
+
+.toolRow {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 3px;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--dsw-alias-bg-layer-2) 86%, transparent);
+  border: 1px solid var(--dsw-alias-border-l1);
+}
+
+.toolButton {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  height: 26px;
+  padding: 0 9px;
+  border: none;
+  border-radius: 999px;
+  background: transparent;
+  color: var(--dsw-alias-label-secondary);
+  font-size: 11px;
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+.toolButton:hover:not(:disabled) { color: var(--dsw-alias-label-primary); }
+
+.toolButton[aria-pressed='true'] {
+  background: var(--dsw-alias-bg-layer-3);
+  color: var(--dsw-alias-label-primary);
+}
+
+.toolButton:disabled { opacity: 0.5; cursor: default; }
+
+/* 底部一句话：和画布 composer 同一视觉语言（圆角药丸 + 右侧发送）。 */
+.prompt {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  width: 100%;
+  padding: 4px 4px 4px 12px;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--dsw-alias-bg-layer-2) 92%, transparent);
+  border: 1px solid var(--dsw-alias-border-l1);
+}
+
+.promptInput {
+  flex: 1;
+  min-width: 0;
+  height: 26px;
+  border: none;
+  background: transparent;
+  color: var(--dsw-alias-label-primary);
+  font-size: 11px;
+  outline: none;
+}
+
+.promptInput::placeholder { color: var(--dsw-alias-label-tertiary); }
+
+.promptSend {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 26px;
+  height: 26px;
+  padding: 0;
+  border: none;
+  border-radius: 50%;
+  background: var(--dsw-alias-bg-layer-3);
+  color: var(--dsw-alias-label-secondary);
+  cursor: pointer;
+}
+
+.promptSend:hover:not(:disabled) { color: var(--dsw-alias-label-primary); }
+.promptSend:disabled { opacity: 0.4; cursor: default; }
+
+/* ------------------------------------------------------------- 右栏 */
+
+.inspector {
+  flex: none;
+  width: 300px;
+  display: flex;
+  flex-direction: column;
+  overflow-y: auto;
+  overflow-x: hidden;
+  background: var(--dsw-alias-bg-layer-2);
+  border-inline-start: 1px solid var(--dsw-alias-border-l1);
+}
+
+.section {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 12px;
+  border-bottom: 1px solid var(--dsw-alias-border-l1);
+}
+
+.section:last-child { border-bottom: none; }
+
+.sectionTitle {
+  margin: 0;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--dsw-alias-label-primary);
+}
+
+.field {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 0;
+}
+
+.fieldLabel {
+  font-size: 11px;
+  color: var(--dsw-alias-label-tertiary);
+}
+
+.fieldRow {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+}
+
+/* 滑杆统一用宿主唯一的强调色。按轴分色会让面板看着不像原生控件（有反向测试盯这条）。 */
+.slider {
+  flex: 1;
+  min-width: 0;
+  height: 14px;
+  margin: 0;
+  accent-color: var(--dsw-alias-brand-primary);
+  cursor: pointer;
+}
+
+.number {
+  flex: none;
+  width: 62px;
+  height: 24px;
+  padding: 0 6px;
+  border: none;
+  border-radius: var(--dsw-radius-sm);
+  background: var(--dsw-alias-bg-layer-3);
+  color: var(--dsw-alias-label-primary);
+  font-size: 11px;
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+  box-sizing: border-box;
+}
+
+.number:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+
+.number::-webkit-outer-spin-button,
+.number::-webkit-inner-spin-button { appearance: none; margin: 0; }
+
+.value {
+  flex: none;
+  width: 40px;
+  text-align: right;
+  font-size: 11px;
+  color: var(--dsw-alias-label-secondary);
+  font-variant-numeric: tabular-nums;
+}
+
+/* 三格 X/Y/Z：每格是「轴字母 + 数字框」，与 LibTV 的排列一致。 */
+.triple {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 4px;
+}
+
+.tripleCell {
+  display: flex;
+  align-items: center;
+  gap: 3px;
+  min-width: 0;
+  font-size: 10px;
+  color: var(--dsw-alias-label-tertiary);
+}
+
+.tripleCell .number { width: 100%; min-width: 0; }
+
+.panoConnected {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 11px;
+  color: var(--dsw-alias-label-secondary);
+}
+
+.panoThumb {
+  flex: none;
+  width: 40px;
+  height: 40px;
+  border-radius: var(--dsw-radius-sm);
+  object-fit: cover;
+  background: var(--dsw-alias-bg-layer-3);
+}
+
+/* 未连接时是一块虚线占位：它说明「这里可以接东西」，而不是「这里坏了」。 */
+.panoEmpty {
+  margin: 0;
+  padding: 10px;
+  border: 1px dashed var(--dsw-alias-border-l1);
+  border-radius: var(--dsw-radius-md);
+  font-size: 11px;
+  line-height: 1.5;
+  color: var(--dsw-alias-label-tertiary);
+}
+
+.colorInput {
+  flex: none;
+  width: 40px;
+  height: 26px;
+  padding: 2px;
+  border: 1px solid var(--dsw-alias-border-l1);
+  border-radius: var(--dsw-radius-sm);
+  background: var(--dsw-alias-bg-layer-3);
+  cursor: pointer;
+}
+
+.colorText,
+.textInput {
+  flex: 1;
+  min-width: 0;
+  height: 26px;
+  padding: 0 8px;
+  border: none;
+  border-radius: var(--dsw-radius-sm);
+  background: var(--dsw-alias-bg-layer-3);
+  color: var(--dsw-alias-label-primary);
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+  box-sizing: border-box;
+}
+
+.textInput { flex: none; width: 100%; }
+
+.toggleRow {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  min-width: 0;
+}
+
+.checkbox {
+  flex: none;
+  width: 15px;
+  height: 15px;
+  margin: 0;
+  accent-color: var(--dsw-alias-brand-primary);
+  cursor: pointer;
+}
+
+/* 窄屏（<1100px）：右栏先让出 40px，中间视口至少还有 320px。
+   收窄而不是堆叠——一个竖着排的三栏面板会让视口变成一条缝。 */
+@media (max-width: 1100px) {
+  .inspector { width: 260px; }
+  .sidebar { width: 210px; }
+}
