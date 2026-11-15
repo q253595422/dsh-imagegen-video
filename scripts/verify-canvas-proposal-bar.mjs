@@ -128,6 +128,17 @@ const launched = await launchChrome({ chrome: CHROME, name: 'dsh-canvas-proposal
 const session = await openPage(launched.port, `http://127.0.0.1:${serverPort}/`)
 const { send, evaluate } = session
 
+// `openPage` 把 target 建出来就返回，不等导航完成。本地静态页通常已经就绪，
+// 但 CI 上（并行跑整条测试链时尤甚）会抢在 DOM 建好之前求值，
+// `document.getElementById(...)` 拿到 null，报的却是「Cannot read properties
+// of null」——看起来像夹具坏了，其实是竞态。与 `verify-ui-contracts` 同一修法：
+// 轮询就绪而不是睡一个固定值，后者在这台机器上过、在慢机器上一样会红。
+for (let attempt = 0; attempt < 100; attempt += 1) {
+  if (await evaluate(`document.readyState === 'complete' && document.getElementById('canvas') !== null`)) break
+  if (attempt === 99) throw new Error('the proposal-bar fixture never finished rendering')
+  await new Promise(resolve => setTimeout(resolve, 50))
+}
+
 // 类名先对一遍真实组件源码：组件改了类名而这里没改，量测就在量一个不存在的
 // 结构，量出来的「通过」毫无意义。
 assertFixtureClasses({
