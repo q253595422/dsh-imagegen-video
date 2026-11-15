@@ -484,6 +484,25 @@ check('F19 omitting x/y puts the node in a new column instead of stacking at the
   assert.equal(c.y, 250)
 })
 
+check('F20 the size arguments the node builder honours are declared in the schema', async () => {
+  // `createNode` 一直在读 `width` / `height`，但 `add_canvas_node` 的 schema 里
+  // 没有它们。这不是「能不能用」的问题——传了确实生效——而是模型只能靠猜。
+  // 声明与实现的这一处偏差，测的是「模型读得到的契约」与「代码真正接受的
+  // 参数」是同一份。
+  const registered = new Map()
+  registerAgentCanvasTools({ tools: { register (definition) { registered.set(definition.name, definition); return () => {} } } }, () => ({ enabled: true }))
+  const properties = registered.get('add_canvas_node').parameters.properties
+  assert.equal(properties.width?.type, 'number', 'width is honoured, so it must be declared')
+  assert.equal(properties.height?.type, 'number', 'height is honoured, so it must be declared')
+
+  const created = await registered.get('create_canvas').execute({ title: '尺寸' }, {})
+  const view = await registered.get('add_canvas_node').execute({
+    canvas_id: created.id, type: 'image', title: '宽一点', width: 900, height: 600,
+  }, {})
+  assert.equal(view.nodes[0].width, 900, 'the declared argument actually takes effect')
+  assert.equal(view.nodes[0].height, 600)
+})
+
 check('R5e proposals made back to back come back in the order they were proposed', async () => {
   // 探针实测过的重排：Agent 一次任务连发几条提案，它们常落在同一毫秒里，
   // 而 `scan` 的 tie-break 是 `id.localeCompare`——uuid 是随机的，于是顺序

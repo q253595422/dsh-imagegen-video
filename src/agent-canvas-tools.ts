@@ -647,6 +647,10 @@ export function registerAgentCanvasTools(ctx: Context, config: () => { enabled: 
         text: { type: 'string', description: 'Body text for a text node.' },
         x: { type: 'number', description: 'Canvas x. Defaults to a free spot.' },
         y: { type: 'number', description: 'Canvas y. Defaults to a free spot.' },
+        // `createNode` 一直在读这两个键，但 schema 里没声明——模型无从得知能设，
+        // 而声明与不声明在这里的差别是「猜到的能用」与「文档上写着的能用」。
+        width: { type: 'number', description: 'Node width in canvas units. Defaults per type.' },
+        height: { type: 'number', description: 'Node height in canvas units. Defaults per type.' },
       },
       output: {
         schema: canvasViewSchema,

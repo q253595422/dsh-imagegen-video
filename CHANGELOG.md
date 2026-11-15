@@ -7,6 +7,7 @@ Attribution for third-party code is in [NOTICE](./NOTICE).
 
 ### 未发布
 
+- **`add_canvas_node` 把一直生效的 `width` / `height` 写进了参数表**：`createNode` 从第一天就在读这两个键，传了也确实生效，但 schema 里没声明——模型只能靠猜，猜不到就用默认尺寸。现在补上声明，并用一条断言把「schema 声明的参数」与「代码真正接受的参数」锁在一起，免得下次再漂。反向注入实测：删掉声明 → F20 红。
 - **Agent 加的节点依次排开，不再全叠在原点**：`add_canvas_node` 的说明写着「Omit x/y to place it in a free column to the right of the existing nodes」，实现却把缺省钉成 `0,0`。探针实测：连着加 A、B、C 三个节点，三个坐标都是 `(0,0)`——用户打开画布只看到最上面那一个，还以为 Agent 只加了一个。现在省略 x 就落在「现有节点最右边 + 一个列间距」，间距取画布自己的 `NODE_GAP`（90），模型明确给了坐标则照用、不被覆盖。反向注入实测：去掉自动摆放 → F19 红。
 - **Agent 删掉节点时，分组里不再留下指向它的悬空 id**：用户在画布上把几个节点框成一组，Agent 只认识节点和连线，删掉其中一个之后组里仍留着那个 id——探针实测 `groups[0].nodeIds` 是两个，其中一个已不存在。画布自己删节点走的是 `pruneGroupsField`（去掉悬空成员、清空则整组消失、本来没有 `groups` 字段就继续没有），提案这条接受路径漏了它。现在 `apply` 复用同一个函数，两种删除语义不再各写一套。这一条同时守住老画布：写回时若 `groups` 变成 `undefined` 就删掉这个键，`pruneGroupsField` 的意义正是「1429 份不带 `groups` 的老画布，第一次删节点不该因此长出一个 `groups: []`」。反向注入实测：去掉 `pruneGroupsField` → F17 红；把「没有键」改成「写空数组」→ F17/F18 各自红。
 - **`list_canvases` 带出待确认条数，两个工具的计数对得上了**：`nodeCount` 只数已保存的节点，Agent 刚提议的节点不在里面，而 `read_canvas` 看得到——探针实测 list 说 1 个、read 说 2 个。两个数字打架，模型会以为自己提议失败，于是再提一遍。现在每行多一个 `pending`（复用下拉「待确认」标记的 `countByCanvas`，不为每份画布各扫一遍目录），`nodeCount + pending` 正好等于 `read_canvas` 给出的节点数；渲染成文本时也会写明「N change(s) awaiting the user's accept」。反向注入实测：去掉 `pending` → F16 红。
