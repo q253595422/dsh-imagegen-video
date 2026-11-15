@@ -431,6 +431,18 @@ function rethrowConflict(error: unknown): never {
 }
 
 /**
+ * Validate a config mode that arrived from the model.
+ *
+ * 与下面的 `parseRole` 同一个理由：JSON Schema 的 enum 会挡住拼写错误，但不是
+ * 每条宿主路径都保证按 schema 校验过参数，而把一个未知字符串写进文档，会让
+ * 那份画布在别的机器上变得读不出来。
+ */
+function parseMode(value: string): 'image' | 'video' | 'text' {
+  if (value === 'image' || value === 'video' || value === 'text') return value
+  throw new Error(`Unknown config mode "${value}". Use one of: image, video, text.`)
+}
+
+/**
  * Validate a role that arrived from the model.
  *
  * The JSON Schema enum already rejects typos, but a tool call is not guaranteed
@@ -581,11 +593,7 @@ export function registerAgentCanvasTools(ctx: Context, config: () => { enabled: 
       // `if (metadata.mode === undefined) metadata.mode = 'image'` 恒为真：
       // Agent 造不出视频配置节点，而视频配置正是「往这里连两张图做插帧」的
       // 那个节点。传了就用传的，没传才默认出图。
-      const mode = typeof args.mode === 'string' ? args.mode : 'image'
-      if (mode !== 'image' && mode !== 'video' && mode !== 'text') {
-        throw new Error(`Unknown config mode "${mode}". Use one of: image, video, text.`)
-      }
-      metadata.mode = mode
+      metadata.mode = typeof args.mode === 'string' ? parseMode(args.mode) : 'image'
     }
     return {
       id,
@@ -721,7 +729,7 @@ export function registerAgentCanvasTools(ctx: Context, config: () => { enabled: 
     })),
     ctx.tools.register(defineTool({
       name: 'update_canvas_node',
-      description: 'Change one node\'s title, prompt, model, plain text or position. Only the fields you pass are touched.',
+      description: 'Change one node\'s title, prompt, model, plain text, position, size, or (config nodes only) what pressing run should produce. Only the fields you pass are touched.',
       parameters: {
         canvas_id: { type: 'string', required: true, description: 'Canvas id.' },
         node_id: { type: 'string', required: true, description: 'Node id from read_canvas.' },
@@ -731,6 +739,13 @@ export function registerAgentCanvasTools(ctx: Context, config: () => { enabled: 
         text: { type: 'string', description: 'New body text (text nodes).' },
         x: { type: 'number', description: 'New x position.' },
         y: { type: 'number', description: 'New y position.' },
+        // 与 `add_canvas_node` 对齐：它三个都收，这里原先一个都不收，于是
+        // 「加的时候选错了」只能删了重建——而重建会换掉节点 id、坐标和已经
+        // 连好的线。探针实测：update 传 mode/width/height 全部被静默忽略，
+        // 工具还回一句「This call changed nothing」。
+        width: { type: 'number', description: 'New node width in canvas units.' },
+        height: { type: 'number', description: 'New node height in canvas units.' },
+        mode: { type: 'string', enum: ['image', 'video', 'text'], description: 'config nodes only: what pressing run should produce.' },
       },
       output: {
         schema: canvasViewSchema,
@@ -744,10 +759,18 @@ export function registerAgentCanvasTools(ctx: Context, config: () => { enabled: 
           if (typeof args.title === 'string') node.title = args.title
           if (typeof args.x === 'number') node.x = args.x
           if (typeof args.y === 'number') node.y = args.y
+          if (typeof args.width === 'number') node.width = args.width
+          if (typeof args.height === 'number') node.height = args.height
           const metadata: CanvasNodeMetadata = { ...node.metadata }
           if (typeof args.prompt === 'string') metadata.prompt = args.prompt
           if (typeof args.model === 'string') metadata.model = args.model
           if (typeof args.text === 'string') metadata.text = args.text
+          // `mode` 只对 config 有意义。静默写到别的类型上是让文档里长出一个
+          // 谁也不读的键；直说更省事，模型也不会以为自己改成了。
+          if (typeof args.mode === 'string') {
+            if (node.type !== 'config') throw new Error(`Node ${node.id} is a ${node.type} node; only config nodes carry a mode.`)
+            metadata.mode = parseMode(args.mode)
+          }
           if (Object.keys(metadata).length > 0) node.metadata = metadata
         })
       },

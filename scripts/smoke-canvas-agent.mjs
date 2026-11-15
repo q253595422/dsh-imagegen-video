@@ -789,6 +789,52 @@ check('F22 a proposal the user outran blocks writes but never makes read_canvas 
   )
 })
 
+check('F23 update_canvas_node changes the config mode and the node size in place', async () => {
+  // 加的时候选错了只能删了重建吗？不该——重建会换掉节点 id、坐标和连好的线，
+  // 而这三样正是用户已经在画布上看过、调整过的东西。探针实测过：update 传
+  // mode/width/height 全被静默忽略，工具还回「This call changed nothing」。
+  const stub = stubContext()
+  registerAgentCanvasTools(stub.ctx, enabledConfig)
+  const created = await stub.registered.get('create_canvas').execute({ title: '改模式' }, {})
+  let view = await stub.registered.get('add_canvas_node').execute({ canvas_id: created.id, type: 'config', title: '出图', prompt: '海边' }, {})
+  const cfg = view.nodes.find(node => node.title === '出图').id
+  view = await stub.registered.get('add_canvas_node').execute({ canvas_id: created.id, type: 'image', title: '素材' }, {})
+  const img = view.nodes.find(node => node.title === '素材').id
+  await stub.registered.get('connect_canvas_nodes').execute({ canvas_id: created.id, from_node_id: img, to_node_id: cfg }, {})
+
+  const before = view.nodes.find(node => node.id === cfg)
+  assert.equal(before.mode, 'image', 'a config node defaults to producing images')
+
+  const updated = await stub.registered.get('update_canvas_node').execute(
+    { canvas_id: created.id, node_id: cfg, mode: 'video', width: 520, height: 400 }, {})
+  const after = updated.nodes.find(node => node.id === cfg)
+  assert.equal(after.mode, 'video', 'the config node now produces video')
+  assert.equal(after.width, 520)
+  assert.equal(after.height, 400)
+  assert.ok(updated.proposalId, 'the change is a proposal, not a silent write')
+  assert.equal(after.id, cfg, 'the node keeps its id, so the wires the user already has still land on it')
+  assert.ok(updated.connections.some(edge => edge.to === cfg), 'the existing wire survives the edit')
+
+  // mode 只属于 config：写到图片节点上要直说，而不是长出一个谁也不读的键。
+  await assert.rejects(
+    () => stub.registered.get('update_canvas_node').execute({ canvas_id: created.id, node_id: img, mode: 'video' }, {}),
+    /only config nodes carry a mode/i,
+  )
+
+  // 非法值在这里也要挡住。宿主会先按 schema 的 enum 拒掉（`ToolArgsError`），
+  // 所以断言的是「有东西挡住了」而不是某一句文案——措辞归宿主管，会变。
+  // 工具内的 `parseMode` 是给不走 schema 的调用路径（例如以后新增的批量入口）
+  // 兜底的，这几句测试打不到它，也就不假装打到了。
+  await assert.rejects(
+    () => stub.registered.get('update_canvas_node').execute({ canvas_id: created.id, node_id: cfg, mode: 'gif' }, {}),
+    /gif|one of|invalid/i,
+  )
+  await assert.rejects(
+    () => stub.registered.get('add_canvas_node').execute({ canvas_id: created.id, type: 'config', title: 'x', mode: 'gif' }, {}),
+    /gif|one of|invalid/i,
+  )
+})
+
 check('F6 the auto-apply escape hatch is not reachable from a tool argument', async () => {
   const stub = stubContext()
   registerAgentCanvasTools(stub.ctx, enabledConfig)
