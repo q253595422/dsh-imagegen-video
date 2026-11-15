@@ -411,6 +411,56 @@ check('R5h a connection patch naming a role this build does not know is skipped 
   assert.equal(listed.proposals[0].id, proposalId, 'only the healthy one is queued')
 })
 
+check('F17 removing a node also drops it from any group it belonged to', async () => {
+  // 用户在画布上把几个节点框成一组，Agent 只认识节点与连线，删掉其中一个后
+  // 组里就留下指向不存在节点的 id。探针实测过：`groups[0].nodeIds` 仍是
+  // 两个 id，其中一个是死的。画布自己删节点走 `pruneGroupsField`，提案这条
+  // 路径漏了它。
+  const registered = new Map()
+  registerAgentCanvasTools({ tools: { register (definition) { registered.set(definition.name, definition); return () => {} } } }, () => ({ enabled: true }))
+  const created = await registered.get('create_canvas').execute({ title: '分组' }, {})
+  for (const title of ['A', 'B']) {
+    const view = await registered.get('add_canvas_node').execute({ canvas_id: created.id, type: 'image', title }, {})
+    await proposalStore.acceptOne(created.id, view.proposalId)
+  }
+  const seeded = await canvasStore.read(created.id)
+  const ids = seeded.nodes.map(node => node.id)
+  await canvasStore.save({
+    ...seeded,
+    groups: [{ id: 'g1', title: '镜头一', nodeIds: ids }],
+  }, seeded.revision)
+
+  const removed = await registered.get('remove_canvas_node').execute({ canvas_id: created.id, node_id: ids[0] }, {})
+  assert.equal((await proposalStore.acceptOne(created.id, removed.proposalId)).ok, true)
+
+  const after = await canvasStore.read(created.id)
+  assert.deepEqual(after.groups?.[0]?.nodeIds, [ids[1]], 'the deleted node is gone from the group')
+
+  // 组里最后一个成员也删掉时，整个组该消失（`pruneGroups` 的语义），而不是
+  // 留下一个零成员的框。
+  const last = await registered.get('remove_canvas_node').execute({ canvas_id: created.id, node_id: ids[1] }, {})
+  await proposalStore.acceptOne(created.id, last.proposalId)
+  assert.equal((await canvasStore.read(created.id)).groups, undefined, 'an emptied group leaves no field behind')
+})
+
+check('F18 pruning groups never invents the field on a canvas that never had one', async () => {
+  // 1429 份老画布都没有 `groups` 字段。第一次删节点就写出一个 `groups: []`
+  // 等于改写了每一份用户文档——这与 `withRole(x, 'input')` 删字段同一策略。
+  const registered = new Map()
+  registerAgentCanvasTools({ tools: { register (definition) { registered.set(definition.name, definition); return () => {} } } }, () => ({ enabled: true }))
+  const created = await registered.get('create_canvas').execute({ title: '没分组' }, {})
+  const added = await registered.get('add_canvas_node').execute({ canvas_id: created.id, type: 'image', title: 'A' }, {})
+  await proposalStore.acceptOne(created.id, added.proposalId)
+  const nodeId = (await canvasStore.read(created.id)).nodes[0].id
+  assert.equal((await canvasStore.read(created.id)).groups, undefined)
+
+  const removed = await registered.get('remove_canvas_node').execute({ canvas_id: created.id, node_id: nodeId }, {})
+  await proposalStore.acceptOne(created.id, removed.proposalId)
+  const after = await canvasStore.read(created.id)
+  assert.equal(after.groups, undefined, 'no groups key appeared')
+  assert.equal(Object.hasOwn(after, 'groups'), false, 'nor a key holding undefined')
+})
+
 check('R5e proposals made back to back come back in the order they were proposed', async () => {
   // 探针实测过的重排：Agent 一次任务连发几条提案，它们常落在同一毫秒里，
   // 而 `scan` 的 tie-break 是 `id.localeCompare`——uuid 是随机的，于是顺序

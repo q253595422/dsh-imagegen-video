@@ -37,6 +37,7 @@ import path from 'node:path'
 import type { CanvasDocument, CanvasNode, CanvasProposal, CanvasProposalChange, CanvasProposalNodeUpdate } from './protocol.ts'
 import { canvasStore, CanvasConflictError, coerceDocument, readJson, safeId, writeJsonAtomic, type CanvasStore } from './canvas-store.ts'
 import { CONNECTION_ROLES, roleOf, withRole } from './client/canvas/connection-role.ts'
+import { pruneGroupsField } from './client/canvas/group-model.ts'
 import { imageDataRoot } from './image-storage-path.ts'
 
 // 供同包内其他模块从存储层导入类型；客户端仍从 protocol.ts 拿。
@@ -286,13 +287,26 @@ export class ProposalStore {
     if (removed.size > 0) {
       connections = connections.filter(edge => !removed.has(edge.fromNodeId) && !removed.has(edge.toNodeId))
     }
+    // 分组同理：用户在画布上把几个节点框成一组，Agent 删掉其中一个，组里就会
+    // 留下一个指向不存在节点的 id。画布自己删节点时走的是 `pruneGroupsField`
+    // （去掉悬空成员、清空则整个组消失、没有 groups 字段时保持没有），提案这
+    // 条路径漏了它——探针实测删完节点后 `groups[0].nodeIds` 仍指着那个 id。
+    // 复用同一个函数，两种删除语义不各写一套。
+    const groups = removed.size === 0
+      ? document.groups
+      : pruneGroupsField(document.groups, new Set(kept.map(node => node.id)))
 
-    return {
+    const next: CanvasDocument = {
       ...document,
       ...change.title === undefined ? {} : { title: change.title },
       nodes: kept,
       connections,
     }
+    // 「没有 groups 字段」必须继续是没有：1429 份老画布都不带它，写回一个
+    // `groups: []` 等于 Agent 第一次删节点就改写了它们的形态。
+    if (groups === undefined) delete next.groups
+    else next.groups = groups
+    return next
   }
 }
 
