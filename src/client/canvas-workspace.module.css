@@ -3548,6 +3548,195 @@
   background: color-mix(in srgb, var(--dsw-alias-state-warn-primary) 14%, transparent);
 }
 
+/* ---------------------------------------------------------- 姿势节点 ---
+   姿势节点是一块人偶预览 + 预设条 + 关节滑杆。卡片外观沿用 `.node`；
+   内部按「方形预览 → 预设条 → 关节控件 → 底部朝向」纵向排，每段都不滚动，
+   因为滑杆行一旦跟着换行变高，节点高度就会跳。 */
+
+.poseNode { cursor: default; }
+
+.pose {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 0 10px 8px;
+}
+
+/* 预览：正方形、可拖动环绕。cursor 明示「这里能转视角」。 */
+.posePreview {
+  flex: none;
+  aspect-ratio: 1;
+  border-radius: var(--dsw-radius-md);
+  background: var(--dsw-alias-bg-layer-2);
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--dsw-alias-label-primary) 12%, transparent);
+  cursor: grab;
+  touch-action: none;
+  overflow: hidden;
+}
+
+.posePreview:active { cursor: grabbing; }
+
+.poseCanvas {
+  width: 100%;
+  height: 100%;
+  display: block;
+}
+
+/* 预设条：横向滚动，不换行——换行会把下面的控件整体推下去。 */
+.posePresets {
+  flex: none;
+  display: flex;
+  gap: 4px;
+  overflow-x: auto;
+  scrollbar-width: none;
+  padding: 1px 0;
+}
+
+.posePresets::-webkit-scrollbar { display: none; }
+
+.posePreset {
+  flex: none;
+  height: 22px;
+  padding: 0 8px;
+  border: none;
+  border-radius: 999px;
+  background: var(--dsw-alias-bg-layer-2);
+  color: var(--dsw-alias-label-secondary);
+  font-size: 11px;
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+.posePreset:hover {
+  background: var(--dsw-alias-bg-layer-3);
+  color: var(--dsw-alias-label-primary);
+}
+
+.poseControls {
+  flex: none;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+
+.poseRow {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.poseSpacer { flex: 1; }
+
+.poseSelect {
+  flex: 1;
+  min-width: 0;
+  height: 24px;
+  padding: 0 6px;
+  border: none;
+  border-radius: var(--dsw-radius-sm);
+  background: var(--dsw-alias-bg-layer-2);
+  color: var(--dsw-alias-label-primary);
+  font-size: 11px;
+}
+
+/* 一行 = 轴标记 + 滑杆 + 数字框。数字框定宽，滑杆吃掉剩余宽度：
+   只有滑杆时 360° 摊在 200px 上，用户调不到精确角度。 */
+.poseAxis {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 10px;
+}
+
+.poseAxisLabel {
+  flex: none;
+  width: 10px;
+  font-weight: 600;
+  text-align: center;
+}
+
+.poseAxis input[type='range'] {
+  flex: 1;
+  min-width: 0;
+  height: 14px;
+  margin: 0;
+  accent-color: currentColor;
+  cursor: pointer;
+}
+
+.poseNumber {
+  flex: none;
+  width: 46px;
+  height: 20px;
+  padding: 0 4px;
+  border: none;
+  border-radius: var(--dsw-radius-sm);
+  background: var(--dsw-alias-bg-layer-2);
+  color: var(--dsw-alias-label-primary);
+  font-size: 10px;
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+
+.poseNumber::-webkit-outer-spin-button,
+.poseNumber::-webkit-inner-spin-button { appearance: none; margin: 0; }
+
+.poseFoot {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.poseFacing {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 10px;
+  color: var(--dsw-alias-label-tertiary);
+}
+
+.poseFacing input[type='range'] {
+  flex: 1;
+  min-width: 0;
+  height: 14px;
+  margin: 0;
+  cursor: pointer;
+}
+
+.poseFacingValue {
+  flex: none;
+  width: 34px;
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+
+.poseAction {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  height: 24px;
+  padding: 0 8px;
+  border: none;
+  border-radius: var(--dsw-radius-sm);
+  background: var(--dsw-alias-bg-layer-2);
+  color: var(--dsw-alias-label-secondary);
+  font-size: 11px;
+  cursor: pointer;
+}
+
+.poseAction:hover:not(:disabled) {
+  background: var(--dsw-alias-bg-layer-3);
+  color: var(--dsw-alias-label-primary);
+}
+
+.poseAction:disabled { opacity: 0.5; cursor: default; }
+
 /* ---------------------------------------------------------- 分镜节点 ---
    分镜节点是一张镜头清单：每一镜产出的都是一个普通视频节点，这里只负责编排。
    卡片外观（背景 / 边框 / 圆角 / 阴影）全部沿用 `.node`，这里不再另起一套视觉语言；

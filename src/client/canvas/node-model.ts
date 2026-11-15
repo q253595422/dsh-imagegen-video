@@ -141,6 +141,12 @@ export function isSketchNode(node: CanvasNode): boolean {
   return node.type === 'image' && nodeMetadata(node).sketch !== undefined
 }
 
+/** 姿势人偶节点。与草图板一样是 image 节点的一种「带活数据」的形态：有
+ *  `pose` 就画人偶，导出后 `asset` 就是它成为普通参考图的方式。 */
+export function isPoseNode(node: CanvasNode): boolean {
+  return node.type === 'image' && nodeMetadata(node).pose !== undefined
+}
+
 /** Letterboxed rect of an `object-fit: contain` image inside its container. */
 export function clamp01(value: number): number {
   return Math.min(1, Math.max(0, value))

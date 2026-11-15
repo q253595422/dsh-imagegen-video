@@ -369,6 +369,41 @@ function isShotOrigin(value: unknown): boolean {
     && typeof origin.index === 'number' && Number.isFinite(origin.index)
 }
 
+/** 姿势人偶的关节名，与 `CanvasPoseJoint` 同步；写成集合是因为这里要的是
+ *  「是不是一个认识的关节」，而不是类型层面的约束。 */
+const POSE_JOINTS = new Set([
+  'hips', 'spine', 'chest', 'neck', 'head',
+  'shoulderL', 'elbowL', 'handL',
+  'shoulderR', 'elbowR', 'handR',
+  'hipL', 'kneeL', 'footL',
+  'hipR', 'kneeR', 'footR',
+])
+
+/**
+ * 姿势人偶的存储形状。
+ *
+ * 只拒绝「有但类型不对」的值：未知的关节名、角度不是有限数、`facing` 不是
+ * 数字。缺项是合法的（渲染时按 0 度处理），因为这次校验失败会让**整份画布
+ * 存不下去**，而不是拒收一次请求。
+ */
+function isPoseRig(value: unknown): boolean {
+  if (value === null || typeof value !== 'object') return false
+  const rig = value as Record<string, unknown>
+  if (rig.facing !== undefined && (typeof rig.facing !== 'number' || !Number.isFinite(rig.facing))) return false
+  if (rig.joints === undefined) return true
+  if (rig.joints === null || typeof rig.joints !== 'object') return false
+  for (const [key, raw] of Object.entries(rig.joints as Record<string, unknown>)) {
+    if (!POSE_JOINTS.has(key)) return false
+    if (raw === null || typeof raw !== 'object') return false
+    for (const axis of ['x', 'y', 'z']) {
+      const angle = (raw as Record<string, unknown>)[axis]
+      if (angle === undefined) continue
+      if (typeof angle !== 'number' || !Number.isFinite(angle)) return false
+    }
+  }
+  return true
+}
+
 function isNode(value: unknown): value is CanvasNode {
   if (value === null || typeof value !== 'object') return false
   const node = value as Record<string, unknown>
@@ -399,6 +434,10 @@ function isNode(value: unknown): value is CanvasNode {
       if (cast.role !== 'character' && cast.role !== 'item' && cast.role !== 'style') return false
       if (cast.name !== undefined && typeof cast.name !== 'string') return false
     }
+    // 姿势人偶：与分镜同一个取舍——只拒绝「有但类型不对」的值，缺项一律当作
+    // 空姿势。校验器在这里过严的代价不是「拒收这次请求」，而是**这份文档再也
+    // 存不下去**，因为 `coerceDocument` 变 undefined、`save()` 直接抛。
+    if (state.pose !== undefined && !isPoseRig(state.pose)) return false
     return state.status === undefined || state.status === 'idle' || state.status === 'generating' || state.status === 'success' || state.status === 'error'
   }
   if (node.type === 'video') {

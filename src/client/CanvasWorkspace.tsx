@@ -51,6 +51,7 @@ import { coveredNodes, SNAP_SCREEN_PX, snapOffset, type OverlapPair, type Point 
 import { ComposerSelect, IconButton, labelWithKeys, ToolbarIcon, type ToolbarIconName } from './canvas/dock-controls.tsx'
 import { COMPOSE_SKILL_ID, composeGlyphs, PolishMenu, SkillConfigForm, SkillConfirmDialog, SkillLibraryDialog, SkillPicker, tierLabel } from './canvas/skill-dialogs.tsx'
 import { StoryboardBody } from './canvas/storyboard-board.tsx'
+import { PoseBoard, poseOf } from './canvas/pose-board.tsx'
 import { CanvasMinimap } from './canvas/minimap.tsx'
 import { ConnectionLayer } from './canvas/connection-layer.tsx'
 import { GroupLayer } from './canvas/group-layer.tsx'
@@ -66,9 +67,10 @@ import { CanvasErrorToast, CanvasNoticeToast, CanvasVideoPreviewOverlay, CanvasW
 import { CanvasProposalBar } from './canvas/proposal-bar.tsx'
 import { BackgroundDockMenu, ImageDockMenu, NodeAddMenu } from './canvas/dock-menus.tsx'
 import {
-  annotationAnchor, assetOf, assetToDataUrl, attachedCards, bezierPath, clamp01, clampScale, cloneNodesWithCards, freeColumnX, imageDataUrl, isAnnotationCard, isSketchNode, layerKindLabel, liveAnnotations, newId, nodeAnchor, nodeMetadata, nodeSizeFromRatio, nodesBounds, normalizeConfigNodeSizes, pruneAnnotations, removeNodesAndCards, resizedRect, sizeForAsset, textStyleOf, usableAsset, videoOf,
+  annotationAnchor, assetOf, assetToDataUrl, attachedCards, bezierPath, clamp01, clampScale, cloneNodesWithCards, freeColumnX, imageDataUrl, isAnnotationCard, isPoseNode, isSketchNode, layerKindLabel, liveAnnotations, newId, nodeAnchor, nodeMetadata, nodeSizeFromRatio, nodesBounds, normalizeConfigNodeSizes, pruneAnnotations, removeNodesAndCards, resizedRect, sizeForAsset, textStyleOf, usableAsset, videoOf,
 } from './canvas/node-model.ts'
-import { CONFIG_NODE_SIZE, DROP_IMAGE_MAX_BYTES, WORLD_PAD, SKETCH_ERASER_RADIUS, SKETCH_WIDTH_DOTS, FILE_NODE_SIZE, GRID_SIZE, IMAGE_NODE_SIZE, LEGACY_CONFIG_NODE_SIZE, MAX_SCALE, MIN_SCALE, PICKER_TABS, SKETCH_COLORS, SKETCH_EXPORT_WIDTH, SKETCH_NODE_SIZE, SKETCH_WIDTHS, STORYBOARD_NODE_SIZE, TEXT_NODE_SIZE } from './canvas/constants.ts'
+import { CONFIG_NODE_SIZE, DROP_IMAGE_MAX_BYTES, WORLD_PAD, POSE_NODE_SIZE, SKETCH_ERASER_RADIUS, SKETCH_WIDTH_DOTS, FILE_NODE_SIZE, GRID_SIZE, IMAGE_NODE_SIZE, LEGACY_CONFIG_NODE_SIZE, MAX_SCALE, MIN_SCALE, PICKER_TABS, SKETCH_COLORS, SKETCH_EXPORT_WIDTH, SKETCH_NODE_SIZE, SKETCH_WIDTHS, STORYBOARD_NODE_SIZE, TEXT_NODE_SIZE } from './canvas/constants.ts'
+import { POSE_PRESETS } from './canvas/pose-rig.ts'
 
 type CanvasTool = 'select' | 'pan'
 type BackgroundMode = CanvasDocument['background']
@@ -1314,6 +1316,23 @@ export function CanvasWorkspace(props: CanvasWorkspaceProps): React.JSX.Element 
       x: Math.round(center.x - SKETCH_NODE_SIZE.width / 2), y: Math.round(center.y - SKETCH_NODE_SIZE.height / 2),
       width: SKETCH_NODE_SIZE.width, height: SKETCH_NODE_SIZE.height,
       metadata: { sketch: { strokes: [] }, status: 'idle' },
+    }
+  }, [canvasCenter])
+
+  /**
+   * 姿势人偶：与画板同一个模式——一个 image 节点，只是它还没生成时由一段
+   * 关节角度画预览。导出后 PNG 落在 `asset` 上，于是它又能当普通参考图用。
+   *
+   * 默认给一副站立的骨架而不是空姿势：一块什么都没有的预览看起来像坏了，
+   * 而「站着的人偶」一眼就说清这个节点是干什么的。
+   */
+  const createPoseNode = useCallback((position?: Point): CanvasNode => {
+    const center = position ?? canvasCenter()
+    return {
+      id: newId('node'), type: 'image', title: tt('canvas.poseNode'),
+      x: Math.round(center.x - POSE_NODE_SIZE.width / 2), y: Math.round(center.y - POSE_NODE_SIZE.height / 2),
+      width: POSE_NODE_SIZE.width, height: POSE_NODE_SIZE.height,
+      metadata: { pose: POSE_PRESETS[0]!.rig, status: 'idle' },
     }
   }, [canvasCenter])
 
@@ -5006,6 +5025,7 @@ export function CanvasWorkspace(props: CanvasWorkspaceProps): React.JSX.Element 
 
   const nodeClassName = (node: CanvasNode): string => {
     const isSketch = isSketchNode(node)
+    const isPose = isPoseNode(node)
     const isStoryboard = node.type === 'storyboard'
     const isConfig = node.type === 'config'
     const isTextual = node.type === 'text' || isConfig
@@ -5013,7 +5033,7 @@ export function CanvasWorkspace(props: CanvasWorkspaceProps): React.JSX.Element 
     const isRelated = relatedIds.has(node.id)
     const isConnectTarget = connecting?.targetId === node.id
     const isOverlapping = liveOverlap !== null && liveOverlap.ids.has(node.id)
-    return `${css.node} ${isSketch ? css.sketchNode : isStoryboard ? css.storyboardNode : isConfig ? css.configNode : isTextual ? css.textNode : css.imageNode} ${isSelected ? css.nodeSelected : ''} ${isRelated ? css.nodeRelated : ''} ${isConnectTarget ? css.nodeConnectTarget : ''} ${isOverlapping ? css.nodeOverlap : ''}`
+    return `${css.node} ${isSketch ? css.sketchNode : isPose ? css.poseNode : isStoryboard ? css.storyboardNode : isConfig ? css.configNode : isTextual ? css.textNode : css.imageNode} ${isSelected ? css.nodeSelected : ''} ${isRelated ? css.nodeRelated : ''} ${isConnectTarget ? css.nodeConnectTarget : ''} ${isOverlapping ? css.nodeOverlap : ''}`
   }
 
   const handleNodeDoubleClick = (event: React.MouseEvent, node: CanvasNode): void => {
@@ -5057,9 +5077,9 @@ export function CanvasWorkspace(props: CanvasWorkspaceProps): React.JSX.Element 
     colorPickerNodeId, brokenVideoIds, polishBusy,
     api, modelGroups, videoGroups, defaultChannelId,
     fileUploadRef, imageFileRef, connectRef,
-    IconButton, ToolbarIcon, ModelPicker, SketchBoard, StoryboardBody, CanvasFileBody,
+    IconButton, ToolbarIcon, ModelPicker, SketchBoard, PoseBoard, StoryboardBody, CanvasFileBody,
     ROLE_LABELS, TEXT_COLORS,
-    nodeMetadata, assetOf, videoOf, isSketchNode, isAnnotationCard, layerKindLabel,
+    nodeMetadata, assetOf, videoOf, isSketchNode, isPoseNode, poseOf, isAnnotationCard, layerKindLabel,
     liveAnnotations, fileKindOfAsset, fileKindLabel, fileSizeLabel,
     storyboardOf, storyboardProgress, resolveModelChoice, textStyleOf,
   }), [document, selectedIds, relatedIds, connecting, liveOverlap, skillRuns, composeIds,
@@ -5073,6 +5093,7 @@ export function CanvasWorkspace(props: CanvasWorkspaceProps): React.JSX.Element 
     toggleAnnotate, removeNodeBackground, splitLayers, retryGeneration, retryVideoGeneration,
     grabVideoFrame, continueFromClip, favoriteVideoNode, runStoryboard, submitShot,
     startStoryboardStitch, clearBrokenVideo, patchSketchStrokes, patchSketchAsset,
+    reportError: (message: string) => { setError(message) },
     setColorPickerNodeId, setVideoPreviewNodeId, setFilePreviewNodeId, setFileTargetNodeId,
     setPosterTarget, setPolishNode, setBrokenVideoIds, setAnnotationDraft,
   }), [patchNode, deleteNode, duplicateNode, downloadNode, downloadFileNode, downloadVideoNode,
@@ -5133,13 +5154,13 @@ export function CanvasWorkspace(props: CanvasWorkspaceProps): React.JSX.Element 
     contextMenu, createMenu, nodeById, connectionById, groupById, fileUploadRef,
     selectedCount: selectedIds.size,
     assetOf, videoOf, nodeMetadata, isAnnotationCard,
-    createTextNode, createSketchNode, createStoryboardNode,
+    createTextNode, createSketchNode, createPoseNode, createStoryboardNode,
     createImageNode, createEmptyFileNode, createConfigNode,
   }), [
     document, contextMenu, createMenu, nodeById, connectionById, groupById, fileUploadRef,
     selectedIds,
     assetOf, videoOf, nodeMetadata, isAnnotationCard,
-    createTextNode, createSketchNode, createStoryboardNode,
+    createTextNode, createSketchNode, createPoseNode, createStoryboardNode,
     createImageNode, createEmptyFileNode, createConfigNode,
   ])
 
@@ -5971,6 +5992,7 @@ export function CanvasWorkspace(props: CanvasWorkspaceProps): React.JSX.Element 
       onAdd={kind => {
         addConnectedNode(nodeAddMenu.nodeId, position => kind === 'text' ? createTextNode(position)
           : kind === 'sketch' ? createSketchNode(position)
+            : kind === 'pose' ? createPoseNode(position)
             : kind === 'storyboard' ? createStoryboardNode(position)
               : kind === 'config' ? createConfigNode(position)
                 : createImageNode({ assetId: '', url: '', mime: 'image/png', bytes: 0, width: 1, height: 1, origin: 'upload' }, position))

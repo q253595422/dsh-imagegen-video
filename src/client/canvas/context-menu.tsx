@@ -53,6 +53,7 @@ export interface CanvasContextMenuState {
   isAnnotationCard: (node: CanvasNode) => boolean
   createTextNode: (world: Point) => CanvasNode
   createSketchNode: (world: Point) => CanvasNode
+  createPoseNode: (world: Point) => CanvasNode
   createStoryboardNode: (world: Point) => CanvasNode
   createImageNode: (asset: { assetId: string; url: string; mime: string; bytes: number; width: number; height: number; origin: 'upload' }, world: Point) => CanvasNode
   createEmptyFileNode: (world: Point) => CanvasNode
@@ -181,6 +182,7 @@ if (contextMenu !== null) {
     items.push({ label: tt('canvas.addImage'), icon: 'image', action: () => A.setPickerOpen(true) })
     items.push({ label: tt('canvas.addTextNode'), icon: 'text', action: () => A.placeNewNode(S.createTextNode(contextMenu.world)) })
     items.push({ label: tt('canvas.addSketchNode'), icon: 'sketch', action: () => A.placeNewNode(S.createSketchNode(contextMenu.world)) })
+    items.push({ label: tt('canvas.addPoseNode'), icon: 'expand', action: () => A.placeNewNode(S.createPoseNode(contextMenu.world)) })
     items.push({ label: tt('canvas.storyboardNode'), icon: 'layers', action: () => A.placeNewNode(S.createStoryboardNode(contextMenu.world)) })
     items.push({ label: tt('canvas.paste'), icon: 'duplicate', action: () => A.pasteClipboard(contextMenu.world) })
     items.push({ label: tt('canvas.fitView'), icon: 'fit', action: A.fitView })
@@ -193,6 +195,7 @@ if (createMenu !== null) {
   return <div className={css.contextMenu} style={{ left: createMenu.screen.x, top: createMenu.screen.y }} data-canvas-no-zoom="" role="menu">
     <button type="button" role="menuitem" onClick={() => { A.placeNewNode(S.createTextNode(createMenu.world)); A.setCreateMenu(null) }}><ToolbarIcon name="text" size={16} />{tt('canvas.addTextNode')}</button>
     <button type="button" role="menuitem" onClick={() => { A.placeNewNode(S.createSketchNode(createMenu.world)); A.setCreateMenu(null) }}><ToolbarIcon name="sketch" size={16} />{tt('canvas.addSketchNode')}</button>
+    <button type="button" role="menuitem" data-add-pose="" onClick={() => { A.placeNewNode(S.createPoseNode(createMenu.world)); A.setCreateMenu(null) }}><ToolbarIcon name="expand" size={16} />{tt('canvas.addPoseNode')}</button>
     <button type="button" role="menuitem" data-add-storyboard="" onClick={() => { A.placeNewNode(S.createStoryboardNode(createMenu.world)); A.setCreateMenu(null) }}><ToolbarIcon name="layers" size={16} />{tt('canvas.storyboardNode')}</button>
     <button type="button" role="menuitem" onClick={() => { A.placeNewNode(S.createImageNode({ assetId: '', url: '', mime: 'image/png', bytes: 0, width: 1, height: 1, origin: 'upload' }, createMenu.world)); A.setCreateMenu(null) }}><ToolbarIcon name="image" size={16} />{tt('canvas.addImageNode')}</button>
     <button type="button" role="menuitem" onClick={() => { A.placeNewNode(S.createEmptyFileNode(createMenu.world)); A.setFileTargetNodeId(null); A.setCreateMenu(null) }}><ToolbarIcon name="file" size={16} />{tt('canvas.skills.addFileNode')}</button>

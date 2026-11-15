@@ -31,9 +31,10 @@ import { CanvasFileBody, fileKindLabel, fileKindOfAsset, fileSizeLabel } from '.
 import { ModelPicker, resolveModelChoice, type ModelPickerValue } from '../ModelPicker.tsx'
 import { IconButton, ToolbarIcon } from './dock-controls.tsx'
 import { ROLE_LABELS } from '../cast.ts'
-import { isAnnotationCard, isSketchNode, liveAnnotations, nodeMetadata, textStyleOf, videoOf, bezierPath as _bezierPath } from './node-model.ts'
+import { isAnnotationCard, isPoseNode, isSketchNode, liveAnnotations, nodeMetadata, textStyleOf, videoOf, bezierPath as _bezierPath } from './node-model.ts'
 import { storyboardOf, storyboardProgress } from '../storyboard.ts'
 import { SketchBoard } from './sketch-and-picker.tsx'
+import { PoseBoard, poseOf } from './pose-board.tsx'
 import { StoryboardBody } from './storyboard-board.tsx'
 import type { Point } from './geometry.ts'
 import css from '../canvas-workspace.module.css'
@@ -94,6 +95,7 @@ export interface NodeBodyState {
   ToolbarIcon: typeof ToolbarIcon
   ModelPicker: typeof ModelPicker
   SketchBoard: typeof SketchBoard
+  PoseBoard: typeof PoseBoard
   StoryboardBody: typeof StoryboardBody
   CanvasFileBody: typeof CanvasFileBody
   ROLE_LABELS: typeof ROLE_LABELS
@@ -103,6 +105,8 @@ export interface NodeBodyState {
   assetOf: (node: CanvasNode) => CanvasAssetRef | undefined
   videoOf: typeof videoOf
   isSketchNode: typeof isSketchNode
+  isPoseNode: typeof isPoseNode
+  poseOf: typeof poseOf
   isAnnotationCard: typeof isAnnotationCard
   layerKindLabel: (kind: CanvasLayerKind) => string
   liveAnnotations: typeof liveAnnotations
@@ -147,6 +151,8 @@ export interface NodeBodyActions {
   clearBrokenVideo: (nodeId: string) => void
   patchSketchStrokes: (nodeId: string, strokes: CanvasSketchStroke[]) => void
   patchSketchAsset: (nodeId: string, asset: CanvasAssetRef | undefined) => void
+  /** 画布的错误横幅：节点体自己弹不了提示，所有失败都往这里报。 */
+  reportError: (message: string) => void
   setColorPickerNodeId: (nodeId: string | null) => void
   setVideoPreviewNodeId: (nodeId: string | null) => void
   setFilePreviewNodeId: (nodeId: string | null) => void
@@ -188,6 +194,7 @@ const isStoryboard = node.type === 'storyboard'
 const video = S.videoOf(node)
 const hasVideo = video !== undefined && video.url !== ''
 const isSketch = S.isSketchNode(node)
+const isPose = S.isPoseNode(node)
 const fileKind = isFile ? (metadata.fileKind ?? S.fileKindOfAsset(asset ?? { assetId: '', url: '', mime: 'application/octet-stream', bytes: 0, width: 0, height: 0, origin: 'upload' })) : 'other'
 const hasFile = isFile && asset !== undefined && asset.url !== ''
 /** Only config nodes are excluded: every content node can feed a skill. */
@@ -203,7 +210,7 @@ const skillRun = Object.entries(S.skillRuns).find(([, entry]) => entry.nodeId ==
 const composeIndex = S.composeIds.length >= 2 ? S.composeIds.indexOf(node.id) : -1
 const isTextual = node.type === 'text' || isConfig
 const isTextNode = node.type === 'text'
-const annotating = S.annotateNodeId === node.id && hasImage && !isSketch
+const annotating = S.annotateNodeId === node.id && hasImage && !isSketch && !isPose
 const busyLabel = S.busyNodes[node.id]
 const annotations = node.type === 'image' ? S.liveAnnotations(node, S.canvasDocument?.nodes ?? []) : []
 const draftRect = S.annotationDraft !== null && S.annotationDraft.nodeId === node.id ? S.annotationDraft.rect : null
@@ -249,7 +256,7 @@ return <>
       {progress.generating > 0 ? <span className={css.nodeTag} data-storyboard-running="">{tt('canvas.storyboard.running', { count: progress.generating })}</span> : null}
     </header>
   })() : null}
-  {isTextual || isSketch ? <header className={css.nodeHeader}>
+  {isTextual || isSketch || isPose ? <header className={css.nodeHeader}>
     <span className={css.nodeTitle}>{node.title}</span>
     {metadata.annotation !== undefined ? <span className={css.nodeTag}>{tt('canvas.annotationTag')}</span> : null}
     {metadata.layer !== undefined ? <span className={css.nodeTag}>{S.layerKindLabel(metadata.layer.kind)}</span> : null}
@@ -312,6 +319,15 @@ return <>
         placeholder={metadata.annotation !== undefined ? tt('canvas.annotationPlaceholder') : tt('canvas.textPlaceholder')}
         onPointerDown={event => event.stopPropagation()}
         onChange={event => A.patchNode(node.id, { text: event.target.value })}
+      />
+    : isPose
+    ? <S.PoseBoard
+        api={S.api}
+        node={node}
+        rig={S.poseOf(node)}
+        onRigChange={next => A.patchNode(node.id, { pose: next })}
+        onAssetChange={asset => A.patchSketchAsset(node.id, asset)}
+        onError={A.reportError}
       />
     : isSketch
     ? <S.SketchBoard
@@ -409,7 +425,7 @@ return <>
         </div> : null}
         {busyLabel !== undefined ? <div className={css.nodeBusy}><span className={css.nodeSpinner} aria-hidden="true" /><span>{busyLabel}</span></div> : null}
       </div>}
-  {node.type === 'image' && !isSketch && hasImage ? <div className={css.imageFooter} data-image-footer="">
+  {node.type === 'image' && !isSketch && !isPose && hasImage ? <div className={css.imageFooter} data-image-footer="">
     <span className={css.imageFooterLabel}>
       {metadata.layer !== undefined
         ? `${S.layerKindLabel(metadata.layer.kind)} · ${metadata.layer.label}`
@@ -439,7 +455,7 @@ return <>
     </span>
     {hasFile && asset.bytes > 0 ? <span className={css.imageFooterSize}>{S.fileSizeLabel(asset.bytes)}</span> : null}
   </div> : null}
-  {isSelected && !isSketch
+  {isSelected && !isSketch && !isPose
     ? (['nw', 'ne', 'sw', 'se'] as const).map(corner => <div
         key={corner}
         className={css.resizeHandle}

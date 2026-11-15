@@ -425,6 +425,14 @@ export interface CanvasProposalChange {
   removedNodeIds?: string[]
   /** 新建的连线。 */
   addedConnections?: CanvasConnection[]
+  /**
+   * 被改的连线，只带真正变过的键。
+   *
+   * 今天只有 `role` 会变（首帧/尾帧/素材），但按「只带变过的键」写，将来加
+   * 别的连线字段不用再动协议形状。与 {@link CanvasProposalNodeUpdate} 同一
+   * 理由：整份替换会把用户在提案之后做的改动一并回退。
+   */
+  updatedConnections?: CanvasProposalConnectionUpdate[]
   /** 被删的连线 id。 */
   removedConnectionIds?: string[]
   /** 画布标题改成什么。 */
@@ -447,6 +455,22 @@ export interface CanvasProposalNodeUpdate {
   metadata?: CanvasNodeMetadata
   /** metadata 里要删掉的键（今天的工具都不删键，但补丁语义得自己站得住）。 */
   removedMetadataKeys?: string[]
+}
+
+/**
+ * 提案里对某条连线的字段补丁。
+ *
+ * 形状与 {@link CanvasProposalNodeUpdate} 同源：只带真正变过的键，未出现的
+ * 键保持文档当前值。今天只有 `role` 会变。
+ */
+export interface CanvasProposalConnectionUpdate {
+  /** 要改的连线 id。 */
+  id: string
+  /**
+   * 改成什么角色。`'input'` 表示「把角色删掉」——见 `connection-role.ts` 的
+   * 硬约束：默认值不落盘，所以这里不能是「写成 'input'」。
+   */
+  role?: CanvasConnectionRole
 }
 
 export interface CanvasProposal {
@@ -487,6 +511,8 @@ export interface CanvasProposalCounts {
   updatedNodes?: number
   removedNodes?: number
   addedConnections?: number
+  /** 改了角色的连线数。 */
+  updatedConnections?: number
   removedConnections?: number
   /** 被改成的标题（只在提案确实改名时出现）。 */
   title?: string
@@ -1712,6 +1738,33 @@ export interface CanvasSketchDrawing {
   strokes: CanvasSketchStroke[]
 }
 
+/** 姿势人偶的关节名。与人偶骨骼的层级一一对应（见 `canvas/pose-rig.ts`）。 */
+export type CanvasPoseJoint =
+  | 'hips' | 'spine' | 'chest' | 'neck' | 'head'
+  | 'shoulderL' | 'elbowL' | 'handL'
+  | 'shoulderR' | 'elbowR' | 'handR'
+  | 'hipL' | 'kneeL' | 'footL'
+  | 'hipR' | 'kneeR' | 'footR'
+
+/** 一个关节绕自身三个轴的旋转，单位为度。 */
+export interface CanvasPoseAngles { x: number; y: number; z: number }
+
+/**
+ * 姿势节点：一套关节角度。
+ *
+ * 与草图画板同一个模式——节点本体只带这份数据，预览在客户端算，导出时画成
+ * 一张 PNG 落进 `metadata.asset`，于是下游只看见一个普通 image 节点，生成、
+ * 标注、图库、导出全都不必知道「姿势」存在。
+ *
+ * `joints` 允许缺项：缺的那个关节按 0 度处理。这样新增关节不会让老文档读不
+ * 动，而校验器也只需要拒绝「有但类型不对」的值。
+ */
+export interface CanvasPoseRig {
+  joints: Partial<Record<CanvasPoseJoint, CanvasPoseAngles>>
+  /** 整体朝向，绕 y 轴，单位为度；0 = 正面朝相机。 */
+  facing: number
+}
+
 export interface CanvasViewport {
   x: number
   y: number
@@ -1838,6 +1891,14 @@ export interface CanvasNodeMetadata {
   transparent?: boolean
   /** Sketch boards: the live drawing behind an image node. */
   sketch?: CanvasSketchDrawing
+  /**
+   * 姿势人偶：一块带关节角度的人偶，导出成 PNG 落在 `asset` 上。
+   *
+   * 与 `sketch` 同一个模式——节点仍是 `type: 'image'`，这个字段只是「图片
+   * 还没生成时拿什么画预览」。所以删掉它，节点就退回一张普通图片，而不会
+   * 变成一份读不懂的文档。
+   */
+  pose?: CanvasPoseRig
   /** File nodes: coarse bucket driving the icon and preview branch. */
   fileKind?: CanvasFileKind
   /** Skill-produced nodes: which skill produced this and from what. */

@@ -124,7 +124,7 @@ export function BackgroundDockMenu({ anchor, mode, hasBackgroundImage, onEnter, 
 }
 
 /** 节点连线上「从这里再接一个」的候选类型。 */
-export type NodeAddKind = 'text' | 'sketch' | 'storyboard' | 'image' | 'config'
+export type NodeAddKind = 'text' | 'sketch' | 'pose' | 'storyboard' | 'image' | 'config'
 
 export interface NodeAddMenuProps {
   /** 锚点：屏幕坐标，菜单出现在指针右侧。 */
@@ -147,6 +147,7 @@ export function NodeAddMenu({ anchor, sourceNodeType, onEnter, onLeave, onAdd }:
   >
     <button type="button" role="menuitem" onClick={() => onAdd('text')}><ToolbarIcon name="text" size={16} />{tt('canvas.addTextNode')}</button>
     <button type="button" role="menuitem" onClick={() => onAdd('sketch')}><ToolbarIcon name="sketch" size={16} />{tt('canvas.addSketchNode')}</button>
+    <button type="button" role="menuitem" onClick={() => onAdd('pose')}><ToolbarIcon name="expand" size={16} />{tt('canvas.addPoseNode')}</button>
     <button type="button" role="menuitem" onClick={() => onAdd('storyboard')}><ToolbarIcon name="layers" size={16} />{tt('canvas.storyboardNode')}</button>
     <button type="button" role="menuitem" onClick={() => onAdd('image')}><ToolbarIcon name="image" size={16} />{tt('canvas.addImageNode')}</button>
     {sourceNodeType !== 'config' ? <button type="button" role="menuitem" onClick={() => onAdd('config')}><ToolbarIcon name="sparkle" size={16} />{tt('canvas.addConfigNode')}</button> : null}
