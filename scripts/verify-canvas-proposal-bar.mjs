@@ -391,6 +391,24 @@ if (!componentSource.includes('data-stacked')) {
   if (!/flushPendingCanvas = useCallback\(async \(\): Promise<boolean>/.test(workspaceSource)) {
     failures.push('flushPendingCanvas 不再返回成败——调用方拿不到「这笔到底写没写出去」')
   }
+  // 跨画布竞态。`accept` 要等两个网络往返；这段时间里用户点了别的画布，
+  // 返回的是**那本**画布的文档。直接 `setDocument` 会把眼前这本换成另一本的
+  // 内容，而项目下拉仍指着当前这本，旧 revision 再顺着 autosave 写到错的画布。
+  // `writeCanvas` 早就为同一种竞态装了守门，这里也必须有一道，而且要排在
+  // `setDocument` 之前。
+  //
+  // 只看 acceptProposal 自己的函数体：后面的 `discardProposal` 里也有同形状
+  // 的 id 比较，把整段 tail 当范围会让顺序断言认错行。
+  const acceptBody = body.slice(0, body.indexOf('const discardProposal'))
+  const setDocAt = acceptBody.indexOf('setDocument(saved)')
+  const guardAt = acceptBody.indexOf('documentRef.current?.id !== canvasId')
+  if (guardAt < 0) {
+    failures.push('acceptProposal 没检查画布是否已经切走——返回的文档会把当前画布覆盖成另一本')
+  } else if (setDocAt < 0) {
+    failures.push('找不到 acceptProposal 里的 setDocument(saved)，这条断言的前提已失效')
+  } else if (guardAt > setDocAt) {
+    failures.push('acceptProposal 的跨画布守门排在 setDocument 之后，等于没有')
+  }
 }
 
 // 8b. 接受提案要进撤销栈，而且快照要在换文档**之前**记。

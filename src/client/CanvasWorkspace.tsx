@@ -912,6 +912,15 @@ export function CanvasWorkspace(props: CanvasWorkspaceProps): React.JSX.Element 
         return
       }
       const saved = await api.canvasProposalAccept(canvasId, proposalId)
+      // 这两个 await 之间用户可能已经点了别的画布。`canvasProposalAccept`
+      // 返回的是**那本**画布的新文档——拿它 `setDocument` 会把用户眼前的
+      // 画布换成另一本的内容，而项目下拉仍指着当前这本；它的 revision 还会
+      // 顺着下一次 autosave 写到错的画布上。`writeCanvas` 早就为同一种竞态
+      // 装了守门（`live.id !== next.id`，见上面的 seq 注释），这条路径漏了。
+      //
+      // 不刷新提案列表是对的：切画布那个 effect 已经清空并重新拉过一遍。
+      // 也不丢东西：提案已经在服务端应用了，切回那本画布读到的就是新文档。
+      if (documentRef.current?.id !== canvasId) return
       // 服务端返回的就是落盘后的文档，直接用它换掉本地视图，不再多跑一次读取。
       //
       // 但必须同时把 `syncedRef` 推进到这里，并且把保存状态标成 saved：
@@ -932,6 +941,9 @@ export function CanvasWorkspace(props: CanvasWorkspaceProps): React.JSX.Element 
       await refreshProposals()
     } catch (caught) {
       const message = caught instanceof Error ? caught.message : String(caught)
+      // 同上：这条错误是关于**刚才那本**画布的。用户已经切走了的话，把它
+      // 挂到眼前这本的提案条上只会让人以为当前画布出了问题。
+      if (documentRef.current?.id !== canvasId) return
       // 过期是一句具体的指路，其余错误原样显示。
       setProposalError(message)
       // 过期之后这条提案已经不可能再被接受，直接从列表里去掉，免得用户反复点。
