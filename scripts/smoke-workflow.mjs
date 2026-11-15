@@ -549,11 +549,24 @@ for (const bad of [0, -3, 1.5, Number.NaN]) {
   // 成因是关闭清单被抄了四份（悬停计时器、Escape、点画布、开技能菜单），
   // 每份只写自己认识的那两个 state，新加的第三个就被漏在外面。所以这里锁的
   // 不是「某处有没有写 setWorkflowMenu(null)」，而是**只有一份清单**。
+  //
+  // 名单里每多一个浮层，这条就多一个 `setXMenu(null)` —— 加底栏实底 `+`
+  // 的菜单时正是靠它提醒：新浮层必须进同一份名单，否则 Escape 与点画布都
+  // 关不掉它。所以这条断言按「清单本身」匹配，而不是只认当初那三个。
   assert.match(
     workspace,
-    /const closeDockMenus = useCallback\(\(\): void => \{\s*setBackgroundMenu\(null\); setImageMenu\(null\); setWorkflowMenu\(null\)\s*\}, \[\]\)/,
+    /const closeDockMenus = useCallback\(\(\): void => \{\s*(?:set[A-Za-z]+Menu\(null\);?\s*)+\}, \[\]\)/,
     '底栏浮层的关闭清单必须只有一处，且含工作流选项菜单',
   )
+  // 只认「有没有写进去」还不够：清单里少一个具体浮层时上面那条依然绿。
+  // 逐个点名，让删掉任何一个都会失败并说出是哪个。
+  for (const menu of ['setBackgroundMenu', 'setImageMenu', 'setWorkflowMenu', 'setAddMenu']) {
+    assert.match(
+      workspace,
+      new RegExp(`const closeDockMenus = useCallback\\(\\(\\): void => \\{[^}]*${menu}\\(null\\)`),
+      `${menu} 必须出现在唯一的关闭清单里，否则这个浮层关不掉`,
+    )
+  }
   // 手写 `setBackgroundMenu(null); setImageMenu(null)` 的平行清单一旦回来，
   // 下一处新增浮层还会被漏掉。除了 closeDockMenus 自己，不该再有人这么写。
   const parallelLists = workspace.match(/setBackgroundMenu\(null\);\s*setImageMenu\(null\)/g) ?? []

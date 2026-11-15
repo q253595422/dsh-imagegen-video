@@ -66,7 +66,7 @@ import { ImagePicker, readImageSize, SketchBoard } from './canvas/sketch-and-pic
 import { RUN_NODE_SIZE, runRectOf, SkillRunCard, type SkillRunTrace } from './canvas/run-card.tsx'
 import { CanvasErrorToast, CanvasNoticeToast, CanvasVideoPreviewOverlay, CanvasWorkflowProgressBar } from './canvas/overlays.tsx'
 import { CanvasProposalBar } from './canvas/proposal-bar.tsx'
-import { BackgroundDockMenu, ImageDockMenu, NodeAddMenu } from './canvas/dock-menus.tsx'
+import { BackgroundDockMenu, DockAddMenu, ImageDockMenu, NodeAddMenu, type DockAddKind } from './canvas/dock-menus.tsx'
 import {
   annotationAnchor, assetOf, assetToDataUrl, attachedCards, bezierPath, clamp01, clampScale, cloneNodesWithCards, freeColumnX, imageDataUrl, isAnnotationCard, isPoseNode, isSketchNode, layerKindLabel, liveAnnotations, newId, nodeAnchor, nodeMetadata, nodeSizeFromRatio, nodesBounds, normalizeConfigNodeSizes, pruneAnnotations, removeNodesAndCards, resizedRect, sizeForAsset, textStyleOf, usableAsset, videoOf,
 } from './canvas/node-model.ts'
@@ -504,6 +504,9 @@ export function CanvasWorkspace(props: CanvasWorkspaceProps): React.JSX.Element 
   const [videoPickerOpen, setVideoPickerOpen] = useState(false)
   const [backgroundMenu, setBackgroundMenu] = useState<Point | null>(null)
   const [imageMenu, setImageMenu] = useState<Point | null>(null)
+  /** The bottom dock's solid `+` menu: the six node types that used to be six
+   *  equally-weighted tiles of their own. */
+  const [addMenu, setAddMenu] = useState<Point | null>(null)
   // 工作流选项菜单的锚点。放在这三个 dock 菜单旁边而不是跟三个开关一起：
   // 它是**同一类东西**（挂靠一个底栏按钮的临时浮层），必须和它们共用关闭
   // 逻辑——状态各自独立时，Escape / 点画布 / 悬停离开每一条都只清自己认识
@@ -521,7 +524,7 @@ export function CanvasWorkspace(props: CanvasWorkspaceProps): React.JSX.Element 
    *  点「运行工作流」把它带走——而那一次运行是会真花钱的。清单只写一份，
    *  下次再加浮层就不会再漏。 */
   const closeDockMenus = useCallback((): void => {
-    setBackgroundMenu(null); setImageMenu(null); setWorkflowMenu(null)
+    setBackgroundMenu(null); setImageMenu(null); setWorkflowMenu(null); setAddMenu(null)
   }, [])
   const scheduleMenuClose = useCallback((): void => {
     clearMenuCloseTimer()
@@ -632,7 +635,11 @@ export function CanvasWorkspace(props: CanvasWorkspaceProps): React.JSX.Element 
     // Capture resting centers once. Reading an item's live center while its
     // width is animating creates a layout feedback loop that can run away on
     // slow frames; the resting anchor keeps the pointer target deterministic.
-    const tiles = [...dock.querySelectorAll<HTMLElement>('[data-dock-item]')].map(el => {
+    //
+    // `:not([data-dock-static])` leaves out tiles that are not squares — the
+    // labelled primary action on the right. The engine writes an inline
+    // `width`, which would squeeze a text pill down to 40px and clip its label.
+    const tiles = [...dock.querySelectorAll<HTMLElement>('[data-dock-item]:not([data-dock-static])')].map(el => {
       const rect = el.getBoundingClientRect()
       return { el, size: BASE, velocity: 0, centerX: rect.left + Math.min(rect.width, BASE) / 2 }
     })
@@ -1360,6 +1367,25 @@ export function CanvasWorkspace(props: CanvasWorkspaceProps): React.JSX.Element 
       metadata: { storyboard: defaultStoryboard(), status: 'idle' },
     }
   }, [canvasCenter])
+
+  /**
+   * 底栏实底 `+` 的菜单分发。
+   *
+   * 放在这里而不是菜单组件里：菜单只发「用户点了哪一类」，建节点要读
+   * `canvasCenter()` 与各个 create 函数——都属画布自己的状态。这五个类型
+   * 原本是底栏上各自的图标，合并后走同一条路径，行为与合并前逐条点击一致。
+   *
+   * `file` 是唯一不建节点的：文件节点要先有字节，所以它打开文件选择器，
+   * 由 onChange 建出带内容的节点（和合并前那个图标完全一样）。
+   */
+  const addDockNode = useCallback((kind: DockAddKind): void => {
+    if (kind === 'file') { setFileTargetNodeId(null); fileUploadRef.current?.click(); return }
+    placeNewNode(kind === 'text' ? createTextNode()
+      : kind === 'sketch' ? createSketchNode()
+        : kind === 'pose' ? createPoseNode()
+          : kind === 'storyboard' ? createStoryboardNode()
+            : createConfigNode())
+  }, [placeNewNode, createTextNode, createSketchNode, createPoseNode, createStoryboardNode, createConfigNode])
 
   /** A brand-new canvas starts with one text node wired into one config node,
    *  laid out around the visible viewport center so the workflow is obvious. */
@@ -5810,7 +5836,23 @@ export function CanvasWorkspace(props: CanvasWorkspaceProps): React.JSX.Element 
         <div className={css.dockItem} data-dock-item="" data-label={tt('canvas.toolPan')}>
           <IconButton name="pan" size={18} label={tt('canvas.toolPan')} active={tool === 'pan'} onClick={() => setTool('pan')} />
         </div>
-        <span className={css.dockDivider} aria-hidden="true" />
+        <span className={css.dockGap} aria-hidden="true" />
+        <div className={`${css.dockItem} ${css.dockPrimary}`} data-dock-item="" data-label={tt('canvas.addNode')} data-open={addMenu !== null ? '' : undefined}>
+          <IconButton
+            name="new"
+            size={20}
+            label={tt('canvas.addNode')}
+            onClick={event => {
+              // 点开、再点收起：一个只开不关的入口在画布上只能靠点别处退出。
+              if (addMenu !== null) { setAddMenu(null); return }
+              const bounds = event.currentTarget.getBoundingClientRect()
+              const rootRect = rootRef.current?.getBoundingClientRect()
+              // 和另外两个底栏菜单互斥：同屏只留一个浮层。
+              closeDockMenus()
+              setAddMenu({ x: bounds.left + bounds.width / 2 - (rootRect?.left ?? 0), y: bounds.top - (rootRect?.top ?? 0) })
+            }}
+          />
+        </div>
         <div className={css.dockItem} data-dock-item="" data-label={tt('canvas.addImage')}>
           <IconButton
             name="image"
@@ -5822,27 +5864,7 @@ export function CanvasWorkspace(props: CanvasWorkspaceProps): React.JSX.Element 
             onMouseLeave={scheduleMenuClose}
           />
         </div>
-        <div className={css.dockItem} data-dock-item="" data-label={tt('canvas.addText')}>
-          <IconButton name="text" size={18} label={tt('canvas.addText')} onClick={() => placeNewNode(createTextNode())} />
-        </div>
-        <div className={css.dockItem} data-dock-item="" data-label={tt('canvas.addSketch')}>
-          <IconButton name="sketch" size={18} label={tt('canvas.addSketch')} onClick={() => placeNewNode(createSketchNode())} />
-        </div>
-        <div className={css.dockItem} data-dock-item="" data-label={tt('canvas.skills.addFileNode')}>
-          <IconButton
-            name="file"
-            size={18}
-            label={tt('canvas.skills.addFileNode')}
-            onClick={() => { setFileTargetNodeId(null); fileUploadRef.current?.click() }}
-          />
-        </div>
-        <div className={css.dockItem} data-dock-item="" data-label={tt('canvas.addConfigNode')}>
-          <IconButton name="sparkle" size={18} label={tt('canvas.addConfigNode')} onClick={() => placeNewNode(createConfigNode())} />
-        </div>
-        <div className={css.dockItem} data-dock-item="" data-label={tt('canvas.storyboardNode')}>
-          <IconButton name="layers" size={18} label={tt('canvas.storyboardNode')} onClick={() => placeNewNode(createStoryboardNode())} />
-        </div>
-        <span className={css.dockDivider} aria-hidden="true" />
+        <span className={css.dockGap} aria-hidden="true" />
         <div className={css.dockItem} data-dock-item="" data-label={tt('canvas.templateLibrary')}>
           <IconButton name="template" size={18} label={tt('canvas.templateLibrary')} active={libraryOpen} onClick={() => setLibraryOpen(previous => !previous)} />
         </div>
@@ -5855,27 +5877,30 @@ export function CanvasWorkspace(props: CanvasWorkspaceProps): React.JSX.Element 
             onClick={() => { if (skillLibraryOpen) setSkillLibraryOpen(false); else openSkillLibrary() }}
           />
         </div>
-        <span className={css.dockDivider} aria-hidden="true" />
-        <div className={css.dockItem} data-dock-item="" data-label={tt('canvas.workflow.run')}>
-          {/* 运行是主动作，不能被「怎么跑」的选项挡住。三项默认值就是升级前
-              写死的行为，所以直接跑与旧版完全一致；想看选项的人点旁边那个
-              箭头。把运行塞进菜单会让常用路径每次都多点一下，换来的只是
-              「先看见复用是开着的」——而默认值已经保证了这一点。 */}
-          <IconButton
-            name="workflow"
-            size={18}
-            label={tt('canvas.workflow.run')}
-            active={workflowBusy}
+        <span className={css.dockGap} aria-hidden="true" />
+        {/* 运行是主动作，不能被「怎么跑」的选项挡住。三项默认值就是升级前
+            写死的行为，所以直接跑与旧版完全一致；想看选项的人点旁边那个
+            箭头。把运行塞进菜单会让常用路径每次都多点一下，换来的只是
+            「先看见复用是开着的」——而默认值已经保证了这一点。
+
+            它带文字而其它按钮不带：一排纯图标只能靠逐个悬停学会，而「把这张
+            图跑成片」是画布存在的理由，值得占一格说清自己叫什么。箭头并进
+            同一块（而不是另起一格），是因为它们读起来是同一件事的两半。 */}
+        <div className={css.dockAction} data-dock-item="" data-dock-static="" data-label={tt('canvas.workflow.run')}>
+          <button
+            type="button"
             disabled={document === null || document.nodes.length === 0}
             onClick={() => { void runWorkflowFrom([...selectedIds]) }}
-          />
-        </div>
-        <div className={css.dockItem} data-dock-item="" data-label={tt('canvas.workflow.options')}>
-          <IconButton
-            name="chevronDown"
-            size={14}
-            label={tt('canvas.workflow.options')}
-            active={workflowMenu !== null}
+          >
+            <ToolbarIcon name="workflow" size={16} />
+            <span>{tt('canvas.workflow.runShort')}</span>
+          </button>
+          <button
+            type="button"
+            className={css.dockCaret}
+            aria-label={tt('canvas.workflow.options')}
+            title={tt('canvas.workflow.options')}
+            data-active={workflowMenu !== null ? '' : undefined}
             disabled={document === null || document.nodes.length === 0}
             onClick={event => {
               clearMenuCloseTimer()
@@ -5887,7 +5912,7 @@ export function CanvasWorkspace(props: CanvasWorkspaceProps): React.JSX.Element 
               const rootRect = rootRef.current?.getBoundingClientRect()
               setWorkflowMenu({ x: bounds.left + bounds.width / 2 - (rootRect?.left ?? 0), y: bounds.top - (rootRect?.top ?? 0) })
             }}
-          />
+          ><ToolbarIcon name="chevronDown" size={13} /></button>
         </div>
         <div className={css.dockItem} data-dock-item="" data-label={tt('timeline.open')}>
           <IconButton
@@ -5910,7 +5935,7 @@ export function CanvasWorkspace(props: CanvasWorkspaceProps): React.JSX.Element 
             onMouseLeave={scheduleMenuClose}
           />
         </div>
-        <span className={css.dockDivider} aria-hidden="true" />
+        <span className={css.dockGap} aria-hidden="true" />
         <div className={css.dockItem} data-dock-item="" data-label={tt('canvas.shortcuts.button')}>
           <IconButton name="help" size={18} label={tt('canvas.shortcuts.button')} active={shortcutHelpOpen} onClick={() => setShortcutHelpOpen(open => !open)} />
         </div>
@@ -5920,7 +5945,7 @@ export function CanvasWorkspace(props: CanvasWorkspaceProps): React.JSX.Element 
         <div className={css.dockItem} data-dock-item="" data-label={tt('canvas.redo')}>
           <IconButton name="redo" size={18} label={labelWithKeys('canvas.redo')} disabled={futureRef.current.length === 0} onClick={redo} />
         </div>
-        <span className={css.dockDivider} aria-hidden="true" />
+        <span className={css.dockGap} aria-hidden="true" />
         <div className={css.dockItem} data-dock-item="" data-label={tt('canvas.delete')}>
           <IconButton name="trash" size={18} label={labelWithKeys('canvas.delete')} disabled={selectedIds.size === 0 && selectedConnectionId === null} onClick={deleteSelection} />
         </div>
@@ -5928,6 +5953,12 @@ export function CanvasWorkspace(props: CanvasWorkspaceProps): React.JSX.Element 
     </div>
     </div>
 
+    {addMenu !== null ? <DockAddMenu
+      anchor={addMenu}
+      onEnter={clearMenuCloseTimer}
+      onLeave={scheduleMenuClose}
+      onAdd={kind => { addDockNode(kind); setAddMenu(null) }}
+    /> : null}
     {imageMenu !== null ? <ImageDockMenu
       anchor={imageMenu}
       onEnter={clearMenuCloseTimer}

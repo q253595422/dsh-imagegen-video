@@ -46,13 +46,25 @@ const componentSource = canvasSourceText()
  */
 const PANEL_WIDTHS = [997, 860, 720, 560, 420]
 
-/** The 17 dock tiles, in the order the component renders them. */
+/**
+ * The 13 dock tiles, in the order the component renders them.
+ *
+ * Were 17. The five node-building icons (text / sketch / file / config /
+ * storyboard) are now entries of the solid `+` menu — one anchor instead of
+ * five equally-weighted squares — and the run button became a single labelled
+ * pill holding its own caret, so it is one tile here too, not two.
+ *
+ * The pill is real, not a stand-in: it must measure as one item because the
+ * whole point of the redesign is that the dock fits more easily at narrow
+ * panel widths. It carries `data-dock-static` like the component's does.
+ */
 const DOCK_TILES = [
-  'select', 'pan', 'image', 'text', 'sketch', 'file', 'config', 'storyboard', 'template',
-  'skill', 'workflow', 'timeline', 'background', 'help', 'undo', 'redo', 'trash',
+  'select', 'pan', 'addNode', 'image', 'template', 'skill', 'workflow',
+  'timeline', 'background', 'help', 'undo', 'redo', 'trash',
 ]
-/** Divider positions in that list (LibTV 式分组：工具 / 建节点 / 库 / 运行 / 撤销 / 删除). */
-const DIVIDERS_AT = new Set([2, 8, 10, 13, 16])
+/** Gap positions in that list (LibTV 式分组：工具 / 建节点 / 库 / 运行+场景 / 撤销 / 删除).
+ *  These are now blank space, not 1px rules — see `.dockGap`. */
+const GAPS_AT = new Set([2, 5, 7, 11])
 
 // ------------------------------------------------- fixture vs. real component
 // Validation runs on the fixture MARKUP below, not on a hand-kept list: a list
@@ -65,7 +77,14 @@ const tokens = [...new Set(css.match(/var\(--dsw-[a-z0-9-]+\)/g) ?? [])]
   .map(token => `${token.slice(4, -1)}: #8a8a8a`).join('; ')
 
 const dockMarkup = DOCK_TILES
-  .map((name, index) => `${DIVIDERS_AT.has(index) ? '<span class="dockDivider"></span>' : ''}<div class="dockItem" data-dock-item=""><button class="iconButton" aria-label="${name}"></button></div>`)
+  .map((name, index) => {
+    const gap = GAPS_AT.has(index) ? '<span class="dockGap"></span>' : ''
+    if (name === 'workflow') {
+      return `${gap}<div class="dockAction" data-dock-item data-dock-static><button aria-label="${name}">${name}</button><button class="dockCaret"></button></div>`
+    }
+    const primary = name === 'addNode' ? ' dockPrimary' : ''
+    return `${gap}<div class="dockItem${primary}" data-dock-item><button class="iconButton" aria-label="${name}"></button></div>`
+  })
   .join('')
 
 const page = `<!doctype html><html><head><style>

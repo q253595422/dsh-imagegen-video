@@ -1081,6 +1081,86 @@
 
 .dockItem:hover { background: var(--dsw-alias-interactive-bg-hover); }
 
+/**
+ * The one solid tile: 添加. LibTV's dock has exactly one high-contrast anchor
+ * on the left and everything else stays quiet — that is what makes the row
+ * readable at a glance. With 18 equally-weighted icons nothing read as
+ * "start here"; every user had to read each glyph to find the way in.
+ *
+ * Solid fill, not the brand tint: `--dsw-alias-brand-primary` is a neutral
+ * inverting colour in this theme (see the note at the top of this file), so a
+ * filled square of it is the highest contrast the shell offers without
+ * inventing a colour.
+ */
+.dockPrimary {
+  background: var(--dsw-alias-label-primary);
+  color: var(--dsw-alias-bg-layer-1);
+}
+
+.dockPrimary:hover { background: color-mix(in srgb, var(--dsw-alias-label-primary) 86%, var(--dsw-alias-bg-layer-1)); }
+
+.dockPrimary[data-open] { background: color-mix(in srgb, var(--dsw-alias-label-primary) 78%, var(--dsw-alias-bg-layer-1)); }
+
+.dockPrimary .iconButton { color: inherit; }
+
+/**
+ * The labelled primary action, opposite the 添加 tile.
+ *
+ * An icon-only dock can only be learned by hovering each glyph. The one action
+ * a canvas exists for — running the workflow that turns it into pictures —
+ * says its name instead. `data-dock-static` keeps it out of the spring
+ * engine's width animation (a text pill cannot shrink to 40px).
+ */
+.dockAction {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 40px;
+  padding: 0 14px;
+  border-radius: var(--dsw-radius-md);
+  border: 1px solid color-mix(in srgb, var(--dsw-alias-brand-primary) 34%, transparent);
+  background: color-mix(in srgb, var(--dsw-alias-brand-primary) 14%, transparent);
+  color: var(--dsw-alias-brand-primary);
+  font-size: 12px;
+  line-height: 1;
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+.dockAction:not(:disabled):hover {
+  background: color-mix(in srgb, var(--dsw-alias-brand-primary) 22%, transparent);
+}
+
+.dockAction:disabled { opacity: 0.35; cursor: not-allowed; }
+
+/* 主动作里的两半：左边运行、右边只开菜单。它们不可分割地同属一块药丸，
+ * 所以分割线比 `.dockGap` 更淡、更短，读起来是一条缝而不是一个分组。 */
+.dockAction > button {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 100%;
+  padding: 0;
+  border: none;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  cursor: pointer;
+}
+
+.dockAction > button:disabled { cursor: not-allowed; }
+
+.dockAction > button:not(:disabled):hover { color: var(--dsw-alias-label-primary); }
+
+.dockAction > .dockCaret {
+  margin-left: 2px;
+  padding-left: 8px;
+  border-left: 1px solid color-mix(in srgb, currentColor 30%, transparent);
+  gap: 0;
+}
+
+.dockAction > .dockCaret[data-active] { color: var(--dsw-alias-label-primary); }
+
 .dockItem::after {
   content: attr(data-label);
   position: absolute;
@@ -1122,11 +1202,19 @@
 .dock .iconButton:disabled { opacity: 0.3; cursor: not-allowed; }
 .dock .iconButton:disabled:hover { background: transparent; color: var(--dsw-alias-label-secondary); }
 
-.dockDivider {
+/**
+ * Group separators are SPACE, not rules.
+ *
+ * Five 1px vertical lines across an 18-tile row drew a grid over the dock: every
+ * group read as a boxed cell of equal weight, which is exactly what made the row
+ * hard to scan. A wider gap separates at least as clearly and adds nothing to
+ * look at. `flex: none` keeps it from shrinking when the dock wraps.
+ */
+.dockGap {
+  flex: none;
   align-self: center;
-  width: 1px;
-  height: 18px;
-  background: var(--dsw-alias-border-l1);
+  width: 10px;
+  height: 1px;
 }
 
 /* ------------------------------------------------- floating composer */
@@ -4263,7 +4351,7 @@
     scrollbar-width: none;
   }
   .dock::-webkit-scrollbar { display: none; }
-  .dockItem, .dockDivider { flex: none; }
+  .dockItem, .dockGap { flex: none; }
 }
 
 /* ------------------------------------------------------------ groups

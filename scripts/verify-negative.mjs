@@ -588,9 +588,9 @@ const CASES = [
     name: 'the workflow options menu is dropped from the shared close list',
     runner: 'workflow',
     file: 'src/client/CanvasWorkspace.tsx',
-    from: 'setBackgroundMenu(null); setImageMenu(null); setWorkflowMenu(null)',
-    to: 'setBackgroundMenu(null); setImageMenu(null)',
-    expect: /底栏浮层的关闭清单必须只有一处，且含工作流选项菜单/,
+    from: 'setBackgroundMenu(null); setImageMenu(null); setWorkflowMenu(null); setAddMenu(null)',
+    to: 'setBackgroundMenu(null); setImageMenu(null); setAddMenu(null)',
+    expect: /底栏浮层的关闭清单必须只有一处，且含工作流选项菜单|setWorkflowMenu 必须出现在唯一的关闭清单里/,
   },
   {
     // 同一类缺陷的另一种形状：清单还在，但某个入口又自己抄了一份。抄一份就

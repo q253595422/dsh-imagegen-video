@@ -153,3 +153,44 @@ export function NodeAddMenu({ anchor, sourceNodeType, onEnter, onLeave, onAdd }:
     {sourceNodeType !== 'config' ? <button type="button" role="menuitem" onClick={() => onAdd('config')}><ToolbarIcon name="sparkle" size={16} />{tt('canvas.addConfigNode')}</button> : null}
   </div>
 }
+
+/** 底栏 `+` 菜单能建的东西，除了图片——图片有自己的按钮和菜单（上传 / 素材库
+ *  / 历史 / 生成 / 视频），并进这里会让两个入口做同一件事而各说各话。 */
+export type DockAddKind = 'text' | 'sketch' | 'pose' | 'storyboard' | 'file' | 'config'
+
+export interface DockAddMenuProps {
+  anchor: MenuAnchor
+  onEnter: () => void
+  onLeave: () => void
+  onAdd: (kind: DockAddKind) => void
+}
+
+/**
+ * 底栏实底 `+` 的菜单。
+ *
+ * WHY 合并：停靠栏原来把 6 个建节点的图标平铺在中间（文本 / 画板 / 文件 /
+ * 配置卡 / 分镜 / 姿势），和选择、平移、素材库、撤销、删除一样是 40px 方块。
+ * 一排 18 个同权重的图标里没有一个读得出「从这里开始」——每个都得悬停看名字。
+ * 收进一个实底 `+` 之后，数量减半，而且「新建」这件事在哪个画布应用里都是 `+`。
+ *
+ * 保留各自独立的入口（图片不在这个菜单里）是有意的：图片菜单已经承载了
+ * 上传/素材库/历史/生成/视频五条路径，再把这五条换成「先点 + 再选图片」
+ * 只是把一步变成两步。
+ */
+export function DockAddMenu({ anchor, onEnter, onLeave, onAdd }: DockAddMenuProps): React.JSX.Element {
+  return <div
+    className={css.backgroundMenu}
+    style={{ left: anchor.x, top: anchor.y - 10 }}
+    {...menuPointerHandlers}
+    role="menu"
+    onMouseEnter={onEnter}
+    onMouseLeave={onLeave}
+  >
+    <button type="button" role="menuitem" onClick={() => onAdd('text')}><ToolbarIcon name="text" size={16} />{tt('canvas.addTextNode')}</button>
+    <button type="button" role="menuitem" onClick={() => onAdd('sketch')}><ToolbarIcon name="sketch" size={16} />{tt('canvas.addSketchNode')}</button>
+    <button type="button" role="menuitem" onClick={() => onAdd('pose')}><ToolbarIcon name="expand" size={16} />{tt('canvas.addPoseNode')}</button>
+    <button type="button" role="menuitem" onClick={() => onAdd('storyboard')}><ToolbarIcon name="layers" size={16} />{tt('canvas.storyboardNode')}</button>
+    <button type="button" role="menuitem" onClick={() => onAdd('file')}><ToolbarIcon name="file" size={16} />{tt('canvas.skills.addFileNode')}</button>
+    <button type="button" role="menuitem" onClick={() => onAdd('config')}><ToolbarIcon name="sparkle" size={16} />{tt('canvas.addConfigNode')}</button>
+  </div>
+}

@@ -8670,11 +8670,25 @@ await check('E1 client apply mounts the sidebar entry and studio (jsdom)', async
     }
     dockToolbar.dispatchEvent(new jsdomWindow.MouseEvent('pointermove', { bubbles: true, clientX: 0, clientY: 0 }))
     drainDockFrames(12)
-    const dockSizes = [...dockToolbar.querySelectorAll('[data-dock-item]')].map(item => Number.parseFloat(item.style.width))
+    // 只量被弹簧驱动的方块。带文字的主动作挂在 `data-dock-static` 上，是刻意
+    // 排除在引擎之外的——引擎写的是内联 `width`，那会把一个文字药丸压到 40px
+    // 并裁掉标签。以前这里没有这个例外，因为每个磁贴都是方块。
+    const dockSizes = [...dockToolbar.querySelectorAll('[data-dock-item]:not([data-dock-static])')]
+      .map(item => Number.parseFloat(item.style.width))
     assert.ok(dockSizes.length > 0, 'dock tiles are present')
     assert.ok(
       dockSizes.every(size => Number.isFinite(size) && size >= 40 && size <= 50),
       `dock tiles stay bounded after a stale frame timestamp: ${dockSizes.join(',')}`,
+    )
+    // 反向保证：主动作必须真的存在且没被引擎写上宽度。少这一条，把
+    // `data-dock-static` 从组件里删掉时上面那句仍会绿（它只是量到更少的方块），
+    // 而线上症状是主动作的文字被裁成一条缝。
+    const staticDockItems = [...dockToolbar.querySelectorAll('[data-dock-item][data-dock-static]')]
+    assert.ok(staticDockItems.length > 0, 'the labelled primary action opts out of the spring engine')
+    assert.deepEqual(
+      staticDockItems.map(item => item.style.width),
+      staticDockItems.map(() => ''),
+      'the spring engine must not write a width onto the labelled primary action',
     )
     dockToolbar.dispatchEvent(new jsdomWindow.MouseEvent('pointerleave', { bubbles: true }))
     drainDockFrames(12)
