@@ -3743,6 +3743,11 @@
   gap: 4px;
   height: 24px;
   padding: 0 8px;
+  /* 标签不许折行。少了这一条，中文标签在窄行里会被按字断开，按钮宽度
+   * 于是随字体度量漂移——mac 上量到 49px，Linux 的 CJK 回退字体量到
+   * 41px，已经低于 44px 的可点最小尺寸。高度写死 24px，折行的文字还会
+   * 溢出按钮外。 */
+  white-space: nowrap;
   border: none;
   border-radius: var(--dsw-radius-sm);
   background: var(--dsw-alias-bg-layer-2);

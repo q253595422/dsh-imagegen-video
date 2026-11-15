@@ -128,6 +128,21 @@ for (const selector of ['.poseAxis input[type=\'range\']', '.poseFacing input[ty
   )
 }
 
+// 卡片按钮的标签必须禁止折行。
+//
+// WHY 单独立一条：`open stage` 按钮的宽度靠内容撑开，而中文标签在窄行里会
+// 按字断开。macOS 的 CJK 字体度量下量到 49px，Linux 的回退字体下折成两行后
+// 只剩 41px——低于 44px 的可点最小尺寸。CI 在 ubuntu 上真的红了，本地跑
+// 一万遍也看不见，所以这条不能只靠真浏览器量尺寸（量出来的是本机字体）。
+for (const selector of ['.poseAction']) {
+  const body = ruleBodyOf(css, selector)
+  assert.notEqual(body, undefined, `${selector} must exist — the card's two action buttons depend on it`)
+  assert(
+    body.includes('white-space: nowrap'),
+    `${selector} must set white-space: nowrap: without it a CJK label wraps in a narrow row and the button`,
+  )
+}
+
 const launched = await launchChrome({ chrome: CHROME, name: 'dsh-pose-card' })
 const session = await openPage(launched.port, `http://127.0.0.1:${serverPort}/`)
 const { evaluate } = session
