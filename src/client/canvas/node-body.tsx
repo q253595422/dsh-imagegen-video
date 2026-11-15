@@ -22,7 +22,7 @@
 
 import type { CSSProperties, PointerEvent as ReactPointerEvent } from 'react'
 import { X } from 'lucide-react'
-import type { CanvasAssetRef, CanvasDocument, CanvasLayerKind, CanvasNode, CanvasRect, CanvasSketchStroke } from '../../protocol.ts'
+import type { CanvasAssetRef, CanvasDocument, CanvasLayerKind, CanvasNode, CanvasPoseRig, CanvasRect, CanvasSketchStroke } from '../../protocol.ts'
 import type { ImageGenApi } from '../api.ts'
 import { tt } from '../helpers.ts'
 import type { ImageGenKey } from '../locales.ts'
@@ -151,6 +151,8 @@ export interface NodeBodyActions {
   clearBrokenVideo: (nodeId: string) => void
   patchSketchStrokes: (nodeId: string, strokes: CanvasSketchStroke[]) => void
   patchSketchAsset: (nodeId: string, asset: CanvasAssetRef | undefined) => void
+  /** 卡片预设条改第一个角色的姿势：必须写进 `stage`，只写 `pose` 会被读取路径忽略。 */
+  patchStageRig: (nodeId: string, rig: CanvasPoseRig) => void
   /** 打开该节点的全屏导演台。父组件负责选中与挂载面板。 */
   openStage: (nodeId: string) => void
   /** 画布的错误横幅：节点体自己弹不了提示，所有失败都往这里报。 */
@@ -327,7 +329,7 @@ return <>
         api={S.api}
         node={node}
         rig={S.poseOf(node)}
-        onRigChange={next => A.patchNode(node.id, { pose: next })}
+        onRigChange={next => A.patchStageRig(node.id, next)}
         onAssetChange={asset => A.patchSketchAsset(node.id, asset)}
         onOpenStage={() => A.openStage(node.id)}
         onError={A.reportError}

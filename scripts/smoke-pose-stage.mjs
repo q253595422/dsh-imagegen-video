@@ -352,6 +352,51 @@ await check('S9 every actor lands inside the framed view', async () => {
   }
 })
 
+// ------------------------------------------------- 卡片预设条（真机缺陷回填）
+//
+// 2026-11-15 真机走查发现：卡片上的预设条直接把新姿势写进 `metadata.pose`，
+// 而读取以 `stage` 为准（`stageOf`）。于是点「坐姿」什么都没发生——文件里
+// 多了一份没人读的 `pose`，画面一动不动。断言模拟「按卡片那条路写一次」，
+// 再按读取路径读回来：只写 `pose` 必须读不到，写 `stage` 必须读到。
+
+await check('P1 writing only `pose` after a stage exists changes nothing on read', async () => {
+  const base = stage.emptyStage()
+  const seated = { joints: { shoulderR: { x: 0, y: 0, z: 20 } }, facing: 0 }
+  // 这正是旧代码做的事：patchNode(id, { pose: next })。
+  const metadata = { ...stage.stagePatch(base), pose: seated }
+  const read = stage.stageOf(metadata)
+  assert.notDeepEqual(
+    read.actors[0].rig.joints, seated.joints,
+    'a `pose`-only write must NOT be readable while `stage` exists — otherwise the preset bar would look like it works',
+  )
+  assert.deepEqual(
+    read.actors[0].rig.joints, base.actors[0].rig.joints,
+    'the stage rig stays the source of truth',
+  )
+})
+
+await check('P2 writing the same pose through `stage` IS readable, and mirrors into `pose`', async () => {
+  const base = stage.emptyStage()
+  const seated = { joints: { shoulderR: { x: 0, y: 0, z: 20 } }, facing: 0 }
+  const [first, ...rest] = base.actors
+  const written = stage.stagePatch({ ...base, actors: [{ ...first, rig: seated }, ...rest] })
+  const read = stage.stageOf(written)
+  assert.deepEqual(read.actors[0].rig.joints, seated.joints, 'the preset must survive the round trip')
+  assert.deepEqual(written.pose.joints, seated.joints, '`pose` mirrors actors[0].rig so old plugins still read a figure')
+  assert.equal(read.actors.length, 1, 'editing one rig must not drop the other actors')
+})
+
+await check('P3 editing the first rig leaves the other actors untouched', async () => {
+  const base = threeActorStage(1.2)
+  const seated = { joints: { shoulderR: { x: 0, y: 0, z: 20 } }, facing: 0 }
+  const [first, ...rest] = base.actors
+  const read = stage.stageOf(stage.stagePatch({ ...base, actors: [{ ...first, rig: seated }, ...rest] }))
+  assert.equal(read.actors.length, 3, 'all three actors survive')
+  assert.deepEqual(read.actors[0].rig.joints, seated.joints)
+  assert.deepEqual(read.actors[1].rig.joints, base.actors[1].rig.joints)
+  assert.deepEqual(read.actors[2].rig.joints, base.actors[2].rig.joints)
+})
+
 // ------------------------------------------------------------------ 汇总
 
 rmSync(root, { recursive: true, force: true })

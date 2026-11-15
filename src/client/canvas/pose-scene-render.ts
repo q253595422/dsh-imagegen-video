@@ -434,7 +434,17 @@ export function drawScene(ctx: CanvasRenderingContext2D, options: SceneRenderOpt
   paintSkyAndGround(ctx, size, camera, stage)
 
   const { focal, project } = makeProjector(size, camera)
-  const fieldSize = Math.min(720, Math.max(280, Math.round(size / 2.4)))
+  /* 距离场的格子数：跟着画布走，别只跟着「屏幕」走。
+   *
+   * 这里原本固定 `size / 2.4`（1024 上是 427 格），于是 1280 导出图里的人物
+   * 体块是从一张 427² 的遮罩插值放大贴回去的——胳膊贴躯干那条缝、膝弯的
+   * 转折全部糊成一片平涂白。真机走查一眼就看见了：预览里分得清的姿势，
+   * 导出图里读不出来。
+   *
+   * 现在按「每个遮罩格最多 2.4 个设备像素」反推格子数，并给一个下限与上限：
+   *  - 下限 280 是卡片预览（~200px）还看得清轮廓所需；
+   *  - 上限 2048 是逐像素算距离场的成本墙。1280 导出对应 533 格，仍在墙内。 */
+  const fieldSize = Math.max(280, Math.min(2048, Math.round(size / 2.4)))
   const fieldCell = size / fieldSize
 
   paintGroundGrid(ctx, size, project, stage)

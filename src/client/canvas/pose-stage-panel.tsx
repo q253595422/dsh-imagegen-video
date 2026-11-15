@@ -27,10 +27,12 @@ import {
 } from './pose-stage.ts'
 import { makeProjector, solveRig, type PoseCamera, type PoseJoint } from './pose-rig.ts'
 import { drawScene, renderSceneToCanvas } from './pose-scene-render.ts'
+import { STAGE_CAPTURE_SIZE } from './constants.ts'
 import css from './pose-stage-panel.module.css'
 
-/** 机位截图的边长。与姿势面板的 1024 一致：都是给模型当参考的图，再大只是上传更慢。 */
-const CAPTURE_SIZE = 1024
+/** 机位截图的边长。取自 `constants.ts`，与文档声称的尺寸只有一处定义——
+ *  两处各写一个数时，面板里的那张实际是 1024，而说明写的是 1280。 */
+const CAPTURE_SIZE = STAGE_CAPTURE_SIZE
 
 /** 拖拽超过这个距离（CSS 像素）就算「转视角」，不算「点选角色」。 */
 const CLICK_SLOP = 4

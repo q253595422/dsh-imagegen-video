@@ -12,7 +12,7 @@ import {
   GitBranch, Keyboard, Layers, Magnet, Map as MapIcon, Maximize, Maximize2, MousePointer2, Palette, Pencil, Plus, Redo2, Scissors, SendHorizonal, Share2, Sparkles, Star,
   Shrink, SquareDashedMousePointer, Trash2, Type, Undo2, Upload, Video, Wand2, Wallpaper,
 } from 'lucide-react'
-import type { CanvasAnnotation, CanvasAssetRef, CanvasConnection, CanvasConnectionRole, CanvasDocument, CanvasProposal, CanvasFileKind, CanvasLayerInfo, CanvasLayerPlanItem, CanvasNode, CanvasRect, CanvasStoryboard, CanvasVideoRef, CanvasSkillConfigApplyResult, CanvasSkillConfigField, CanvasSkillConfigSaveResult, CanvasSkillConfigStep, CanvasSkillConfigView, CanvasSkillDescriptor, CanvasSkillLibrary, CanvasSkillOutput, CanvasSkillRunRequest, CanvasSkillTask, CanvasSketchStroke, CanvasPoseStage, GenerateRequest, GenerationTask, HistoryEntry, VideoGenerateRequest, VideoTaskSummary, VideoMode, VideoResolution } from '../protocol.ts'
+import type { CanvasAnnotation, CanvasAssetRef, CanvasConnection, CanvasConnectionRole, CanvasDocument, CanvasProposal, CanvasFileKind, CanvasLayerInfo, CanvasLayerPlanItem, CanvasNode, CanvasRect, CanvasStoryboard, CanvasVideoRef, CanvasSkillConfigApplyResult, CanvasSkillConfigField, CanvasSkillConfigSaveResult, CanvasSkillConfigStep, CanvasSkillConfigView, CanvasSkillDescriptor, CanvasSkillLibrary, CanvasSkillOutput, CanvasSkillRunRequest, CanvasSkillTask, CanvasSketchStroke, CanvasPoseStage, CanvasPoseRig, GenerateRequest, GenerationTask, HistoryEntry, VideoGenerateRequest, VideoTaskSummary, VideoMode, VideoResolution } from '../protocol.ts'
 import type { CanvasBundleUnresolved } from '../canvas-bundle.ts'
 import { describeVideoModel, durationsOf, VIDEO_RESOLUTIONS } from '../video-model-catalog.ts'
 // The stitch order is a SHARED rule: the host builds its ffmpeg concat list with
@@ -1418,6 +1418,21 @@ export function CanvasWorkspace(props: CanvasWorkspaceProps): React.JSX.Element 
   const patchStage = useCallback((nodeId: string, stage: CanvasPoseStage): void => {
     patchNode(nodeId, stagePatch(stage))
   }, [patchNode])
+
+  /**
+   * 卡片上的预设条改第一个角色的姿势。
+   *
+   * 为什么不能照旧直接写 `pose`：读取以 `stage` 为准（`stageOf`），只写
+   * `pose` 的后果是点了预设、卡片和面板都不动——用户在真机上就是这么发现
+   * 的。这里走 `patchStage`，`pose` 镜像由 `stagePatch` 一并写。
+   */
+  const patchStageRig = useCallback((nodeId: string, rig: CanvasPoseRig): void => {
+    const node = documentRef.current?.nodes.find(item => item.id === nodeId)
+    const stage = stageOf(node?.metadata)
+    const [first, ...rest] = stage.actors
+    if (first === undefined) return
+    patchStage(nodeId, { ...stage, actors: [{ ...first, rig }, ...rest] })
+  }, [patchStage])
 
   /** 正在编辑的导演台节点。节点被删掉时这里自然变 undefined，面板随之关闭。 */
   const stageNode = stageNodeId === null ? undefined : document?.nodes.find(node => node.id === stageNodeId)
@@ -5137,7 +5152,7 @@ export function CanvasWorkspace(props: CanvasWorkspaceProps): React.JSX.Element 
     handleConnectStart, handleResizeStart, beginAnnotationDrag, moveAnnotationDrag, endAnnotationDrag,
     toggleAnnotate, removeNodeBackground, splitLayers, retryGeneration, retryVideoGeneration,
     grabVideoFrame, continueFromClip, favoriteVideoNode, runStoryboard, submitShot,
-    startStoryboardStitch, clearBrokenVideo, patchSketchStrokes, patchSketchAsset,
+    startStoryboardStitch, clearBrokenVideo, patchSketchStrokes, patchSketchAsset, patchStageRig,
     openStage: (nodeId: string) => { setStageNodeId(nodeId) },
     reportError: (message: string) => { setError(message) },
     setColorPickerNodeId, setVideoPreviewNodeId, setFilePreviewNodeId, setFileTargetNodeId,
@@ -5147,7 +5162,7 @@ export function CanvasWorkspace(props: CanvasWorkspaceProps): React.JSX.Element 
     handleConnectStart, handleResizeStart, beginAnnotationDrag, moveAnnotationDrag, endAnnotationDrag,
     toggleAnnotate, removeNodeBackground, splitLayers, retryGeneration, retryVideoGeneration,
     grabVideoFrame, continueFromClip, favoriteVideoNode, runStoryboard, submitShot,
-    startStoryboardStitch, clearBrokenVideo, patchSketchStrokes, patchSketchAsset])
+    startStoryboardStitch, clearBrokenVideo, patchSketchStrokes, patchSketchAsset, patchStageRig])
 
   const renderNodeBody = (node: CanvasNode): React.JSX.Element =>
     <NodeBody node={node} S={nodeBodyState} A={nodeBodyActions} />
