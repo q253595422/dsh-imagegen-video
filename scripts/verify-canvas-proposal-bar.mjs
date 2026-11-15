@@ -378,6 +378,19 @@ if (!componentSource.includes('data-stacked')) {
   } else if (flushAt > acceptAt) {
     failures.push('acceptProposal 里 flush 排在 accept 之后——等 accept 返回时本地编辑已经被覆盖，再写就是对着一份丢过数据的文档写')
   }
+  // flush 失败必须中止。`writeCanvas` 内部把失败吞成 `false`（它自己弹了
+  // toast 带重试），所以调用方不看返回值就等于「写入与否都往下走」——服务端
+  // 基于它那份**没有这笔编辑**的文档应用提案，返回的整份新文档覆盖本地并推进
+  // `syncedRef`，用户拖过的节点彻底消失，autosave 也不再补写。
+  const gateAt = body.indexOf('if (!await flushPendingRef.current())')
+  if (gateAt < 0) {
+    failures.push('acceptProposal 没检查 flush 的结果——本地编辑保存失败时仍会接受提案，把那份编辑覆盖掉')
+  } else if (acceptAt >= 0 && gateAt > acceptAt) {
+    failures.push('acceptProposal 先调了 accept 才检查 flush 结果，检查等于没有')
+  }
+  if (!/flushPendingCanvas = useCallback\(async \(\): Promise<boolean>/.test(workspaceSource)) {
+    failures.push('flushPendingCanvas 不再返回成败——调用方拿不到「这笔到底写没写出去」')
+  }
 }
 
 // 8b. 接受提案要进撤销栈，而且快照要在换文档**之前**记。

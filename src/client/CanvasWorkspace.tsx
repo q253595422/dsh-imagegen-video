@@ -900,7 +900,17 @@ export function CanvasWorkspace(props: CanvasWorkspaceProps): React.JSX.Element 
     setProposalsBusy(true); setProposalError(null)
     try {
       // 见上：不先把这笔写出去，下面那份返回值会带走用户的编辑。
-      await flushPendingRef.current()
+      //
+      // 写入**失败时不能继续**。`writeCanvas` 已经把错误显示给用户了（
+      // 带一个「重试」动作），这里再加一句说明为什么不继续；然后原样留住
+      // 屏幕上的文档——用户拖过的节点还在，他点重试就能补上。继续下去的话，
+      // 服务端会拿它那份没有这笔编辑的文档应用提案、返回整份新文档，而
+      // 下面几行会用它覆盖本地并推进 `syncedRef`：编辑彻底消失，autosave
+      // 也不会再补写一次。
+      if (!await flushPendingRef.current()) {
+        setProposalError(tt('canvas.proposal.flushFailed'))
+        return
+      }
       const saved = await api.canvasProposalAccept(canvasId, proposalId)
       // 服务端返回的就是落盘后的文档，直接用它换掉本地视图，不再多跑一次读取。
       //
@@ -1077,8 +1087,15 @@ export function CanvasWorkspace(props: CanvasWorkspaceProps): React.JSX.Element 
    * `flushPendingCanvas` 要等 `writeCanvas` 先定义，而那一段在四千行以下—
    * —直接把函数写进依赖数组，等于让上面这个回调依赖下面整条链。ref 是这里
    * 唯一不需要搬家就能表达的依赖：它在挂载后总是最新的那个闭包。
+   *
+   * 返回值是**这一笔到底写没写出去**：`true` 表示「现在服务端有的就是屏幕上
+   * 这份」，`false` 表示写入失败、本地那份仍然只在内存里。接受提案必须先看
+   * 这个值——不看就继续，服务端会基于它那份旧文档应用提案并返回整份新文档，
+   * 客户端拿它覆盖本地，用户刚拖的节点、刚改的标题就没了，而 `syncedRef` 又
+   * 被一起推进，autosave 也不会补写。改造前这里返回的是 void，调用方 await
+   * 一个「什么都没有」的东西，失败完全不可见。
    */
-  const flushPendingRef = useRef<() => Promise<void>>(async () => {})
+  const flushPendingRef = useRef<() => Promise<boolean>>(async () => true)
   /**
    * 把「这次改动要能撤销」转给下面的 `beginHistory`。
    *
@@ -3922,11 +3939,11 @@ export function CanvasWorkspace(props: CanvasWorkspaceProps): React.JSX.Element 
    * 650 ms timer — so an edit made just before the click was never sent. The
    * write goes through the same conflict read-back path as the debounce.
    */
-  const flushPendingCanvas = useCallback(async (): Promise<void> => {
+  const flushPendingCanvas = useCallback(async (): Promise<boolean> => {
     const live = documentRef.current
-    if (live === null || JSON.stringify(live) === syncedRef.current) return
+    if (live === null || JSON.stringify(live) === syncedRef.current) return true
     flushRef.current = true
-    try { await writeCanvas(live) } finally { flushRef.current = false }
+    try { return await writeCanvas(live) } finally { flushRef.current = false }
   }, [writeCanvas])
 
   // 接受提案前要用到它（见 `acceptProposal`）。在这里接上：这一行运行的
