@@ -7,6 +7,7 @@ Attribution for third-party code is in [NOTICE](./NOTICE).
 
 ### 未发布
 
+- **一条用户已经改过的提案，不再让 `read_canvas` 整个失败**：用户在接受之前自己删掉了提案点名的节点，那条提案就对不上了。`read_canvas` 和写工具走的是同一个叠加草稿（`draftOf`），于是**只读工具也抛错**——探针实测：「A pending change on this canvas no longer applies…」，模型连「画布现在长什么样」都看不到，而用户那边一切正常（`acceptOne` 自己会把过期提案移除）。现在读路径跳过应用不了的提案，并如实说明「N 条改动对不上、已略过」；写路径仍报错（起点不确定时继续算，会把那条坏掉的差异固化进新提案）。同时把「待确认 N 条」改成只数真正叠进草稿的条数，否则会出现「1 条待确认」加「另有 1 条已略过」这种总数只有一条的自相矛盾。反向注入实测：读路径退回抛错 → F22 红；只数总数 → F22 红；跳过但不报告 → F22 红。
 - **config 节点会告诉 Agent 它产出什么，Agent 也能造出视频配置节点**：config 的 `metadata.mode`（image / video / text）决定按 run 得到图片、视频还是文字，但 `projectNode` 没投影它——模型只看到「这是个 config」，判断不出该不该往这里连图片。同一处还有一句恒为真的死判断：`createNode` 里「`metadata.mode` 没设就写成 `image`」，而 `metadata.mode` 从来没被赋过值，于是 Agent **根本造不出视频配置节点**（而视频配置正是「连两张图做插帧」的那个）。现在 `mode` 进投影、进参数表（enum 由 schema 挡非法值）、进文本渲染的标签（`[config:video]`），省略时仍默认 `image`。反向注入实测：去掉投影 → F21 红；把取值固定回 `image` → F21 红。
 - **`add_canvas_node` 把一直生效的 `width` / `height` 写进了参数表**：`createNode` 从第一天就在读这两个键，传了也确实生效，但 schema 里没声明——模型只能靠猜，猜不到就用默认尺寸。现在补上声明，并用一条断言把「schema 声明的参数」与「代码真正接受的参数」锁在一起，免得下次再漂。反向注入实测：删掉声明 → F20 红。
 - **Agent 加的节点依次排开，不再全叠在原点**：`add_canvas_node` 的说明写着「Omit x/y to place it in a free column to the right of the existing nodes」，实现却把缺省钉成 `0,0`。探针实测：连着加 A、B、C 三个节点，三个坐标都是 `(0,0)`——用户打开画布只看到最上面那一个，还以为 Agent 只加了一个。现在省略 x 就落在「现有节点最右边 + 一个列间距」，间距取画布自己的 `NODE_GAP`（90），模型明确给了坐标则照用、不被覆盖。反向注入实测：去掉自动摆放 → F19 红。

@@ -470,24 +470,39 @@ export function registerAgentCanvasTools(ctx: Context, config: () => { enabled: 
    *
    * 读与写必须用同一个起点。`mutate` 早就在这份叠加后的草稿上算（否则连着
    * 两步操作里第二步会报「节点不存在」，因为它要连的节点还在提案里），但
-   * `read_canvas` 走的是只读真实文档的 `load()`——于是 Agent 刚刚提议加了一个
-   * 节点，回头一读却是「This canvas is empty」的空白画布，很可能再添加一遍。
-   * 探针实测：add → read（0 个节点）→ 再 add，同一个标题落进两条提案。
+   * `read_canvas` 当时走的是只读真实文档的 `load()`——于是 Agent 刚刚提议加了
+   * 一个节点，回头一读却是「This canvas is empty」的空白画布，很可能再添加
+   * 一遍。探针实测：add → read（0 个节点）→ 再 add，同一个标题落进两条提案。
+   *
+   * `onStale` 决定叠加不了的那条提案怎么办：
+   *  - 写操作**必须**抛错（`mutate`）：起点不确定时继续算，会把那条坏掉的
+   *    差异固化进新提案里。
+   *  - 读操作只跳过它并如实报告。它是个只读操作，因为一条用户那边早已过期
+   *    的提案而彻底失败，模型连「画布现在长什么样」都看不到——探针实测过：
+   *    用户删掉一个提案点名的节点之后，`read_canvas` 直接抛
+   *    「A pending change … no longer applies」，而 `acceptOne` 遇到同一条
+   *    提案时会自己把它移除。读路径不该比用户看到的状态更糟。
    */
-  const draftOf = async (canvasId: string): Promise<{ document: CanvasDocument; draft: CanvasDocument; pending: number }> => {
+  const draftOf = async (
+    canvasId: string,
+    onStale: 'throw' | 'skip',
+  ): Promise<{ document: CanvasDocument; draft: CanvasDocument; pending: number; stale: number }> => {
     const document = await load(canvasId)
     const pending = await proposalStore.list(canvasId)
     let draft: CanvasDocument = document
+    let stale = 0
     for (const proposal of pending) {
       const applied = ProposalStore.apply(draft, proposal.change)
-      // 已有提案里有一步已经对不上当前文档（例如用户手改过）：不能拿错误的
-      // 起点继续算，否则后续改动会把那条坏掉的差异固化下来。
       if (applied === undefined) {
-        throw new Error('A pending change on this canvas no longer applies to the current document (the canvas was edited after it was proposed). Ask the user to accept or discard the pending changes first, then retry.')
+        if (onStale === 'throw') {
+          throw new Error('A pending change on this canvas no longer applies to the current document (the canvas was edited after it was proposed). Ask the user to accept or discard the pending changes first, then retry.')
+        }
+        stale += 1
+        continue
       }
       draft = applied
     }
-    return { document, draft, pending: pending.length }
+    return { document, draft, pending: pending.length, stale }
   }
 
   /**
@@ -504,7 +519,7 @@ export function registerAgentCanvasTools(ctx: Context, config: () => { enabled: 
    * 一条「什么都没改」的待确认项打断。
    */
   const mutate = async (canvasId: string, tool: string, edit: (document: CanvasDocument) => void): Promise<AgentCanvasView> => {
-    const { document, draft, pending } = await draftOf(canvasId)
+    const { document, draft, pending } = await draftOf(canvasId, 'throw')
     // 关键：先**深拷贝**一份再交给 edit。
     //
     // `edit` 是原地改的（`document.nodes.push(...)`），如果 `before` 和它指向
@@ -626,7 +641,7 @@ export function registerAgentCanvasTools(ctx: Context, config: () => { enabled: 
       },
       async execute(args) {
         ensureEnabled()
-        const { draft, pending } = await draftOf(args.canvas_id)
+        const { draft, pending, stale } = await draftOf(args.canvas_id, 'skip')
         const view = viewOf(draft)
         // `viewOf` 的 note 说的是「这张图能不能跑」，这里说的是「你读到的这份
         // 还不等于用户看到的」。两个都要，所以拼接而不是覆盖。
@@ -634,10 +649,23 @@ export function registerAgentCanvasTools(ctx: Context, config: () => { enabled: 
         // 不会出现「This canvas is empty」与「有提案」并存的自相矛盾：那句话
         // 只在 `draft.nodes.length === 0` 时说，而待确认提案一旦加过节点，草稿
         // 里就有了。只剩改名提案时它仍然是对的。
-        const unaccepted = pending === 0
+        //
+        // 数的是**真正叠进这份草稿**的条数（`pending - stale`）：`pending` 是
+        // 磁盘上的总数，包含下面单独提到的那几条过期的。用总数会出现「1 change
+        // here are only proposed」加「1 other no longer applies」这种总数只有
+        // 一条的自相矛盾。
+        const shown = pending - stale
+        const unaccepted = shown === 0
           ? undefined
-          : `${pending} change(s) here are only proposed: the user has not accepted them, and the canvas they see does not have them yet.`
-        const note = [unaccepted, view.note].filter((part): part is string => part !== undefined).join(' ')
+          : `${shown} change(s) here are only proposed: the user has not accepted them, and the canvas they see does not have them yet.`
+        // 有一条提案应用不到当前文档时，上面那份草稿**少叠了**它——读到的内容
+        // 与「全部提案都在」的情形不等价，必须说出来，否则模型会以为那就是
+        // 全部待确认改动。写工具遇到同一条提案会直接报错，读工具只是跳过，
+        // 原因见 `draftOf` 的注释。
+        const staleNote = stale === 0
+          ? undefined
+          : `${stale} other proposed change(s) no longer apply to this canvas (it was edited after they were made) and are left out of what you see; they will be dropped if the user accepts or discards them.`
+        const note = [unaccepted, staleNote, view.note].filter((part): part is string => part !== undefined).join(' ')
         return { ...view, ...note === '' ? {} : { note } }
       },
     })),
