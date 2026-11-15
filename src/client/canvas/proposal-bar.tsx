@@ -19,6 +19,7 @@
 
 import type { CanvasProposal } from '../../protocol.ts'
 import { tt } from '../helpers.ts'
+import { proposalSummaryText } from './proposal-summary.ts'
 import css from '../canvas-workspace.module.css'
 
 export interface CanvasProposalBarProps {
@@ -85,7 +86,7 @@ export function CanvasProposalBar({
         ? <span className={css.proposalCount}>{tt('canvas.proposal.more', { count: remaining })}</span>
         : null}
     </div>
-    <div className={css.proposalSummary}>{first.summary}</div>
+    <div className={css.proposalSummary}>{proposalSummaryText(first)}</div>
     <div className={css.proposalHint}>{tt('canvas.proposal.notApplied')}</div>
     {error === null ? null : <div className={css.proposalError} role="alert">{error}</div>}
     <div className={css.proposalActions}>

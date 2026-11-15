@@ -313,6 +313,31 @@ check('R5d a stale proposal no longer blocks the ones queued behind it', async (
   assert.equal(final.nodes[0].title, '后来的')
 })
 
+check('R5e proposals made back to back come back in the order they were proposed', async () => {
+  // 探针实测过的重排：Agent 一次任务连发几条提案，它们常落在同一毫秒里，
+  // 而 `scan` 的 tie-break 是 `id.localeCompare`——uuid 是随机的，于是顺序
+  // 也跟着随机（八次里两次被重排）。用户看到的是「先加节点、再连线」被翻成
+  // 「先连线、后加节点」。
+  const registered = new Map()
+  registerAgentCanvasTools({ tools: { register (definition) { registered.set(definition.name, definition); return () => {} } } }, () => ({ enabled: true }))
+  const created = await registered.get('create_canvas').execute({ title: '连续提案' }, {})
+  const titles = ['第一步', '第二步', '第三步', '第四步', '第五步']
+  for (const title of titles) {
+    await registered.get('add_canvas_node').execute({ canvas_id: created.id, type: 'text', title }, {})
+  }
+  const queue = (await post(PROPOSALS, { canvasId: created.id })).proposals
+  assert.deepEqual(
+    queue.map(proposal => proposal.change.addedNodes[0].title),
+    titles,
+    'proposals must arrive in the order they were made, ties in timestamp included',
+  )
+  // 时间戳本身必须严格递增：相等就说明还在靠 uuid 兜底。
+  for (let index = 1; index < queue.length; index += 1) {
+    assert.ok(queue[index].createdAt > queue[index - 1].createdAt,
+      `proposal ${index} did not get a later timestamp than the one before it`)
+  }
+})
+
 check('R6 a proposal cannot be accepted onto another canvas', async () => {
   const a = await seed('画布A')
   const b = await seed('画布B')

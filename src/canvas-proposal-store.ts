@@ -120,10 +120,31 @@ export class ProposalStore {
   async add(proposal: Omit<CanvasProposal, 'id' | 'createdAt'>): Promise<CanvasProposal> {
     await this.ensure()
     const id = randomUUID()
-    const created: CanvasProposal = { ...proposal, id, createdAt: Date.now() }
+    const created: CanvasProposal = { ...proposal, id, createdAt: this.nextTimestamp() }
     await writeJsonAtomic(this.filePath(id), created)
     return created
   }
+
+  /**
+   * 提案时间戳，保证**同一进程内严格递增**。
+   *
+   * WHY 不是裸的 `Date.now()`：Agent 一次任务会连发好几条提案（加节点、连线、
+   * 改标题），它们常常落在同一毫秒里。`scan` 的排序是
+   * `createdAt || id.localeCompare`，而 uuid 是随机的——同一毫秒的多条提案
+   * 于是按 uuid 排，用户看到的顺序每次机器都不一样，Agent 说「先加再连」，
+   * 界面上可能先连后加。探针实测：八次里有两次顺序被重排。
+   *
+   * 单调递增还顺带解决了另一种情况：系统时钟往回跳时，新提案不会排到旧提案
+   * 前面去，队列不会突然「回到过去」。
+   */
+  private nextTimestamp(): number {
+    const now = Date.now()
+    this.lastTimestamp = Math.max(now, this.lastTimestamp + 1)
+    return this.lastTimestamp
+  }
+
+  /** 本进程发出过的最后一个提案时间戳（见 `nextTimestamp`）。 */
+  private lastTimestamp = 0
 
   async remove(id: string): Promise<void> {
     await fs.rm(this.filePath(id), { force: true })
@@ -355,6 +376,10 @@ function coerceProposal(value: unknown): CanvasProposal | undefined {
     canvasId: raw.canvasId,
     tool: raw.tool,
     summary: raw.summary,
+    // 旧提案没有 counts（改造前只写了中文句子）。不补一个从 change 反推的：
+    // 反推出来的数字可能与当初那句 summary 不一致，而界面对「没有 counts」
+    // 已经有明确的退路——显示 summary 原文。
+    ...isCountsShape(raw.counts) ? { counts: raw.counts as CanvasProposal['counts'] } : {},
     baseRevision: raw.baseRevision,
     createdAt: raw.createdAt,
     // 归一在读取时做，`apply` 于是只有一种形状要处理。旧提案（整份节点）
@@ -364,6 +389,24 @@ function coerceProposal(value: unknown): CanvasProposal | undefined {
       ...updatedNodes === undefined ? {} : { updatedNodes },
     },
   }
+}
+
+/**
+ * `counts` 的形状：出现的每个键都必须是非负整数，`title` 必须是字符串。
+ *
+ * 严格因为它是**渲染输入**：一个 `NaN` 或字符串数字进了文案会变成
+ * 「添加 NaN 个节点」。形状不对就当没有——界面退回 summary，比显示一句
+ * 坏文案强。
+ */
+function isCountsShape(value: unknown): boolean {
+  if (value === undefined) return false
+  if (value === null || typeof value !== 'object') return false
+  const counts = value as Record<string, unknown>
+  for (const key of ['addedNodes', 'updatedNodes', 'removedNodes', 'addedConnections', 'removedConnections'] as const) {
+    const field = counts[key]
+    if (field !== undefined && !(typeof field === 'number' && Number.isInteger(field) && field >= 0)) return false
+  }
+  return counts.title === undefined || typeof counts.title === 'string'
 }
 
 export const proposalStore = new ProposalStore()

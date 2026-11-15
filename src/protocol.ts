@@ -454,12 +454,42 @@ export interface CanvasProposal {
   canvasId: string
   /** 产出这条提案的工具名，界面按它说明来源。 */
   tool: string
-  /** 一句话说明，直接给用户看，例如「添加 2 个节点、连接 1 条线」。 */
+  /**
+   * 一句话说明，直接给用户看。
+   *
+   * @deprecated 界面改为从 {@link counts} + 语言表渲染。这个字段是服务端
+   * 用中文拼好的，英文/俄文用户会看到中文——一条提案的文案却不受语言表
+   * 管辖，是这套机制里唯一漏掉的一处。保留它只有一个用途：**旧提案**已经
+   * 写进磁盘（`proposals/` 是旁路目录，没人清理过），它们没有 `counts`，
+   * 界面用这个字段兜底。新提案同时写两者。
+   */
   summary: string
+  /**
+   * 提案要改动的数量，界面按当前语言渲染成句子。
+   *
+   * 只放数字与「改成了什么名字」，不放任何一句话：文案在
+   * `src/client/locales.ts` 的 `canvas.proposal.summary.*` 里。旧提案没有
+   * 这个字段，界面退回 `summary`。
+   */
+  counts?: CanvasProposalCounts
   /** 起草时的文档 revision。仅供参考：接受时不拿它当门槛（多条提案共享它）。 */
   baseRevision: number
   createdAt: number
   change: CanvasProposalChange
+}
+
+/**
+ * 一条提案的改动规模。键都只有出现了才算数——没出现表示「这类改动为 0」，
+ * 而不是「未知」。
+ */
+export interface CanvasProposalCounts {
+  addedNodes?: number
+  updatedNodes?: number
+  removedNodes?: number
+  addedConnections?: number
+  removedConnections?: number
+  /** 被改成的标题（只在提案确实改名时出现）。 */
+  title?: string
 }
 
 export const CANVAS_API = {

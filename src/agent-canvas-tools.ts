@@ -38,6 +38,7 @@ import type {
   CanvasNode,
   CanvasNodeMetadata,
   CanvasNodeType,
+  CanvasProposalCounts,
   CanvasProposalNodeUpdate,
   CanvasSummary,
 } from './protocol.ts'
@@ -248,7 +249,15 @@ function diffOf(before: CanvasDocument, after: CanvasDocument): CanvasProposalCh
   const beforeEdges = new Map(before.connections.map(edge => [edge.id, edge]))
   const afterEdges = new Map(after.connections.map(edge => [edge.id, edge]))
   const addedConnections = after.connections.filter(edge => !beforeEdges.has(edge.id))
-  const removedConnectionIds = before.connections.filter(edge => !afterEdges.has(edge.id)).map(edge => edge.id)
+  // 连线消失有两种原因：用户明确断开，或者它的某一端被删了。后者 `apply`
+  // 在删节点时本来就会连带过滤掉，列出来只会让提案条多出一句「断开 N 条
+  // 线」——用户看到「删除 1 个节点、断开 1 条线」会以为自己漏了一条改动。
+  // 只报「两端都还在、却没了」的那些。
+  const goneNodes = new Set(removedNodeIds)
+  const removedConnectionIds = before.connections
+    .filter(edge => !afterEdges.has(edge.id))
+    .filter(edge => !goneNodes.has(edge.fromNodeId) && !goneNodes.has(edge.toNodeId))
+    .map(edge => edge.id)
 
   const title = before.title === after.title ? undefined : after.title
 
@@ -300,7 +309,7 @@ function nodePatchOf(before: CanvasNode, after: CanvasNode): CanvasProposalNodeU
  * 这是用户在提案条上唯一会读的东西，所以写具体的数量与最常见的动作，
  * 不写「Agent 修改了画布」这种等于没说的句子。
  */
-function summarise(tool: string, change: CanvasProposalChange): string {
+function summarise(tool: string, change: CanvasProposalChange): { summary: string; counts: CanvasProposalCounts } {
   const parts: string[] = []
   const added = change.addedNodes?.length ?? 0
   const updated = change.updatedNodes?.length ?? 0
@@ -313,7 +322,20 @@ function summarise(tool: string, change: CanvasProposalChange): string {
   if (wired > 0) parts.push(`连接 ${wired} 条线`)
   if (unwired > 0) parts.push(`断开 ${unwired} 条线`)
   if (change.title !== undefined) parts.push(`改名为「${change.title}」`)
-  return parts.length === 0 ? tool : parts.join('、')
+  // `summary` 是给旧客户端 / 旧提案兜底的中文句子；`counts` 才是界面用的。
+  // 两者一起写：只写 counts，则升级前的画布窗口（还是旧前端）会显示工具名；
+  // 只写 summary，则英文用户永远看到中文。
+  return {
+    summary: parts.length === 0 ? tool : parts.join('、'),
+    counts: {
+      ...added === 0 ? {} : { addedNodes: added },
+      ...updated === 0 ? {} : { updatedNodes: updated },
+      ...removed === 0 ? {} : { removedNodes: removed },
+      ...wired === 0 ? {} : { addedConnections: wired },
+      ...unwired === 0 ? {} : { removedConnections: unwired },
+      ...change.title === undefined ? {} : { title: change.title },
+    },
+  }
 }
 
 function viewOf(document: CanvasDocument): AgentCanvasView {
@@ -451,10 +473,12 @@ export function registerAgentCanvasTools(ctx: Context, config: () => { enabled: 
       return { ...viewOf(draft), note: 'This call changed nothing, so there is no pending change to accept.' }
     }
 
+    const described = summarise(tool, change)
     const proposal = await proposalStore.add({
       canvasId,
       tool,
-      summary: summarise(tool, change),
+      summary: described.summary,
+      counts: described.counts,
       // 钉住真实文档的 revision，不是草稿的：用户接受时要比对的是他手上
       // 那份文档，而草稿只存在于这次调用里。
       baseRevision: document.revision,
