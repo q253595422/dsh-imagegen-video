@@ -461,6 +461,29 @@ check('F18 pruning groups never invents the field on a canvas that never had one
   assert.equal(Object.hasOwn(after, 'groups'), false, 'nor a key holding undefined')
 })
 
+check('F19 omitting x/y puts the node in a new column instead of stacking at the origin', async () => {
+  // 工具说明写着「Omit x/y to place it in a free column to the right of the
+  // existing nodes」，实现却把缺省钉成 0,0——探针实测 A/B/C 三个节点坐标全
+  // 是 (0,0)，Agent 加几个用户就只能看到最上面那一个。
+  const registered = new Map()
+  registerAgentCanvasTools({ tools: { register (definition) { registered.set(definition.name, definition); return () => {} } } }, () => ({ enabled: true }))
+  const created = await registered.get('create_canvas').execute({ title: '摆放' }, {})
+  const first = await registered.get('add_canvas_node').execute({ canvas_id: created.id, type: 'image', title: 'A' }, {})
+  await proposalStore.acceptOne(created.id, first.proposalId)
+  assert.equal(first.nodes[0].x, 0, 'the first node starts at the origin')
+
+  const second = await registered.get('add_canvas_node').execute({ canvas_id: created.id, type: 'image', title: 'B' }, {})
+  const b = second.nodes.find(node => node.title === 'B')
+  assert.ok(b.x > first.nodes[0].x + first.nodes[0].width, `B must land to the right of A, not on top of it: ${b.x}`)
+  assert.equal(b.y, 0)
+
+  // 模型给了坐标就照用，不能被自动摆放覆盖。
+  const placed = await registered.get('add_canvas_node').execute({ canvas_id: created.id, type: 'image', title: 'C', x: -400, y: 250 }, {})
+  const c = placed.nodes.find(node => node.title === 'C')
+  assert.equal(c.x, -400)
+  assert.equal(c.y, 250)
+})
+
 check('R5e proposals made back to back come back in the order they were proposed', async () => {
   // 探针实测过的重排：Agent 一次任务连发几条提案，它们常落在同一毫秒里，
   // 而 `scan` 的 tie-break 是 `id.localeCompare`——uuid 是随机的，于是顺序

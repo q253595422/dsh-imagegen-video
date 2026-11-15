@@ -65,7 +65,27 @@ const DEFAULT_SIZE: Record<CanvasNodeType, { width: number; height: number }> = 
   storyboard: { width: 380, height: 420 },
 }
 
-/** One node as the Agent sees it: ids to wire with, metadata to reason about.
+/**
+ * 自动摆放新节点时的列间距。与画布自己的 `NODE_GAP`（CanvasWorkspace.tsx）
+ * 取同一个值：同一张画布上，Agent 加的节点和用户手动加的节点应当看起来是
+ * 同一个东西摆出来的。
+ */
+const NODE_COLUMN_GAP = 90
+
+/**
+ * 新节点该放的 x：现有节点最右边再留一列间距。
+ *
+ * 空画布从 0 开始；有节点就接在最右那个后面。只算 x 是因为「省略 x/y」的
+ * 承诺是「放到右边的一列」，纵向从 0 起就够——真要让多个新节点上下排开，那是
+ * 布局问题，不该由这个工具猜。
+ */
+function nextColumnX(document: CanvasDocument): number {
+  if (document.nodes.length === 0) return 0
+  return Math.max(...document.nodes.map(node => node.x + node.width)) + NODE_COLUMN_GAP
+}
+
+/**
+ * One node as the Agent sees it: ids to wire with, metadata to reason about.
  *
  * `type` is plain `string` rather than `CanvasNodeType` because the tool's
  * output schema is what the render callback receives, and the schema can only
@@ -637,6 +657,12 @@ export function registerAgentCanvasTools(ctx: Context, config: () => { enabled: 
         return await mutate(args.canvas_id, 'add_canvas_node', document => {
           const node = createNode(args as Record<string, unknown>)
           if (document.nodes.some(existing => existing.id === node.id)) throw new Error(`A node with id ${node.id} already exists on this canvas.`)
+          // 说明写着「省略 x/y 就放到现有节点右边」，而 `createNode` 的缺省是
+          // 0,0——于是 Agent 连着加三个节点，三个都叠在原点，用户打开画布只
+          // 看到最上面那一个。探针实测过：A/B/C 的坐标都是 (0,0)。
+          // `createNode` 已经照抄了模型给的两个轴，这里只补它没给的那一个。
+          if (typeof args.x !== 'number') node.x = nextColumnX(document)
+          if (typeof args.y !== 'number') node.y = 0
           document.nodes.push(node)
         })
       },
