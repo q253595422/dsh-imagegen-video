@@ -165,6 +165,8 @@ const canvasSummarySchema = {
     title: { type: 'string', required: true },
     revision: { type: 'integer', required: true },
     nodeCount: { type: 'integer', required: true },
+    /** 待用户接受的改动条数。0 表示没有。 */
+    pending: { type: 'integer', required: true },
     updatedAt: { type: 'integer', required: true },
   },
 } as const
@@ -386,9 +388,9 @@ function renderCanvasView(value: AgentCanvasView): Array<{ type: 'text'; text: s
   return [{ type: 'text', text: lines.join('\n') }]
 }
 
-function renderSummaryList(values: readonly CanvasSummary[]): string {
+function renderSummaryList(values: readonly (CanvasSummary & { pending?: number })[]): string {
   if (values.length === 0) return 'There are no canvases yet.'
-  return values.map(value => `- ${value.id}「${value.title}」 (${value.nodeCount} nodes, revision ${value.revision})`).join('\n')
+  return values.map(value => `- ${value.id}「${value.title}」 (${value.nodeCount} nodes, revision ${value.revision}${value.pending === undefined || value.pending === 0 ? '' : `, ${value.pending} change(s) awaiting the user's accept`})`).join('\n')
 }
 
 /** Turn a store conflict into copy the model can act on. */
@@ -558,7 +560,21 @@ export function registerAgentCanvasTools(ctx: Context, config: () => { enabled: 
       async execute() {
         ensureEnabled()
         const values = await canvasStore.list()
-        return values.map(value => ({ id: value.id, title: value.title, revision: value.revision, nodeCount: value.nodeCount, updatedAt: value.updatedAt }))
+        // `nodeCount` 只数已保存的节点。Agent 刚提议的节点不在里面，而
+        // `read_canvas` 看得到——两个数字打架，模型会以为自己提议失败，再提
+        // 一遍（探针实测：list 说 1 个、read 说 2 个）。所以这里一并带出待确认
+        // 条数，让模型一眼看出「那个画布上还有我说了但用户没点头的东西」。
+        // 一次遍历拿到每份画布的待确认条数：`countByCanvas` 就是下拉的
+        // 「待确认」标记用的那个，不必为每份画布各扫一遍目录。
+        const counts = await proposalStore.countByCanvas()
+        return values.map(value => ({
+          id: value.id,
+          title: value.title,
+          revision: value.revision,
+          nodeCount: value.nodeCount,
+          pending: counts[value.id] ?? 0,
+          updatedAt: value.updatedAt,
+        }))
       },
     })),
     ctx.tools.register(defineTool({

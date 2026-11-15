@@ -294,6 +294,25 @@ check('E1 unknown canvas, unknown node, self-connection and bad type are actiona
   )
 })
 
+check('F16 list_canvases says how many changes are still waiting, so its count and read_canvas agree', async () => {
+  // `nodeCount` 只数已保存的节点。Agent 刚提议的节点不在里面，而 `read_canvas`
+  // 看得到——探针实测：list 说 1 个、read 说 2 个。两个数字打架，模型会以为
+  // 自己提议失败，再提一遍。带上 `pending` 之后，差异有了明确的解释。
+  const stub = stubContext()
+  registerAgentCanvasTools(stub.ctx, enabledConfig)
+  const created = await stub.registered.get('create_canvas').execute({ title: '计数' }, {})
+  const first = await stub.registered.get('add_canvas_node').execute({ canvas_id: created.id, type: 'image', title: 'A' }, {})
+  await proposalStore.acceptOne(created.id, first.proposalId)
+  await stub.registered.get('add_canvas_node').execute({ canvas_id: created.id, type: 'image', title: 'B' }, {})
+
+  const row = (await stub.registered.get('list_canvases').execute({}, {})).find(item => item.id === created.id)
+  assert.equal(row.nodeCount, 1, 'nodeCount still reports the saved canvas, like the picker does')
+  assert.equal(row.pending, 1, 'the proposed node is accounted for')
+
+  const view = await stub.registered.get('read_canvas').execute({ canvas_id: created.id }, {})
+  assert.equal(row.nodeCount + row.pending, view.nodes.length, 'the two numbers now add up to what read_canvas shows')
+})
+
 check('E2 list_canvases reports what was created, newest first', async () => {
   const stub = stubContext()
   registerAgentCanvasTools(stub.ctx, enabledConfig)
