@@ -249,6 +249,16 @@ function diffOf(before: CanvasDocument, after: CanvasDocument): CanvasProposalCh
   const beforeEdges = new Map(before.connections.map(edge => [edge.id, edge]))
   const afterEdges = new Map(after.connections.map(edge => [edge.id, edge]))
   const addedConnections = after.connections.filter(edge => !beforeEdges.has(edge.id))
+  // 连线**改了内容**（今天只有角色）此前完全不算改动：`diffOf` 只比 id 集合，
+  // 于是「把这条边设成首帧」在 `mutate` 眼里什么都没发生，工具回一句
+  // 「This call changed nothing」，而视频插帧读的正是 role。角色按
+  // `withRole` 的语义比：`'input'` 与「没有 role」等价，其余逐个比。
+  const updatedConnections = after.connections.flatMap(edge => {
+    const original = beforeEdges.get(edge.id)
+    if (original === undefined) return []
+    const role = roleOf(edge) === roleOf(original) ? undefined : roleOf(edge)
+    return role === undefined ? [] : [{ id: edge.id, role }]
+  })
   // 连线消失有两种原因：用户明确断开，或者它的某一端被删了。后者 `apply`
   // 在删节点时本来就会连带过滤掉，列出来只会让提案条多出一句「断开 N 条
   // 线」——用户看到「删除 1 个节点、断开 1 条线」会以为自己漏了一条改动。
@@ -262,7 +272,8 @@ function diffOf(before: CanvasDocument, after: CanvasDocument): CanvasProposalCh
   const title = before.title === after.title ? undefined : after.title
 
   if (addedNodes.length === 0 && updatedNodes.length === 0 && removedNodeIds.length === 0
-    && addedConnections.length === 0 && removedConnectionIds.length === 0 && title === undefined) {
+    && addedConnections.length === 0 && updatedConnections.length === 0
+    && removedConnectionIds.length === 0 && title === undefined) {
     return undefined
   }
   return {
@@ -270,6 +281,7 @@ function diffOf(before: CanvasDocument, after: CanvasDocument): CanvasProposalCh
     ...updatedNodes.length === 0 ? {} : { updatedNodes },
     ...removedNodeIds.length === 0 ? {} : { removedNodeIds },
     ...addedConnections.length === 0 ? {} : { addedConnections },
+    ...updatedConnections.length === 0 ? {} : { updatedConnections },
     ...removedConnectionIds.length === 0 ? {} : { removedConnectionIds },
     ...title === undefined ? {} : { title },
   }
@@ -315,11 +327,13 @@ function summarise(tool: string, change: CanvasProposalChange): { summary: strin
   const updated = change.updatedNodes?.length ?? 0
   const removed = change.removedNodeIds?.length ?? 0
   const wired = change.addedConnections?.length ?? 0
+  const rewired = change.updatedConnections?.length ?? 0
   const unwired = change.removedConnectionIds?.length ?? 0
   if (added > 0) parts.push(`添加 ${added} 个节点`)
   if (updated > 0) parts.push(`修改 ${updated} 个节点`)
   if (removed > 0) parts.push(`删除 ${removed} 个节点`)
   if (wired > 0) parts.push(`连接 ${wired} 条线`)
+  if (rewired > 0) parts.push(`调整 ${rewired} 条线的角色`)
   if (unwired > 0) parts.push(`断开 ${unwired} 条线`)
   if (change.title !== undefined) parts.push(`改名为「${change.title}」`)
   // `summary` 是给旧客户端 / 旧提案兜底的中文句子；`counts` 才是界面用的。
@@ -332,6 +346,7 @@ function summarise(tool: string, change: CanvasProposalChange): { summary: strin
       ...updated === 0 ? {} : { updatedNodes: updated },
       ...removed === 0 ? {} : { removedNodes: removed },
       ...wired === 0 ? {} : { addedConnections: wired },
+      ...rewired === 0 ? {} : { updatedConnections: rewired },
       ...unwired === 0 ? {} : { removedConnections: unwired },
       ...change.title === undefined ? {} : { title: change.title },
     },
@@ -665,8 +680,22 @@ export function registerAgentCanvasTools(ctx: Context, config: () => { enabled: 
           const ids = new Set(document.nodes.map(node => node.id))
           if (!ids.has(args.from_node_id)) throw new Error(`Node ${args.from_node_id} was not found.`)
           if (!ids.has(args.to_node_id)) throw new Error(`Node ${args.to_node_id} was not found.`)
-          if (document.connections.some(edge => edge.fromNodeId === args.from_node_id && edge.toNodeId === args.to_node_id)) return
           const role = args.role === undefined ? 'input' : parseRole(args.role)
+          const existing = document.connections.find(edge => edge.fromNodeId === args.from_node_id && edge.toNodeId === args.to_node_id)
+          if (existing !== undefined) {
+            // 边已经在，但**角色可能不同**：Agent 先 connect（默认 input），
+            // 之后又说「把这张设成首帧」时会再调一次。此前这里无条件 return，
+            // 第二次调用被当成「什么都没改」——而且工具还回一句
+            // 「This call changed nothing」，模型于是以为自己设好了。视频插帧
+            // 读的就是 role，用户看到的会是首尾帧用错了图。
+            //
+            // `withRole` 是幂等的：角色相同返回同一个对象（`diffOf` 算出无差异、
+            // 不产生空提案），不同则改掉那一条边。
+            const updated = withRole(existing, role)
+            if (updated === existing) return
+            document.connections = document.connections.map(edge => edge === existing ? updated : edge)
+            return
+          }
           document.connections.push(withRole({
             id: `edge-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 7)}`,
             fromNodeId: args.from_node_id,

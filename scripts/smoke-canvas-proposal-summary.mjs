@@ -137,6 +137,33 @@ check('S5 退化的 counts 什么都不渲染', () => {
   assert.equal(describeProposal({ addedNodes: Number.NaN }), undefined, 'NaN 不能进文案')
 })
 
+check('S6 改连线角色报自己的键，三种语言都说得清', async () => {
+  // 角色是唯一会被「改」的连线字段（首帧 / 尾帧 / 素材）。它此前完全不算
+  // 改动：`diffOf` 只比连线 id 集合，于是「把这条设成首帧」产出的提案在界面上
+  // 什么都不说，而视频插帧读的正是 role。
+  const registered = tools()
+  const created = await seedAccepted(registered, '角色文案', ['A', 'B'])
+  const nodes = (await canvasStore.read(created.id)).nodes
+  const aId = nodes.find(node => node.title === 'A').id
+  const bId = nodes.find(node => node.title === 'B').id
+  const wire = await run(registered, 'connect_canvas_nodes', { canvas_id: created.id, from_node_id: aId, to_node_id: bId })
+  await proposalStore.acceptOne(created.id, wire.proposalId)
+
+  const rerole = await run(registered, 'connect_canvas_nodes', { canvas_id: created.id, from_node_id: aId, to_node_id: bId, role: 'first' })
+  const counts = (await proposalStore.list(created.id)).find(item => item.id === rerole.proposalId).counts
+  assert.deepEqual(counts, { updatedConnections: 1 }, '只报「改了一条线的角色」，不连带说「连了一条线」')
+
+  const render = (locale) => { applyHostLocale(locale); return describeProposal(counts) }
+  const zh = render('zh')
+  const en = render('en')
+  const ru = render('ru')
+  applyHostLocale('zh')
+  assert.equal(zh, '调整 1 条线的角色', `中文文案不对：${zh}`)
+  assert.ok(en.includes('1') && !en.includes('canvas.proposal'), `英文文案不对：${en}`)
+  assert.ok(ru.includes('1') && !ru.includes('canvas.proposal'), `俄文文案不对：${ru}`)
+  assert.equal(new Set([zh, en, ru]).size, 3, '三种语言必须各有各的文案')
+})
+
 // ------------------------------------------------------------------- 驱动
 
 let passed = 0

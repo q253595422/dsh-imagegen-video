@@ -16,7 +16,7 @@ import { tt } from '../helpers.ts'
 /**
  * 一句话描述这条提案要做什么；没有任何可说的数量时返回 `undefined`。
  *
- * 顺序固定（加 / 改 / 删 / 连 / 断 / 改名），与 `summarise` 一致：两个实现
+ * 顺序固定（加 / 改 / 删 / 连 / 改角色 / 断 / 改名），与 `summarise` 一致：两个实现
  * 输出同一句话，只是语言不同。
  */
 export function describeProposal(counts: CanvasProposalCounts | undefined): string | undefined {
@@ -26,6 +26,7 @@ export function describeProposal(counts: CanvasProposalCounts | undefined): stri
   if ((counts.updatedNodes ?? 0) > 0) parts.push(tt('canvas.proposal.summary.updated', { count: counts.updatedNodes ?? 0 }))
   if ((counts.removedNodes ?? 0) > 0) parts.push(tt('canvas.proposal.summary.removed', { count: counts.removedNodes ?? 0 }))
   if ((counts.addedConnections ?? 0) > 0) parts.push(tt('canvas.proposal.summary.wired', { count: counts.addedConnections ?? 0 }))
+  if ((counts.updatedConnections ?? 0) > 0) parts.push(tt('canvas.proposal.summary.rewired', { count: counts.updatedConnections ?? 0 }))
   if ((counts.removedConnections ?? 0) > 0) parts.push(tt('canvas.proposal.summary.unwired', { count: counts.removedConnections ?? 0 }))
   if (counts.title !== undefined) parts.push(tt('canvas.proposal.summary.renamed', { title: counts.title }))
   return parts.length === 0 ? undefined : parts.join(tt('canvas.proposal.summary.separator'))

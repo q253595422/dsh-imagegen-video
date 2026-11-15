@@ -651,6 +651,70 @@ check('F12 a wire whose endpoint was deleted cannot be written by accepting it',
   assert.equal(after.nodes.length, 1)
 })
 
+check('F13 connecting an existing pair with a new role changes that role instead of doing nothing', async () => {
+  // 探针复现：Agent 先 connect(A → B)（默认 input），之后说「把 A 设成首帧」
+  // 再调一次带 role:'first' 的 connect。此前那句「边已存在就 return」把它当成
+  // 什么都没改，工具还回一句「This call changed nothing」——模型以为自己设好
+  // 了，而视频插帧读的正是 role，用户拿到的是首尾帧用错了图。
+  const stub = stubContext()
+  registerAgentCanvasTools(stub.ctx, enabledConfig)
+  const created = await stub.registered.get('create_canvas').execute({ title: '角色' }, {})
+  await proposalStore.acceptOne(created.id, (await stub.registered.get('add_canvas_node').execute({ canvas_id: created.id, type: 'image', title: 'A' }, {})).proposalId)
+  await proposalStore.acceptOne(created.id, (await stub.registered.get('add_canvas_node').execute({ canvas_id: created.id, type: 'image', title: 'B' }, {})).proposalId)
+  const current = await canvasStore.read(created.id)
+  const aId = current.nodes.find(node => node.title === 'A').id
+  const bId = current.nodes.find(node => node.title === 'B').id
+
+  await proposalStore.acceptOne(created.id, (await stub.registered.get('connect_canvas_nodes').execute({ canvas_id: created.id, from_node_id: aId, to_node_id: bId }, {})).proposalId)
+  assert.equal((await canvasStore.read(created.id)).connections[0].role, undefined, 'the default role stays off disk')
+
+  const again = await stub.registered.get('connect_canvas_nodes').execute({
+    canvas_id: created.id, from_node_id: aId, to_node_id: bId, role: 'first',
+  }, {})
+  assert.ok(again.proposalId !== undefined, 'changing the role is a change, so it must produce a proposal')
+  const accepted = await proposalStore.acceptOne(created.id, again.proposalId)
+  assert.equal(accepted.ok, true, `the role change must apply: ${JSON.stringify(accepted)}`)
+  const after = await canvasStore.read(created.id)
+  assert.equal(after.connections.length, 1, 'the wire is updated, not duplicated')
+  assert.equal(after.connections[0].role, 'first')
+
+  // 同一个角色再连一次是真正的无改动：不产生空提案，也不把边改坏。
+  const same = await stub.registered.get('connect_canvas_nodes').execute({
+    canvas_id: created.id, from_node_id: aId, to_node_id: bId, role: 'first',
+  }, {})
+  assert.equal(same.proposalId, undefined, 'connecting the same pair with the same role has nothing to propose')
+  assert.equal((await canvasStore.read(created.id)).connections.length, 1)
+})
+
+check('F14 re-roling a wire the user has since cut fails loudly instead of silently doing nothing', async () => {
+  // `apply` 处理连线补丁时找不到那条边（用户在提议之后断开了）：与「要改的
+  // 节点已被删」同一条规矩，明确失败。默默跳过会让提案条说「已接受」，而画布
+  // 上什么都没变，用户下次生成视频才发现首帧没设上。
+  const stub = stubContext()
+  registerAgentCanvasTools(stub.ctx, enabledConfig)
+  const created = await stub.registered.get('create_canvas').execute({ title: '线没了' }, {})
+  await proposalStore.acceptOne(created.id, (await stub.registered.get('add_canvas_node').execute({ canvas_id: created.id, type: 'image', title: 'A' }, {})).proposalId)
+  await proposalStore.acceptOne(created.id, (await stub.registered.get('add_canvas_node').execute({ canvas_id: created.id, type: 'image', title: 'B' }, {})).proposalId)
+  const current = await canvasStore.read(created.id)
+  const aId = current.nodes.find(node => node.title === 'A').id
+  const bId = current.nodes.find(node => node.title === 'B').id
+  await proposalStore.acceptOne(created.id, (await stub.registered.get('connect_canvas_nodes').execute({ canvas_id: created.id, from_node_id: aId, to_node_id: bId }, {})).proposalId)
+
+  const rerole = await stub.registered.get('connect_canvas_nodes').execute({
+    canvas_id: created.id, from_node_id: aId, to_node_id: bId, role: 'last',
+  }, {})
+  assert.ok(rerole.proposalId !== undefined)
+
+  // 用户在接受之前自己把这条线断了。
+  const beforeCut = await canvasStore.read(created.id)
+  await canvasStore.save({ ...beforeCut, connections: [] }, beforeCut.revision)
+
+  const accepted = await proposalStore.acceptOne(created.id, rerole.proposalId)
+  assert.equal(accepted.ok, false, 'a role patch whose wire is gone cannot be applied')
+  assert.equal(accepted.code, 'proposal-stale')
+  assert.equal((await canvasStore.read(created.id)).connections.length, 0, 'no wire was resurrected')
+})
+
 check('F6 the auto-apply escape hatch is not reachable from a tool argument', async () => {
   const stub = stubContext()
   registerAgentCanvasTools(stub.ctx, enabledConfig)

@@ -36,6 +36,7 @@ import { randomUUID } from 'node:crypto'
 import path from 'node:path'
 import type { CanvasDocument, CanvasNode, CanvasProposal, CanvasProposalChange, CanvasProposalNodeUpdate } from './protocol.ts'
 import { canvasStore, CanvasConflictError, coerceDocument, readJson, safeId, writeJsonAtomic, type CanvasStore } from './canvas-store.ts'
+import { CONNECTION_ROLES, roleOf, withRole } from './client/canvas/connection-role.ts'
 import { imageDataRoot } from './image-storage-path.ts'
 
 // 供同包内其他模块从存储层导入类型；客户端仍从 protocol.ts 拿。
@@ -264,6 +265,15 @@ export class ProposalStore {
       if (!endpoints.has(connection.fromNodeId) || !endpoints.has(connection.toNodeId)) return undefined
       connections.push(connection)
     }
+    for (const update of change.updatedConnections ?? []) {
+      const index = connections.findIndex(connection => connection.id === update.id)
+      // 提案要改的连线已经不在了（用户断开过）：与节点同一条规矩，明确失败，
+      // 不假装生效。
+      if (index < 0) return undefined
+      connections[index] = update.role === undefined
+        ? connections[index]!
+        : withRole(connections[index]!, update.role)
+    }
     const droppedEdges = new Set(change.removedConnectionIds ?? [])
     if (droppedEdges.size > 0) {
       const next = connections.filter(connection => !droppedEdges.has(connection.id))
@@ -360,7 +370,8 @@ function coerceProposal(value: unknown): CanvasProposal | undefined {
   const change = raw.change as Record<string, unknown>
   const isArray = (field: unknown): boolean => field === undefined || Array.isArray(field)
   if (!isArray(change.addedNodes) || !isArray(change.updatedNodes) || !isArray(change.removedNodeIds)
-    || !isArray(change.addedConnections) || !isArray(change.removedConnectionIds)) return undefined
+    || !isArray(change.addedConnections) || !isArray(change.updatedConnections)
+    || !isArray(change.removedConnectionIds)) return undefined
   // `title` 会被原样写进文档，而文档的校验器（`isDocument`）要求它是字符串。
   // 不在这里挡住的话：这条提案读得出来、排进队列、接受时由 `store.save` 抛
   // 「malformed canvas document」——而 `apply` 是成功返回的，所以「应用不了就
@@ -380,6 +391,15 @@ function coerceProposal(value: unknown): CanvasProposal | undefined {
     const patch = update as Record<string, unknown>
     if (typeof patch.id !== 'string' || patch.id === '') return undefined
     if (!isPatchShape(patch) && !isLegacyNodeShape(patch)) return undefined
+  }
+  // 连线补丁同理：`id` 必须是字符串，`role` 出现就必须是认得的角色。认不得的
+  // 角色会经 `withRole` 原样写进文档，而那是一个只在画布渲染时才露出来的
+  // 坏值。读入时就当坏文件跳过。
+  for (const update of (change.updatedConnections as unknown[] | undefined) ?? []) {
+    if (update === null || typeof update !== 'object') return undefined
+    const patch = update as Record<string, unknown>
+    if (typeof patch.id !== 'string' || patch.id === '') return undefined
+    if (patch.role !== undefined && !(CONNECTION_ROLES as readonly unknown[]).includes(patch.role)) return undefined
   }
   const updatedNodes = normalizeNodeUpdates(change.updatedNodes as unknown[] | undefined)
   return {
@@ -413,7 +433,7 @@ function isCountsShape(value: unknown): boolean {
   if (value === undefined) return false
   if (value === null || typeof value !== 'object') return false
   const counts = value as Record<string, unknown>
-  for (const key of ['addedNodes', 'updatedNodes', 'removedNodes', 'addedConnections', 'removedConnections'] as const) {
+  for (const key of ['addedNodes', 'updatedNodes', 'removedNodes', 'addedConnections', 'updatedConnections', 'removedConnections'] as const) {
     const field = counts[key]
     if (field !== undefined && !(typeof field === 'number' && Number.isInteger(field) && field >= 0)) return false
   }

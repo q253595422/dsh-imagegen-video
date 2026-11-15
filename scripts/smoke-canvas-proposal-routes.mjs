@@ -390,6 +390,27 @@ check('R5g a proposal whose result would be an invalid document is removed, not 
   assert.equal(byId.get(addedNodeId).title, '出图', 'the good node landed unchanged')
 })
 
+check('R5h a connection patch naming a role this build does not know is skipped as a bad file', async () => {
+  // `updatedConnections` 是新字段，`role` 会经 `withRole` 原样写进文档。手改过
+  // 的 JSON、或将来加了新角色又回退版本时，磁盘上可能出现本版本不认的角色。
+  // 读入时就当坏文件跳过，而不是让它进队列、接受后把坏值写进连线——那时画布
+  // 渲染只会把它当 `input`（`roleOf` 的兜底），用户看不到任何报错，却也没拿到
+  // 自己设的角色。
+  const { canvasId, proposalId } = await seed('坏角色')
+  const dir = join(home, 'dsh-imagegen', 'canvas', 'proposals')
+  const document = await canvasStore.read(canvasId)
+  writeFileSync(join(dir, 'bad-role.json'), JSON.stringify({
+    id: 'bad-role', canvasId, tool: 'connect_canvas_nodes',
+    summary: '改角色', counts: { updatedConnections: 1 },
+    baseRevision: document.revision, createdAt: Date.now() - 1000,
+    change: { updatedConnections: [{ id: 'edge-x', role: 'middle' }] },
+  }))
+
+  const listed = await post(PROPOSALS, { canvasId })
+  assert.equal(listed.proposals.length, 1, 'the unknown role must not reach the queue')
+  assert.equal(listed.proposals[0].id, proposalId, 'only the healthy one is queued')
+})
+
 check('R5e proposals made back to back come back in the order they were proposed', async () => {
   // 探针实测过的重排：Agent 一次任务连发几条提案，它们常落在同一毫秒里，
   // 而 `scan` 的 tie-break 是 `id.localeCompare`——uuid 是随机的，于是顺序
