@@ -156,11 +156,19 @@ check('B1 writes become proposals; read_canvas still reports the saved canvas', 
   assert.equal(config.model, 'gpt-image-2')
   assert.equal(afterConfig.nodes.length, 2, 'the draft stacks every pending proposal')
 
-  // 读工具读的是**真实文档**，所以它仍然说空——这正是「还没接受」该有的样子。
+  // 读工具与写工具用**同一个起点**：真实文档 + 待确认提案。
+  //
+  // 这里曾经断言「read_canvas 只报真实文档，所以仍然是空的」——把缺陷写成了
+  // 规格。后果是模型提议加完节点、回头一读看到「This canvas is empty. Create
+  // nodes…」，于是再添加一遍：探针实测同一个标题落进两条提案。读到的这份也
+  // 必须说明「这些还没被用户接受」，否则模型会以为画布上已经有了。
   const view = await stub.registered.get('read_canvas').execute({ canvas_id: created.id }, {})
-  assert.equal(view.nodes.length, 0, 'read_canvas reports the saved canvas, not the proposals')
+  assert.equal(view.nodes.length, 2, 'read_canvas reads from the same draft the write tools use')
   assert.equal(view.revision, created.revision, 'reading does not bump the revision')
-  assert.match(view.note, /empty/i, 'an empty saved canvas still says so')
+  assert.match(view.note, /only proposed/i, 'the model must be told these are not accepted yet')
+  assert.doesNotMatch(view.note, /canvas is empty/i, 'it is not empty to the model that just filled it')
+  // 而磁盘上仍然是空的——读与写看到同一份草稿，不等于提案落盘了。
+  assert.equal((await canvasStore.read(created.id)).nodes.length, 0, 'reading still writes nothing')
 })
 
 check('B2 wires connect, duplicate safely, and removing a node drops its wires', async () => {
@@ -713,6 +721,20 @@ check('F14 re-roling a wire the user has since cut fails loudly instead of silen
   assert.equal(accepted.ok, false, 'a role patch whose wire is gone cannot be applied')
   assert.equal(accepted.code, 'proposal-stale')
   assert.equal((await canvasStore.read(created.id)).connections.length, 0, 'no wire was resurrected')
+})
+
+check('F15 read_canvas stops calling a change pending once the user accepts it', async () => {
+  // 上面 B1 只测了「有提案时读得到」。反过来也要成立：接受之后那句话必须
+  // 消失，否则模型每次读都被告知「这些还没被接受」，于是反复提议同一件事。
+  const stub = stubContext()
+  registerAgentCanvasTools(stub.ctx, enabledConfig)
+  const created = await stub.registered.get('create_canvas').execute({ title: '接受后' }, {})
+  const added = await stub.registered.get('add_canvas_node').execute({ canvas_id: created.id, type: 'text', title: 'A' }, {})
+  await proposalStore.acceptOne(created.id, added.proposalId)
+
+  const view = await stub.registered.get('read_canvas').execute({ canvas_id: created.id }, {})
+  assert.equal(view.nodes.length, 1)
+  assert.doesNotMatch(view.note ?? '', /only proposed/i, 'nothing is pending any more')
 })
 
 check('F6 the auto-apply escape hatch is not reachable from a tool argument', async () => {

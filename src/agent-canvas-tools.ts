@@ -435,6 +435,31 @@ export function registerAgentCanvasTools(ctx: Context, config: () => { enabled: 
   }
 
   /**
+   * 真实文档 + 本画布待确认提案 = Agent 应当看到的那份画布。
+   *
+   * 读与写必须用同一个起点。`mutate` 早就在这份叠加后的草稿上算（否则连着
+   * 两步操作里第二步会报「节点不存在」，因为它要连的节点还在提案里），但
+   * `read_canvas` 走的是只读真实文档的 `load()`——于是 Agent 刚刚提议加了一个
+   * 节点，回头一读却是「This canvas is empty」的空白画布，很可能再添加一遍。
+   * 探针实测：add → read（0 个节点）→ 再 add，同一个标题落进两条提案。
+   */
+  const draftOf = async (canvasId: string): Promise<{ document: CanvasDocument; draft: CanvasDocument; pending: number }> => {
+    const document = await load(canvasId)
+    const pending = await proposalStore.list(canvasId)
+    let draft: CanvasDocument = document
+    for (const proposal of pending) {
+      const applied = ProposalStore.apply(draft, proposal.change)
+      // 已有提案里有一步已经对不上当前文档（例如用户手改过）：不能拿错误的
+      // 起点继续算，否则后续改动会把那条坏掉的差异固化下来。
+      if (applied === undefined) {
+        throw new Error('A pending change on this canvas no longer applies to the current document (the canvas was edited after it was proposed). Ask the user to accept or discard the pending changes first, then retry.')
+      }
+      draft = applied
+    }
+    return { document, draft, pending: pending.length }
+  }
+
+  /**
    * 让写操作在「真实文档 + 本画布已有提案」之上跑，然后把它带来的变化记成
    * 一条新提案。
    *
@@ -448,21 +473,7 @@ export function registerAgentCanvasTools(ctx: Context, config: () => { enabled: 
    * 一条「什么都没改」的待确认项打断。
    */
   const mutate = async (canvasId: string, tool: string, edit: (document: CanvasDocument) => void): Promise<AgentCanvasView> => {
-    const document = await load(canvasId)
-    const pending = await proposalStore.list(canvasId)
-
-    // 草稿：真实文档 → 应用已有提案 → 交给 edit。
-    let draft: CanvasDocument = document
-    for (const proposal of pending) {
-      const applied = ProposalStore.apply(draft, proposal.change)
-      // 已有提案里有一步已经对不上当前文档（例如用户手改过）：不能拿错误的
-      // 起点继续算，否则新提案会把那条坏掉的差异固化下来。
-      if (applied === undefined) {
-        throw new Error('A pending change on this canvas no longer applies to the current document (the canvas was edited after it was proposed). Ask the user to accept or discard the pending changes first, then retry.')
-      }
-      draft = applied
-    }
-
+    const { document, draft, pending } = await draftOf(canvasId)
     // 关键：先**深拷贝**一份再交给 edit。
     //
     // `edit` 是原地改的（`document.nodes.push(...)`），如果 `before` 和它指向
@@ -502,7 +513,7 @@ export function registerAgentCanvasTools(ctx: Context, config: () => { enabled: 
 
     return {
       ...viewOf(draft),
-      note: `This is a PROPOSAL (${pending.length + 1} pending on this canvas), not a change to the user's canvas yet. Tell the user what you proposed and that they need to accept it in the canvas window. Nothing was saved.`,
+      note: `This is a PROPOSAL (${pending + 1} pending on this canvas), not a change to the user's canvas yet. Tell the user what you proposed and that they need to accept it in the canvas window. Nothing was saved.`,
       proposalId: proposal.id,
     }
   }
@@ -552,7 +563,7 @@ export function registerAgentCanvasTools(ctx: Context, config: () => { enabled: 
     })),
     ctx.tools.register(defineTool({
       name: 'read_canvas',
-      description: 'Read one canvas as a node graph: every node\'s id, type, title, position, prompt/model/text, plus the connections between them. Use the returned ids with the other canvas tools. This never starts a render.',
+      description: 'Read one canvas as a node graph: every node\'s id, type, title, position, prompt/model/text, plus the connections between them. Use the returned ids with the other canvas tools. Includes the changes you proposed that the user has not accepted yet (the same starting point the write tools use), so read it again after proposing instead of assuming your proposal is already on the canvas. This never starts a render.',
       parameters: { canvas_id: { type: 'string', required: true, description: 'Canvas id from list_canvases.' } },
       output: {
         schema: canvasViewSchema,
@@ -560,7 +571,19 @@ export function registerAgentCanvasTools(ctx: Context, config: () => { enabled: 
       },
       async execute(args) {
         ensureEnabled()
-        return viewOf(await load(args.canvas_id))
+        const { draft, pending } = await draftOf(args.canvas_id)
+        const view = viewOf(draft)
+        // `viewOf` 的 note 说的是「这张图能不能跑」，这里说的是「你读到的这份
+        // 还不等于用户看到的」。两个都要，所以拼接而不是覆盖。
+        //
+        // 不会出现「This canvas is empty」与「有提案」并存的自相矛盾：那句话
+        // 只在 `draft.nodes.length === 0` 时说，而待确认提案一旦加过节点，草稿
+        // 里就有了。只剩改名提案时它仍然是对的。
+        const unaccepted = pending === 0
+          ? undefined
+          : `${pending} change(s) here are only proposed: the user has not accepted them, and the canvas they see does not have them yet.`
+        const note = [unaccepted, view.note].filter((part): part is string => part !== undefined).join(' ')
+        return { ...view, ...note === '' ? {} : { note } }
       },
     })),
     ctx.tools.register(defineTool({
