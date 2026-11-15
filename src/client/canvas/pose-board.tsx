@@ -52,9 +52,9 @@ function paint(canvas: HTMLCanvasElement, rig: PoseRig, size: number, guides: bo
   // 取景在画之前统一算：调用方只关心「从哪个角度看」，不关心站多远。固定距离
   // 会让蹲姿缩成画面中央一小团、举手被裁掉——这是参考图最不该出现的两种构图。
   //
-  // 背板固定是 `studio`（深灰径向渐变）。白模靠明暗才读得出体积，铺在白底
-  // 或透明底上时高光与背景贴成一片，人形会退化成一张白剪影；导出图也是同一
-  // 块背板，下游模型才拿到与预览一致的明暗关系。
+  // 背板固定是 `studio`（近白柔和径向渐变）。人偶是淡蓝灰的，必须配浅底——
+  // 深色底会把体块压成一块发亮的剪影，关节球与骨骼线也就叠在一片黑上。
+  // 导出图用同一块背板，下游模型才拿到与预览一致的明暗关系。
   drawPose(ctx, rig, { size, guides, background: null, backdrop: 'studio', camera: frameCamera(rig, camera) })
 }
 
@@ -136,8 +136,8 @@ export function PoseBoard(props: {
     void (async () => {
       try {
         const canvas = document.createElement('canvas')
-        // 导出与预览用同一块深灰背板：白模的明暗只有在这种底色上才读得出
-        // 体积，铺白底会把它压成一张白剪影。
+        // 导出与预览用同一块浅色背板：人偶的淡蓝灰只有在这种底色上才分得
+        // 出轮廓，铺深底会压成剪影。
         paint(canvas, rigRef.current, POSE_EXPORT_SIZE, false, cameraRef.current)
         const dataUrl = canvas.toDataURL('image/png')
         const asset = await props.api.canvasUpload(dataUrl, POSE_EXPORT_SIZE, POSE_EXPORT_SIZE, { origin: 'upload', originId: `pose-${node.id}` })

@@ -548,7 +548,8 @@ export interface PoseRenderOptions {
   /** 背景色；`null` 表示透明。`backdrop: 'studio'` 时被相机棚渐变代替。 */
   background: string | null
   /**
-   * 背板：`studio` 是图片库里那种深灰径向渐变，`flat` 是纯色（或透明）。
+   * 背板：`studio` 是近白的柔和径向渐变（见 `paintStudioBackdrop`），
+   * `flat` 是纯色（或透明）。
    *
    * 预览与导出必须用同一块背板，否则用户在这里摆完姿势、导出的参考图
    * 却是另一种明暗，下游模型会把人形的亮部当成光源而不是皮肤。
@@ -560,9 +561,9 @@ export interface PoseRenderOptions {
 /**
  * 姿势图的背板：近白、中心略亮的柔和渐变 + 一层极淡的地面网格。
  *
- * 早先是深灰摄影棚底，那是给「打光白模」用的。改成线稿木人形之后深灰底
- * 反而把细描边吃掉，而姿势图库里的参考图一律是浅底——线稿要的就是
- * 「纸上的结构图」这种观感。网格留一条地平线，3/4 视角才看得出朝向。
+ * 与「标准初始样子」那张参考图一致：淡蓝灰人偶要配浅底，深色底会把它压成
+ * 一块发亮的剪影。网格留一条地平线，3/4 视角才看得出朝向，也看得出脚踩在
+ * 地上而不是浮着。
  */
 function paintStudioBackdrop(ctx: CanvasRenderingContext2D, size: number): void {
   const gradient = ctx.createRadialGradient(
