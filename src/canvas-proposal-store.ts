@@ -187,7 +187,12 @@ export class ProposalStore {
     if (current === undefined) return { ok: false, code: 'not-found', message: '画布不存在' }
 
     const next = ProposalStore.apply(current, proposal.change)
-    if (next === undefined) {
+    // `apply` 只保证「差分能应用」，不保证结果是一份合法文档：老版本的提案
+    // 或手工改过的文件可能带着文档校验器挡掉的字段（`title` 不是字符串是最
+    // 典型的一个）。不在这里拦住，`store.save` 会抛「malformed canvas
+    // document」——那句话对用户没有意义，而且这条提案永远应用不了却一直占着
+    // 队首。与下面那条分支同等处理：它已不可能再生效，移除并如实说明。
+    if (next === undefined || coerceDocument(next) === undefined) {
       // 这条提案已经不可能再生效：`apply` 是纯函数，只要文档还缺它点名的
       // 节点/连线，以后每一次都会失败。留着它没有意义——它是队列的头，而
       // 界面只让用户点队首那一条，于是后面所有**本来能应用**的提案全被它
@@ -356,6 +361,12 @@ function coerceProposal(value: unknown): CanvasProposal | undefined {
   const isArray = (field: unknown): boolean => field === undefined || Array.isArray(field)
   if (!isArray(change.addedNodes) || !isArray(change.updatedNodes) || !isArray(change.removedNodeIds)
     || !isArray(change.addedConnections) || !isArray(change.removedConnectionIds)) return undefined
+  // `title` 会被原样写进文档，而文档的校验器（`isDocument`）要求它是字符串。
+  // 不在这里挡住的话：这条提案读得出来、排进队列、接受时由 `store.save` 抛
+  // 「malformed canvas document」——而 `apply` 是成功返回的，所以「应用不了就
+  // 自己出队」那条路走不到它，它会永久占着队首，用户点多少次都一样，后面
+  // 本来能用的提案全被挡住。形状不对就当坏文件跳过，与这里其余字段一致。
+  if (change.title !== undefined && typeof change.title !== 'string') return undefined
   // 节点本身用画布自己的校验器过一遍：提案里的节点最终会被写进 pages/，
   // 形状不合格的必须在**入库时**就被挡住，而不是等到接受时才炸。
   for (const node of (change.addedNodes as unknown[] | undefined) ?? []) {

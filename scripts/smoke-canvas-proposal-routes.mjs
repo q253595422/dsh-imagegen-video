@@ -20,7 +20,7 @@
  * Run: node scripts/smoke-canvas-proposal-routes.mjs
  */
 
-import { mkdtempSync, rmSync } from 'node:fs'
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import assert from 'node:assert/strict'
@@ -311,6 +311,83 @@ check('R5d a stale proposal no longer blocks the ones queued behind it', async (
   const final = await canvasStore.read(created.id)
   assert.equal(final.nodes.length, 1, 'the later proposal landed')
   assert.equal(final.nodes[0].title, '后来的')
+})
+
+check('R5f a proposal with a non-string title never reaches the queue', async () => {
+  // 探针复现：一条 `change.title` 是数字的提案（老版本写的、或手工改过的），
+  // 读得出来、排进队列，接受时 `apply` 成功返回，`store.save` 却抛
+  // 「malformed canvas document」——所以「应用不了就自己出队」那条路走不到
+  // 它。它永久占着队首，用户点多少次都是同一条错误，后面本来能用的提案全被
+  // 挡住。现在读取时就按坏文件跳过。
+  const { canvasId, proposalId } = await seed('坏标题')
+  const dir = join(home, 'dsh-imagegen', 'canvas', 'proposals')
+  const document = await canvasStore.read(canvasId)
+  writeFileSync(join(dir, 'bad-title.json'), JSON.stringify({
+    id: 'bad-title', canvasId, tool: 'update_canvas_node',
+    summary: '改名为「3」', counts: { title: 3 },
+    baseRevision: document.revision, createdAt: Date.now() - 1000,
+    change: { title: 3 },
+  }))
+
+  const listed = await post(PROPOSALS, { canvasId })
+  assert.equal(listed.proposals.length, 1, 'the malformed proposal must not be listed')
+  assert.equal(listed.proposals[0].id, proposalId, 'only the healthy one is queued')
+  assert.equal(listed.counts[canvasId], 1, 'nor counted in the dropdown badge')
+
+  // 队首那条（健康的）照常能接受，写进画布。
+  const accepted = await post(ACCEPT, { canvasId, proposalId })
+  assert.equal(accepted.ok, true, `the healthy proposal must still apply: ${JSON.stringify(accepted)}`)
+  assert.equal((await canvasStore.read(canvasId)).nodes.length, 1)
+  // 坏文件留在磁盘上不动——读不懂就不动它，与 scan 的其余字段一致。
+  assert.equal(readFileSync(join(dir, 'bad-title.json'), 'utf8').includes('"title":3'), true)
+})
+
+check('R5g a proposal whose result would be an invalid document is removed, not retried forever', async () => {
+  // 读入时的校验只看形状，挡不住「补丁里字段类型是错的」：`isPatchShape` 只
+  // 要求 `fields` 是对象，`fields.title` 是 3 一样能进来。它通过读取、排到
+  // 队首，`apply` 成功返回，`store.save` 却因为节点标题不是字符串抛
+  // 「malformed canvas document」——与那条坏 title 提案同一个死锁，只是这道
+  // 门更靠后。所以接受路径自己也要用文档校验器验一遍，不合格按「永远应用
+  // 不了」处理：移除、如实报错、把队首让给后面的。
+  // 补丁要改的节点必须真的在画布上，否则 `apply` 会因为「节点不存在」先返回
+  // undefined，第二道校验根本执行不到——那样这条用例测的就不是它要测的东西。
+  const { canvasId, proposalId } = await seed('坏补丁')
+  const dir = join(home, 'dsh-imagegen', 'canvas', 'proposals')
+  const seeded = await canvasStore.read(canvasId)
+  await canvasStore.save({
+    ...seeded,
+    nodes: [{ id: 'target', type: 'text', title: '原文', x: 0, y: 0, width: 200, height: 80 }],
+  }, seeded.revision)
+  const document = await canvasStore.read(canvasId)
+  // 第 1 条提案添加的节点 id（健康那条要应用的就是它）。
+  const addedNodeId = (await proposalStore.list(canvasId))[0].change.addedNodes[0].id
+  // createdAt 更小 → 排在健康那条前面，正是会堵住队列的位置。
+  writeFileSync(join(dir, 'bad-patch.json'), JSON.stringify({
+    id: 'bad-patch', canvasId, tool: 'update_canvas_node',
+    summary: '重命名节点', counts: { updatedNodes: 1 },
+    baseRevision: document.revision, createdAt: Date.now() - 1000,
+    change: { updatedNodes: [{ id: 'target', fields: { title: 3 } }] },
+  }))
+
+  const listed = await post(PROPOSALS, { canvasId })
+  assert.equal(listed.proposals.length, 2, 'a well-formed patch is read in even if its values are not')
+  assert.equal(listed.proposals[0].id, 'bad-patch', 'it sits at the head')
+
+  const refused = await post(ACCEPT, { canvasId, proposalId: 'bad-patch' })
+  assert.equal(refused.ok, false)
+  assert.equal(refused.code, 'proposal-stale', `a document the store would reject can never apply: ${JSON.stringify(refused)}`)
+  // 用户不需要自己想到去点「丢弃」：队首已经让出来了。
+  const rest = (await post(PROPOSALS, { canvasId })).proposals
+  assert.equal(rest.length, 1)
+  assert.equal(rest[0].id, proposalId)
+  const accepted = await post(ACCEPT, { canvasId, proposalId })
+  assert.equal(accepted.ok, true, `the one behind it must apply: ${JSON.stringify(accepted)}`)
+  const final = await canvasStore.read(canvasId)
+  // 第 1 条提案加的是「出图」，第 2 条改成「原文」——两个节点都在。
+  assert.equal(final.nodes.length, 2)
+  const byId = new Map(final.nodes.map(node => [node.id, node]))
+  assert.equal(byId.get('target').title, '原文', 'the bad patch never wrote its number into the node')
+  assert.equal(byId.get(addedNodeId).title, '出图', 'the good node landed unchanged')
 })
 
 check('R5e proposals made back to back come back in the order they were proposed', async () => {
