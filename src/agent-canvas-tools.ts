@@ -486,18 +486,22 @@ export function registerAgentCanvasTools(ctx: Context, config: () => { enabled: 
    * 一个节点，回头一读却是「This canvas is empty」的空白画布，很可能再添加
    * 一遍。探针实测：add → read（0 个节点）→ 再 add，同一个标题落进两条提案。
    *
-   * `onStale` 决定叠加不了的那条提案怎么办：
-   *  - 写操作**必须**抛错（`mutate`）：起点不确定时继续算，会把那条坏掉的
-   *    差异固化进新提案里。
-   *  - 读操作只跳过它并如实报告。它是个只读操作，因为一条用户那边早已过期
-   *    的提案而彻底失败，模型连「画布现在长什么样」都看不到——探针实测过：
-   *    用户删掉一个提案点名的节点之后，`read_canvas` 直接抛
-   *    「A pending change … no longer applies」，而 `acceptOne` 遇到同一条
-   *    提案时会自己把它移除。读路径不该比用户看到的状态更糟。
+   * 过期提案（`apply` 返回 undefined：它点名的节点/连线已经不在了）一律跳过
+   * 并**移除**，读、写共用这一个行为。
+   *
+   * 此前写路径是抛错的，理由是「起点不确定时继续算，会把坏掉的差异固化进新
+   * 提案里」。但这么做的代价是整张画布对 Agent 失效：探针实测，用户随手删掉
+   * 一个提案点名的节点之后，`add_canvas_node` / `update_canvas_node` /
+   * `connect_canvas_nodes` **全部**失败，只有用户碰巧去点「接受」才能恢复。
+   * 而 `acceptOne` 对同一条提案的判断是：它不可能再生效（`apply` 是纯函数，
+   * 只要文档还缺那个节点，以后每一次都会失败），留着只会挡住队列，所以直接
+   * 移除。两边对同一件事有两种判断，没有道理——按 `acceptOne` 那条来。
+   *
+   * 移除是安全的：这条提案在任何后续状态下都不会再应用成功，而用户界面本来
+   * 也只让它自己消失（点「接受」→ `proposal-stale` + 移除）。
    */
   const draftOf = async (
     canvasId: string,
-    onStale: 'throw' | 'skip',
   ): Promise<{ document: CanvasDocument; draft: CanvasDocument; pending: number; stale: number }> => {
     const document = await load(canvasId)
     const pending = await proposalStore.list(canvasId)
@@ -506,10 +510,8 @@ export function registerAgentCanvasTools(ctx: Context, config: () => { enabled: 
     for (const proposal of pending) {
       const applied = ProposalStore.apply(draft, proposal.change)
       if (applied === undefined) {
-        if (onStale === 'throw') {
-          throw new Error('A pending change on this canvas no longer applies to the current document (the canvas was edited after it was proposed). Ask the user to accept or discard the pending changes first, then retry.')
-        }
         stale += 1
+        await proposalStore.remove(proposal.id)
         continue
       }
       draft = applied
@@ -531,7 +533,7 @@ export function registerAgentCanvasTools(ctx: Context, config: () => { enabled: 
    * 一条「什么都没改」的待确认项打断。
    */
   const mutate = async (canvasId: string, tool: string, edit: (document: CanvasDocument) => void): Promise<AgentCanvasView> => {
-    const { document, draft, pending } = await draftOf(canvasId, 'throw')
+    const { document, draft, pending, stale } = await draftOf(canvasId)
     // 关键：先**深拷贝**一份再交给 edit。
     //
     // `edit` 是原地改的（`document.nodes.push(...)`），如果 `before` 和它指向
@@ -551,10 +553,16 @@ export function registerAgentCanvasTools(ctx: Context, config: () => { enabled: 
       }
     }
 
+    // 这次调用可能顺手移除过几条过期提案。不说的话，用户会在界面上发现少
+    // 了一条自己原本看着的待确认改动，而模型以为它还在。
+    const staleNote = stale === 0
+      ? undefined
+      : `${stale} previously proposed change(s) had been invalidated and were discarded.`
+
     if (change === undefined) {
       // 没有差异：返回当前视图，并说明这次调用没有产生待确认项，免得模型
       // 以为自己在等一个永远不会出现的确认。
-      return { ...viewOf(draft), note: 'This call changed nothing, so there is no pending change to accept.' }
+      return { ...viewOf(draft), note: ['This call changed nothing, so there is no pending change to accept.', staleNote].filter((part): part is string => part !== undefined).join(' ') }
     }
 
     const described = summarise(tool, change)
@@ -571,7 +579,9 @@ export function registerAgentCanvasTools(ctx: Context, config: () => { enabled: 
 
     return {
       ...viewOf(draft),
-      note: `This is a PROPOSAL (${pending + 1} pending on this canvas), not a change to the user's canvas yet. Tell the user what you proposed and that they need to accept it in the canvas window. Nothing was saved.`,
+      // `pending` 是读磁盘时的总数，里面还算着已经过期并被移掉的那几条；
+      // 报给用户的应该是「真的在等他接受的」，再加上这一条新的。
+      note: [`This is a PROPOSAL (${pending - stale + 1} pending on this canvas), not a change to the user's canvas yet. Tell the user what you proposed and that they need to accept it in the canvas window. Nothing was saved.`, staleNote].filter((part): part is string => part !== undefined).join(' '),
       proposalId: proposal.id,
     }
   }
@@ -649,7 +659,7 @@ export function registerAgentCanvasTools(ctx: Context, config: () => { enabled: 
       },
       async execute(args) {
         ensureEnabled()
-        const { draft, pending, stale } = await draftOf(args.canvas_id, 'skip')
+        const { draft, pending, stale } = await draftOf(args.canvas_id)
         const view = viewOf(draft)
         // `viewOf` 的 note 说的是「这张图能不能跑」，这里说的是「你读到的这份
         // 还不等于用户看到的」。两个都要，所以拼接而不是覆盖。
@@ -658,21 +668,18 @@ export function registerAgentCanvasTools(ctx: Context, config: () => { enabled: 
         // 只在 `draft.nodes.length === 0` 时说，而待确认提案一旦加过节点，草稿
         // 里就有了。只剩改名提案时它仍然是对的。
         //
-        // 数的是**真正叠进这份草稿**的条数（`pending - stale`）：`pending` 是
-        // 磁盘上的总数，包含下面单独提到的那几条过期的。用总数会出现「1 change
-        // here are only proposed」加「1 other no longer applies」这种总数只有
-        // 一条的自相矛盾。
+        // 数的是**真正叠进这份草稿**的条数（`pending - stale`）：磁盘上那些
+        // 过期的已经被 `draftOf` 移掉了，但 `pending` 是先读的，里面还算着它们。
         const shown = pending - stale
         const unaccepted = shown === 0
           ? undefined
           : `${shown} change(s) here are only proposed: the user has not accepted them, and the canvas they see does not have them yet.`
-        // 有一条提案应用不到当前文档时，上面那份草稿**少叠了**它——读到的内容
-        // 与「全部提案都在」的情形不等价，必须说出来，否则模型会以为那就是
-        // 全部待确认改动。写工具遇到同一条提案会直接报错，读工具只是跳过，
-        // 原因见 `draftOf` 的注释。
+        // 过期提案已经被移掉了（那几个节点/连线在提议之后被改过），读到的内容
+        // 与它们还在时的情形不等价，必须说出来；否则用户会在界面上找不到一条
+        // Agent 以为待确认的改动。
         const staleNote = stale === 0
           ? undefined
-          : `${stale} other proposed change(s) no longer apply to this canvas (it was edited after they were made) and are left out of what you see; they will be dropped if the user accepts or discards them.`
+          : `${stale} proposed change(s) had been invalidated (the canvas was edited after they were made) and were discarded, so they are not in what you see.`
         const note = [unaccepted, staleNote, view.note].filter((part): part is string => part !== undefined).join(' ')
         return { ...view, ...note === '' ? {} : { note } }
       },

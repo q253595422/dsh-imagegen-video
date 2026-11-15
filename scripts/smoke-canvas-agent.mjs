@@ -756,37 +756,54 @@ check('F15 read_canvas stops calling a change pending once the user accepts it',
   assert.doesNotMatch(view.note ?? '', /only proposed/i, 'nothing is pending any more')
 })
 
-check('F22 a proposal the user outran blocks writes but never makes read_canvas fail', async () => {
+check('F22 a proposal the user outran is dropped instead of blocking the canvas', async () => {
   // 用户在接受之前自己动手改了那个节点（这里是删掉），提案就对不上了。
   //
-  // 写工具遇到这种提案必须报错：起点不确定时继续算，会把那条坏掉的差异
-  // 固化进新提案里。但读工具是只读的——它要是也跟着抛错，模型连「画布现在
-  // 长什么样」都看不到，而用户那边其实一切正常（`acceptOne` 自己会清掉过期
-  // 提案）。探针实测过：read_canvas 抛「A pending change … no longer applies」。
-  const stub = stubContext()
-  registerAgentCanvasTools(stub.ctx, enabledConfig)
-  const created = await stub.registered.get('create_canvas').execute({ title: '过期提案' }, {})
-  const added = await stub.registered.get('add_canvas_node').execute({ canvas_id: created.id, type: 'text', title: 'A' }, {})
-  await proposalStore.acceptOne(created.id, added.proposalId)
-  const saved = await canvasStore.read(created.id)
-  const nodeId = saved.nodes[0].id
+  // 探针实测过两版错法：read_canvas 直接抛「A pending change … no longer
+  // applies」；后来读路径改成跳过，但**写路径仍然抛错**——于是用户随手删掉
+  // 一个节点之后，这张画布上的 add / update / connect 全部永久失败，只有用户
+  // 碰巧去点「接受」才能恢复。而 `acceptOne` 对同一条提案的判断是「它不可能
+  // 再生效，留着只会挡住队列」并直接移除。两处对同一件事没有两种道理。
+  //
+  // 现在读、写都跳过并移除，并如实告诉模型发生过这件事。
+  const seedStale = async () => {
+    const stub = stubContext()
+    registerAgentCanvasTools(stub.ctx, enabledConfig)
+    const created = await stub.registered.get('create_canvas').execute({ title: '过期提案' }, {})
+    const added = await stub.registered.get('add_canvas_node').execute({ canvas_id: created.id, type: 'text', title: 'A' }, {})
+    await proposalStore.acceptOne(created.id, added.proposalId)
+    const saved = await canvasStore.read(created.id)
+    // 提议改名，然后用户在接受前把节点删掉。
+    const renamed = await stub.registered.get('update_canvas_node').execute(
+      { canvas_id: created.id, node_id: saved.nodes[0].id, title: 'A2' }, {})
+    assert.ok(renamed.proposalId, 'the rename must become a proposal')
+    await canvasStore.save({ ...saved, nodes: [] }, saved.revision)
+    assert.equal((await proposalStore.list(created.id)).length, 1, 'one proposal is now dead')
+    return { stub, id: created.id }
+  }
 
-  // 提议改名，然后用户在接受前把节点删掉。
-  const renamed = await stub.registered.get('update_canvas_node').execute({ canvas_id: created.id, node_id: nodeId, title: 'A2' }, {})
-  assert.ok(renamed.proposalId, 'the rename must become a proposal')
-  await canvasStore.save({ ...saved, nodes: [] }, saved.revision)
+  // 写路径：那张画布不能因为一条早已作废的提案而对 Agent 失效。
+  {
+    const { stub, id } = await seedStale()
+    const write = await stub.registered.get('add_canvas_node').execute({ canvas_id: id, type: 'image', title: 'B' }, {})
+    assert.equal(write.nodes.length, 1, 'the add went through despite the stale proposal')
+    assert.ok(write.proposalId, 'and it is a proposal like any other')
+    assert.match(write.note ?? '', /invalidated/i, 'the model is told a stale proposal was dropped')
+    assert.equal((await proposalStore.list(id)).length, 1,
+      'only the new proposal is left; the dead one is gone')
+  }
 
-  const view = await stub.registered.get('read_canvas').execute({ canvas_id: created.id }, {})
-  assert.equal(view.nodes.length, 0, 'read_canvas reports the document as it really is')
-  assert.doesNotMatch(view.note ?? '', /only proposed/i,
-    'the stale proposal was left out of what the model sees, so nothing pending is being shown')
-  assert.match(view.note ?? '', /no longer appl/i, 'the note must say a change could not be shown')
-
-  // 写操作仍然报错，并且说的是「去处理那条过期提案」，不是别的东西。
-  await assert.rejects(
-    () => stub.registered.get('add_canvas_node').execute({ canvas_id: created.id, type: 'image', title: 'B' }, {}),
-    /no longer applies/i,
-  )
+  // 读路径：用户可能只读不写，也不能让人以为还有一条在等接受。
+  {
+    const { stub, id } = await seedStale()
+    const view = await stub.registered.get('read_canvas').execute({ canvas_id: id }, {})
+    assert.equal(view.nodes.length, 0, 'read_canvas reports the document as it really is')
+    assert.doesNotMatch(view.note ?? '', /only proposed/i,
+      'the stale proposal was dropped, so nothing pending is being shown')
+    assert.match(view.note ?? '', /invalidated|no longer appl/i, 'the note must say a change was dropped')
+    assert.equal((await proposalStore.list(id)).length, 0,
+      'reading the canvas clears the proposal that can never apply again')
+  }
 })
 
 check('F23 update_canvas_node changes the config mode and the node size in place', async () => {
