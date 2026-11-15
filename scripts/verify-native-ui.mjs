@@ -22,6 +22,7 @@
 import { readFileSync, readdirSync, existsSync } from 'node:fs'
 import { dirname, join, relative } from 'node:path'
 import { fileURLToPath } from 'node:url'
+import { selectorOf, stripCssComments } from './lib/css-rule.mjs'
 
 const ROOT = dirname(dirname(fileURLToPath(import.meta.url)))
 const CLIENT = join(ROOT, 'src', 'client')
@@ -88,21 +89,6 @@ function walk (dir, extension, out = []) {
 }
 
 /**
- * Strip CSS comments so a token named in prose is not read as a live reference.
- *
- * The newlines inside a comment are PRESERVED. Every reported line number is
- * computed against the stripped text (lineOf), so collapsing a multi-line
- * comment silently shifts every violation below it upward. That is not
- * cosmetic: the reader lands on an unrelated line that usually still looks
- * plausible, and the fix gets applied to the wrong property.
- */
-function stripCssComments (text) {
-  return text.replace(/\/\*[\s\S]*?\*\//g, comment =>
-    '\n'.repeat((comment.match(/\n/g) || []).length)
-  )
-}
-
-/**
  * Strip JS comments that are documentation, not code.
  *
  * String literals are deliberately NOT stripped: the checks below match
@@ -129,22 +115,6 @@ function violate (rule, file, line, detail) {
 
 function lineOf (text, index) {
   return text.slice(0, index).split('\n').length
-}
-
-/**
- * The selector an offset sits under, from the last `{` that opened its rule.
- *
- * Used only where a rule has a legitimate exception keyed on WHERE it applies
- * (a `[data-compact]` miniature), never to excuse a value everywhere. It walks
- * back two braces at most so a `@media` wrapper does not hide the selector.
- */
-function selectorOf (text, index) {
-  const head = text.slice(0, index)
-  const open = head.lastIndexOf('{')
-  if (open === -1) return ''
-  const before = head.slice(0, open)
-  const prevClose = before.lastIndexOf('}')
-  return before.slice(prevClose + 1)
 }
 
 /* --------------------------------------------------------------- CSS checks */

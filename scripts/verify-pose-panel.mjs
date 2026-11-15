@@ -23,6 +23,7 @@ import { createServer } from 'node:http'
 import { findChrome, launchChrome, openPage, skipWithoutChrome } from './lib/headless-chrome.mjs'
 import { assertFixtureClasses } from './lib/fixture-classes.mjs'
 import { canvasSourceText } from './lib/canvas-source.mjs'
+import { ruleBodyOf } from './lib/css-rule.mjs'
 
 const CHROME = findChrome()
 if (CHROME === null) skipWithoutChrome('the pose panel layout guard did NOT run.')
@@ -123,14 +124,14 @@ if (inlineAccent) {
   process.exit(1)
 }
 for (const selector of ['.poseAxis input[type=\'range\']', '.poseFacing input[type=\'range\']']) {
-  const rule = css.slice(css.indexOf(selector))
-  const body = rule.slice(rule.indexOf('{'), rule.indexOf('}') + 1)
+  // `ruleBodyOf` 找不到规则时返回 undefined（不是空串）：选择器被改名时，
+  // 空串会让下面的断言报「缺少声明」，把读者引到错的结论上。
+  const body = ruleBodyOf(css, selector)
   assert(
-    body.includes('accent-color: var(--dsw-alias-brand-primary)'),
+    body !== undefined && body.includes('accent-color: var(--dsw-alias-brand-primary)'),
     `${selector} must set accent-color to the host brand token — the host has exactly one accent, not one per axis`,
   )
 }
-
 const launched = await launchChrome({ chrome: CHROME, name: 'dsh-pose-panel' })
 const session = await openPage(launched.port, `http://127.0.0.1:${serverPort}/`)
 const { send, evaluate } = session
