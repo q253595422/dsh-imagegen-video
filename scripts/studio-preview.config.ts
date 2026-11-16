@@ -16,7 +16,7 @@
  *    preview's static server. Without this stub the build fails outright.
  */
 import { fileURLToPath } from 'node:url'
-import configs from '../tsdown.config.ts'
+import configs, { xyflowCssInjection } from '../tsdown.config.ts'
 
 const client = configs[1]
 
@@ -44,7 +44,7 @@ export default {
   // them is the whole point (a stub cannot show whether the studio looks native).
   deps: {
     neverBundle: [],
-    alwaysBundle: ['react', 'react-dom', 'lucide-react', '@deepseek-ai/dsh-client-ui-primitives', 'clsx'],
+    alwaysBundle: ['react', 'react-dom', 'lucide-react', '@deepseek-ai/dsh-client-ui-primitives', 'clsx', '@xyflow/react'],
   },
   plugins: [
     // Must run BEFORE the shared css-modules plugin: that one only claims
@@ -63,5 +63,11 @@ export default {
     },
     ...(client.plugins ?? []),
   ],
-  outputOptions: { entryFileNames: 'preview.js', banner: '', footer: '', intro: '' },
+  // `intro: ''` is right for the registration banner (an iife page has no
+  // module table) but it also drops react-flow's global stylesheet, which the
+  // shared client config injects there. Without it every node loses
+  // `position: absolute` and the canvas lays them out in document flow — the
+  // nodes appear stacked vertically, which reads as a placement bug in the
+  // canvas rather than a missing stylesheet in this harness.
+  outputOptions: { entryFileNames: 'preview.js', banner: '', footer: '', intro: xyflowCssInjection },
 }

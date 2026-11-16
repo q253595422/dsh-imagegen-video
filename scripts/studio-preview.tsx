@@ -26,7 +26,7 @@ import { ImageGenController } from '../src/client/controller.ts'
 import { mountSidebarEntry } from '../src/client/sidebar-entry.ts'
 import { mountPanel } from '../src/client/mount.tsx'
 import { tt } from '../src/client/helpers.ts'
-import type { HistoryEntry, TemplateCase, TemplateSample, UpdateInfo } from '../src/protocol.ts'
+import type { CanvasDocument, HistoryEntry, TemplateCase, TemplateSample, UpdateInfo } from '../src/protocol.ts'
 
 /** An inline SVG poster, so thumbnails paint something instead of a broken box. */
 function poster(hue: number, label: string): string {
@@ -106,6 +106,31 @@ const CONFIG: ImageGenConfig = {
 
 const EMPTY_GALLERY = { entries: [] as HistoryEntry[], trash: [] as HistoryEntry[] }
 
+/**
+ * A brand-new canvas, the same shape the host writes for `canvas/create`.
+ *
+ * Kept here rather than imported from the store: the store pulls in `node:fs`
+ * and the preview is a browser page. The field set mirrors
+ * `canvas-store.ts`'s `defaultDocument` — if that grows a required field, this
+ * goes out of date silently, which is why it carries no nodes of its own: the
+ * client's `seedDocument` fills them, and that is the code under test here.
+ */
+function previewCanvas(title?: string, id = 'preview-canvas'): CanvasDocument {
+  const now = Date.now()
+  return {
+    version: 2,
+    id,
+    title: title ?? tt('canvas.untitled'),
+    revision: 1,
+    viewport: { x: 0, y: 0, k: 1 },
+    background: 'lines',
+    nodes: [],
+    connections: [],
+    createdAt: now,
+    updatedAt: now,
+  }
+}
+
 const UPDATE_INFO: UpdateInfo = {
   currentVersion: '1.15.3',
   latestVersion: '1.15.3',
@@ -151,7 +176,18 @@ const api = {
   }),
   favoritesList: async () => [],
   diagnosticsList: async () => [],
+  /**
+   * An EMPTY library on purpose: the canvas then takes its "no projects yet,
+   * create one" path on mount, which is exactly the first-run screen this
+   * preview exists to show — the seed pair and the example prompt in it.
+   * Answering with one saved canvas would open that and never render the seed.
+   */
   canvasList: async () => [],
+  canvasCreate: async (title?: string): Promise<CanvasDocument> => previewCanvas(title),
+  canvasRead: async (id: string): Promise<CanvasDocument> => previewCanvas(undefined, id),
+  canvasSave: async (document: CanvasDocument): Promise<CanvasDocument> => document,
+  canvasRemove: async () => [],
+  canvasProposals: async () => ({ proposals: [], counts: {} }),
   pptTasks: async () => [],
   canvasSkillsList: async () => ({ skills: [], installed: [] }),
   pptRuntime: async () => ({ available: false, message: 'preview' }),

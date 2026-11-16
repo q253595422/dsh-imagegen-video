@@ -1387,8 +1387,21 @@ export function CanvasWorkspace(props: CanvasWorkspaceProps): React.JSX.Element 
             : createConfigNode())
   }, [placeNewNode, createTextNode, createSketchNode, createPoseNode, createStoryboardNode, createConfigNode])
 
-  /** A brand-new canvas starts with one text node wired into one config node,
-   *  laid out around the visible viewport center so the workflow is obvious. */
+  /**
+   * 新建画布的第一屏。
+   *
+   * WHY 不是一对空节点：第一次装插件的人打开画布，看到的是一个空文本节点
+   * 加一张空配置卡——他不知道该往里写什么、写完之后会得到什么，也没有任何
+   * 现成的例子可以对照。所以种子节点自带一条能直接跑通的提示词：点「生成」
+   * 就有图，改几个字就是自己的东西。
+   *
+   * WHY 用 `metadata.text` 而不是往提示词框里塞占位符：占位符一变真，用户
+   * 就得先删掉它才能写自己的。这里是一条真的、完整可用的提示词，删掉重写也
+   * 不损失什么。
+   *
+   * WHY 只预置一个案例而不是一张多案例教程画布（咖图AI 的做法）：我们的画布
+   * 是用户自己的第一屏，不是展示厅。一条跑得通的链比五条要读的链有用。
+   */
   const seedDocument = useCallback((created: CanvasDocument): CanvasDocument => {
     if (created.nodes.length > 0) return created
     const bounds = viewportRef.current?.getBoundingClientRect()
@@ -1397,17 +1410,41 @@ export function CanvasWorkspace(props: CanvasWorkspaceProps): React.JSX.Element 
     // user sees, and centring it behind the bottom dock is how a brand-new
     // canvas opens with both nodes half-covered.
     const freeHeight = bounds !== undefined ? Math.max(80, bounds.height - chromeHeight - 26) : 0
-    const center = bounds !== undefined && bounds.width > 0 && bounds.height > 0
+    const middle = bounds !== undefined && bounds.width > 0 && bounds.height > 0
       ? { x: (bounds.width / 2 - viewport.x) / viewport.k, y: (freeHeight / 2 - viewport.y) / viewport.k }
       : { x: 480, y: 320 }
-    const config = createConfigNode(center)
+    // Wider than a default text node: the example prompt is a full sentence and
+    // at the stock 280×150 it arrives as a scroll box the user has to read
+    // through a letterbox. A first-run example nobody can read is not an example.
+    const seedSize = { width: 360, height: 220 }
+    const GAP = 80
+    // Centre the PAIR, not the config node. `center` is a point, and
+    // `createConfigNode` turns it into top-left by subtracting half its own
+    // width — so building the text node off `config.x` put it a whole node plus
+    // a gap to the LEFT of centre, which at panel widths is off-screen: the
+    // example opened with its title cut in half ("例提示词").
+    const pairWidth = seedSize.width + GAP + CONFIG_NODE_SIZE.width
+    const pairLeft = middle.x - pairWidth / 2
     const text: CanvasNode = {
       ...createTextNode(),
-      x: Math.round(config.x - TEXT_NODE_SIZE.width - 80),
-      y: Math.round(config.y + (CONFIG_NODE_SIZE.height - TEXT_NODE_SIZE.height) / 2),
+      title: tt('canvas.seedExampleTitle'),
+      x: Math.round(pairLeft),
+      y: Math.round(middle.y - seedSize.height / 2),
+      width: seedSize.width,
+      height: seedSize.height,
+      metadata: { text: tt('canvas.seedExamplePrompt'), fontSize: 14 },
+    }
+    const config: CanvasNode = {
+      ...createConfigNode(),
+      x: Math.round(pairLeft + seedSize.width + GAP),
+      y: Math.round(middle.y - CONFIG_NODE_SIZE.height / 2),
     }
     return {
       ...created,
+      // A name the user can find in the switcher later. "未命名画布" plus an
+      // example in it reads as a scratch buffer; "示例：第一张图" says what it
+      // is and can be renamed in one click.
+      title: tt('canvas.seedExampleCanvasTitle'),
       nodes: [text, config],
       connections: [{ id: newId('edge'), fromNodeId: text.id, toNodeId: config.id }],
     }

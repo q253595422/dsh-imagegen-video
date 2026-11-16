@@ -38,7 +38,12 @@ const xyflowCss = transform({
   minify: true,
 }).code.toString()
 const xyflowCssTag = `${ID}/xyflow-style.css`
-const xyflowCssInjection = `if(typeof document!=='undefined'&&document.querySelector('style[data-plugin-css='+JSON.stringify(${JSON.stringify(xyflowCssTag)})+']')===null){var __xyflowStyle=document.createElement('style');__xyflowStyle.dataset.plugin=${JSON.stringify(ID)};__xyflowStyle.dataset.pluginCss=${JSON.stringify(xyflowCssTag)};__xyflowStyle.textContent=${JSON.stringify(xyflowCss)};document.head.appendChild(__xyflowStyle);}`
+/** react-flow's global stylesheet, injected as a plain <style> tag.
+ *  Exported so `scripts/studio-preview.config.ts` can inject the SAME bytes: an
+ *  iife preview that overrides `intro` and loses this ends up with unstyled
+ *  nodes that stack vertically instead of sitting at their x/y, which looks
+ *  exactly like a layout bug in the canvas itself. */
+export const xyflowCssInjection = `if(typeof document!=='undefined'&&document.querySelector('style[data-plugin-css='+JSON.stringify(${JSON.stringify(xyflowCssTag)})+']')===null){var __xyflowStyle=document.createElement('style');__xyflowStyle.dataset.plugin=${JSON.stringify(ID)};__xyflowStyle.dataset.pluginCss=${JSON.stringify(xyflowCssTag)};__xyflowStyle.textContent=${JSON.stringify(xyflowCss)};document.head.appendChild(__xyflowStyle);}`
 
 /**
  * The module specifiers the web shell shares into the frozen module table
