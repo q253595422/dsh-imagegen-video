@@ -3833,6 +3833,7 @@
   flex: none;
   display: inline-flex;
   align-items: center;
+  justify-content: center;
   gap: 4px;
   height: 24px;
   padding: 0 8px;
@@ -3841,6 +3842,11 @@
    * 41px，已经低于 44px 的可点最小尺寸。高度写死 24px，折行的文字还会
    * 溢出按钮外。 */
   white-space: nowrap;
+  /* 但只有 nowrap 不够：它挡住折行，挡不住**字体本身**比 mac 的窄 8px，
+   * 于是按钮在 CI 上仍是 41px（三次 CI 都红在这里，而本地永远是 49px）。
+   * 一个可点目标的尺寸不该由它上面写着哪种语言的字决定——给一个下限，
+   * 文案短时靠 `justify-content` 居中，文案长时照常撑开。 */
+  min-width: 44px;
   border: none;
   border-radius: var(--dsw-radius-sm);
   background: var(--dsw-alias-bg-layer-2);

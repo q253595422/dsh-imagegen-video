@@ -233,6 +233,29 @@ for (const [width, height] of NODE_SIZES) {
     + `  open ${measured.openWidth}px  overlap ${measured.nameButtonOverlap}px`
     + `  presets scroll ${measured.presetsScrollable ? 'yes' : 'no'}`)
   for (const problem of problems) failures.push(`${width}x${height}: ${problem}`)
+
+  // 同一批尺寸，把按钮文字压窄再量一遍。
+  //
+  // WHY：这条断言在三次 CI 上都是红的（mac 上永远绿，量到 49px），根因是
+  // 「导演台」三个字在 Linux 的回退字体里只有 mac 上的约 84% 宽，于是按钮从
+  // 49px 落到 41px——低于 44px 的可点下限。只在本机跑就永远看不见它。
+  //
+  // 这里不去赌「哪个平台的哪种字体更窄」（那取决于跑在哪台机器上），而是
+  // 直接把文字压到必然更窄：字号缩到 9px。任何平台上这一下都让文字比原来
+  // 窄，于是「按钮宽度会不会跟着文字一起缩」这件事被稳定地测到。
+  // 修好之后（`.poseAction` 有了 `min-width`）这里在任何平台都绿。
+  await evaluate(`(() => {
+    const open = document.getElementById('open')
+    open.style.fontSize = '9px'
+    return true
+  })()`)
+  await new Promise(resolve => setTimeout(resolve, 200))
+  const narrow = JSON.parse(await evaluate(MEASURE))
+  if (narrow.openWidth < 44) {
+    failures.push(`${width}x${height}: the "open stage" button shrank to ${narrow.openWidth}px when its label got narrower`)
+  }
+  console.log(`node ${width}x${height}  narrow-label open ${narrow.openWidth}px`)
+  await evaluate(`(() => { document.getElementById('open').style.removeProperty('font-size'); return true })()`)
 }
 
 // 预设条横向滚动之后，最后一枚必须真的滚进视野——否则排在末尾的预设等于不可达。
