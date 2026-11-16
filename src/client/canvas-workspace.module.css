@@ -1213,7 +1213,12 @@
 .dockGap {
   flex: none;
   align-self: center;
-  width: 10px;
+  /* 6px, not more: `.dock` already puts 6px between every flex child, so this
+   * span yields 18px of air around a group break against 6px inside a group —
+   * a clear break at a third of what a 10px span cost. Five spans at 10px
+   * pushed the row 20px past what a 900px-wide studio offers, and the last
+   * tile wrapped to a second row for no visual gain. */
+  width: 6px;
   height: 1px;
 }
 

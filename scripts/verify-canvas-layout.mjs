@@ -149,11 +149,22 @@ const MEASURE = `JSON.stringify((() => {
   const viewport = box('viewport'), dock = box('dock'), zoom = box('zoomDock'), minimap = box('minimap')
   const inside = (r) => r.left >= viewport.left - 1 && r.right <= viewport.right + 1
     && r.top >= viewport.top - 1 && r.bottom <= viewport.bottom + 1
+  // Row count, measured rather than assumed. The dock is allowed to wrap — that
+  // is the fallback that keeps it inside a narrow panel — but a wrap that drops
+  // ONE tile onto a row of its own looks like a missing button, and neither the
+  // overlap nor the inside check can see it: the wrapped tile is still inside
+  // the canvas and touches nothing.
+  //
+  // Counting distinct top values of the tiles is what the user sees. A
+  // threshold would not do: at 420px two rows are correct and unavoidable.
+  const rows = new Set([...document.querySelectorAll('#dock [data-dock-item]')]
+    .map(el => Math.round(el.getBoundingClientRect().top))).size
   return {
     dockZoom: overlap(dock, zoom),
     dockMinimap: overlap(dock, minimap),
     zoomMinimap: overlap(zoom, minimap),
     dockInside: inside(dock), zoomInside: inside(zoom), minimapInside: inside(minimap),
+    rows,
   }
 })())`
 
@@ -168,11 +179,17 @@ for (const width of PANEL_WIDTHS) {
 
   const overlaps = measured.dockZoom + measured.dockMinimap + measured.zoomMinimap
   const inside = measured.dockInside && measured.zoomInside && measured.minimapInside
+  // Panels at 720px and wider must hold the dock on ONE row. Measured against
+  // the real component at 900px the row needs ~800px; the 6px group gaps in
+  // `.dockGap` are what keep it under that. Narrower panels wrap by design.
+  const mustBeOneRow = width >= 720
   const problem = overlaps > 0
     ? `the bottom chrome overlaps itself (${measured.dockZoom + measured.dockMinimap + measured.zoomMinimap}px² of shared area)`
     : !inside ? 'a piece of the bottom chrome is outside the canvas'
-      : null
-  console.log(`panel ${String(width).padStart(4)}px  dock/zoom ${measured.dockZoom}px²  dock/minimap ${measured.dockMinimap}px²  inside ${inside}`)
+      : mustBeOneRow && measured.rows > 1
+        ? `the dock wraps to ${measured.rows} rows on a panel wide enough for one — a lone tile on the second row reads as a missing button`
+        : null
+  console.log(`panel ${String(width).padStart(4)}px  dock/zoom ${measured.dockZoom}px²  dock/minimap ${measured.dockMinimap}px²  inside ${inside}  rows ${measured.rows}`)
   if (problem !== null) failures.push(`${width}px: ${problem}`)
 }
 
