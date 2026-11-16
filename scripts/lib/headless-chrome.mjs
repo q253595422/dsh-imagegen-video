@@ -58,7 +58,15 @@ function resolveOnPath (name, env) {
  * @returns {string | null} an existing binary path, or null when none is found.
  */
 export function findChrome (argv = process.argv, env = process.env) {
-  const explicit = argv[2] ?? env.CHROME_HEADLESS_SHELL
+  // `argv[2]` is only an explicit browser path when it LOOKS like one. A guard
+  // that takes its own options (`--out FILE`, `--only name`) put that option
+  // here, `existsSync('--out')` answered false, and the whole run skipped with
+  // "no headless Chromium found" — a missing-tool message for an argument this
+  // file had mis-read. A path always contains a separator or a dot; an option
+  // never does.
+  const first = argv[2]
+  const looksLikePath = first !== undefined && first !== '' && !first.startsWith('-') && /[/\\.]/.test(first)
+  const explicit = (looksLikePath ? first : undefined) ?? env.CHROME_HEADLESS_SHELL
   if (explicit !== undefined && explicit !== '') return existsSync(explicit) ? explicit : null
   const candidates = [
     // Both spellings of the temp root: on macOS `os.tmpdir()` is the per-user

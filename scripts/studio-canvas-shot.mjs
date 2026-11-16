@@ -7,9 +7,9 @@
  * a single question — what does a brand-new canvas look like — and to leave a
  * PNG behind that a person can look at.
  *
- * It reuses the acceptance harness's own fixtures rather than writing a second
- * one: the theme/sidebar/layout stylesheets are extracted from the INSTALLED
- * DSH there, so a copy here would drift the moment the shell restyles.
+ * The theme stylesheet is the one from the INSTALLED DSH, read through the same
+ * helper the acceptance suite uses, so this picture is painted with the real
+ * `--dsw-alias-*` tokens rather than a copy that drifts when the shell restyles.
  *
  * Run: node scripts/studio-canvas-shot.mjs [--out FILE]
  * Exit 0 = wrote the PNG. Skips loudly (exit 0) when no Chromium is available.
@@ -19,12 +19,28 @@ import { createReadStream, mkdirSync, statSync, writeFileSync } from 'node:fs'
 import { createServer } from 'node:http'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
+import { dshNodeModules, themeCss } from './lib/dsh-theme.mjs'
+import { findChrome, launchChrome, openPage, skipWithoutChrome } from './lib/headless-chrome.mjs'
 
 const ROOT = dirname(dirname(fileURLToPath(import.meta.url)))
 const BUNDLE = join(ROOT, '.studio-preview', 'preview.js')
 
-const outIndex = process.argv.indexOf('--out')
-const OUT = outIndex > 0 ? process.argv[outIndex + 1] : join(ROOT, '.studio-preview', 'canvas-first-run.png')
+/**
+ * `--out FILE`, read without touching `process.argv[2]`'s meaning.
+ *
+ * `findChrome()` treats `argv[2]` as an explicit Chromium path (so a script can
+ * be pointed at a specific binary). Reading `--out` with the same index made
+ * every `--out` run look for a browser called `--out`: the shot skipped with
+ * "no headless Chromium found", which reads as a missing tool rather than as
+ * an argument the script itself had mis-parsed.
+ */
+function outputPath(argv) {
+  const index = argv.indexOf('--out')
+  return index > 0 && argv[index + 1] !== undefined
+    ? argv[index + 1]
+    : join(ROOT, '.studio-preview', 'canvas-first-run.png')
+}
+const OUT = outputPath(process.argv)
 
 /**
  * The quietest host page that still lets the panel mount.
@@ -39,12 +55,25 @@ const OUT = outIndex > 0 ? process.argv[outIndex + 1] : join(ROOT, '.studio-prev
  * ancestor, so a page without them mounts nothing and the probe would report
  * "never appeared" without saying why.
  */
+const NODE_MODULES = dshNodeModules()
+if (NODE_MODULES === null) {
+  console.error('\nSKIP: no installed DSH found -- the canvas shot needs its theme tokens.')
+  console.error('Set DSH_ASAR_DIR to a DSH `node_modules` directory, or install DSH through npx once.')
+  process.exit(0)
+}
+const THEME = themeCss(NODE_MODULES)
+
 const PAGE = `<!doctype html>
-<html lang="zh-CN"><head><meta charset="utf-8"><title>canvas first run</title>
+<html lang="zh-CN" data-platform="darwin"><head><meta charset="utf-8"><title>canvas first run</title>
+<style>${THEME}</style>
 <style>
   :root { color-scheme: light; }
   html, body { margin: 0; height: 100%; }
-  body { font: 13px/1.5 -apple-system, "PingFang SC", system-ui, sans-serif; }
+  body {
+    background: var(--dsw-alias-bg-base);
+    color: var(--dsw-alias-label-primary);
+    font: 13px/1.5 -apple-system, "PingFang SC", system-ui, sans-serif;
+  }
   #shell { display: flex; height: 100%; }
   #column { flex: 1 1 auto; min-width: 0; display: flex; flex-direction: column; }
   #panel-slot { flex: 1 1 auto; min-height: 0; display: flex; }
@@ -81,7 +110,6 @@ const server = createServer((request, response) => {
 await new Promise(resolve => server.listen(0, '127.0.0.1', resolve))
 const serverPort = server.address().port
 
-const { findChrome, launchChrome, openPage, skipWithoutChrome } = await import('./lib/headless-chrome.mjs')
 const CHROME = findChrome()
 if (CHROME === null) skipWithoutChrome('the canvas first-run screenshot was NOT taken.')
 

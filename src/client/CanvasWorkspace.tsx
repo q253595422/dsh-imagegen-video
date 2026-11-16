@@ -1413,10 +1413,14 @@ export function CanvasWorkspace(props: CanvasWorkspaceProps): React.JSX.Element 
     const middle = bounds !== undefined && bounds.width > 0 && bounds.height > 0
       ? { x: (bounds.width / 2 - viewport.x) / viewport.k, y: (freeHeight / 2 - viewport.y) / viewport.k }
       : { x: 480, y: 320 }
-    // Wider than a default text node: the example prompt is a full sentence and
-    // at the stock 280×150 it arrives as a scroll box the user has to read
-    // through a letterbox. A first-run example nobody can read is not an example.
-    const seedSize = { width: 360, height: 220 }
+    // Wider and a little taller than a default text node, but NOT a fixed 220:
+    // measured at 360px wide with the shipped `.textArea` metrics (14px type,
+    // 1.55 leading), the example is 121px tall in Chinese, 164 in English and
+    // 186 in Russian — 220 left two thirds of the card blank under a three-line
+    // prompt, which reads as a node that failed to render rather than as an
+    // example. 190 fits the longest of the three with a few pixels to spare;
+    // the config node beside it is 190 tall, so the pair also lines up.
+    const seedSize = { width: 360, height: 190 }
     const GAP = 80
     // Centre the PAIR, not the config node. `center` is a point, and
     // `createConfigNode` turns it into top-left by subtracting half its own
