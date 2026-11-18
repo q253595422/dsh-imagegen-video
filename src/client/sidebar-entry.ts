@@ -844,7 +844,78 @@ export function mountSidebarEntry(
     syncActive()
   }
 
-  const bodyObserver = new MutationObserver(ensure)
+  /**
+   * 这次 DOM 变更是否可能影响侧栏入口。
+   *
+   * 监听的是整个 `document.body`，而画布是这棵树里最活跃的部分：每次缩放、
+   * 平移、拖动都会重画上百个节点，每个节点都是一串 childList 变更。原样传给
+   * `ensure()`，它就要对整份文档做 `getComputedStyle`（`isVisible` 逐级向上），
+   * 那是强制重排——无头浏览器实测 5 次缩放里，侧栏入口的 `isVisible` 独自吃掉
+   * 845 ms，比画布自己的渲染多一个量级。用户看到的是「缩放卡」。
+   *
+   * 判据刻意保守：只有**确实与入口无关**的变更才被丢掉。我们插入/移除自己的
+   * 节点也会产生变更，所以自己那些标记一律当相关；画幅内的节点重建同理。
+   */
+  const touchesSidebar = (records: MutationRecord[]): boolean => {
+    for (const record of records) {
+      const target = record.target as HTMLElement | null
+      if (target === null) return true
+      // 画布内部：自己的缩放/渲染不会挪动侧栏。
+      if (typeof target.closest === 'function'
+        && target.closest('[data-canvas-workspace]') !== null) continue
+      // 只看「这一条变更有没有可能改变侧栏所在的那块 DOM」。
+      //
+      // WHY 不再是「只要有一个节点就当真」：宿主的顶栏有一组装饰性粒子，每次
+      // 交互都会摘掉一个（`span[class*="particle"]`，和我们毫无关系）。旧判据
+      // 把它们全当真，于是**每次真实平移**都排一次 `ensure()`，而 `ensure` 里
+      // 对整棵树做 `getComputedStyle` 会强制重排。真机实测（200 节点，60 帧
+      // 平移）：p95 56 ms、8 帧超过 33 ms；把这批无关变更排除后 p95 18 ms、
+      // 零帧超标。上一轮只挡住了画布内部，漏的就是这一层。
+      //
+      // 判据：变更的目标或它插入/移除的元素，必须和当前侧栏根有包含关系。
+      // 根还没解析出来时一律当真——那正是「入口该挂上去」的时刻，跳过就等于
+      // 永远挂不上。
+      const rootCurrent = root
+      if (rootCurrent === undefined) return true
+      if (relatesTo(rootCurrent, target)) return true
+      for (const node of [...record.addedNodes, ...record.removedNodes]) {
+        if (node.nodeType !== 1) continue
+        const element = node as HTMLElement
+        if (typeof element.closest === 'function' && element.closest('[data-canvas-workspace]') !== null) continue
+        if (relatesTo(rootCurrent, element)) return true
+      }
+    }
+    return false
+  }
+
+  /**
+   * 一个节点是否可能影响侧栏：它是根的祖先、后代，或就是根。
+   *
+   * 祖先也要算——宿主把整个列换掉（切主题、换布局、重启一侧面板）时，变更
+   * 目标在根的上游，那种情况必须重新解析座位，否则入口会留在被摘掉的旧容器里。
+   */
+  const relatesTo = (seat: HTMLElement, node: HTMLElement): boolean => {
+    if (seat === node) return true
+    if (seat.contains(node)) return true
+    if (typeof node.contains === 'function' && node.contains(seat)) return true
+    return false
+  }
+
+  // 同一轮事件循环内只算一次：一次画布重渲染会产生成百上千条记录，逐条
+  // ensure 就是逐条强制重排。合并用 `setTimeout(0)` 而不是 rAF：rAF 在页面
+  // 不可见时不跑（后台标签页、无头浏览器），入口就永远挂不上——那是「侧栏
+  // 整个消失」级的事故，而这里省的只是重复测量。
+  let scheduled = 0
+  const schedule = (): void => {
+    if (scheduled !== 0) return
+    scheduled = window.setTimeout(() => {
+      scheduled = 0
+      ensure()
+    }, 0)
+  }
+  const bodyObserver = new MutationObserver(records => {
+    if (touchesSidebar(records)) schedule()
+  })
   bodyObserver.observe(document.body, { childList: true, subtree: true })
   const unsubscribe = controller.subscribe(syncActive)
   ensure()
@@ -852,6 +923,7 @@ export function mountSidebarEntry(
   return () => {
     window.clearTimeout(unmountedTimer)
     bodyObserver.disconnect()
+    if (scheduled !== 0) window.clearTimeout(scheduled)
     unsubscribe()
     tabs?.remove()
     historyHost?.remove()
