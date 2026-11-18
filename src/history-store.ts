@@ -251,7 +251,13 @@ export async function appendHistory(input: HistoryEntryInput): Promise<HistoryEn
       ...input.agentTool === undefined ? {} : { agentTool: input.agentTool },
       ...input.renderer === undefined ? {} : { renderer: input.renderer },
     }
-    const merged = [entry, ...await readIndex()]
+    // 同 id 覆盖，不是追加——理由与 `appendVideoHistory` 同一处：id 是调用方
+    // 给的稳定标识，重写一次指的是「同一条结果被重新保存」。无条件追加会让同
+    // 一个 id 堆出多条，前端 `group.key` 撞车、删除时又一次性抹掉全部。
+    const previous = await readIndex()
+    const superseded = previous.filter(item => item.id === entry.id)
+    for (const old of superseded) await removeEntryFiles(old)
+    const merged = [entry, ...previous.filter(item => item.id !== entry.id)]
     const kept = merged.slice(0, HISTORY_MAX)
     for (const dropped of merged.slice(HISTORY_MAX)) await removeEntryFiles(dropped)
     await writeIndex(kept)
@@ -263,8 +269,11 @@ export async function appendHistory(input: HistoryEntryInput): Promise<HistoryEn
 export async function removeHistory(id: string): Promise<HistoryEntry[]> {
   return mutateHistory(async () => {
     const previous = await readIndex()
-    const target = previous.find(entry => entry.id === id)
-    if (target !== undefined) await removeEntryFiles(target)
+    // Every entry carrying this id, not just the first: an index written before
+    // the append side deduped can hold several, and deleting only the first one's
+    // files while dropping all of them from the index orphans the rest on disk.
+    const targets = previous.filter(entry => entry.id === id)
+    for (const target of targets) await removeEntryFiles(target)
     const kept = previous.filter(entry => entry.id !== id)
     await writeIndex(kept)
     return kept.map(toWire)

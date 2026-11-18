@@ -285,7 +285,21 @@ export async function appendVideoHistory(input: VideoHistoryEntryInput & { files
       ...input.renderer === undefined ? {} : { renderer: input.renderer },
       ...input.canvas === undefined ? {} : { canvas: input.canvas },
     }
-    const merged = [entry, ...await readIndex()]
+    // 同 id 覆盖，不是追加。
+    //
+    // `id` 是调用方给的稳定标识（导演台按会话 id、拼接按 compose id），同一个
+    // 标识再写一次指的是「同一条结果被重新保存」，不是「又生成了一条」。原来
+    // 这里无条件 `[entry, ...previous]`，于是同一个 id 能在索引里堆出任意多条：
+    // 前端用 `video:${id}` 做 React key，重复行撞在同一个 key 上（渲染错位、
+    // 删一行另一行不动），而 `removeVideoHistory` 用 `filter(id !== x)` 又一次性
+    // 抹掉全部同 id 条目——两者合起来就是用户看到的「三条一样，删不干净」。
+    //
+    // 被覆盖那条的文件要先删：新条目会用同样的文件名重写，而旧条目可能带着
+    // 新条目没有的 poster 文件，留着就是永久的孤儿 JPEG。
+    const previous = await readIndex()
+    const superseded = previous.filter(item => item.id === entry.id)
+    for (const old of superseded) await removeEntryFiles(old)
+    const merged = [entry, ...previous.filter(item => item.id !== entry.id)]
     const kept = merged.slice(0, VIDEO_HISTORY_MAX)
     for (const dropped of merged.slice(VIDEO_HISTORY_MAX)) await removeEntryFiles(dropped)
     await writeIndex(kept)
@@ -297,8 +311,12 @@ export async function appendVideoHistory(input: VideoHistoryEntryInput & { files
 export async function removeVideoHistory(id: string): Promise<VideoHistoryEntry[]> {
   return mutateVideos(async () => {
     const previous = await readIndex()
-    const target = previous.find(entry => entry.id === id)
-    if (target !== undefined) await removeEntryFiles(target)
+    // Every entry carrying this id, not just the first: an index written before
+    // `appendVideoHistory` deduped by id can hold several, and deleting only the
+    // first one's files while dropping all of them from the index would leave
+    // the rest of the clips orphaned on disk forever.
+    const targets = previous.filter(entry => entry.id === id)
+    for (const target of targets) await removeEntryFiles(target)
     const kept = previous.filter(entry => entry.id !== id)
     await writeIndex(kept)
     return kept.map(toWire)

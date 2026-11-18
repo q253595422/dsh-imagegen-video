@@ -21,6 +21,24 @@ import { deflateSync } from 'node:zlib'
 import { createCheckHarness } from './lib/check-harness.mjs'
 
 const ROOT = dirname(dirname(fileURLToPath(import.meta.url)))
+
+/**
+ * 把数据目录指到临时目录，**必须在任何 src/ 之前**。
+ *
+ * WHY 这条在这里而不是「以后再说」：`E9` 真的调 `stageEncodeSession()`，而它在
+ * 编码成功后会把成片写进视频库（`appendVideoHistory`）。不设 `DSH_HOME`，
+ * `image-storage-path.ts` 就解析成 `~/.dsh/dsh-imagegen` —— 用户真实的库。
+ *
+ * 后果不是多几条垃圾：条目 id 是固定的 `stage-e9-real`（由会话 id 派生），
+ * 于是每跑一次 `pnpm test` 就往真实历史里**追加一条同 id 的 64×64 蓝帧**。
+ * 用户看到的是「列表里三条一模一样的『3D 导演台导出』，点删除只少一条」——
+ * 因为 store 的 `removeVideoHistory` 用 `filter(id !== x)` 一次就抹掉全部同 id
+ * 条目，而 React 用 `video:${id}` 做 key，三条行撞在同一个 key 上。
+ * 2026-11-18 用户就是这样遇到的。
+ */
+const home = mkdtempSync(join(tmpdir(), 'dsh-stage-encode-'))
+process.env.DSH_HOME = home
+
 const results = []
 const check = createCheckHarness({ results })
 
@@ -190,6 +208,7 @@ if (!hasFfmpeg) {
 }
 
 await mod.resetStageEncode?.()
+rmSync(home, { recursive: true, force: true })
 process.stdout.write(`${results.join('\n')}\n`)
 const failed = results.filter(line => line.startsWith('FAIL')).length
 if (failed > 0) {

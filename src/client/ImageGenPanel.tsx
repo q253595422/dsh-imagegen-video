@@ -956,8 +956,14 @@ function historyGroupKey(entry: HistoryEntry): string {
 
 /** Collapse the per-model history rows that belong to one comparison run. */
 function groupHistoryEntries(entries: HistoryEntry[]): HistoryGroup[] {
+  // 同 id 只留第一条：索引里若有去重之前写下的重复条目，它会让这个 group 的
+  // `entries` 多出几份、`imageCount` 算虚、「删除这一组」对同一个 id 发几次
+  // 请求。列表是只读投影，在这里收一次口是安全的。
+  const seen = new Set<string>()
   const groups = new Map<string, HistoryGroup>()
   for (const entry of entries) {
+    if (seen.has(entry.id)) continue
+    seen.add(entry.id)
     const key = historyGroupKey(entry)
     const existing = groups.get(key)
     if (existing === undefined) {
@@ -1567,7 +1573,14 @@ export function ImageGenPanel(props: {
     const ownHistory = history.filter(entry => entry.canvas === undefined)
     const ownVideos = videoHistory.filter(entry => entry.canvas === undefined)
     const imageRows = groupHistoryEntries(ownHistory).map(imageRowOf)
-    const videoRows = ownVideos.map(videoRowOf)
+    // 同 id 只留最新那条，和存储层的写入去重对齐。
+    //
+    // 存储层现在按 id 覆盖，但**盘上已有的旧索引**可能还带着去重之前的重复
+    // 条目（`stage-e9-real` 那种测试污染就是）。前端若照单全收，几行会拿到
+    // 同一个 `video:${id}` React key——React 会丢掉其中一部分、把剩余的当成
+    // 同一行复用，表现就是「删了一条，列表里那条还在」。列表是只读投影，
+    // 在这里收一次口没有任何副作用。
+    const videoRows = [...new Map(ownVideos.map(entry => [entry.id, entry])).values()].map(videoRowOf)
     const canvasRows = canvasSummaries.map(canvasRowOf)
     const matches = (row: UnifiedHistoryRow, extra: string): boolean => {
       if (historyKindFilter !== 'all' && row.kind !== historyKindFilter) return false

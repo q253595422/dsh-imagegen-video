@@ -5,6 +5,21 @@ Attribution for third-party code is in [NOTICE](./NOTICE).
 
 ## Releases
 
+### 未发布 — 视频历史里那条删不掉的「3D 导演台导出」
+
+用户报的是「删不掉？」：历史侧栏里三条一模一样的「1:1 · 64x64 · 0.2s · ffmpeg」，蓝方块缩略图，点垃圾桶没有反应。
+
+**它们不是生成结果，是测试产物。** `scripts/smoke-stage-encode.mjs` 的 E9 真的调 `stageEncodeSession()`，而它在编码成功后会把成片写进视频库。那个脚本没有隔离数据目录——`import` 了 `mkdtempSync` / `rmSync` 却一次也没调用——于是 `DSH_HOME` 解析成 `~/.dsh/dsh-imagegen`，每跑一次 `pnpm test` 就往用户的真实视频库追加一条 64×64 纯蓝、6 帧 / 30fps（正好 0.2s）的测试片。缩略图那个蓝方块就是测试用的 `makePng(64, [40, 90, 160])`。
+
+- **为什么删不掉**：会话 id 是固定的 `e9-real`，条目 id 因此恒为 `stage-e9-real`。索引里堆着三条同 id 的记录，而列表拿 `video:${id}` 当 React key——三行撞在同一个 key 上，React 会把它们当成同一行复用。同时 `removeVideoHistory` 用 `filter(id !== x)` 一次性抹掉全部同 id 条目、却只删第一条的文件，于是界面上看起来「删了一条，另外两条还在」，磁盘上还留下两个孤儿 mp4。
+- **修 1：脚本隔离数据目录。** `smoke-stage-encode.mjs` 在最前面把 `DSH_HOME` 指到 `mkdtempSync(...)`，收尾删掉。跑一遍 `pnpm test` 不再碰真实库（已核对：跑完整套后 `videos/index.json` 的 mtime、条目数与 `files/` 文件数都没变）。
+- **修 2：写入按 id 覆盖，不再追加。** `appendVideoHistory` 与 `appendHistory` 都改成「先删同 id 的旧条目（连同文件），再放到最前」。`id` 本来就是调用方给的稳定标识（导演台按会话 id、拼接按 compose id），重写指的是同一条结果被重新保存。代价写在注释里：被覆盖那条的 poster 若新条目没有，会一起删掉——那是正确的，否则就是永久孤儿。
+- **修 3：删除清掉同 id 的全部文件。** `removeVideoHistory` / `removeHistory` 从 `find` 改成 `filter`，把每条同 id 条目的文件都 unlink。这条专门对付**已经写在盘上的旧索引**——去重只管新写入，用户机器上那三条还得靠它清干净。
+- **修 4：前端兜底去重。** `unifiedHistory` 与 `groupHistoryEntries` 按 id 收口。存储层修好之后盘上仍可能有旧重复条目（已经收到过这种用户），列表是只读投影，在这里再挡一层。
+- **修 5：守门扩到视频库。** `verify-test-isolation.mjs` 原来只认画布写入（`canvas/create`、`canvasStore.*`），所以 `smoke-stage-encode` 一路绿着把数据写进了用户的库。现在 `appendVideoHistory` / `stageEncodeSession` / `appendHistory` / `appendGallery` 都算写盘动作，提示文案也从「会写画布」改成「会写用户数据」。
+- **反向验证**：新增两条断言（`smoke-history-canvas.mjs` 的「同一个 id 再保存一次是覆盖」与「删除一个 id 会连它名下所有旧文件一起清掉」）。把 `appendVideoHistory` 的去重改回追加 → 第一条立刻红；把 `smoke-stage-encode.mjs` 的隔离删掉 → 守门立刻报出这个文件。两处都做过注入验证再恢复。
+- **数据现状**：用户库里那三条已经不在（`videos/index.json` 只剩 8 条真实记录，`files/` 下 0 个 `stage-*`），界面上若还留着行，是宿主进程里的旧渲染状态，重启 App 即可。
+
 ### 1.33.0 — 导演台换成真 3D + 时间轴；画布补上层级、锁定隐藏、套图、找节点、体检与目录
 
 本版把 `v1.32.0` 的「静态构图导演台」升成「一段能播的镜头」。完整说明见 [docs/releases/v1.33.0.md](./docs/releases/v1.33.0.md)。

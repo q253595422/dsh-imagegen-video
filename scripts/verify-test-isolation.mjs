@@ -41,10 +41,25 @@ import { readdirSync, readFileSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
 import path from 'node:path'
 
-/** 写画布的动作。读操作（`canvas/list`、`canvasStore.list(`）不算，只读不会多出条目。 */
+/** 会往用户真实数据目录里写条目的动作。读操作（`canvas/list`、`canvasStore.list(`）
+ *  不算：只读不会多出条目。
+ *
+ *  画布只是其中一类。`~/.dsh/dsh-imagegen/` 下还有三个库会被脚本写：图片历史
+ *  (`appendHistory`)、视频历史 (`appendVideoHistory`)、画廊 (`appendGallery`)。
+ *  2026-11-18 用户报「删不掉」的根因就是这个守门只管画布：`smoke-stage-encode`
+ *  真的调 `stageEncodeSession()`，而它在编码成功后写视频历史，脚本却没设
+ *  `DSH_HOME`，于是每跑一次 `pnpm test` 就往真实库里追加一条同 id 的测试片。
+ *  守门看不见视频库，这个脚本就一直绿。 */
 const WRITE_MARKERS = [
   /\/canvas\/create/,
   /\bcanvasStore\.(create|save|remove|importDocument)\s*\(/,
+  // 视频历史：直接调 store，或调会内部写它的编码入口。
+  /\bappendVideoHistory\s*\(/,
+  /\bstageEncodeSession\s*\(/,
+  /\/video\/history\/remove\b/,
+  // 图片历史与画廊。
+  /\bappendHistory\s*\(/,
+  /\bappendGallery\s*\(/,
 ]
 
 /** 把注释换成空格，保留行号。字符串里的 `//` 会被误伤，但脚本里的 URL 是
@@ -153,14 +168,14 @@ for (const name of readdirSync(scriptsDir)) {
 }
 
 if (offenders.length > 0) {
-  console.error(`\nFAIL: ${offenders.length} 个脚本会写画布，却没有把数据目录指到临时目录`)
+  console.error(`\nFAIL: ${offenders.length} 个脚本会写用户数据，却没有把数据目录指到临时目录`)
   for (const file of offenders) console.error(`  - ${file}`)
-  console.error('\n这些脚本跑一次，就会在用户真实的下拉里多出一条画布。')
+  console.error('\n这些脚本跑一次，就会在用户真实的画布 / 历史 / 视频库里多出条目。')
   console.error('在脚本最前面（任何 import 之前）加一行：')
   console.error("  process.env.DSH_HOME = mkdtempSync(join(tmpdir(), 'dsh-imagegen-<name>-'))")
   process.exit(1)
 }
 
 console.log(
-  `test isolation ok: ${scanned} scripts scanned, ${writers} canvas writers all point at a temp data root`,
+  `test isolation ok: ${scanned} scripts scanned, ${writers} data writers all point at a temp data root`,
 )
