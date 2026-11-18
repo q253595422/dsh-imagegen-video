@@ -146,6 +146,16 @@ export interface SettingsSeam {
 export interface ImageGenRoutesDeps {
   /** The settings seam (namespace storage). */
   settings: SettingsSeam
+  /**
+   * The host web server's configured bind address (its `webServer.host`).
+   *
+   * The guard needs it to accept a LAN deployment: a browser pointed at the
+   * listener's own address reaches this host over that NIC, so its connection
+   * is not loopback, and the Host header naming the bind address is what makes
+   * the request the user's own rather than a rebound domain. Absent keeps the
+   * old loopback-only behaviour.
+   */
+  bindHost?: string
   /** Internal namespace when the host entry differs from the bridge alias. */
   settingsNamespace?: string
   /** Resolve the current upstream config (legacy single-endpoint path). */
@@ -290,10 +300,44 @@ export interface CanvasBackend {
   materialize?: (ref: CanvasAssetRef, targetPath: string) => Promise<void>
 }
 
-/** Loopback literal check plus browser same-origin markers (mirrors dsh-ssh). */
-function isLoopbackRequest(request: IncomingMessage): boolean {
-  const address = request.socket.remoteAddress
-  if (address !== '127.0.0.1' && address !== '::1' && address !== '::ffff:127.0.0.1') return false
+/** Strip an IPv6 zone id: `fe80::1%en0` names an interface, not an authority. */
+function stripZoneId(host: string): string {
+  const zone = host.indexOf('%')
+  return zone === -1 ? host : host.slice(0, zone)
+}
+
+/** The `URL.hostname` form of one configured bind address (undefined when unusable). */
+function authorityNameOf(bindHost: string): string | undefined {
+  const bare = stripZoneId(bindHost.trim())
+  if (bare === '') return undefined
+  try {
+    return new URL(`http://${bare.includes(':') ? `[${bare}]` : bare}`).hostname
+  } catch {
+    return undefined
+  }
+}
+
+/**
+ * Whether this request may use the plugin's local API.
+ *
+ * Two authorities are accepted, and nothing else:
+ *  - a loopback connection (a client on this machine), or
+ *  - the exact address the host web server was told to listen on.
+ *
+ * The second one is what makes a LAN deployment work. A browser pointed at
+ * `192.168.10.201:3000` reaches the host over that NIC, so `remoteAddress` is
+ * never a loopback literal; and a Host header naming the listener's own bind
+ * address is the only thing that can tell "the user opened their own DSH" apart
+ * from "some page rebound a domain onto this address". The `sec-fetch-site` and
+ * Origin checks stay in force for both authorities — they are what actually
+ * blocks a rebinding page, and the Host check is what keeps that Origin
+ * comparison meaningful.
+ *
+ * `0.0.0.0` (all interfaces) grants no authority of its own: it names no address
+ * a browser could type, so there is nothing to compare Host against, and such a
+ * deployment keeps the loopback-only answer.
+ */
+function isLoopbackRequest(request: IncomingMessage, bindHost?: string): boolean {
   const host = request.headers.host
   if (typeof host !== 'string') return false
   let hostUrl: URL
@@ -302,7 +346,17 @@ function isLoopbackRequest(request: IncomingMessage): boolean {
   } catch {
     return false
   }
-  if (hostUrl.hostname !== '127.0.0.1' && hostUrl.hostname !== 'localhost' && hostUrl.hostname !== '[::1]') return false
+  const remote = request.socket.remoteAddress
+  const fromLoopback = remote === '127.0.0.1' || remote === '::1' || remote === '::ffff:127.0.0.1'
+  const bindName = bindHost === undefined ? undefined : authorityNameOf(bindHost)
+  const namesListener = bindName !== undefined
+    && bindName !== '0.0.0.0'
+    && bindName !== '[::]'
+    && hostUrl.hostname === bindName
+  // A LAN client is only ever allowed in through the address the host listens on.
+  if (!fromLoopback && !namesListener) return false
+  // …and even a local client has to name an authority we recognise.
+  if (!namesListener && hostUrl.hostname !== '127.0.0.1' && hostUrl.hostname !== 'localhost' && hostUrl.hostname !== '[::1]') return false
   if (request.headers['sec-fetch-site'] === 'cross-site') return false
   const origin = request.headers.origin
   if (origin === undefined) return true
@@ -935,7 +989,7 @@ export function makeRoutes(deps: ImageGenRoutesDeps): WebRoute[] {
     basePath: string,
     read: (file: string) => Promise<{ path: string; size: number; mime: string } | undefined>,
   ): Promise<void> => {
-    if (!isLoopbackRequest(req)) { writeJson(res, 403, { error: 'forbidden: loopback-only' }); return }
+    if (!isLoopbackRequest(req, deps.bindHost)) { writeJson(res, 403, { error: 'forbidden: loopback-only' }); return }
     if (req.method !== 'GET' && req.method !== 'HEAD') {
       writeJson(res, 405, { error: `method not allowed: ${req.method}` })
       return
@@ -1015,7 +1069,7 @@ export function makeRoutes(deps: ImageGenRoutesDeps): WebRoute[] {
     return { ok: true, request: { ...request, model: asked, upstream: mapping.id, channelId: picked.id, channel: picked.name } }
   }
   const guard = (req: IncomingMessage, res: ServerResponse, method: string): boolean => {
-    if (!isLoopbackRequest(req)) {
+    if (!isLoopbackRequest(req, deps.bindHost)) {
       writeJson(res, 403, { error: 'forbidden: loopback-only' })
       return false
     }
@@ -1060,7 +1114,7 @@ export function makeRoutes(deps: ImageGenRoutesDeps): WebRoute[] {
       kind: 'prefix' as const,
       path: AGENT_IMAGE_API,
       handler: async (req: IncomingMessage, res: ServerResponse) => {
-        if (!isLoopbackRequest(req)) {
+        if (!isLoopbackRequest(req, deps.bindHost)) {
           writeJson(res, 403, { error: 'forbidden: loopback-only' })
           return
         }
@@ -1668,7 +1722,7 @@ export function makeRoutes(deps: ImageGenRoutesDeps): WebRoute[] {
       kind: 'prefix',
       path: HISTORY_API.image,
       handler: async (req, res) => {
-        if (!isLoopbackRequest(req)) {
+        if (!isLoopbackRequest(req, deps.bindHost)) {
           writeJson(res, 403, { error: 'forbidden: loopback-only' })
           return
         }
@@ -1826,7 +1880,7 @@ export function makeRoutes(deps: ImageGenRoutesDeps): WebRoute[] {
       kind: 'prefix',
       path: GALLERY_API.image,
       handler: async (req, res) => {
-        if (!isLoopbackRequest(req)) {
+        if (!isLoopbackRequest(req, deps.bindHost)) {
           writeJson(res, 403, { error: 'forbidden: loopback-only' })
           return
         }
@@ -2246,7 +2300,7 @@ export function makeRoutes(deps: ImageGenRoutesDeps): WebRoute[] {
       kind: 'prefix',
       path: CANVAS_API.asset,
       handler: async (req, res) => {
-        if (!isLoopbackRequest(req)) { writeJson(res, 403, { error: 'forbidden: loopback-only' }); return }
+        if (!isLoopbackRequest(req, deps.bindHost)) { writeJson(res, 403, { error: 'forbidden: loopback-only' }); return }
         if (req.method !== 'GET') { writeJson(res, 405, { error: `method not allowed: ${req.method}` }); return }
         const file = imageFileFrom(req.url, CANVAS_API.asset)
         const found = file === undefined ? undefined : await canvas.readAsset(file)
@@ -2674,7 +2728,7 @@ export function makeRoutes(deps: ImageGenRoutesDeps): WebRoute[] {
       kind: 'prefix',
       path: TEMPLATES_API.image,
       handler: async (req, res) => {
-        if (!isLoopbackRequest(req)) {
+        if (!isLoopbackRequest(req, deps.bindHost)) {
           writeJson(res, 403, { error: 'forbidden: loopback-only' })
           return
         }

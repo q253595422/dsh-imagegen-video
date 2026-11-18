@@ -504,6 +504,35 @@ async function historyImagesToGenerated(refs: HistoryImageRef[]): Promise<Genera
   }))
 }
 
+/**
+ * Fold per-entry image reads into one result set, keeping whatever arrived.
+ *
+ * WHy this is a pure function taking settled promises rather than awaiting
+ * itself: the failure mode it exists to prevent (#49) is invisible from the
+ * outside — a rejected batch and an empty group both leave the board blank, so
+ * the only way to hold the behaviour still is to test this directly.
+ *
+ * `Promise.all` was the whole bug. A comparison group has one entry per model,
+ * and a single unreadable member (its file evicted, a 404, a transient fetch
+ * failure) rejected the entire batch: `setImages` never ran and the board stayed
+ * on "prompt + N 张" with no picture. Four models meant four times the chance of
+ * showing nothing.
+ *
+ * @param settled - one per entry, in group order.
+ * @returns every image that loaded, and how many entries failed.
+ */
+export function collectHistoryGroupImages(
+  settled: ReadonlyArray<PromiseSettledResult<GeneratedImage[]>>,
+): { images: GeneratedImage[]; failed: number } {
+  const images: GeneratedImage[] = []
+  let failed = 0
+  for (const outcome of settled) {
+    if (outcome.status === 'fulfilled') images.push(...outcome.value)
+    else failed += 1
+  }
+  return { images, failed }
+}
+
 /** Compact, locale-independent timestamp for history entries. */
 function formatTime(timestamp: number): string {
   const d = new Date(timestamp)
@@ -2459,9 +2488,16 @@ export function ImageGenPanel(props: {
     }
   }, [preview])
 
-  const loadHistoryGroup = async (group: HistoryGroup): Promise<GeneratedImage[]> => {
-    const loaded = await Promise.all(group.entries.map(entry => historyImagesToGenerated(entry.images)))
-    return loaded.flat()
+  /**
+   * Read one history group's images, keeping whatever arrives.
+   *
+   * The folding itself lives in {@link collectHistoryGroupImages} so the
+   * all-or-nothing regression (#49) can be asserted directly; this only does
+   * the IO.
+   */
+  const loadHistoryGroup = async (group: HistoryGroup): Promise<{ images: GeneratedImage[]; failed: number }> => {
+    const settled = await Promise.allSettled(group.entries.map(entry => historyImagesToGenerated(entry.images)))
+    return collectHistoryGroupImages(settled)
   }
 
   /** View every model result from one comparison as one canvas result set. */
@@ -2478,9 +2514,12 @@ export function ImageGenPanel(props: {
     // immediately, then hydrate the selected result into its canvas.
     openTab('text')
     try {
-      setImages(await loadHistoryGroup(group))
+      const { images: loaded, failed } = await loadHistoryGroup(group)
+      setImages(loaded)
       setComparison(null)
-      setError(null)
+      // A member that could not be read is reported, not hidden: a four-model
+      // comparison that silently draws two pictures reads as a two-model run.
+      setError(failed === 0 ? null : tt('history.groupImagesFailed', { failed, total: group.entries.length }))
       setBoardView({ kind: 'history', id: entry.id })
     } catch (caught) {
       setError(errorMessage(caught))

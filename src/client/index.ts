@@ -62,6 +62,10 @@ export const inject = ['slots', 'locale', 'connection', 'sessions', 'conversatio
 export { autoRemoveBackground, compositeAnnotatedResult, containRect, cropRaster, drawAnnotation, rectBetween, rectToPixels, removeBackground, transparencyRatio } from './image-ops.ts'
 export { addConversationAttachments, conversationInput, createConversationDrafts, releaseConversationDrafts, removeConversationAttachment } from './conversation-sync.ts'
 export { sidebarEntryTestHooks } from './sidebar-entry.ts'
+// #49 regression: the all-or-nothing history-group fold is invisible from the
+// outside (a rejected batch and an empty group both leave the board blank), so
+// the smoke test drives this function directly.
+export { collectHistoryGroupImages } from './ImageGenPanel.tsx'
 export { isPosterDocument, wrapPosterText } from '../poster.ts'
 export { paintPoster } from './poster-render.ts'
 

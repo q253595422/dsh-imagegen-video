@@ -1164,9 +1164,16 @@ export function apply(ctx: Context, config?: Config): (() => void) | void {
     mutateSettings = async ops => { await seam.mutate(settingsNamespace, ops) }
     sctx.effect(
       () => {
+        // The guard needs the address this host listens on: with a LAN bind
+        // (a concrete NIC address), a browser on that address is not a loopback
+        // client, and only the bind address itself can authorise its Host
+        // header. The published type advertises just the two literals, so read
+        // the runtime value as a plain string rather than narrowing it away.
+        const bindHost = (sctx.webServer as { host?: unknown } | undefined)?.host
         const routes = makeRoutes({
           settings: seam,
           settingsNamespace,
+          bindHost: typeof bindHost === 'string' && bindHost !== '' ? bindHost : undefined,
           resolve: () => {
             const value = resolve()
             const channel = value.channels.find(candidate => candidate.id === value.defaultChannelId) ?? value.channels[0]
