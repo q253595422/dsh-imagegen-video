@@ -401,6 +401,8 @@ export function directorSystemPrompt(chinese: boolean): string {
       '7. 只输出一个 JSON 对象，不要 Markdown、不要解释：',
       shape,
       '字段含义：look=视觉风格；shotLanguage=景别与光线；pacing=节奏 0..1；shots=镜头列表；prompt=最终提示词（不超过 900 字）；seconds/aspectRatio/resolution=建议参数（时长不得超过用户值）。',
+      '8. 一个镜头可以容纳 2–4 个子镜头（换景别、换角度或换对象，硬切衔接），总长 8–15 秒；不要把一条「铺垫-发生-反应」的因果链切散到两个镜头里。',
+      '9. 用户原文里已有的台词，照抄并放进「」；这一镜的时长必须 ≥ 台词字数 ÷ 4.5 + 2 秒表演余量，装不下就把台词拆到下一镜，不要为了塞台词而压缩画面。（第 5 条禁的是你自行编造台词，不是用户写的。）',
     ].join('\n')
   }
   return [
@@ -415,6 +417,8 @@ export function directorSystemPrompt(chinese: boolean): string {
     '7. Output exactly one JSON object — no markdown, no explanation:',
     shape,
     'Fields: look = visual style; shotLanguage = shot size and lighting; pacing = 0..1; shots = the shot list; prompt = the final prompt (under 900 characters); seconds/aspectRatio/resolution = proposed params (duration must not exceed the user value).',
+    '8. One shot can hold 2-4 sub-shots (a change of shot size, angle or subject, joined by hard cuts) and run 8-15 seconds in total; never split one setup-development-reaction chain across two shots.',
+    '9. Dialogue the user already wrote goes in verbatim inside 「」; that shot must then be long enough to speak it — about 4.5 Chinese characters or 2.5 English words per second, plus 2 seconds of performance — else move the line to the next shot rather than crushing the picture to fit it. (Rule 5 forbids inventing dialogue; it does not forbid quoting the user\'s.)',
   ].join('\n')
 }
 

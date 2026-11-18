@@ -13,7 +13,8 @@ import { useState } from 'react'
 import type { CanvasNode, CanvasStoryboard, VideoResolution } from '../../protocol.ts'
 import { tt } from '../helpers.ts'
 import type { ImageGenKey } from '../locales.ts'
-import { MAX_SHOTS, SHOT_SECONDS, nextShotIndex, shotNodeOf, shotState, storyboardClipIds, storyboardOf, storyboardProgress, withAppendedShot, withMovedShot, withRemovedShot, withShot } from '../storyboard.ts'
+import { MAX_SHOTS, nextShotIndex, shotNodeOf, shotSecondsOptions, shotSpeechFit, shotState, shotsWithoutCast, storyboardClipIds, storyboardOf, storyboardProgress, withAppendedShot, withMovedShot, withRemovedShot, withShot } from '../storyboard.ts'
+import { castMembers } from '../cast.ts'
 import { describeVideoModel, VIDEO_RESOLUTIONS } from '../../video-model-catalog.ts'
 import type { ShotState } from '../storyboard.ts'
 import css from '../canvas-workspace.module.css'
@@ -45,6 +46,18 @@ function shotStateLabel(state: ShotState): ImageGenKey {
 export function StoryboardBody(props: {
   node: CanvasNode
   nodes: readonly CanvasNode[]
+  /**
+   * The video model a shot will actually be submitted with, when the board
+   * names none of its own.
+   *
+   * The board has no model picker: `submitShot` resolves `state.model` against
+   * the channel default, so that default IS the model every shot runs on. It
+   * has to be passed in, because this body cannot read settings. Without it
+   * `catalog` stayed undefined on every real board and the duration picker
+   * offered all seven lengths regardless of what the model accepts — the
+   * narrowing code existed but was unreachable.
+   */
+  defaultVideoModel?: string
   busy: boolean
   onChange: (next: CanvasStoryboard) => void
   onRun: () => void
@@ -72,12 +85,37 @@ export function StoryboardBody(props: {
   // on its own (the default lives in settings), so the full list is offered
   // rather than the unknown-family list -- that one exists to describe a model
   // we cannot classify, not the absence of a model.
-  const catalog = board.model === undefined || board.model.trim() === '' ? undefined : describeVideoModel(board.model)
+  const named = (board.model ?? '').trim()
+  const effectiveModel = named !== '' ? named : (props.defaultVideoModel ?? '').trim()
+  const catalog = effectiveModel === '' ? undefined : describeVideoModel(effectiveModel)
   const resolutionOptions = catalog !== undefined && catalog.resolutions.length > 0 ? catalog.resolutions : VIDEO_RESOLUTIONS
   const resolutionChoices = resolutionOptions.includes(board.resolution as VideoResolution)
     ? resolutionOptions
     : [board.resolution as VideoResolution, ...resolutionOptions]
   const aspectOptions = catalog !== undefined && catalog.aspectRatios.length > 0 ? catalog.aspectRatios : ['16:9', '9:16', '1:1']
+  /**
+   * Shots that will run WITHOUT the pinned identities, and how many identities
+   * that costs them.
+   *
+   * `carry` spends both frame slots on the join (`first_frame` / `last_frame`
+   * exclude `reference_image` — see `minimaxRole` in the engine), so from the
+   * second shot onward the pinned faces do not travel. That is the correct
+   * trade when a cut would break the join, but it is invisible: the user pinned
+   * 「阿禾」 once and reasonably expects every shot to look like her. The board
+   * says which rows lose her instead of letting the drift show up in the render.
+   */
+  const pinned = castMembers(props.nodes).length
+  const castless = new Set(shotsWithoutCast(board, pinned))
+  // A shot's length is the model's own vocabulary, narrowed to the editorial
+  // set: snapgen accepts 6 / 10 / 15, muse only 10. Offering a 4 on a model that
+  // answers with a 400 costs a failed submit per attempt, so the picker only
+  // shows numbers the chosen model documents.
+  //
+  // `catalog.durations`, NOT `durationsOf(catalog)`: the latter answers the
+  // panel's generic 5/10 default when a family declares nothing, and using that
+  // here would silently drop 4 / 6 / 8 / 12 / 15 from every model that accepts
+  // a range (Seedance takes 4-15). Only a DECLARED set is evidence.
+  const secondsOptions = shotSecondsOptions(catalog?.durations)
   return <div className={css.storyboardBody} data-storyboard-body="" onPointerDown={event => event.stopPropagation()}>
     <div className={css.storyboardSettings}>
       <label className={css.storyboardField}>
@@ -116,6 +154,16 @@ export function StoryboardBody(props: {
       </label>
     </div>
 
+    <p className={css.storyboardHint} data-storyboard-spec-hint="">{tt('canvas.storyboard.specHelp')}</p>
+
+    {/* 只有在真的会丢身份参考时才出现。一直显示会让「每镜独立」的板也挂着一句
+        无关的警告，用户就会学会忽略这一行——那比不显示更糟。 */}
+    {castless.size === 0 ? null : <p
+      className={css.storyboardCastWarn}
+      data-storyboard-cast-warn=""
+      title={tt('canvas.storyboard.castDroppedHint')}
+    >{tt('canvas.storyboard.castDroppedBar', { count: castless.size, cast: pinned })}</p>}
+
     {board.shots.length === 0
       ? <div className={css.storyboardEmpty}>{tt('canvas.storyboard.empty')}</div>
       : <ol className={css.storyboardShots} data-storyboard-shots="">
@@ -123,18 +171,36 @@ export function StoryboardBody(props: {
             const state = shotState(shot, props.nodes)
             const clippable = shotNodeOf(shot, props.nodes)
             const active = hovered === shot.id || index === nextIndex
+            // A board written by an older build can hold a length the current
+            // model no longer accepts. Keep it as a choice rather than silently
+            // rewriting the document: the row has to show what will be sent.
+            // Only a REAL number is worth keeping as an extra option; a NaN
+            // would render an option labelled "NaN" that selects nothing.
+            const secondsChoices = secondsOptions.includes(shot.seconds) || !Number.isFinite(shot.seconds)
+              ? secondsOptions
+              : [shot.seconds, ...secondsOptions]
+            const speech = shotSpeechFit(shot)
+            const dropsCast = castless.has(index)
             return <li
               key={shot.id}
               className={css.storyboardShot}
               data-state={state}
               data-active={active ? '' : undefined}
               data-shot-id={shot.id}
+              data-cast-dropped={dropsCast ? '' : undefined}
               onMouseEnter={() => setHovered(shot.id)}
               onMouseLeave={() => setHovered(previous => previous === shot.id ? null : previous)}
             >
               <div className={css.storyboardShotHead}>
                 <span className={css.storyboardShotIndex}>{index + 1}</span>
                 <span className={css.storyboardShotState} data-state={state}>{tt(shotStateLabel(state))}</span>
+                {/* 一粒角标，而不是整行变色：这一镜仍然能跑、仍然有用，只是
+                    少了钉住的脸。用警示色画整行会让用户以为它坏了。 */}
+                {dropsCast ? <span
+                  className={css.storyboardCastChip}
+                  data-cast-chip=""
+                  title={tt('canvas.storyboard.castDroppedHint')}
+                >{tt('canvas.storyboard.castDroppedChip')}</span> : null}
                 <span className={css.storyboardShotActions}>
                   <button
                     type="button"
@@ -177,7 +243,7 @@ export function StoryboardBody(props: {
                   aria-label={tt('canvas.storyboard.seconds', { seconds: shot.seconds })}
                   onChange={event => props.onChange(withShot(board, index, { seconds: Number(event.target.value) }))}
                 >
-                  {SHOT_SECONDS.map(value => <option key={value} value={String(value)}>{tt('canvas.videoDuration', { seconds: value })}</option>)}
+                  {secondsChoices.map(value => <option key={value} value={String(value)}>{tt('canvas.videoDuration', { seconds: value })}</option>)}
                 </select>
                 {state === 'failed' || state === 'empty'
                   ? <button
@@ -196,6 +262,12 @@ export function StoryboardBody(props: {
                       >{tt('canvas.storyboard.previewShot')}</button>
                     : <span className={css.storyboardShotState} data-state="generating">{tt('canvas.storyboard.stateGenerating')}</span>}
               </div>
+              {/* 台词装不下只是提醒：它按 4.5 字/秒的经验值估，用户可能就是要说得快。
+                  放进按钮行会把 62px 的时长下拉挤变形，所以单独占一行。 */}
+              {speech.fits ? null : <span
+                className={css.storyboardSpeechWarn}
+                data-storyboard-speech-warn=""
+              >{tt('canvas.storyboard.speechTooLong', { seconds: Math.ceil(speech.required) })}</span>}
             </li>
           })}
         </ol>}

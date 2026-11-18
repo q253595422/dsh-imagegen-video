@@ -8,7 +8,7 @@
 export const IMAGEGEN_SETTINGS_NAMESPACE = 'dsh-imagegen'
 
 /** Published package version shared by the host updater and the client UI. */
-export const PLUGIN_VERSION = '1.32.0'
+export const PLUGIN_VERSION = '1.33.0'
 
 /** Same-origin route family (loopback-only, mirroring the dsh-ssh fence). */
 export const SETTINGS_API = {
@@ -541,7 +541,52 @@ export const CANVAS_API = {
   proposals: '/api/dsh-imagegen/canvas/proposals',
   proposalAccept: '/api/dsh-imagegen/canvas/proposal/accept',
   proposalDiscard: '/api/dsh-imagegen/canvas/proposal/discard',
+  /**
+   * 导演台导出视频：客户端把逐帧 PNG 逐块 POST 到这里，宿主拼成 mp4 并返回
+   * 一条可落成视频节点的引用。
+   *
+   * 为什么不在浏览器里编：WebCodecs 的 H.264 只在部分浏览器/画幅下可用
+   * （牧野自己就带了一句「当前浏览器不支持此画幅的 H.264 编码」），而宿主
+   * 本来就有 ffmpeg（见 `src/clip-compose.ts`）。逐帧交给宿主，画幅和时长
+   * 都不受编码器能力表约束。
+   */
+  stageFrame: '/api/dsh-imagegen/canvas/stage/frame',
+  stageEncode: '/api/dsh-imagegen/canvas/stage/encode',
 } as const
+
+/** 导演台逐帧导出的线上形状。 */
+export interface StageFrameUpload {
+  /** 一次导出会话的 id，客户端生成；同一个会话的帧按 `index` 排序。 */
+  sessionId: string
+  /**
+   * 这次导出属于哪张画布。
+   *
+   * WHY 单独一个字段而不是复用 `sessionId`：导演台导出的成片会写进视频历史，
+   * 而历史列表要把「画布产物」与用户自己生成的作品分开——没有这个 id，
+   * 重启之后那条成片就分不清是谁的，只能留在列表里冒充一次独立生成。
+   */
+  canvasId?: string
+  /** 帧序号，0 起始。 */
+  index: number
+  /** 总帧数；最后一帧到达即触发编码。 */
+  total: number
+  /** 帧宽度与高度（像素），所有帧必须一致。 */
+  width: number
+  height: number
+  /** 帧率；固定 30，写进来是为了让宿主不必猜。 */
+  fps: number
+  /** 单帧 PNG，data URL。 */
+  dataUrl: string
+}
+
+export interface StageEncodeResult {
+  /** 编好的 mp4，走视频存储的读取路由。 */
+  url: string
+  mime: string
+  /** 实际时长（秒）。 */
+  duration: number
+  bytes: number
+}
 
 /** Same-origin route family for canvas skills (catalog + run control). */
 export const CANVAS_SKILL_API = {
@@ -1047,6 +1092,17 @@ export interface VideoHistoryEntry {
    * `code` means a chat model wrote drawing code and this host rendered it.
    */
   renderer?: 'model' | 'code'
+  /**
+   * Canvas lineage, when this clip came from a canvas video node.
+   *
+   * WHY it is persisted: the canvas used to know a clip only through the
+   * in-memory task queue, which a host restart wipes. A placeholder whose
+   * render finished but whose task row was gone then had no way back to its
+   * clip and was reported as lost, even though the bytes were on disk. The
+   * lineage makes the history entry the durable half of that link, so a
+   * reopened canvas can adopt a finished clip into the node it was made for.
+   */
+  canvas?: CanvasVideoTaskMeta
 }
 export interface VideoHistoryEntryInput {
   id: string
@@ -1066,6 +1122,8 @@ export interface VideoHistoryEntryInput {
   plan?: VideoDirectorPlan
   /** Host-filled: `code` when a chat model wrote the drawing code. */
   renderer?: 'model' | 'code'
+  /** Canvas lineage, for a clip generated from a canvas video node. */
+  canvas?: CanvasVideoTaskMeta
 }
 
 /** Lifecycle of one host-resident video generation task. */
@@ -1393,6 +1451,14 @@ export interface ClipComposer {
     duration?: number
     /** Human-readable provenance ("stitched from 3 clips"). */
     prompt: string
+    /**
+     * 这次拼接属于哪张画布。
+     *
+     * WHY 拼接入参也要带：成片会写进视频历史，而历史列表要把画布产物与用户
+     * 自己生成的作品分开。技能运行本来就知道 `canvasId`，不传就只剩一条
+     * 「不知道谁拼的」的孤立成片。
+     */
+    canvasId?: string
   }) => Promise<{ url: string; mime: string; duration?: number }>
 }
 
@@ -1853,6 +1919,129 @@ export interface CanvasPoseStage {
    * 缺项照旧合法。
    */
   prompt?: string
+  /**
+   * 时间轴。**缺项 = 静态舞台**：老文档没有这个字段，编辑器按「没有时间维度」
+   * 渲染，不写盘、不改字节。一旦用户动了关键帧或时长，整份 timeline 一起写。
+   *
+   * 为什么整份存而不是每条轨道分开存：关键帧的时间与时长是同一个坐标系，
+   * 拆开放进 actor / camera 里，删掉一个对象时它的轨道就成了孤儿，而校验器
+   * 没有办法知道该删哪一半。集中一处，删对象就是删一条轨道。
+   */
+  timeline?: CanvasStageTimeline
+  /**
+   * 场景道具：立方体、球体、导入的 GLB。
+   *
+   * 与 actors 分开而不是都塞进 actors：角色的核心是 rig（骨骼），道具没有
+   * 骨骼、只有变换与尺寸。合成一个数组之后，每个遍历 actor 的地方——姿势
+   * 面板、骨骼投影、关键帧快照——都要先判一次「这是不是人」，而漏判的表现
+   * 是给立方体画一副骨架。
+   *
+   * 缺项 = 没有道具，老文档照旧合法。
+   */
+  props?: CanvasStageProp[]
+}
+
+/** 道具的形状。`glb` 是需要显式上传的模型，其余是程序化的基础几何。 */
+export type CanvasStagePropKind = 'cube' | 'sphere' | 'glb'
+
+/**
+ * 场景里的一个道具。
+ *
+ * 位置存 `y`（与角色不同）：角色是「站在地上」，y 由落地决定；道具可以被
+ * 摆在半空——把盒子垫在脚下、让球悬在头顶，都是常见需求，用一个隐式落地
+ * 规则满足不了。
+ */
+export interface CanvasStageProp {
+  id: string
+  name: string
+  kind: CanvasStagePropKind
+  /** 世界坐标（米）。 */
+  x: number
+  y: number
+  z: number
+  /** 绕各轴的欧拉角（度）。 */
+  rotateX?: number
+  rotateY?: number
+  rotateZ?: number
+  /** 缩放。`cube`/`sphere` 的基准边长是 1 米。 */
+  scaleX?: number
+  scaleY?: number
+  scaleZ?: number
+  /**
+   * GLB 模型的来源。`glb` 之外忽略。
+   *
+   * 用画布资产引用而不是内联字节：一个 GLB 动辄几 MB，写进节点会让整份画布
+   * JSON 变成十几 MB，每次保存都重传一次。存在资产里，引用只带 id。
+   */
+  asset?: { assetId: string; url: string; name?: string }
+}
+
+/**
+ * 时间轴：时长 + 帧率 + 每条轨道的动画。
+ *
+ * 帧率固定 30（不是可选参数）：导出 MP4 时逐帧交给宿主 ffmpeg 编码，帧率
+ * 一变，`at` 里的帧号含义就跟着变，用户改一次时长整条轨道的时间就对不上了。
+ * 存成「秒」而不是「帧」也同理——帧号是渲染期的派生量。
+ */
+export interface CanvasStageTimeline {
+  /** 工程时长（秒），2–15 的整数。 */
+  duration: number
+  /** 固定 30。写进数据是为了让导出端不必猜，而不是给用户改。 */
+  fps: number
+  /** 每条轨道对应一个对象（角色 id 或机位 id）。 */
+  tracks: CanvasStageTrack[]
+}
+
+/** 一条轨道：属于某个对象，按时间排好的关键帧。 */
+export interface CanvasStageTrack {
+  /** 指向 `actors[].id` 或 `cameras[].id`。 */
+  targetId: string
+  /** 这个对象是角色还是机位——同一个 id 命名空间下要靠它区分。 */
+  target: 'actor' | 'camera'
+  /** 关键帧，按 `at` 升序。同一时刻最多一个（写入时后到者覆盖）。 */
+  keyframes: CanvasStageKeyframe[]
+  /**
+   * 运动轨迹片段（路径动画）。与位置关键帧互斥：一段轨迹在时间上覆盖的那
+   * 一段里，对象的位置由路径求值，不再读 `position` 关键帧。
+   */
+  paths?: CanvasStagePath[]
+}
+
+/**
+ * 一个关键帧。
+ *
+ * 所有字段都是可选的：机位关键帧只有位姿，角色关键帧可以只有姿势。用
+ * 「有什么就插值什么」而不是给每种对象一个独立的关键帧类型，是因为用户会
+ * 在同一个时间点上既转身又摆姿势——分成两种关键帧之后，时间轴上那一格会
+ * 出现两个重叠的标记，删起来必然误删。
+ */
+export interface CanvasStageKeyframe {
+  /** 时间（秒，对齐到 1/fps 的整数帧）。 */
+  at: number
+  /** 角色姿势（整份 rig 快照）。插值时逐关节欧拉角线性插值。 */
+  rig?: CanvasPoseRig
+  /** 角色站位（世界坐标米）。 */
+  position?: [number, number, number]
+  /** 角色朝向（度，绕 y）。 */
+  facing?: number
+  /** 机位位姿快照（视点 + 注视点 + 视场角）。 */
+  camera?: CanvasPoseCamera
+}
+
+/** 轨迹：把一段路径铺在一段时间上。 */
+export interface CanvasStagePath {
+  id: string
+  /** 形状。`free` 是铅笔/钢笔出来的折线，点直接存在 `points` 里。 */
+  shape: 'circle' | 'line' | 'rect' | 'free'
+  /** 路径在世界坐标里的控制点（米）。circle 用前两个点定圆心与半径。 */
+  points: Array<[number, number, number]>
+  /** 这段路径生效的时间窗口（秒）。 */
+  start: number
+  end: number
+  /** 路径高度（米）；0 = 贴地。 */
+  height?: number
+  /** 沿路径朝向（角色朝切线方向）而不是保持固定朝向。 */
+  orient?: boolean
 }
 
 export interface CanvasViewport {
@@ -1909,7 +2098,36 @@ export interface CanvasCastMember {
   name?: string
 }
 
+/**
+ * 套图里的一条：一句带标题的提示词。
+ *
+ * `title` 会落到结果节点的标题上（「正面视图 · 第1张」比「图片节点」有用），
+ * 所以它在文档里是有意义的数据，不是给人看的备注。`id` 只用于 React 列表
+ * 的 key 与「改哪一条」，不参与生成。
+ */
+export interface CanvasPromptSetItem {
+  id: string
+  /** 这一条的名字；空串表示「用兜底标题」。保存时允许为空（用户正在打字）。 */
+  title: string
+  /** 这一条真正发出去的提示词；空串表示这一条还没写。 */
+  prompt: string
+}
+
 export interface CanvasNodeMetadata {
+  /**
+   * 这一张被钉住了：拖不动、改不了大小、删不掉。
+   *
+   * 存在 metadata 而不是新字段：老文档没有它，读出来就是「没锁」，零迁移；
+   * 而锁定是单张卡片自己的属性，跟画布、跟分组都无关。
+   */
+  locked?: boolean
+  /**
+   * 这一张收起来了：不渲染、不参与框选，但仍在 `nodes` 数组里。
+   *
+   * WHY 不真的从数组里删掉：删了就再也找不回来。隐藏是「暂时别看」，不是
+   * 「不要了」——两者的差别只有用户自己知道。
+   */
+  hidden?: boolean
   /**
    * Image nodes: this node is a pinned identity reference. Generation attaches
    * it (and every other pinned node) as a reference image automatically.
@@ -1933,6 +2151,15 @@ export interface CanvasNodeMetadata {
   video?: CanvasVideoRef
   status?: 'idle' | 'generating' | 'success' | 'error'
   error?: string
+  /**
+   * 这个节点的失败是不是「任务从宿主队列里消失了」，而不是上游真的报错。
+   *
+   * WHY 一个标记而不是只看 `error` 文本：文案随语言变（`videoTaskLost` 有三套
+   * 翻译），而历史认领必须能事后重建。只比对字符串的话，用户切一次语言，那个
+   * 已经被误判的节点就再也救不回来了。老文档没有这个字段，认领处仍保留对旧
+   * 文案的比对作为兼容。
+   */
+  failure?: 'task-lost'
   /** Config/image nodes: generation settings. */
   prompt?: string
   model?: string
@@ -1942,6 +2169,18 @@ export interface CanvasNodeMetadata {
   quality?: string
   /** Config nodes: how many images to generate (1-4). */
   count?: number
+  /**
+   * 配置节点：一组**带标题的提示词**（套图）。跑一次，每条各出一张图。
+   *
+   * 与 `count` 语义相反，不要合并：`count` 是「同一条出 N 张」（求同，用来
+   * 挑最好的一张），套图是「N 条各出一张」（求异，用来一次出齐一套三视图 /
+   * 一组电商图）。把两者塞进同一个数字，填 3 想出一套三视图的人会拿到三张
+   * 一样的正面。
+   *
+   * 只有配置节点读它；别的类型上出现也合法（老文档、复制粘贴都可能带过来），
+   * 只是没人读——那条取舍写在 `canvas-store` 的类型守卫旁边。
+   */
+  promptSet?: CanvasPromptSetItem[]
   /** Config nodes: generation mode (image), video, or plain writing (text). */
   mode?: 'image' | 'text' | 'video'
   /** Config/video nodes: the video generation mode (which reference inputs the
@@ -2114,6 +2353,14 @@ export interface CanvasSummary {
   updatedAt: number
   /** User pinned this canvas to the favorites group. */
   favorite?: boolean
+  /**
+   * 列表里那一格缩略图（画布首张图片节点的资产 URL）。
+   *
+   * WHY 存在摘要里而不是列表时去读文档：列表要一次画几十张画布，逐个读
+   * `pages/*.json` 是几十次磁盘读；而保存时文档本来就在手上，顺手取一张图
+   * 的 URL 是零成本。老画布没有这个字段，界面退回到画布图标。
+   */
+  thumb?: string
   /**
    * Agent 在这份画布上还等着用户点头的改动条数。
    *

@@ -1,0 +1,234 @@
+/**
+ * 「全部功能」弹窗。
+ *
+ * 与快捷键表（`shortcut-help.module.css`）同一套表面配方，但尺寸不同：这张表
+ * 一屏要放下 30 行、还要带搜索框，所以宽度取 620px 而不是 720px 的阅读宽度
+ * ——两列阅读式排版在这里会让每一行都被挤成一行半。单列 + 分组标题是全站
+ * 菜单的既有形状，用户不用重新学。
+ *
+ * 颜色全部走 alias token：DSH 在活页面上切主题，写死的值会留在旧配色里。
+ */
+
+.backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: var(--z-modal-backdrop);
+  display: flex;
+  align-items: flex-start;
+  justify-content: center;
+  /* 顶部对齐而不是居中：这是一个「打开、输入、回车」的拾取器，靠上的位置让
+     结果列表离搜索框更近，视线不用在屏幕中间和顶部之间来回跳。 */
+  padding: 12vh 20px 20px;
+  background: var(--dsw-alias-bg-mask-1);
+  color: var(--dsw-alias-label-primary);
+  font-family: var(--dsw-font-family, system-ui, sans-serif);
+  font-size: 13px;
+  line-height: 1.5;
+}
+
+.dialog {
+  display: flex;
+  flex-direction: column;
+  width: min(620px, 100%);
+  /* 78vh 而不是 70vh：这张表的用途是「扫一眼看全」，而 30 行在任何笔记本
+     高度下都要滚。多让出 8vh 正好是多两行半——分组标题因此常常落在可视区里，
+     用户看得出「下面还有别的组」，而不是以为这就是全部。 */
+  max-height: min(78vh, 720px);
+  border: 1px solid var(--dsw-alias-border-l1);
+  border-radius: var(--dsw-radius-lg);
+  background: var(--dsw-alias-bg-layer-1);
+  box-shadow: var(--dsw-shadow-lv3);
+  overflow: hidden;
+}
+
+/* 焦点本来落在搜索框上；这个规则只管「万一落到容器上」的情况（比如用户点了
+   容器空白处）：容器不是控件，默认环只会读成一道多余的边框。 */
+.dialog:focus { outline: none; }
+
+.header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 12px;
+  border-bottom: 1px solid var(--dsw-alias-border-l1);
+}
+
+.search {
+  flex: 1;
+  min-width: 0;
+  height: 32px;
+  padding: 0 10px;
+  border: 1px solid var(--dsw-alias-border-l1);
+  border-radius: var(--dsw-radius-sm);
+  background: var(--dsw-alias-bg-layer-2);
+  color: var(--dsw-alias-label-primary);
+  font-family: inherit;
+  font-size: 13px;
+}
+
+.search:focus-visible {
+  outline: 2px solid var(--dsw-alias-brand-primary);
+  outline-offset: 1px;
+}
+
+.close {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 26px;
+  height: 26px;
+  border: 1px solid var(--dsw-alias-border-l1);
+  border-radius: var(--dsw-radius-sm);
+  background: var(--dsw-alias-bg-layer-2);
+  color: var(--dsw-alias-label-secondary);
+  font-size: 16px;
+  line-height: 1;
+  cursor: pointer;
+}
+
+.close:hover { background: var(--dsw-alias-interactive-bg-hover); color: var(--dsw-alias-label-primary); }
+.close:focus-visible { outline: 2px solid var(--dsw-alias-brand-primary); outline-offset: 2px; }
+
+.body {
+  padding: 10px 8px 12px;
+  overflow-y: auto;
+  /* 键盘高亮靠 scrollIntoView 滚进来，这里给最后一行留一行的余量，否则贴边的
+     那一行看起来像被裁掉了。 */
+  scroll-padding-bottom: 24px;
+}
+
+.group { display: flex; flex-direction: column; gap: 2px; }
+
+.group + .group { margin-top: 8px; }
+
+.group h4 {
+  margin: 0;
+  padding: 6px 10px 4px;
+  color: var(--dsw-alias-label-tertiary);
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: .06em;
+  text-transform: uppercase;
+}
+
+.row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  /* 6px 上下而不是 8px：一行 44px 仍达到触控目标的通行下限，而 30 行因此少滚
+     一次。再小就会让第二行说明文字贴到下一行标题上。（契约允许 4/6/8/10/14，
+     不允许 3/5/7/9——这里不是审美偏好，是间距阶梯。） */
+  padding: 6px 10px;
+  border: none;
+  border-radius: var(--dsw-radius-sm);
+  background: transparent;
+  color: var(--dsw-alias-label-primary);
+  font-family: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+/* 鼠标悬停与键盘高亮是同一件事：它们指向「回车/点击会执行的那一行」。分成两种
+   外观会让用户以为鼠标和方向键在选不同的东西。 */
+.row:hover,
+.row[data-active] { background: var(--dsw-alias-interactive-bg-hover); }
+
+.row:focus-visible {
+  outline: 2px solid var(--dsw-alias-brand-primary);
+  outline-offset: -2px;
+}
+
+/* 不可用：整行压暗，但保持可聚焦、可阅读——原因就写在第二行，读它比看灰色更
+   有用。不用 `pointer-events: none`：那样鼠标就悬不到「为什么不能点」上。 */
+.row[data-blocked] {
+  color: var(--dsw-alias-label-tertiary);
+  cursor: default;
+}
+
+.row[data-blocked]:hover,
+.row[data-blocked][data-active] { background: transparent; }
+
+.icon {
+  display: grid;
+  place-items: center;
+  width: 26px;
+  height: 26px;
+  flex: none;
+  border-radius: var(--dsw-radius-sm);
+  background: var(--dsw-alias-bg-layer-2);
+  color: var(--dsw-alias-label-secondary);
+}
+
+.row[data-blocked] .icon { opacity: .5; }
+
+.text {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  gap: 1px;
+}
+
+.text strong {
+  font-size: 13px;
+  font-weight: 500;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.text small {
+  color: var(--dsw-alias-label-tertiary);
+  font-size: 12px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/*
+ * 行尾的键位徽章。
+ *
+ * `margin-left: auto` 顶到最右，`.text` 已经是 `min-width: 0`，所以长标题先
+ * 省略号、徽章始终完整——反过来（徽章让位）会让「撤销」和「删除」在视觉上
+ * 一样长，而它们其实是 Ctrl/⌘+Z 与 Delete 两个完全不同的动作。
+ *
+ * 形状刻意做得像一枚键帽（border-bottom 厚 2px）而不是像按钮：这一列不可点，
+ * 一个看起来能点的方块会让用户去点它。
+ *
+ * `flex: none` + `white-space: nowrap`：`Alt/⌥+Ctrl/⌘+←` 这种四段键位在任何
+ * 宽度下都不能折行，折了以后整个列表的行高会被它撑成两倍。
+ */
+.keys {
+  flex: none;
+  margin-left: auto;
+  padding: 1px 6px;
+  border: 1px solid var(--dsw-alias-border-l1);
+  border-bottom-width: 2px;
+  border-radius: var(--dsw-radius-xs);
+  background: var(--dsw-alias-bg-layer-2);
+  /* secondary 而不是 tertiary：11px 的键位是这一行里**要被读**的信息。
+     tertiary 实测只有 3.71:1（白底），低于小字需要的 4.5:1；换成 secondary
+     后浅色 5.80:1、暗色 9.25:1。守卫 `verify-ui-contracts.mjs` 里量的是这两个
+     数，不是这一行注释。 */
+  color: var(--dsw-alias-label-secondary);
+  /* DSH 没有 monospace token（`--dsw-font-mono` 并不存在，写了整条声明会被
+     丢掉）：把字体栈写出来。 */
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+  line-height: 1.6;
+  white-space: nowrap;
+}
+
+.empty {
+  margin: 24px 10px;
+  color: var(--dsw-alias-label-tertiary);
+  text-align: center;
+}
+
+.footer {
+  padding: 8px 14px;
+  border-top: 1px solid var(--dsw-alias-border-l1);
+  color: var(--dsw-alias-label-tertiary);
+  font-size: 12px;
+}

@@ -17,8 +17,178 @@ import type { CanvasNode, CanvasShot, CanvasStoryboard } from '../protocol.ts'
 /** Upper bound on shots per board; the host rejects documents beyond it. */
 export const MAX_SHOTS = 40
 
-/** Shot lengths offered by the composer, matching the video pipeline's own set. */
-export const SHOT_SECONDS = [4, 5, 6, 8, 10] as const
+/**
+ * Editorial shot lengths, in seconds.
+ *
+ * This is the vocabulary the BOARD writes and the default list the composer
+ * offers; it is not a claim about what any one model accepts. A shot is one
+ * video task, and one task can hold a short beat or a twelve-second paragraph
+ * with two cuts inside it — the old five-value list stopped at ten and could not
+ * express the second case at all.
+ *
+ * What the picker actually SHOWS goes through {@link shotSecondsOptions}, which
+ * narrows this list to the model's own wire values. Offering a number the
+ * provider answers with a 400 is worse than offering fewer numbers.
+ */
+export const SHOT_SECONDS = [4, 5, 6, 8, 10, 12, 15] as const
+
+/**
+ * Seconds the picker should offer for one board.
+ *
+ * Families disagree on this: snapgen speaks 6 / 10 / 15, muse only 10, vela only
+ * 5, and the generic list is 5 / 10. Intersecting keeps our editorial set as the
+ * shape and the model's set as the truth.
+ *
+ * Two fallbacks, both deliberate:
+ *  - no declared durations (the model is unknown, or the board names no model
+ *    and the channel default decides) — keep our whole list;
+ *  - the intersection is empty (a model that only speaks 7) — use the model's
+ *    own values sorted, because one valid choice beats a list of invalid ones.
+ */
+export function shotSecondsOptions(modelDurations?: readonly number[]): number[] {
+  const declared = (modelDurations ?? []).filter(value => Number.isFinite(value) && value > 0)
+  if (declared.length === 0) return [...SHOT_SECONDS]
+  const shared = SHOT_SECONDS.filter(value => declared.includes(value))
+  return shared.length > 0 ? shared : [...new Set(declared)].sort((left, right) => left - right)
+}
+
+/**
+ * Upper bound on identity references one shot may carry.
+ *
+ * Four is the ceiling the image and video composers already apply; a fifth
+ * reference does not make the model more consistent, it dilutes the four that
+ * matter and can be rejected outright by the provider.
+ */
+export const MAX_SHOT_REFERENCES = 4
+
+/** How one shot is actually submitted: which mode, and whether the cast goes with it. */
+export interface ShotVideoPlan {
+  mode: 'text' | 'keyframe' | 'reference'
+  /**
+   * How many identity references ride along, in cast order.
+   *
+   * Zero in `carry` mode on purpose. A keyframe run carries exactly two frames
+   * (first / last) and the provider contracts forbid mixing those with
+   * `reference_image` entries — so on a carried shot the exact join wins and the
+   * pinned identities do not travel. Saying "参考图 1 是她" without the image
+   * would be the dishonest option, so the prompt never claims it either.
+   */
+  castSlots: number
+}
+
+/**
+ * Decide a shot's mode from the board and the canvas.
+ *
+ * Pure on purpose: the rule "a pinned character makes a shot a reference run,
+ * unless continuity already owns the frame slots" is exactly the sort of thing
+ * that drifts when it lives inside a 3 000-line submit handler.
+ */
+export function shotVideoPlan(input: {
+  continuity: CanvasStoryboard['continuity']
+  index: number
+  castCount: number
+}): ShotVideoPlan {
+  if (input.continuity === 'carry' && input.index > 0) return { mode: 'keyframe', castSlots: 0 }
+  const castSlots = Math.max(0, Math.min(MAX_SHOT_REFERENCES, Math.floor(input.castCount)))
+  return castSlots > 0 ? { mode: 'reference', castSlots } : { mode: 'text', castSlots: 0 }
+}
+
+/**
+ * Shots on this board that will be submitted WITHOUT the pinned identities.
+ *
+ * WHY the board has to say this out loud: the user pins 「阿禾」 once and expects
+ * every shot to look like her. On a `carry` board that expectation is true for
+ * the first shot and false for all the rest, because a carried shot spends both
+ * its frame slots on the join — and nothing in the picture explains why shot 1
+ * has her face and shot 2 does not. Before this, the only way to learn it was to
+ * run the board and notice the drift.
+ *
+ * Returns the indices (0-based) that lose the cast, so the caller can badge the
+ * exact rows and the count in the hint matches the rows a user can see. Empty
+ * when nobody is pinned (nothing is being lost) or when the board starts every
+ * shot independently.
+ */
+export function shotsWithoutCast(board: CanvasStoryboard, castCount: number): number[] {
+  if (castCount <= 0) return []
+  const out: number[] = []
+  for (let index = 0; index < board.shots.length; index += 1) {
+    if (shotVideoPlan({ continuity: board.continuity, index, castCount }).castSlots === 0) out.push(index)
+  }
+  return out
+}
+
+// ------------------------------------------------------------ speech budget
+
+/**
+ * Speaking rates the duration rule is built on.
+ *
+ * 4.5 汉字/秒 is ordinary Mandarin delivery; 2.5 words/second is the same pace in
+ * English (~150 wpm). Two seconds are then reserved for the performance itself —
+ * a line that fits the clock exactly still needs a breath, an expression and a
+ * reaction, and a shot cut to the bare speaking time is the single most common
+ * way a generated clip ends up unusable.
+ */
+export const SPEECH_CJK_PER_SECOND = 4.5
+export const SPEECH_WORDS_PER_SECOND = 2.5
+export const SPEECH_MARGIN_SECONDS = 2
+
+/**
+ * The dialogue inside one shot prompt — the only part worth timing.
+ *
+ * A shot prompt mixes camera direction with speech ("缓慢推近，她抬头：「你来晚了。」"),
+ * and there is no reliable way to tell a line of dialogue from a sentence of
+ * stage direction without a convention. The convention is quotation marks:
+ * 「…」、『…』、“…” and "…" all count, everything outside them does not. A prompt with
+ * no quotes simply has no measurable speech, which is the honest answer rather
+ * than a guess that would reject perfectly good visual-only shots.
+ */
+export function spokenText(prompt: string): string {
+  const quoted = prompt.match(/「[^」]*」|『[^』]*』|“[^”]*”|"[^"]*"/g)
+  return quoted === null ? '' : quoted.map(span => span.slice(1, -1)).join('')
+}
+
+/**
+ * Seconds the given speech needs, before the performance margin.
+ *
+ * Measured in the script's own terms: every CJK ideograph is one 字 at 4.5/s,
+ * and every run of Latin letters or digits is one word at 2.5/s. Punctuation,
+ * spaces and stage directions carry no time — a comma is a pause the actor
+ * takes inside the margin, not an extra syllable.
+ */
+export function speechSeconds(text: string): number {
+  const cjk = text.match(/[\u3400-\u4dbf\u4e00-\u9fff\uf900-\ufaff]/g)?.length ?? 0
+  const words = text.match(/[A-Za-z0-9]+(?:['’-][A-Za-z0-9]+)*/g)?.length ?? 0
+  return cjk / SPEECH_CJK_PER_SECOND + words / SPEECH_WORDS_PER_SECOND
+}
+
+/** What one shot's dialogue needs, and whether the chosen length pays for it. */
+export interface ShotSpeechFit {
+  /** Measured speech, in seconds (no margin). */
+  speech: number
+  /** Shortest length that still leaves the performance margin. */
+  required: number
+  /** True when `shot.seconds` covers `required`. */
+  fits: boolean
+  /** The line being measured, empty when the prompt has no quoted speech. */
+  line: string
+}
+
+/**
+ * Whether a shot is long enough for the dialogue written into it.
+ *
+ * Advisory, not a gate. The board shows this as a hint on the row; the run is
+ * never blocked by it, because the measured rate is a rule of thumb and the user
+ * may well know that this character speaks fast. Blocking would turn a good
+ * default into a wall.
+ */
+export function shotSpeechFit(shot: CanvasShot): ShotSpeechFit {
+  const line = spokenText(shot.prompt)
+  if (line === '') return { speech: 0, required: 0, fits: true, line }
+  const speech = speechSeconds(line)
+  const required = speech + SPEECH_MARGIN_SECONDS
+  const seconds = Number.isFinite(shot.seconds) ? shot.seconds : 0
+  return { speech, required, fits: seconds + 1e-9 >= required, line }
+}
 
 /** Shared defaults a freshly created board starts from. */
 export function defaultStoryboard(): CanvasStoryboard {

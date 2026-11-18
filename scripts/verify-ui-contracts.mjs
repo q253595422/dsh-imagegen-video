@@ -26,11 +26,11 @@
 
 import { readFileSync, existsSync, readdirSync, mkdirSync, rmSync } from 'node:fs'
 import { readSourceText } from './lib/source-text.mjs'
-import { canvasSourceText } from './lib/canvas-source.mjs'
+import { dirname, join } from 'node:path'
+import { fileURLToPath } from 'node:url'
+import { canvasSourceText, readModuleSource } from './lib/canvas-source.mjs'
 import { tmpdir } from 'node:os'
 import { spawnSync } from 'node:child_process'
-import { join } from 'node:path'
-import { fileURLToPath } from 'node:url'
 import ts from 'typescript'
 import { findChrome, launchChrome, openPage, skipWithoutChrome } from './lib/headless-chrome.mjs'
 import { WCAG_CONTRAST_SOURCE } from './lib/wcag-contrast.mjs'
@@ -142,6 +142,1065 @@ if (viewportHandler === null || !/Number\.isFinite\(viewport\.x\)[\s\S]*?Number\
   process.exit(1)
 }
 console.log('viewport write-back: non-finite geometry never reaches the document')
+
+// --------------------------------------- a config node has one prompt editor
+//
+// WHY this is a SOURCE invariant and not a rendered one: the defect it prevents
+// is a textarea whose writes nobody reads. It renders fine, it types fine, and
+// the value it stores (`metadata.text`) is not on any path the generator reads
+// (`composerPrompt → upstream text → annotation cards`). The user's prompt is
+// discarded in total silence — and a readiness badge next to it says "ready".
+//
+// It cannot be caught by "does the field exist": the field DID exist and worked
+// as a field. What must hold is the structural claim "a config node renders no
+// editable prompt input" — i.e. the config branch is a read-only preview. So the
+// check looks for a `<textarea>` or `<input>` inside the config branch of the
+// node body, and for the preview element that replaced it.
+const nodeBodySource = readModuleSource('canvas/node-body.tsx')
+const configBranch = nodeBodySource.match(/\{isConfig\s*\n\s*\?[\s\S]{0,1400}?: isTextual/)
+if (configBranch === null) {
+  console.error('\nFAIL: the config-node branch in node-body.tsx could not be located.')
+  console.error('This guard is anchored on it; re-anchor rather than deleting the check.')
+  process.exit(1)
+}
+if (/<(textarea|input)\b/.test(configBranch[0])) {
+  console.error('\nFAIL: a config node renders an editable prompt input.')
+  console.error('The generation path reads `composerPrompt → upstream text → annotation')
+  console.error('cards`; it never reads `metadata.text`. Anything typed into a config')
+  console.error("node's own field is discarded, and the readiness badge next to it")
+  console.error('claims the opposite. The composer is the one place a prompt is edited.')
+  process.exit(1)
+}
+if (!/data-config-prompt=/.test(configBranch[0])) {
+  console.error('\nFAIL: a config node no longer previews the prompt that will be sent.')
+  console.error('Removing the discarded editor without a read-only replacement leaves')
+  console.error('the card as an empty shell: the one thing it should answer is what')
+  console.error('this node will actually send.')
+  process.exit(1)
+}
+console.log('config node: no second prompt editor, and it previews what will be sent')
+
+// --------------------------------------- 套图与 count 是两个语义，不走同一条路
+//
+// WHY 源码级：套图与「生成数量」的区别在界面上很容易被做成同一个数字——填 3
+// 想出一套三视图的人会拿到三张一样的正面。三条必须同时成立：
+//   1. 提交路径按套图跑（每条独立任务），不是把 count 抬到 N；
+//   2. 套图 UI 在 composer 里，不在卡片上——卡片只显示只读徽标，撞上面那条
+//      「一个提示词只准有一个编辑入口」的守卫；
+//   3. locales 三块的 `canvas.promptSet*` key 数量相等（少一个就是某个语言里
+//      显示 `key.not.found`）。
+const composerSource = readModuleSource('canvas/composer.tsx')
+if (!/promptSetJobsFromItems\s*\(/.test(workspaceText)) {
+  console.error('\nFAIL: the prompt-set submission path is missing from CanvasWorkspace.tsx.')
+  console.error('A prompt set must run each item as its own task (own taskId, own')
+  console.error('placeholder, own title). Falling back to `count` would give the user')
+  console.error('N copies of the same prompt with the same placeholder pool.')
+  process.exit(1)
+}
+// 提交路径必须读**草稿**而不是节点上已保存的那份：用户刚敲进编辑器、还没落盘的
+// 条目才是这次要跑的东西。读节点的话，新输入要等下次改动才生效——「点了没反应」。
+if (!/promptSetJobsFromItems\(composerPromptSet\)/.test(workspaceText)) {
+  console.error('\nFAIL: the prompt-set path does not read the composer draft.')
+  console.error('Reading `metadata.promptSet` here means the entries the user just typed')
+  console.error('are ignored until some unrelated edit flushes them.')
+  process.exit(1)
+}
+// 每次套图提交必须各自 taskSubmit：一条请求 + 一个共享 taskId 会让 N 条提示词
+// 变成 N 张同一句话的图，标题也全丢。
+{
+  const setBranch = workspaceText.match(/if \(!codeRenderer && target !== null && setJobs\.length > 0\) \{[\s\S]*?\n      \}/)
+  if (setBranch === null) {
+    console.error('\nFAIL: the prompt-set branch in submitComposer could not be located.')
+    process.exit(1)
+  }
+  if ((setBranch[0].match(/api\.taskSubmit\(/g) ?? []).length !== 1 || !/n: 1/.test(setBranch[0])) {
+    console.error('\nFAIL: the prompt-set branch does not submit one request per item.')
+    console.error('Each item needs its own taskSubmit with n: 1 so it gets its own taskId,')
+    console.error('its own placeholder and its own title.')
+    process.exit(1)
+  }
+}
+if (!/composerPromptSet/.test(composerSource) || !/canvas\.promptSetMode\b/.test(composerSource)) {
+  console.error('\nFAIL: the prompt-set editor is missing from the composer.')
+  console.error('The one place a prompt is edited stays the composer; putting the set')
+  console.error('editor on the card would be a second prompt editor for a config node.')
+  process.exit(1)
+}
+if (/<(textarea|input)\b[^\n]*promptSet/.test(nodeBodySource)) {
+  console.error('\nFAIL: node-body.tsx renders an editable prompt-set input.')
+  console.error('The card may show a read-only badge (`canvas.promptSetBadge`) and nothing')
+  console.error('more; editing stays in the composer.')
+  process.exit(1)
+}
+{
+  const localesSource = readFileSync(join(dirname(fileURLToPath(import.meta.url)), '../src/client/locales.ts'), 'utf8').replace(/\r\n?/g, '\n')
+  const blocks = localesSource.split(/\nexport const (?:zh|en|ru)(?:: [^=]*)? = \{/).slice(1)
+  if (blocks.length !== 3) {
+    console.error('\nFAIL: locales.ts no longer has three blocks (zh/en/ru).')
+    process.exit(1)
+  }
+  const counts = blocks.map(block => (block.match(/'canvas\.promptSet\w*'/g) ?? []).length)
+  if (counts[0] !== counts[1] || counts[1] !== counts[2] || counts[0] === 0) {
+    console.error(`\nFAIL: canvas.promptSet* keys differ across locales: ${counts.join(' / ')}.`)
+    console.error('A missing key renders as the raw key name in that language.')
+    process.exit(1)
+  }
+}
+console.log('prompt set: own submission path, composer-side editor, locales agree')
+
+// ------------------------------- 套图编辑器独占一行，参数行不许被它挤窄
+//
+// WHY 源码级：这条守的是**布局归属**，不是样式值。真机上犯过的错是
+// 三段：编辑器塞进参数排（一排 flex 横排被压成一列，尺寸/清晰度只剩一两个字）、
+// 单张/套图切换塞进参数排（三个下拉同时退成「模…」「自…」「清…」）、
+// 提示词框被当成唯一输入（套图条目写满也不让按生成）。
+// 三者都只在真机分辨率下显形，断言只能钉结构：编辑器是 `.composerControls`
+// 的**兄弟**，切换按钮在元信息行，提交按钮把套图条目算作可用。
+{
+  const composerBody = composerSource
+  // 逐个找**所有**参数排，而不是只找第一个。
+  //
+  // WHY：断言原先只取第一个 `.composerControls` 块再在里面找编辑器。注入
+  // 「把编辑器塞回参数排」时，注入点在第一个块之后，检查读到的是注入前的
+  // 那个块，于是缺陷明明回来了、检查照样绿（反向用例当场报 FALSE GREEN）。
+  // 一条只看得见第一处的守卫，等于给第二处开了后门。
+  //
+  // 写法上必须按**标签配对**切块，不能按「到第一个 `\n  </div>` 为止」：注入
+  // 的那一行是单行 `<div …>…</div>`，用换行锚定就永远切不出它，于是又回到
+  // 「只看得见第一处」的老毛病。
+  const divBlocks = []
+  for (let start = composerBody.indexOf('<div'); start >= 0; start = composerBody.indexOf('<div', start + 1)) {
+    const openEnd = composerBody.indexOf('>', start)
+    if (openEnd < 0) break
+    const openTag = composerBody.slice(start, openEnd + 1)
+    if (!openTag.includes('css.composerControls')) continue
+    let depth = 1
+    let cursor = openEnd + 1
+    while (depth > 0) {
+      const nextOpen = composerBody.indexOf('<div', cursor)
+      const nextClose = composerBody.indexOf('</div>', cursor)
+      if (nextClose < 0) break
+      if (nextOpen >= 0 && nextOpen < nextClose) {
+        // 自闭合的 `<div … />` 不增加深度。
+        const selfClose = composerBody.indexOf('/>', nextOpen)
+        if (selfClose >= 0 && selfClose < composerBody.indexOf('>', nextOpen)) {
+          cursor = selfClose + 2
+          continue
+        }
+        depth += 1
+        cursor = nextOpen + 4
+      } else {
+        depth -= 1
+        cursor = nextClose + 6
+      }
+    }
+    divBlocks.push(composerBody.slice(start, cursor))
+  }
+  if (divBlocks.length === 0) {
+    console.error('\nFAIL: the composer parameter row could not be located.')
+    process.exit(1)
+  }
+  if (divBlocks.some(block => /<textarea|ComposerPromptSetEditor/.test(block))) {
+    console.error('\nFAIL: a multi-line prompt-set editor is rendered inside the parameter row.')
+    console.error('That row is a single-line flex strip: a multi-line child squeezes every')
+    console.error('select next to it down to one or two characters. The editor must be a')
+    console.error('sibling of `.composerControls`, not a child.')
+    process.exit(1)
+  }
+  if (!/<ComposerPromptSetEditor/.test(composerBody)) {
+    console.error('\nFAIL: the prompt-set editor is not rendered at all.')
+    process.exit(1)
+  }
+  if (!/composerPromptSet\.every\(item => item\.prompt\.trim\(\) === ''\)/.test(composerBody)) {
+    console.error('\nFAIL: the send button ignores the prompt-set draft.')
+    console.error('With three prompts typed and the main box empty, the button must be live;')
+    console.error('otherwise the user fills a whole set and cannot send it.')
+    process.exit(1)
+  }
+}
+console.log('prompt set layout: editor owns its row, params stay readable, draft enables send')
+
+// ------------------------------------------- 整理画布是一次动作，不是一串动作
+//
+// WHY 这是源码级断言：它守的两条都是「单次动作的原子性」，而这两条在界面上
+// **看不出差别**——逐节点写坐标的结果和一次性写坐标的结果长得一模一样，
+// 区别只在按 Ctrl+Z 的那一下（退一个节点 vs 退回整理前），以及视野有没有跟着
+// 跳走。渲染测试抓不到，只有读调用形态。
+//
+// 被守的两条：
+//   1. 必须走 `mutate`（= 一次撤销记录）。逐节点 `patchNode` 会把一次整理
+//      变成 N 条历史，用户按十次撤销还在整理里打转。
+//   2. 不许动视口。整理的是内容，视野是用户当下正在看的位置；把它一起挪走，
+//      用户会先看到一片空白，再以为自己点错了按钮。
+const arrangeBody = workspaceText.match(/const arrangeCanvas = useCallback\(\(\): void => \{[\s\S]*?\n {2}\}, \[mutate\]\)/)
+if (arrangeBody === null) {
+  console.error('\nFAIL: the arrange-canvas action could not be located.')
+  console.error('This guard is anchored on it; re-anchor rather than deleting the check.')
+  process.exit(1)
+}
+if (!/\bmutate\(/.test(arrangeBody[0])) {
+  console.error('\nFAIL: 整理画布 no longer commits through `mutate`.')
+  console.error('Without a single history entry the arrange is N separate edits, and')
+  console.error('Ctrl+Z walks back one node at a time instead of undoing the arrange.')
+  process.exit(1)
+}
+if (/\bpatchNode\(/.test(arrangeBody[0])) {
+  console.error('\nFAIL: 整理画布 writes coordinates one node at a time.')
+  console.error('Each `patchNode` is its own undo entry; the arrange becomes un-undoable')
+  console.error('as a whole action.')
+  process.exit(1)
+}
+if (/\bsetViewport\(/.test(arrangeBody[0])) {
+  console.error('\nFAIL: 整理画布 moves the viewport as well.')
+  console.error('The user is looking at this content when they press it; moving the')
+  console.error('camera makes the canvas look empty and reads as a mis-click.')
+  process.exit(1)
+}
+if (!/name="arrange"[\s\S]{0,200}?onClick=\{arrangeCanvas\}/.test(workspaceText)) {
+  console.error('\nFAIL: the arrange-canvas button is gone from the chrome.')
+  console.error('A button that exists but is not wired to `arrangeCanvas` is worse than')
+  console.error('no button: it looks like the feature shipped.')
+  process.exit(1)
+}
+console.log('arrange canvas: one history entry, one edit pass, viewport untouched')
+
+// ------------------------------------------ 运行痕迹真的挂到了节点上
+//
+// WHY 源码级：一条完整的失败路径要等执行器轮询到节点出错（最长 30 分钟），
+// jsdom 里造不出来。能造出来的是**接线**，而接线正是这条功能最容易断的地方
+// ——纯函数算得再对，没人把结果交给节点渲染，画布上还是一片安静。
+//
+// 五处接线，缺一处这条功能就不成立：
+//   1. 运行失败时把结论写进 state；
+//   2. 新一轮开始时清掉上一轮；
+//   3. 单节点重试摘掉自己的标记；
+//   4. 节点体读 state 并画出徽标；
+//   5. 节点的类名带上两种描边状态。
+for (const [label, pattern, why] of [
+  // 三处都会落痕：取消（按停之前的失败仍是真失败）、失败、部分成功。
+  // 断言数出现次数而不是位置：任何一条分支漏了，这里就少一次。
+  ['三种结局都落痕', /(setRunMarks\(runMarksFrom\(result\)\)[\s\S]*?){3}/, '有运行结局没有写进画布状态（取消 / 失败 / 部分成功）'],
+  ['新运行清痕', /setRunMarks\(EMPTY_RUN_MARKS\)\n {4}setWorkflowProgress/, '上一轮的痕迹会叠在新一轮上'],
+  ['重试摘标', /setRunMarks\(previous => withoutFailed\(previous, node\.id\)\)/, '重试过的节点还挂着红标'],
+  ['节点体画徽标', /data-run-mark=\{runMark\}/, '节点体不画运行痕迹'],
+  ['节点描边分两态', /isRunFailed \? css\.nodeRunFailed : ''[\s\S]{0,80}?isRunBlocked \? css\.nodeRunBlocked/, '节点本身的描边没有跟上运行痕迹'],
+]) {
+  if (!pattern.test(workspaceText + nodeBodySource)) {
+    console.error(`\nFAIL: 运行痕迹的接线断了一处（${label}）：${why}。`)
+    process.exit(1)
+  }
+}
+console.log('run marks: written on failure, cleared on the next run and on retry, rendered on the node')
+
+// ---------------------------------------------- 全部功能目录：每一行都接着活代码
+//
+// WHY 源码级：目录里有 30 行，逐个点一遍要 30 次渲染；而能让这条功能整块失效的
+// 只有一件事——某一行没接上。那一行长得和别的一模一样，按下去什么都不发生，用户
+// 会以为「这个功能不存在」，而不是「这里有个 bug」。`Record<CapabilityId, …>` 已
+// 经在编译期挡住了缺项；这里挡住的是另一种坏法：接上了一个**空函数**或者接错了
+// 动作（把「导出」接到「导入」上，两行都能点，但只有一行是对的）。
+const catalogSource = readModuleSource('canvas/capability-catalog.ts')
+const catalogIds = [...catalogSource.matchAll(/^ {4}id: '([a-z]+\.[A-Za-z]+)',/gm)].map(match => match[1])
+if (catalogIds.length < 25) {
+  console.error(`\nFAIL: the capability catalog lists only ${catalogIds.length} actions — the whole point is that it covers the surface.`)
+  process.exit(1)
+}
+const actionsBlock = workspaceText.match(/const catalogActions = useMemo<Record<CapabilityId, \(\) => void>>\(\(\) => \(\{[\s\S]*?\n {2}\}\), \[/)
+if (actionsBlock === null) {
+  console.error('\nFAIL: the catalog action table could not be located.')
+  console.error('It is the only place that ties a catalog row to real code; re-anchor rather than deleting the check.')
+  process.exit(1)
+}
+const wiredIds = [...actionsBlock[0].matchAll(/'([a-z]+\.[A-Za-z]+)':/g)].map(match => match[1])
+const unwired = catalogIds.filter(id => !wiredIds.includes(id))
+if (unwired.length > 0) {
+  console.error(`\nFAIL: ${unwired.length} catalog row(s) have no action: ${unwired.join(', ')}`)
+  console.error('A row that renders but does nothing reads as "this feature does not exist".')
+  process.exit(1)
+}
+const strayIds = wiredIds.filter(id => !catalogIds.includes(id))
+if (strayIds.length > 0) {
+  console.error(`\nFAIL: the action table wires ids the catalog does not list: ${strayIds.join(', ')}`)
+  console.error('Dead wiring hides the fact that a row was renamed and its action left behind.')
+  process.exit(1)
+}
+// 目录必须先关再执行。留在屏幕上的遮罩会盖住它刚做的事，用户读到的结果是
+// 「点了，什么也没变」——即使那件事真的发生了。
+if (!/const runCatalogItem = useCallback\(\(id: CapabilityId\): void => \{\s*setCatalogOpen\(false\)\s*catalogActions\[id\]\(\)/.test(workspaceText)) {
+  console.error('\nFAIL: the catalog no longer closes before running the row.')
+  console.error('The dialog covers the canvas, so the action it just ran is invisible')
+  console.error('behind it — indistinguishable from a dead row.')
+  process.exit(1)
+}
+console.log(`capability catalog: ${catalogIds.length} rows, every one wired, the dialog closes before it runs`)
+
+// ------------------------------------------- 目录行尾的键位徽章
+//
+// WHY 源码级：这张表的键位不是它的数据，而是**另一张表**（CANVAS_SHORTCUTS）
+// 的函数。能让它整块失效的坏法只有三种，每一种在截图上都看不出来：
+//
+//   1. 目录自己拼一份键位 → 改键位那天两处走散，用户照目录按、按不出来。
+//   2. 灰行也挂徽章 → 一条按下去没反应的行旁边写着 Ctrl/⌘+Z，读起来是「能用」。
+//   3. 没有键位的行也渲染空壳 → 右侧多出一列空白，每一行的标题都短一截。
+const catalogComponent = readModuleSource('canvas/capability-catalog.tsx')
+
+// (1) 键位只从那张表来。`shortcutKeysFor` 是唯一入口：它按 label/action 反查，
+// 与撤销按钮的 tooltip、对齐条的 tooltip 读的是同一份数据。
+if (!/shortcutKeysFor\(item\.entry\.labelKey\)/.test(catalogComponent)) {
+  console.error('\nFAIL: 目录不再从 CANVAS_SHORTCUTS 取键位。')
+  console.error('A second key table in the catalog drifts the day a binding changes:')
+  console.error('the row goes on advertising a key that no longer does anything.')
+  process.exit(1)
+}
+// 而且不能另起一份：目录里出现 `keys: [` 这种字面量，就是又抄了一张表。
+if (/\bkeys:\s*\[/.test(catalogComponent)) {
+  console.error('\nFAIL: 目录里出现了一份自己的键位表。')
+  console.error('Every binding must come from shortcutKeysFor; a literal here is a')
+  console.error('second source of truth that silently outlives the real one.')
+  process.exit(1)
+}
+
+// (2) 灰行不挂徽章。守的是「同一个条件表达式」：分成两个地方写（先算 keys，
+// 再在渲染里判 blocked）也能对，但只要有人把 `blockedBy === null ?` 摘掉，
+// 灰行就会开始宣传它自己的快捷键——而它在按下时什么都不会发生。
+if (!/item\.blockedBy === null \? shortcutKeysFor\(item\.entry\.labelKey\) : ''/.test(catalogComponent)) {
+  console.error('\nFAIL: 不可用的目录行又挂上了键位徽章。')
+  console.error('A dimmed row advertising Ctrl/⌘+Z reads as "this works"; the user')
+  console.error('presses the key, nothing happens, and the dead row is now a dead')
+  console.error('feature in their head.')
+  process.exit(1)
+}
+
+// (3) 空键位不渲染空壳。`keys === '' ? null :` 这一支既省掉空白列，也让「没有
+// 快捷键」与「有快捷键」在 DOM 上真的不同（截图核对与这里的断言才有意义）。
+if (!/\{keys === '' \? null : <(kbd|span|div)\b/.test(catalogComponent)) {
+  console.error('\nFAIL: 没有快捷键的行也渲染了空徽章。')
+  console.error('An always-present column makes every title a little shorter and looks')
+  console.error('like the label was truncated; absent bindings must render nothing.')
+  process.exit(1)
+}
+// 徽章必须是 `<kbd>` 且带 data-quick-keys：前者让读屏与浏览器都把它当键位，
+// 后者是截图核对与将来真机测试的抓手。
+if (!/<kbd\b[^>]*\bdata-quick-keys=""[^>]*>\{keys\}<\/kbd>/.test(catalogComponent)) {
+  console.error('\nFAIL: 键位徽章不再带 data-quick-keys 或不再是 <kbd>。')
+  console.error('The hook is what lets a real-browser check find the badge; a plain')
+  console.error('span also loses the "this is a key" semantics for assistive tech.')
+  process.exit(1)
+}
+// 徽章样式必须真的存在且用 alias token：写死的颜色在切主题后留在旧配色里。
+const catalogCss = readModuleSource('canvas/capability-catalog.module.css')
+const keysRule = catalogCss.match(/\n\.keys \{[\s\S]*?\n\}/)
+if (keysRule === null) {
+  console.error('\nFAIL: 目录样式里没有 .keys 规则；徽章会退化成一行裸文本。')
+  process.exit(1)
+}
+// 墨色：11px 的键位是这一行里要被读的信息。tertiary 在白底上实测 3.71:1，
+// 低于小字所需的 4.5:1；真浏览器里量到的是 secondary 的 5.80:1 (light) /
+// 9.25:1 (dark)。这里钉住 token，数值由 `verify-ui-contracts` 的对比度一节量。
+if (/color:\s*var\(--dsw-alias-label-tertiary\)/.test(keysRule[0])) {
+  console.error('\nFAIL: 键位徽章退回了 tertiary 墨色。')
+  console.error('Measured on the real dialog: 3.71:1 in the light theme, below the 4.5:1')
+  console.error('that an 11px label needs. Use label-secondary (5.80:1 / 9.25:1).')
+  process.exit(1)
+}
+for (const needed of ['margin-left: auto', 'white-space: nowrap', 'flex: none', 'var(--dsw-alias-label-secondary)']) {
+  if (!keysRule[0].includes(needed)) {
+    console.error(`\nFAIL: .keys 少了 \`${needed}\`。`)
+    console.error('Without it the badge wraps to a second line, or does not sit at the')
+    console.error('row end, or keeps a literal colour across a theme switch.')
+    process.exit(1)
+  }
+}
+console.log('catalog keys: badges come from the one shortcut table, blocked rows show none, empty bindings render nothing')
+
+// ------------------------------------------------- 顶栏是任务动词，不是文件管理
+//
+// WHY 源码级：这是信息架构问题，界面上画得出来、点得动，只是读起来不对——四枚
+// 低频的文件动作（收藏 / 导出 / 导入 / 删除画布）与标题、保存状态并排占掉顶栏
+// 一半宽度，760px 以下还把标题挤到第二行。真浏览器能测「换行了没有」，但测不出
+// 「为什么换行」；把规则写成「这几枚不许直接出现在顶栏」才守得住下一次加按钮。
+const headerBlock = workspaceText.match(/<header ref=\{topBarRef\} className=\{css\.topBar\}[\s\S]*?<\/header>/)
+if (headerBlock === null) {
+  console.error('\nFAIL: the canvas top bar could not be located; re-anchor this guard.')
+  process.exit(1)
+}
+const forbiddenInHeader = ['favorite', 'favoriteFilled', 'download', 'upload', 'deleteProject']
+  .filter(name => new RegExp(`name="${name}"`).test(headerBlock[0]))
+if (forbiddenInHeader.length > 0) {
+  console.error(`\nFAIL: file management is back in the top bar as loose buttons: ${forbiddenInHeader.join(', ')}`)
+  console.error('These four act on the canvas as a FILE, not on what the user is doing')
+  console.error('inside it, and the top bar is the one line that has to stay legible at')
+  console.error('narrow panel widths. They belong in the 画布文件 menu (TopBarMenu).')
+  process.exit(1)
+}
+if (!/name="more"[\s\S]{0,600}?setTopBarMenu\(/.test(headerBlock[0])) {
+  console.error('\nFAIL: the 画布文件 menu entry is gone from the top bar.')
+  console.error('Without it those four actions become unreachable, which is worse than')
+  console.error('sitting in a row: the feature silently disappears.')
+  process.exit(1)
+}
+// 保存状态必须**紧挨着**标题，中间没有 spacer：「叫什么」和「落盘了没有」是同
+// 一个句子的两半；被推到顶栏另一头时，那条橙色的「未保存」就成了一个没人找的
+// 孤词，而 760px 以下一换行，它还会单独落进第二行。
+const titleAt = headerBlock[0].indexOf('className={css.titleButton}')
+const stateAt = headerBlock[0].indexOf('className={css.saveState}')
+const spacerBetween = titleAt === -1 || stateAt === -1 || stateAt < titleAt
+  ? false
+  : headerBlock[0].slice(titleAt, stateAt).includes('topBarSpacer')
+if (titleAt === -1 || stateAt === -1 || stateAt < titleAt || spacerBetween) {
+  console.error('\nFAIL: the save state drifted away from the canvas title.')
+  console.error('They read as one sentence ("未命名画布，未保存"); split to opposite ends')
+  console.error('of the bar, the state is a lone orange word nobody looks for.')
+  process.exit(1)
+}
+console.log('canvas top bar: verbs only, file management lives in the 画布文件 menu, save state sits by the title')
+
+// -------------------------------- 找节点 / 画布体检 / 载入示例：三处接线
+//
+// WHY 源码级：这三条功能的纯函数各自有单测（几何、体检、搜索），但那三层都
+// 证明不了它们**接上了**。接错的表现和没做完全一样——点了没反应、菜单里没有
+// 那一行、跳过去了但没选中——而界面上看得见的部分是对的。
+//
+// 每条断言都对着一个「长得对、作用错」的具体缺陷，反向验证逐条把它注回去。
+{
+  // (1) 找节点必须「先关弹窗再跳」。留着那张全屏遮罩，用户看不到自己刚跳过去
+  // 的那张卡，只能读到「按了回车，屏幕没动」。
+  if (!/onPick=\{\(hit: NodeHit\) => \{ setNodeSearchOpen\(false\); jumpToNode\(hit\.nodeId\) \}\}/.test(workspaceText)) {
+    console.error('\nFAIL: 找节点不再「先关弹窗再跳过去」。')
+    console.error('The overlay covers the canvas, so the card it just jumped to is invisible')
+    console.error('behind it — indistinguishable from a dead result row.')
+    process.exit(1)
+  }
+  // (2) 跳过去必须**选中**目标。只挪视野的话，用户看到的是一张普通卡片，不知道
+  // 自己刚被带到哪一张。
+  const jumpBlock = workspaceText.match(/const jumpToNode = useCallback\(\(nodeId: string\): void => \{[\s\S]*?\n {2}\}, \[[^\]]*\]\)/)
+  if (jumpBlock === null) {
+    console.error('\nFAIL: the find-node jump handler could not be located; re-anchor this guard.')
+    process.exit(1)
+  }
+  if (!/setSelectedIds\(new Set\(\[nodeId\]\)\)/.test(jumpBlock[0])) {
+    console.error('\nFAIL: 找节点跳过去之后不再选中那张卡。')
+    console.error('The user arrives at a card that looks like every other one, with no')
+    console.error('indication of which one they were just brought to.')
+    process.exit(1)
+  }
+  // (3) 视口计算必须走那个有单测的纯函数。自己在这里再写一遍缩放与居中，等于让
+  // 「NaN 会把画布整块抹掉」这条已经守住的边界重新开口。
+  if (!/focusViewport\(/.test(jumpBlock[0])) {
+    console.error('\nFAIL: 找节点自己算视野，不再用 focusViewport。')
+    console.error('That helper is the only place the zero-size / infinity / clamp cases are')
+    console.error('tested; a second copy here can produce NaN and blank the whole canvas.')
+    process.exit(1)
+  }
+  // (4) 体检清单里的每一行都要能点着跳过去。只报不带路的清单把最难的那半件事
+  // （在上百张卡里找到它们）留给了用户。
+  const healthBlock = workspaceText.match(/<div className=\{css\.healthList\}[\s\S]*?\n {4}<\/div>/)
+  if (healthBlock === null) {
+    console.error('\nFAIL: the run menu\'s health list could not be located; re-anchor this guard.')
+    process.exit(1)
+  }
+  if (!/data-health-issue=\{issue\.kind\}/.test(healthBlock[0]) || !/onClick=\{\(\) => props\.onJumpIssue\(issue\)\}/.test(healthBlock[0])) {
+    console.error('\nFAIL: 体检清单又变回「只报不带你去看」。')
+    console.error('After being told which three nodes form a cycle, the user still has to')
+    console.error('hunt for them across the canvas by hand.')
+    process.exit(1)
+  }
+  // (5) 载入示例必须一次写完两个节点加一根线。分几次写会在撤销栈里留下几条
+  // 记录，按一次 Ctrl+Z 只撤回半条示例，剩下的半条既跑不了也删不干净。
+  const exampleBlock = workspaceText.match(/const loadExampleFlow = useCallback\([\s\S]*?\n {2}\}, \[[^\]]*\]\)/)
+  if (exampleBlock === null) {
+    console.error('\nFAIL: the example loader could not be located; re-anchor this guard.')
+    process.exit(1)
+  }
+  const mutateCalls = exampleBlock[0].match(/mutate\(/g)?.length ?? 0
+  if (mutateCalls !== 1 || !/nodes: \[\.\.\.previous\.nodes, \.\.\.flow\.nodes\], connections: \[\.\.\.previous\.connections, \.\.\.flow\.connections\]/.test(exampleBlock[0])) {
+    console.error('\nFAIL: 载入示例不再是一次写入。')
+    console.error(`Found ${mutateCalls} mutate() call(s): a half-applied example leaves a node on the`)
+    console.error('canvas that runs nothing and takes two undos to remove.')
+    process.exit(1)
+  }
+  // (6) 空态必须有那张卡：它是空画布上唯一一条「不用先想清楚要放什么」的路。
+  if (!/data-quick-card="example"/.test(workspaceText)) {
+    console.error('\nFAIL: 空画布不再提供「载入示例」。')
+    console.error('Every remaining card asks the user to already know what to add and how')
+    console.error('to wire it — the exact thing a first-run canvas cannot know.')
+    process.exit(1)
+  }
+  console.log('find node: closes before jumping, selects the target, reuses the tested viewport maths')
+  console.log('canvas check-up: every problem row jumps to its card; the example lands in one edit')
+}
+
+// ------------------------------- 对齐 / 撤销摘要：两处接线
+//
+// 纯函数各自有单测（21 条对齐、19 条摘要），但那一层证明不了「接上了、接对了」。
+// 这一层的断言都对着一个**长得对、作用错**的缺陷：对齐逐张写撤销、只有一张卡时
+// 也出对齐条、撤销按钮退回报一句「撤销」。反向验证逐条把它注回去。
+{
+  // (1) 对齐必须走一次 `mutate`。逐节点 patch 会让撤销变成「按一次退一张卡」，
+  // 而按到一半时画布既不是对齐前也不是对齐后的样子。
+  const alignBlock = workspaceText.match(/const alignSelection = useCallback\(\(mode: AlignMode\): void => \{[\s\S]*?\n {2}\}, \[[^\]]*\]\)/)
+  if (alignBlock === null) {
+    console.error('\nFAIL: the align handler could not be located; re-anchor this guard.')
+    process.exit(1)
+  }
+  const alignMutates = alignBlock[0].match(/mutate\(/g)?.length ?? 0
+  if (alignMutates !== 1) {
+    console.error('\nFAIL: 对齐不再是「一次编辑」。')
+    console.error(`Found ${alignMutates} mutate() call(s). One click must be one undo step: a`)
+    console.error('per-card write turns Ctrl+Z into "put one card back", and the canvas half')
+    console.error('way through is neither the old arrangement nor the new one.')
+    process.exit(1)
+  }
+  // 规则必须来自那个有单测的模块。在这里自己再写一遍对齐的算术，等于让「分组是
+  // 刚体」「取整」「幂等」这几条已经守住的边界重新开口。
+  // 只对画面上的卡对齐：隐藏的卡不在画面上，把它们算进包围盒会把可见的那几张
+  // 推到画外，而把它们挪到一条线上又会让「全部显示」时出现一群被悄悄挪过的卡。
+  if (!/alignNodes\(\{ nodes: visibleNodes\(current\.nodes\), selectedIds: selectedIdsRef\.current, groups: groupsOf\(current\) \}, mode\)/.test(alignBlock[0])) {
+    console.error('\nFAIL: 对齐不再调用 align-model 的 alignNodes。')
+    console.error('That function is the only place grouping-as-rigid-body, integer')
+    console.error('rounding and idempotence are tested; a second copy here drifts silently.')
+    process.exit(1)
+  }
+  // `moved === 0` 必须提前返回：已经对齐的图按一下不该多出一条空撤销，
+  // 否则下一次 Ctrl+Z 看起来什么都没做。
+  if (!/if \(result\.moved === 0\)/.test(alignBlock[0])) {
+    console.error('\nFAIL: 对齐在「一个都没动」时仍然写文档。')
+    console.error('An already-aligned canvas then gets an empty undo step, and the next')
+    console.error('Ctrl+Z appears to do nothing at all.')
+    process.exit(1)
+  }
+  // (2) 对齐条只在 ≥2 张时出现。一枚只选中一张卡也出现的对齐条，点下去要么
+  // 什么都不做（用户以为坏了），要么挪了唯一那张卡（用户以为画布乱跳）。
+  if (!/\{selectedNodeCount >= 2 \? <AlignBar/.test(workspaceText)) {
+    console.error('\nFAIL: 对齐条不再要求至少两个节点。')
+    console.error('With one node selected there is nothing to align against; the button reads')
+    console.error('as broken or moves the only card, and neither is something a user forgives.')
+    process.exit(1)
+  }
+  // (3) 撤销/重做按钮的标签必须来自 `describeStep`。只写「撤销」时，连按三次
+  // 之后用户不知道自己退掉了哪一步——那正是这条功能存在的理由。
+  if (!/label=\{undoHint === null \? labelWithKeys\('canvas\.undo'\) : tt\('canvas\.undo\.step', \{ step: undoHint \}\)\}/.test(workspaceText)) {
+    console.error('\nFAIL: 撤销按钮不再说明「这一步是什么」。')
+    console.error('After three Ctrl+Z the user cannot tell which edit they just took back;')
+    console.error('the tooltip is the only surface that can answer that before they act.')
+    process.exit(1)
+  }
+  if (!/describeStep\(before, after\)/.test(workspaceText)) {
+    console.error('\nFAIL: 摘要不再调用 history-model 的 describeStep。')
+    console.error('The rules for what counts as one action (spill-over wires, mixed')
+    console.error('changes, viewport-only steps) live there, with 19 tests.')
+    process.exit(1)
+  }
+  console.log('align: one edit per click, rules come from the tested module, the bar needs two cards')
+  console.log('undo/redo: the tooltip says which step it will take back')
+
+  // --------------------------------------------------------- 层级顺序：接线
+  //
+  // 纯函数 `reorderLayers` 有 12 条单测，`coveredNodes` 与它的联合语义有 3 条，
+  // 但那一层证明不了「接上了、接对了」。这一节挡的是三种长得对、作用错的写法：
+  //
+  //  1. 逐节点写文档 → 撤销变成「按一次退回一张卡的层级」，而按到一半时画布
+  //     既不是调整前也不是调整后的样子，中间那一帧还会被 autosave 存下去。
+  //  2. `moved === false` 仍然写 → 已经最上面那张再置顶一次，undo 栈里多一条
+  //     什么都没改的步骤，下一次 ⌘Z 看起来没反应。
+  //  3. 忘了关 react-flow 的「选中提权」→ 被置底的那张卡一被点中就用内联
+  //     z-index 1000 跳回最上层，用户看到的是「置底没生效」，而且刷新后又是
+  //     对的——最难复现的一类 bug。
+  {
+    const layerBlock = workspaceText.match(/const reorderSelection = useCallback\(\(mode: LayerMode\): void => \{[\s\S]*?\n {2}\}, \[[^\]]*\]\)/)
+    if (layerBlock === null) {
+      console.error('\nFAIL: the layer-order handler could not be located; re-anchor this guard.')
+      process.exit(1)
+    }
+    const layerMutates = layerBlock[0].match(/mutate\(/g)?.length ?? 0
+    if (layerMutates !== 1) {
+      console.error('\nFAIL: 层级调整不再是「一次编辑」。')
+      console.error(`Found ${layerMutates} mutate() call(s). One click must be one undo step, and a`)
+      console.error('half-applied stacking order is a document the user never asked for.')
+      process.exit(1)
+    }
+    if (!/reorderLayers\(current\.nodes, selectedIdsRef\.current, mode\)/.test(layerBlock[0])) {
+      console.error('\nFAIL: 层级调整不再调用 layer-order 的 reorderLayers。')
+      console.error('That function is the only place "a multi-selection moves as one slot"')
+      console.error('and idempotence are tested; a second copy here drifts silently.')
+      process.exit(1)
+    }
+    if (!/if \(!result\.moved\)/.test(layerBlock[0])) {
+      console.error('\nFAIL: 层级在「一个都没动」时仍然写文档。')
+      console.error('Re-fronting the topmost card then leaves an empty undo step, and the next')
+      console.error('Ctrl+Z appears to do nothing at all.')
+      process.exit(1)
+    }
+    // 叠放顺序必须由数组下标表达。关掉选中提权是这条约定能被看见的前提：
+    // 开着它时，任何一次点选都会把那张卡临时顶到 z-index 1000。
+    if (!/elevateNodesOnSelect=\{false\}/.test(workspaceText)) {
+      console.error('\nFAIL: react-flow 的选中提权又开着。')
+      console.error('It stamps z-index 1000 on whatever the user clicks, so a card that was')
+      console.error('just sent to the back jumps to the front the moment it is selected.')
+      process.exit(1)
+    }
+    if (!/zIndex: index,/.test(workspaceText)) {
+      console.error('\nFAIL: flow 节点不再按下标写 zIndex。')
+      console.error('Without it the stacking order depends on the order react-flow happens to')
+      console.error('render the wrappers, which is not the document order.')
+      process.exit(1)
+    }
+    // 目录四行必须接到同一个 handler。接错方向（把「置顶」接到 back）在界面上
+    // 完全看不出来：两行都能点，只是有一行做的是反的。
+    const layerRows = [
+      ['edit.layerFront', 'front'],
+      ['edit.layerBack', 'back'],
+      ['edit.layerForward', 'forward'],
+      ['edit.layerBackward', 'backward'],
+    ]
+    for (const [id, mode] of layerRows) {
+      if (!new RegExp(`'${id.replace(/\./g, '\\.')}': \\(\\) => reorderSelection\\('${mode}'\\)`).test(workspaceText)) {
+        console.error(`\nFAIL: 目录行 ${id} 没有接到 reorderSelection('${mode}')。`)
+        console.error('A row wired to the wrong direction looks identical until someone presses it.')
+        process.exit(1)
+      }
+    }
+    // 右键菜单也是入口之一，而且是最自然的那个（被压住时手指就在那张卡上）。
+    const menuSource = readModuleSource('canvas/context-menu.tsx')
+    for (const mode of ['front', 'forward', 'backward', 'back']) {
+      if (!new RegExp(`A\\.reorderLayers\\('${mode}'\\)`).test(menuSource)) {
+        console.error(`\nFAIL: 右键菜单少了 '${mode}' 这一个层级动作。`)
+        console.error('The menu is where a user acts on the card that is being covered;')
+        console.error('four of the four directions have to be there or the menu lies by omission.')
+        process.exit(1)
+      }
+    }
+    // 键位必须真的被读。`[]` / `BracketRight` 只有在处理函数里认了 code 才算数，
+    // 而认 key 的写法在 macOS 上永远不成立（⌥] 的 key 是弯引号）。
+    if (!/LAYER_SHORTCUTS_SHIFT\[event\.code\] \?\? LAYER_SHORTCUTS\[event\.code\]/.test(workspaceText)) {
+      console.error('\nFAIL: 层级键位不再读 event.code。')
+      console.error('Under Option, event.key is a composed character on macOS (⌥] is a curly')
+      console.error('quote), so a key-based branch never fires on the platform we ship to.')
+      process.exit(1)
+    }
+    // 遮盖提示必须画在画布覆盖层上，不能画进被盖住的那张卡里。挂进卡片时它
+    // 和卡片一起被压住——以前只是因为 react-flow 给选中节点加 `z-index: 1000`
+    // 才碰巧浮上来，选中提权一关（层级功能要求关掉）它就彻底消失。提示说的是
+    // 画布层面的事实，所以要由画布这一层来画。
+    const nodeBodySource = readModuleSource('canvas/node-body.tsx')
+    if (/data-node-covered=/.test(nodeBodySource)) {
+      console.error('\nFAIL: 遮盖提示又画回卡片里了。')
+      console.error('The badge explains "you cannot see this card", so it must not live')
+      console.error('inside that same card: it gets buried with it. Draw it in the .world')
+      console.error('overlay, positioned from the covered node\'s bottom-right corner.')
+      process.exit(1)
+    }
+    if (!/data-node-covered=\{covered\.id\}/.test(workspaceText)) {
+      console.error('\nFAIL: 画布覆盖层里找不到遮盖提示。')
+      console.error('Without it, a fully covered node is silently invisible: the yellow')
+      console.error('outline is hidden under the covering card too.')
+      process.exit(1)
+    }
+    console.log('layers: one edit per click, order comes from the tested module, four doors agree')
+  }
+
+  // ------------------------------------------------------ 锁定 / 隐藏：接线
+  //
+  // `node-flags.ts` 的 16 条单测证明的是「这几个函数算得对」；它们证明不了
+  // 「有人调用它们」。这一层挡的正是那种最贵的缺陷形态——函数写得无可挑剔，
+  // 但某个入口忘了调它：藏起来的卡还能被框选、锁住的卡被一次框选拖动悄悄挪了
+  // 位置、复制出来的新卡一出生就拖不动。三种都不报错、不崩溃。
+  {
+    // (1) 渲染必须走 `visibleNodes`。react-flow 的 nodes 是画面本身，漏了这一
+    // 层就是「藏了但还在」——而且因为它在画面里，用户还会以为自己没点中。
+    if (!/nodesToFlow\(visibleNodesOf\)/.test(workspaceText)) {
+      console.error('\nFAIL: 渲染不再用 visibleNodesOf。')
+      console.error('Hidden cards then stay on screen: the menu says "hidden", the canvas')
+      console.error('disagrees, and the card keeps eating clicks and marquee hits.')
+      process.exit(1)
+    }
+    // (2) 连线必须与节点用**同一份**过滤结果。只过滤节点会留下通往空气的线，
+    // 那比整条线不画更让人困惑：它看起来像一根还没接完的线。
+    if (!/visibleConnections\(document\.connections, visibleNodesOf\)/.test(workspaceText)) {
+      console.error('\nFAIL: 连线没有跟着节点一起过滤。')
+      console.error('Filtering nodes alone leaves edges running to a card that is not there;')
+      console.error('users read that as a broken connection and try to delete it.')
+      process.exit(1)
+    }
+    // (3) 锁定 / 隐藏都是一次 `mutate`。逐节点写会让 ⌘Z 变成「一次放开一张卡」，
+    // 而半放开的一批卡既不是操作前也不是操作后的状态。
+    for (const [name, key] of [['toggleLock', 'locked'], ['toggleHidden', 'hidden'], ['showAllHidden', 'hidden']]) {
+      const block = workspaceText.match(new RegExp(`const ${name} = useCallback\\(\\(\\): void => \\{[\\s\\S]*?\\n {2}\\}, \\[[^\\]]*\\]\\)`))
+      if (block === null) {
+        console.error(`\nFAIL: ${name} 的处理器找不到了；重新锚定这条守卫。`)
+        process.exit(1)
+      }
+      const count = block[0].match(/mutate\(/g)?.length ?? 0
+      if (count !== 1) {
+        console.error(`\nFAIL: ${name} 不再是「一次编辑」（${count} 次 mutate）。`)
+        console.error('Writing the flag card by card turns one Ctrl+Z into "unlock one card",')
+        console.error('and a half-unlocked selection is a state the user never asked for.')
+        process.exit(1)
+      }
+      if (!new RegExp(`${key}: (locking|hiding|false)`).test(block[0])) {
+        console.error(`\nFAIL: ${name} 没有写 metadata.${key}。`)
+        console.error('The flag has to land in the document, not in component state: a')
+        console.error('reload would otherwise bring every card back unlocked and visible.')
+        process.exit(1)
+      }
+    }
+    // (4) 删除必须先剔掉锁定的那些。这是「锁定」这个功能存在的全部意义——
+    // 一张锁不住 Delete 的卡等于没锁，而且用户会以为锁上了。
+    const deleteBlock = workspaceText.match(/const deleteSelection = useCallback\(\(\): void => \{[\s\S]*?\n {2}\}, \[[^\]]*\]\)/)
+    if (deleteBlock === null) {
+      console.error('\nFAIL: deleteSelection 找不到了；重新锚定这条守卫。')
+      process.exit(1)
+    }
+    if (!/unlockedIds\(current\.nodes, ids\)/.test(deleteBlock[0])) {
+      console.error('\nFAIL: 删除不再跳过锁定的节点。')
+      console.error('A lock that Delete ignores is not a lock: the user locked the card')
+      console.error('precisely so a stray keypress could not take it away.')
+      process.exit(1)
+    }
+    if (!/canvas\.lock\.blockedDelete/.test(deleteBlock[0])) {
+      console.error('\nFAIL: 删除跳过锁定项时不再说明原因。')
+      console.error('Silently doing nothing is indistinguishable from a broken keyboard.')
+      process.exit(1)
+    }
+    // (5) 拖动必须跳过锁定的卡。锁住的卡能被拖动时，用户会以为自己没锁上，
+    // 而更糟的是他拖的是一批——同一次框选里没锁的几张也跟着走了。
+    // 收尾写 `\n  }, [` 而不是 `\n  ], [`：这个回调用的是 `useCallback(() => {...}, [deps])`，
+    // 一个更松的尾部会让正则提前停在前一个内部数组字面量上，断言就对着半截函数跑。
+    const pointerBlock = workspaceText.match(/const handleNodePointerDown = useCallback\(\([\s\S]*?\n {2}\}, \[[^\]]*\]\)/)
+    if (pointerBlock === null) {
+      console.error('\nFAIL: handleNodePointerDown 找不到了；重新锚定这条守卫。')
+      process.exit(1)
+    }
+    // 断言的是**那一条 continue**，不是「函数里出现过 isLocked」。后者是个假守卫：
+    // 同一个函数里还有分组兄弟与超链接入口两处 isLocked，把真正拦拖动的那行注掉
+    // 之后它们仍然在，反向验证当场报 FALSE GREEN——守门绿着，锁却已经拖得动了。
+    if (!/if \(isLocked\(item\)\) \{ lockedInSelection \+= 1; continue \}/.test(pointerBlock[0])) {
+      console.error('\nFAIL: 拖动入口不再跳过锁定的卡片。')
+      console.error('The origins map is what the pointer drag actually moves. If a locked')
+      console.error('card still gets an entry in it, it follows the pointer -- the one thing')
+      console.error('every user tests first, and it fails in the most literal way.')
+      process.exit(1)
+    }
+    // (6) ⌥⇧L / ⌥⇧H 必须读 `event.code`，理由与层级键位完全相同：macOS 按住
+    // Option 时 event.key 是组合字符，`key === 'l'` 永远不成立。
+    // 同一条纪律：认的是**分发那一行**。`FLAG_SHORTCUTS[event.code]` 在守卫条件里
+    // 也出现一次，只断言「文本里有」的话，把分发改成 `event.key` 仍会绿。
+    if (!/if \(FLAG_SHORTCUTS\[event\.code\] === 'lock'\) toggleLock\(\)/.test(workspaceText)) {
+      console.error('\nFAIL: 锁定 / 隐藏的键位不再读 event.code。')
+      console.error('Under Option, event.key is a composed character on macOS (⌥L is not "l"),')
+      console.error('so a key-based branch never fires on the platform we ship to.')
+      process.exit(1)
+    }
+    if (!/FLAG_SHORTCUTS\[event\.code\] !== undefined/.test(workspaceText)) {
+      console.error('\nFAIL: ⌥⇧ 这一档的守卫条件不再读 event.code。')
+      console.error('The guard decides whether to preventDefault; reading event.key there')
+      console.error('means the branch is never entered at all.')
+      process.exit(1)
+    }
+    // (7) 藏起来的卡必须有回来的路。没有这条提示，隐藏就是「删除，但还占着导出」：
+    // 卡片不在渲染里，框选和 ⌘A 都碰不到它。
+    if (!/data-hidden-bar-show/.test(workspaceText)) {
+      console.error('\nFAIL: 底栏没有「全部显示」的入口。')
+      console.error('Hiding is a one-way door without it: a hidden card is out of the render,')
+      console.error('out of the marquee and out of Cmd+A, so the user cannot get it back.')
+      process.exit(1)
+    }
+    if (!/hiddenTotal > 0 \?/.test(workspaceText)) {
+      console.error('\nFAIL: 隐藏提示不再按 hiddenCount 决定显不显示。')
+      console.error('A permanent "0 cards hidden" strip on every canvas is noise that')
+      console.error('teaches users to ignore the one time it matters.')
+      process.exit(1)
+    }
+    // (8) 复制必须清标记（走 `withoutFlags`）。照抄会让新卡一出现就拖不动，或者
+    // 粘贴完屏幕上什么都没有。
+    const modelSource = readModuleSource('canvas/node-model.ts')
+    if (!/metadata: withoutFlags\(/.test(modelSource)) {
+      console.error('\nFAIL: 复制路径不再清掉 locked / hidden。')
+      console.error('Duplicating a locked card must give a card the user can move;')
+      console.error('duplicating a hidden one must not paste into apparent nothing.')
+      process.exit(1)
+    }
+    // (9) 右键菜单也要有这两行：被锁住的那一刻，手指就在这张卡上。
+    const menuSource2 = readModuleSource('canvas/context-menu.tsx')
+    for (const key of ['setNodeLocked', 'setNodeHidden']) {
+      if (!new RegExp(`A\\.${key}\\(`).test(menuSource2)) {
+        console.error(`\nFAIL: 右键菜单缺了 ${key}。`)
+        console.error('The card the user wants to lock is the card under the pointer;')
+        console.error('the menu is the shortest path and the only one that does not need')
+        console.error('a trip to the dock first.')
+        process.exit(1)
+      }
+    }
+    // 锁住的卡不该再提供「删除」：留一行按下去必然失败的菜单项，比少一行更糟。
+    if (!/locked \? /.test(menuSource2) && !/isLocked\(/.test(menuSource2)) {
+      console.error('\nFAIL: 右键菜单不再按锁定状态隐藏删除行。')
+      console.error('A menu item that can only fail is worse than a missing one: the user')
+      console.error('presses it, nothing happens, and the lock reads as broken.')
+      process.exit(1)
+    }
+    console.log('lock/hide: one edit per click, render + marquee + delete + drag all agree, copies come back clean')
+  }
+
+  // ------------------------------------------------------ 吸附参考线：接线
+  //
+  // `snapGuides` 有 6 条单测钉住几何，但它们证明不了「画出来了」和「该消失时
+  // 消失了」。参考线的两种坏法都很安静：
+  //
+  //  1. 线算出来了但没人渲染 → 吸附仍然生效，用户看到的还是「卡片自己跳了一下」，
+  //     而这正是整件事要修的问题。
+  //  2. 松手后线还留着 → 静止画布上一条红线会被读成一次真正的对齐结果，而它描述
+  //     的只是上一帧的暂时状态。这比不画更坏。
+  {
+    if (!/renderSnapGuides\(\)/.test(workspaceText)) {
+      console.error('\nFAIL: 画布不再渲染吸附参考线。')
+      console.error('Without it snapping still works but stays invisible: the card jumps')
+      console.error('by 3px and the user has no way to know why.')
+      process.exit(1)
+    }
+    // 线按**落位之后**的位置算。拿未吸附的位置去算，会在吸附生效的那一帧漏掉
+    // 线——而那恰好是用户唯一需要它的那一帧。
+    if (!/snapGuides\(landed, others\)/.test(workspaceText)) {
+      console.error('\nFAIL: 参考线不再按吸附后的位置计算。')
+      console.error('Computing them from the un-snapped position drops the guide on the')
+      console.error('exact frame the snap takes effect -- the only frame it matters.')
+      process.exit(1)
+    }
+    // 只对着画面上的卡吸附与画线。藏起来的那张既不占视野，也不该产生一条指向
+    // 空处的线。
+    if (!/const others = visibleNodes\(documentRef\.current\?\.nodes \?\? \[\]\)\.filter/.test(workspaceText)) {
+      console.error('\nFAIL: 吸附与参考线不再只看画面上的节点。')
+      console.error('Snapping to a hidden card makes the dragged card stop at empty space;')
+      console.error('and a guide to a card that is not drawn explains nothing.')
+      process.exit(1)
+    }
+    // 松手必须清线。
+    // 收尾锚在 `const connect = connectRef.current`（4 空格缩进）——它紧跟在拖动
+    // 分支之后，所以这一段恰好是「松手时对拖动做的事」。不锚 `}, [deps])` 是因为
+    // 中间还夹着连接、缩放、框选三个分支，那样会匹配到整个监听器。
+    const upBlock = workspaceText.match(/const up = \(event: PointerEvent\): void => \{[\s\S]*?\n {6}const connect = connectRef\.current/)
+    if (upBlock === null) {
+      console.error('\nFAIL: 指针抬起分支找不到了；重新锚定这条守卫。')
+      process.exit(1)
+    }
+    if (!/snapGuidesRef\.current = \[\]/.test(upBlock[0])) {
+      console.error('\nFAIL: 松手之后吸附参考线还留在画布上。')
+      console.error('A static red line reads as "these two edges are aligned", which is a')
+      console.error('claim about the document -- but it only described the last frame.')
+      process.exit(1)
+    }
+    console.log('snap guides: drawn from the snapped position, only against visible cards, cleared on release')
+  }
+
+  // ------------------------------------------------- 历史面板：跳转与键位
+  //
+  // (1) 点一行必须**先关面板再跳**。跳转会把选中清空、把文档换成另一版，而面板
+  // 是浮在画布上的：留着它，用户看到的是「退回去了，但底下的画布还是刚才那张」，
+  // 得再点一次关闭才知道自己退到哪了。找节点那条路径踩过同一个坑，规矩一样。
+  if (!/onJump=\{\(stepsBack, nodeIds\) => \{ setHistoryOpen\(false\); jumpToHistoryStep\(stepsBack, nodeIds\) \}\}/.test(workspaceText)) {
+    console.error('\nFAIL: 历史面板点一行时不再先关面板。')
+    console.error('The jump replaces the document under an open overlay; leaving it up')
+    console.error('means the user cannot see what they just went back to without')
+    console.error('dismissing it first, and the next edit lands on the old map.')
+    process.exit(1)
+  }
+  // (2) 一次回退 N 步必须是**一次**文档替换。逐帧调用 `undo()` 会让 React 在
+  // 每一帧之后重渲染，而栈是同步变的、`document` state 不是——推演到第 3 帧时
+  // `documentRef` 可能还是旧的，最后落下的文档就少退了几步。
+  const jumpBlock = workspaceText.match(/const jumpToHistoryStep = useCallback\(\(stepsBack: number, nodeIds: readonly string\[\] = \[\]\): void => \{[\s\S]*?\n {2}\}, \[\]\)/)
+  if (jumpBlock === null) {
+    console.error('\nFAIL: jumpToHistoryStep 不见了；重新锚定这条守卫。')
+    process.exit(1)
+  }
+  if ((jumpBlock[0].match(/setDocument\(/g)?.length ?? 0) !== 1) {
+    console.error('\nFAIL: 回退多步不再是「一次文档替换」。')
+    console.error('Calling undo() in a loop reads documentRef between frames, and that')
+    console.error('ref lags the state it was set from — the last frame lands on the wrong')
+    console.error('snapshot and the row the user clicked is not the row they get.')
+    process.exit(1)
+  }
+  // 重做栈必须逐条回填：一次性丢一份「最终后态」会让 Ctrl+Shift+Z 直接跳回
+  // 最新，中间那几步再也走不回来——而用户点历史行的目的往往只是「回到两步前
+  // 看看」，不是「放弃后面全部」。
+  if (!/for \(let index = past\.length - 1; index > past\.length - depth; index -= 1\) undone\.push/.test(jumpBlock[0])) {
+    console.error('\nFAIL: 历史跳转不再逐条回填重做栈。')
+    console.error('Redo must be able to walk back one step at a time; collapsing the')
+    console.error('undone range into one entry turns "go back two steps" into "throw away')
+    console.error('everything after that".')
+    process.exit(1)
+  }
+  // (3) ⌥ 系列认 `event.code`。这条守的是一个**已经在线上死了整整一版**的分支：
+  // macOS 按住 Option 时 `event.key` 是组合字符（⌥F 给 ƒ、⌥A 给 å、⌥H 给 ˙），
+  // 所以 `altKey && key === 'f'` 永远不成立，按了没反应且没有任何报错。
+  if (!/ALIGN_SHORTCUTS\[event\.code\]/.test(workspaceText)) {
+    console.error('\nFAIL: 对齐快捷键不再按 event.code 判定。')
+    console.error('On macOS Option turns the letter into a composed character (⌥F = ƒ),')
+    console.error('so a key-based test silently never fires. Use the physical code.')
+    process.exit(1)
+  }
+  if (/ALIGN_SHORTCUTS\[event\.key/.test(workspaceText)) {
+    console.error('\nFAIL: 对齐快捷键又回到了 event.key。')
+    console.error('See above: on macOS that branch is unreachable.')
+    process.exit(1)
+  }
+  if (!/event\.altKey && event\.shiftKey && event\.code === 'KeyF'/.test(workspaceText)) {
+    console.error('\nFAIL: ⌥⇧F 整理画布不再认 event.code。')
+    console.error('This exact branch shipped dead once: it tested event.key === "f", which')
+    console.error('macOS never produces while Option is held.')
+    process.exit(1)
+  }
+  // (4) 坏快照必须截断而不是跳过。`stepsBack` 是「相对当前栈深」的偏移，跳过
+  // 一格会让下面每一行的偏移都比真实步数小一——点一行退错步，比少几行危险。
+  // historyRows 单独读这个模块，且**故意不走** readSourceText：行尾归一化本身就是
+  // 另一条反向用例的靶子（把它改坏要让契约报「读不到文案」）。在这里复用它，那
+  // 条用例会先撞上这条守卫，报出一个与行尾毫无关系的错——RED but wrong reason。
+  const historyModel = readFileSync(new URL('../src/client/canvas/history-model.ts', SCRIPT_DIR), 'utf8')
+  const rowsBlock = historyModel.match(/export function historyRows\([\s\S]*?\r?\n\}\r?\n/)
+  if (rowsBlock === null) {
+    console.error('\nFAIL: historyRows 不见了；重新锚定这条守卫。')
+    process.exit(1)
+  }
+  if (!/catch \{\s*\n\s*break/.test(rowsBlock[0])) {
+    console.error('\nFAIL: 历史列表遇到坏快照不再截断。')
+    console.error('Skipping one frame shifts every row below it by one step, so a click')
+    console.error('lands on the wrong snapshot — worse than showing fewer rows.')
+    process.exit(1)
+  }
+  // (5) 退回去之后必须**选中这一步动过的卡**，且只能选中目标文档里还活着的那些。
+  // 两个坏法各有一条：不选 —— 用户退回去看到一张不太一样的画布，得自己在上百
+  // 张卡里找回刚被撤掉的是哪几张；不筛 —— 「删除」类步骤点名的节点在目标文档
+  // 里已经不存在，selectedIds 里塞进幽灵 id 会让删除按钮亮着、画布上一张卡不亮。
+  if (!/setSelectedIds\(new Set\(nodeIds\.filter\(id => alive\.has\(id\)\)\)\)/.test(jumpBlock[0])) {
+    console.error('\nFAIL: 退回历史后不再选中这一步动过的卡，或没与目标文档求交。')
+    console.error('Selection is the only thing that tells the user WHICH cards the step')
+    console.error('they just took back was about; and ids from the snapshot may name nodes')
+    console.error('that no longer exist in the restored document.')
+    process.exit(1)
+  }
+  // (6) 悬停预览必须由面板说出来、由画布画出来，且**不改文档**。
+  // 预览若走 `mutate`，一次悬停就会压进一条撤销记录——用户只是把鼠标划过那张
+  // 表，撤销栈里就多出几十条什么都没改的步骤。
+  if (!/onHover=\{setHistoryPreviewIds\}/.test(workspaceText)) {
+    console.error('\nFAIL: 历史面板的悬停不再把这一步的节点告诉画布。')
+    console.error('Without it the preview either does not exist, or the panel has to reach')
+    console.error('into the canvas itself — and a panel that mutates the document on hover')
+    console.error('pushes one undo step per pixel of mouse travel.')
+    process.exit(1)
+  }
+  if (!/const \[historyPreviewIds, setHistoryPreviewIds\] = useState/.test(workspaceText) ||
+      !/isHistoryPreview \? css\.nodeHistoryPreview/.test(workspaceText)) {
+    console.error('\nFAIL: 悬停预览的 state 或类名接丢了。')
+    console.error('The panel would announce a preview that nothing draws.')
+    process.exit(1)
+  }
+  // 预览的样式必须是 outline：虚线描边若用 box-shadow / border，会改变节点的
+  // 视觉边界甚至盒模型，悬停时画布会抖一下，而那正是「预览」最不该有的效果。
+  const previewCss = readSourceText(new URL('../src/client/canvas-workspace.module.css', SCRIPT_DIR))
+  const previewRule = previewCss.match(/\.nodeHistoryPreview \{[^}]*\}/)
+  if (previewRule === null || !/outline: 2px dashed var\(--dsw-alias-brand-primary\)/.test(previewRule[0])) {
+    console.error('\nFAIL: 历史预览的描边不再是一条 outline。')
+    console.error('A border or box-shadow shifts or thickens the card while the pointer')
+    console.error('moves across a table of rows — the canvas twitches on every hover.')
+    process.exit(1)
+  }
+  // 两个出口都要清预览：Esc 关面板、点一行跳走。少一处，虚线圈就永远留在画布上。
+  const previewClears = workspaceText.match(/setHistoryPreviewIds\(null\)/g)?.length ?? 0
+  if (previewClears < 3) {
+    console.error(`\nFAIL: 清掉历史预览的地方只剩 ${previewClears} 处（至少要 Esc、跳转、面板关闭三条路）。`)
+    console.error('Every path that closes the panel has to clear it: the ring has no other')
+    console.error('owner, so a missed path leaves it painted on the canvas for good.')
+    process.exit(1)
+  }
+  console.log('history: the row closes the panel first, one document write, redo rebuilds one step at a time')
+  console.log('history preview: the panel announces it, the canvas draws a dashed outline, nothing is written')
+  // (7) 文案里不许写死键位。`canvas.duplicate` 曾经是「创建副本 (Ctrl+D)」——
+  // 在 macOS 上用户按 ⌘D，读到的是 Ctrl+D；而目录按 labelKey 反查键位时也
+  // 对不上（那里查的是 label/action，文案里的括号不是数据）。键位只有一处
+  // 来源：快捷键表，由 `labelWithKeys` / 目录徽章补。
+  const localesSource = readSourceText(new URL('../src/client/locales.ts', SCRIPT_DIR))
+  // 只扫单键位文案（标题行里「(Ctrl+…)」这种形状）。错误提示里提到某个键是
+  // 合理的，那种句子不会是一条例子的全部。
+  const hardCodedKeys = [...localesSource.matchAll(/^\s*'[^']+': '([^']*\(Ctrl\+[A-Z][^']*)',$/gm)].map(match => match[1])
+  if (hardCodedKeys.length > 0) {
+    console.error(`\nFAIL: ${hardCodedKeys.length} 条文案把键位写死在了句子里：`)
+    for (const line of hardCodedKeys) console.error(`  - ${line}`)
+    console.error('On macOS the key is ⌘, not Ctrl, so the sentence is wrong there; and the')
+    console.error('catalog looks the key up by label, which never reads the parenthesis.')
+    process.exit(1)
+  }
+  // (8) 每一条被目录用到的动作，快捷键表里必须能按 label 或 action 反查到。
+  // `canvas.paste` / `canvas.duplicate` 曾经只写在 label 上，目录拿 labelKey 去
+  // 查，两行因此永远没有徽章——看起来像「这两个动作没有快捷键」。
+  const shortcutSource = readModuleSource('ShortcutHelp.tsx')
+  const shortcutEntries = [...shortcutSource.matchAll(/\{ keys: \[[^\]]*\], label: '([^']+)'(?:, action: '([^']+)')? \}/g)]
+  const shortcutNames = new Set(shortcutEntries.flatMap(match => [match[1], match[2]].filter(Boolean)))
+  const catalogLabelKeys = [...catalogSource.matchAll(/^ {4}labelKey: '([^']+)',$/gm)].map(match => match[1])
+  const missingActions = ['canvas.paste', 'canvas.duplicate', 'canvas.delete', 'canvas.undo', 'canvas.redo']
+    .filter(key => catalogLabelKeys.includes(key) && !shortcutNames.has(key))
+  if (missingActions.length > 0) {
+    console.error(`\nFAIL: 目录里这几行的键位查不到：${missingActions.join(', ')}`)
+    console.error('The catalog asks shortcutKeysFor(labelKey); a binding that names only a')
+    console.error('different label reads as "this action has no shortcut".')
+    process.exit(1)
+  }
+  // (9) 右键菜单与节点工具条上的「创建副本」也必须走 labelWithKeys：它们与目录
+  // 是同一个动作，键位却来自同一个函数——三处各写一遍必然有人漏，而漏掉的那处
+  // 会显示一个过时的键位（或者没有）。
+  for (const [file, pattern] of [
+    ['canvas/context-menu.tsx', /label: S\.labelWithKeys\('canvas\.duplicate'\)/],
+    ['canvas/node-body.tsx', /label=\{S\.labelWithKeys\('canvas\.duplicate'\)\}/],
+  ]) {
+    const source = readModuleSource(file)
+    if (!pattern.test(source)) {
+      console.error(`\nFAIL: ${file} 里的「创建副本」不再从快捷键表取键位。`)
+      console.error('A literal key in the label goes stale the moment the binding moves,')
+      console.error('and on macOS it was already the wrong modifier.')
+      process.exit(1)
+    }
+  }
+  console.log('shortcut keys: no literal key in any label; every catalog action resolves; the menus read the same table')
+  console.log('keyboard: ⌥ shortcuts match on event.code (the key is a composed char on macOS)')
+}
+
+// ------------------------------- 生成输入条不能压住底栏那两条药丸
+//
+// 这一条来自真机截图：多选时对齐条渲染出来了，八枚按钮却全在生成输入条底下，
+// 只露出左边半句「对齐 2 个节点」。原因是输入条决定「翻到节点上方还是留在
+// 下方」时用了一个硬编码的 170px，而多选让底栏整行多出两条药丸的高度。
+//
+// jsdom 没有布局引擎（所有 rect 都是 0），真浏览器守卫里输入条又需要真实节点
+// 位置才能复现，所以这里守的是那条**判据**：可用的纵向空间必须扣掉实测的底栏
+// 高度，而不是一个常量。
+{
+  const composerSource = readModuleSource('canvas/composer.tsx')
+  if (!/170 \+ S\.chromeHeight/.test(composerSource)) {
+    console.error('\nFAIL: 生成输入条的翻转判据不再扣掉底栏的实测高度。')
+    console.error('When the compose strip or the align bar appears, the chrome row grows')
+    console.error('upward; a constant threshold then puts the composer on top of those')
+    console.error('buttons and a click meant for 左对齐 lands in the prompt field.')
+    process.exit(1)
+  }
+  // 那个高度必须是**量出来的**：`chromeHeight` 由 ResizeObserver 读
+  // `.canvasChrome` 及其子元素得到。写死一个「够用的」数字迟早又不准。
+  // 每一个子元素都要参与测量：`slice(-1)` / `filter` 这种「只看最后一格」的写法
+  // 会让药丸出现时没人重新量（底栏是最后一个子元素，永远量得到，缺口永远看不见）。
+  const everyChildMeasured = /const tops = \[\.\.\.chrome\.children\]\s*\n\s*\.map\(child => child\.getBoundingClientRect\(\)\)/.test(workspaceText)
+  if (!everyChildMeasured || !/viewportBox\.bottom - Math\.min\(\.\.\.tops\)/.test(workspaceText)) {
+    console.error('\nFAIL: chromeHeight 不再按底栏真正的最高成员测量。')
+    console.error('It must cover the align bar / compose strip too, and those are')
+    console.error('conditionally rendered, so a constant or a dock-only measurement')
+    console.error('silently stops reserving the space the moment they appear.')
+    process.exit(1)
+  }
+  // 两条药丸是条件渲染的，观测那一刻它们可能还不存在；出现时必须重新收集子元素。
+  if (!/\}, \[selectedNodeCount, composeIds\.length\]\)/.test(workspaceText)) {
+    console.error('\nFAIL: 底栏高度不再随两条药丸的出现重新测量。')
+    console.error('ResizeObserver only watches the children that existed when it was')
+    console.error('created; a strip that appears later is never observed, so the composer')
+    console.error('goes on believing those 40px are free canvas.')
+    process.exit(1)
+  }
+  console.log('composer: the flip threshold reserves the measured chrome height, strips included')
+}
 
 if (CHROME === null) skipWithoutChrome('the UI contract guards did NOT run.')
 

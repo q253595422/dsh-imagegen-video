@@ -22,7 +22,7 @@
 
 import type { CSSProperties, PointerEvent as ReactPointerEvent } from 'react'
 import { X } from 'lucide-react'
-import type { CanvasAssetRef, CanvasDocument, CanvasLayerKind, CanvasNode, CanvasPoseRig, CanvasRect, CanvasSketchStroke } from '../../protocol.ts'
+import type { CanvasAssetRef, CanvasDocument, CanvasLayerKind, CanvasNode, CanvasPoseRig, CanvasPromptSetItem, CanvasRect, CanvasSketchStroke } from '../../protocol.ts'
 import type { ImageGenApi } from '../api.ts'
 import { tt } from '../helpers.ts'
 import type { ImageGenKey } from '../locales.ts'
@@ -31,12 +31,16 @@ import { CanvasFileBody, fileKindLabel, fileKindOfAsset, fileSizeLabel } from '.
 import { ModelPicker, resolveModelChoice, type ModelPickerValue } from '../ModelPicker.tsx'
 import { IconButton, ToolbarIcon } from './dock-controls.tsx'
 import { ROLE_LABELS } from '../cast.ts'
-import { isAnnotationCard, isPoseNode, isSketchNode, liveAnnotations, nodeMetadata, textStyleOf, videoOf, bezierPath as _bezierPath } from './node-model.ts'
+import { isAnnotationCard, isPoseNode, isSketchNode, liveAnnotations, nodeMetadata, textStyleOf, usableAsset, videoOf, bezierPath as _bezierPath } from './node-model.ts'
+import { isLocked } from './node-flags.ts'
+import { promptSetOf } from './prompt-set.ts'
 import { storyboardOf, storyboardProgress } from '../storyboard.ts'
 import { SketchBoard } from './sketch-and-picker.tsx'
 import { PoseBoard, poseOf } from './pose-board.tsx'
 import { StoryboardBody } from './storyboard-board.tsx'
 import type { Point } from './geometry.ts'
+import { configReadiness } from './readiness.ts'
+import { markOf, type RunMarks } from './run-marks.ts'
 import css from '../canvas-workspace.module.css'
 
 /** 缩放角的四个方向。 */
@@ -87,12 +91,26 @@ export interface NodeBodyState {
   modelGroups: ImageModelGroup[]
   videoGroups: ImageModelGroup[] | undefined
   defaultChannelId: string | undefined
+  /**
+   * The video model the composer resolved as "the one a run would use".
+   *
+   * A storyboard names no model of its own (there is no picker on the board), so
+   * `submitShot` falls back to this same resolution. Passing it down is what
+   * lets the board offer only the lengths and tiers that model accepts; without
+   * it the board is guessing at a model it cannot see.
+   */
+  effectiveVideoModel: string
   fileUploadRef: { current: HTMLInputElement | null }
   imageFileRef: { current: HTMLInputElement | null }
   connectRef: { current: unknown }
   // 子组件与常量（原来是主文件的 import）
   IconButton: typeof IconButton
   ToolbarIcon: typeof ToolbarIcon
+  /**
+   * 「标题 + 键位」。节点工具条上的按钮要给键位，但键位属于快捷键表，不能
+   * 写进文案——写死的 `(Ctrl+D)` 在 macOS 上是错的，而且它与那张表会走散。
+   */
+  labelWithKeys: (key: ImageGenKey) => string
   ModelPicker: typeof ModelPicker
   SketchBoard: typeof SketchBoard
   PoseBoard: typeof PoseBoard
@@ -103,6 +121,7 @@ export interface NodeBodyState {
   // 纯函数
   nodeMetadata: typeof nodeMetadata
   assetOf: (node: CanvasNode) => CanvasAssetRef | undefined
+  usableAsset: typeof usableAsset
   videoOf: typeof videoOf
   isSketchNode: typeof isSketchNode
   isPoseNode: typeof isPoseNode
@@ -117,11 +136,33 @@ export interface NodeBodyState {
   storyboardProgress: typeof storyboardProgress
   resolveModelChoice: (groups: ImageModelGroup[], choice: { channelId?: string; model?: string }, fallback?: string) => ModelPickerValue
   textStyleOf: typeof textStyleOf
+  /** 某个渠道是否已配置好密钥。配置节点的就绪徽标要靠它说话。 */
+  channelIsConnected: (channelId: string) => boolean
+  /**
+   * 悬浮生成器里正在编辑的提示词。
+   *
+   * 配置节点卡片上那块只读预览与就绪徽标都读它——**同一份值**，因为提交路径
+   * 也只读它。卡片显示的与按下去发出去的必须是同一句话。
+   */
+  composerPrompt: string
+  /** 生成器里正在编辑的套图草稿；只对选中的那张卡有意义。 */
+  composerPromptSet: readonly CanvasPromptSetItem[]
+  /**
+   * 最近一次工作流运行在这个节点上留下的处境：失败 / 被上游跳过。
+   *
+   * 只活在组件状态里（见 `run-marks.ts`），不进文档；所以导出画布不会带走
+   * 它，换一台机器打开也不会有。
+   */
+  runMarks: RunMarks
 }
 
 /** 节点体里会触发的动作，全部由上层提供。 */
 export interface NodeBodyActions {
   patchNode: (nodeId: string, patch: Record<string, unknown>) => void
+  /** 单张卡的锁定开关。锁定之后拖不动、改不了大小、删不掉。 */
+  setNodeLocked: (nodeId: string, locked: boolean) => void
+  /** 单张卡的隐藏开关。隐藏只是「暂时别看」，卡片仍在文档里。 */
+  setNodeHidden: (nodeId: string, hidden: boolean) => void
   deleteNode: (nodeId: string) => void
   duplicateNode: (nodeId: string) => void
   downloadNode: (node: CanvasNode) => void
@@ -186,10 +227,13 @@ const asset = S.assetOf(node)
 const isGenerating = (node.type === 'image' || node.type === 'video') && metadata.status === 'generating'
 const isError = (node.type === 'image' || node.type === 'video') && metadata.status === 'error'
 const isConnectTarget = S.connecting?.targetId === node.id
-/** 被完全盖住的那一方（或盖住别人的那一方）：拖动中出现，松手后保留。 */
-const isOverlapping = S.liveOverlap !== null && S.liveOverlap.ids.has(node.id)
-/** 只有被盖住的那个才挂徽标——盖住别人的那个本身看得见，不需要解释。 */
-const coverNote = S.liveOverlap !== null && S.liveOverlap.coveredId === node.id ? S.liveOverlap : null
+/*
+ * 重叠徽标**不在这里**画。它原来挂在被盖住卡片的右下角，而这恰好是它最不能
+ * 待的地方：它要说明的正是「这张卡看不见」，却和那张卡一起被压在下面。以前
+ * 只是因为 react-flow 会给选中的节点加 `z-index: 1000`，用户一拖（拖动会选中
+ * 它）徽标才碰巧浮上来；关掉选中提权之后它彻底消失，截图里只剩一圈黄边。
+ * 现在它由 `CanvasWorkspace` 画在 `.world` 覆盖层上（见那边的注释）。
+ */
 const hasImage = asset !== undefined && asset.url !== ''
 const isConfig = node.type === 'config'
 const isFile = node.type === 'file'
@@ -212,8 +256,68 @@ const skillRun = Object.entries(S.skillRuns).find(([, entry]) => entry.nodeId ==
  * `request.nodeIds` — so a numbered node is a node the file will carry.
  */
 const composeIndex = S.composeIds.length >= 2 ? S.composeIds.indexOf(node.id) : -1
+/**
+ * 这个节点在最近一次运行里的处境。
+ *
+ * 与 `nodeOverlap` 那类「此刻的交互状态」不同，它是**上一次结论**留下的痕迹：
+ * 交互状态消失了就等于没问题，而这个必须一直挂着，直到用户真的处理掉它。
+ */
+const runMark = markOf(S.runMarks, node.id)
 const isTextual = node.type === 'text' || isConfig
 const isTextNode = node.type === 'text'
+/**
+ * 连进这个配置节点的上游节点。
+ *
+ * 之前这里只数了个数。现在要把「上游文本」和「上游图片」分开看：前者决定
+ * 提示词从哪来，后者决定这次是文生图还是图生图。数一遍再回头按 id 找节点的
+ * 写法有两个真相来源，所以这里直接拿节点。
+ */
+const configUpstream: CanvasNode[] = !isConfig
+  ? []
+  : (S.canvasDocument?.connections ?? [])
+      .filter(connection => connection.toNodeId === node.id)
+      .map(connection => S.canvasDocument?.nodes.find(candidate => candidate.id === connection.fromNodeId))
+      .filter((candidate): candidate is CanvasNode => candidate !== undefined)
+const configInputCount = configUpstream.length
+/**
+ * 卡片上「套图 · N 条」的读数。
+ *
+ * 当前这张卡被选中时读**草稿**（用户正在编辑器里加条目、还没提交），否则读
+ * 节点上已保存的那份。只读文档会让徽标在编辑期间一直显示旧数字，用户加完三条
+ * 抬头一看还是「2 条」，会以为没加上。
+ */
+const promptSetCount = promptSetOf(node).length
+const draftPromptSetCount = S.selectedIds.has(node.id)
+  ? S.composerPromptSet.filter(item => item.prompt.trim() !== '').length
+  : 0
+const promptSetBadgeCount = S.selectedIds.has(node.id) ? draftPromptSetCount : promptSetCount
+/**
+ * 「这张卡片现在能不能跑」。
+ *
+ * 只在配置节点上算。判定逻辑在 `readiness.ts`，与提交路径读同一组事实
+ * （自己的提示词优先、否则用上游文本；code 渲染不需要模型和渠道），所以卡片
+ * 上说什么，按下去就真会发生什么。
+ */
+const configReady = isConfig
+  ? configReadiness({
+      ownText: metadata.text ?? '',
+      // 悬浮生成器只在「这一张配置节点被选中」时存在；它才是提交路径读的那
+      // 个值。不传它的话，卡片会对着一个空框说「缺提示词」，而用户刚刚在下面
+      // 的生成器里写完。
+      composerText: S.selectedIds.has(node.id) ? S.composerPrompt : '',
+      upstreamTexts: configUpstream
+        .filter(candidate => candidate.type === 'text' && !S.isAnnotationCard(candidate))
+        .map(candidate => S.nodeMetadata(candidate).text ?? ''),
+      model: metadata.renderer === 'code'
+        ? ''
+        : S.resolveModelChoice(S.modelGroups, { channelId: metadata.channelId, model: metadata.model }, S.defaultChannelId).model,
+      channelConnected: metadata.renderer === 'code'
+        ? true
+        : S.channelIsConnected(metadata.channelId ?? ''),
+      codeRenderer: metadata.renderer === 'code',
+      referenceCount: configUpstream.filter(candidate => candidate.type === 'image' && S.usableAsset(candidate) !== undefined).length,
+    })
+  : null
 const annotating = S.annotateNodeId === node.id && hasImage && !isSketch && !isPose
 const busyLabel = S.busyNodes[node.id]
 const annotations = node.type === 'image' ? S.liveAnnotations(node, S.canvasDocument?.nodes ?? []) : []
@@ -226,19 +330,24 @@ const boxStyle = (rect: CanvasRect): CSSProperties => ({
 })
 return <>
   <div className={css.nodeGlow} aria-hidden="true" />
-  {coverNote !== null
-    ? <span
-        className={css.overlapBadge}
-        data-node-covered={node.id}
-        role="status"
-        aria-label={`${tt('canvas.overlapBadge', { title: coverNote.coverTitle })}。${tt('canvas.overlapHint')}`}
-      >
-        {tt('canvas.overlapBadge', { title: coverNote.coverTitle })}
-      </span>
-    : null}
   {composeIndex >= 0
     ? <span className={css.composeBadge} data-compose-badge={String(composeIndex + 1)} aria-hidden="true">
         {tt('canvas.composeBadge', { index: composeIndex + 1 })}
+      </span>
+    : null}
+  {/* 上一次运行的处境。挂在这里而不是塞进各形态的正文里：正文有八种，
+      每种都要重新记得加一遍；而这条标记跟「这个节点是什么形态」无关。
+
+      文案分两句而不是一句：失败要「重试这个」，被跳过要「先修上游」——
+      两个完全不同的动作。用同一个「出错」会把它们混成一个。 */}
+  {runMark !== null
+    ? <span
+        className={css.runMark}
+        data-run-mark={runMark}
+        role="status"
+        title={runMark === 'failed' ? tt('canvas.runMark.failedHint') : tt('canvas.runMark.blockedHint')}
+      >
+        {runMark === 'failed' ? tt('canvas.runMark.failed') : tt('canvas.runMark.blocked')}
       </span>
     : null}
   {isVideo ? <header className={css.nodeHeader}>
@@ -250,6 +359,13 @@ return <>
       role: tt(S.ROLE_LABELS[metadata.cast.role]),
       name: (metadata.cast.name ?? '').trim() !== '' ? metadata.cast.name! : node.title,
     })}
+  </span> : null}
+  {/* 锁定标记。WHY 画在卡片上而不是只在悬停条里：锁的意义是「你以为能拖，其实
+      拖不动」，而用户伸手去拖的时候卡片通常是静止的、悬停条还没出来。一个看不见
+      的锁，在体验上等于没有锁——他会先拖两下、以为画布卡了，然后来报 bug。
+      位置放右上角：左上角被身份锚定徽标占着，右下角是遮盖提示。 */}
+  {isLocked(node) ? <span className={css.lockedBadge} data-node-locked={node.id} aria-label={tt('canvas.lock.lock')}>
+    <S.ToolbarIcon name="lock" size={12} />
   </span> : null}
   {isStoryboard ? (() => {
     const board = S.storyboardOf(node)
@@ -310,11 +426,78 @@ return <>
       onClick={() => { A.patchNode(node.id, { color: color === '' ? undefined : color }); A.setColorPickerNodeId(null) }}
     >{color === '' ? <X size={11} strokeWidth={2.4} aria-hidden="true" /> : null}</button>)}
   </div> : null}
-  {isConfig ? <div className={css.configLinks} data-config-links={node.id}>
-    <span className={css.composerChip}>{tt('canvas.composerLinked', { count: (S.canvasDocument?.connections ?? []).filter(connection => connection.toNodeId === node.id).length })}</span>
+  {isConfig && configReady !== null ? <div className={css.configLinks} data-config-links={node.id}>
+    <span className={css.composerChip}>{tt('canvas.composerLinked', { count: configInputCount })}</span>
+    {/*
+      就绪徽标。这是整张画布上唯一一处「按下去之前就告诉你会发生什么」的地方。
+
+      放在连线小条旁边而不是标题栏：它说的是这一次运行的条件，而条件由输入
+      决定（有没有提示词、有没有图）。放在标题旁边会被读成节点的属性。
+
+      三态而不是两态：`ready` 之外还要分开「缺提示词」和「缺配置」。合成一句
+      「无法生成」会让人去翻设置却不知道翻哪一页——缺提示词要去写框里那段字，
+      缺配置要去设置页填钥匙，是两个完全不同的动作。
+    */}
+    <span
+      className={css.configReady}
+      data-config-ready={configReady.ready ? '' : undefined}
+      data-config-blocker={configReady.blockers[0] ?? undefined}
+      role="status"
+      title={configReady.ready
+        ? tt('canvas.configReadyHint')
+        : tt(`canvas.configBlocked.${configReady.blockers[0]!}` as ImageGenKey)}
+    >
+      {configReady.ready
+        ? tt(configReady.hasReference ? 'canvas.configReadyEdit' : 'canvas.configReadyText')
+        : tt(`canvas.configBlocked.${configReady.blockers[0]!}` as ImageGenKey)}
+    </span>
   </div> : null}
+  {/*
+     * The hint is an EMPTY-STATE, not a caption.
+     *
+     * It used to render on every config node for the node's whole life, so a
+     * canvas with six config nodes carried the same three grey lines six times
+     * — and on an empty canvas those lines were the only substantial text, which
+     * made "unwritten instructions" the most prominent thing on screen. Once a
+     * node has an input, the chip above already says how many; repeating the
+     * tutorial next to it is noise the user has to read past every single time.
+     *
+     * ⚠️ 这里曾经还有一个 `textarea`（写 `metadata.text`），已删除。它不是
+     * 「多一个输入框」而是**一个假输入框**：生成的取值链是
+     * `composerPrompt → 上游文本 → 标注卡`，从头到尾不读 `metadata.text`。
+     * 于是用户在里面写的提示词会被静默丢弃，还带着一个「可生成」的徽标。
+     * 配置节点的提示词编辑由悬浮生成器承担（选中即出现，见 composer.tsx），
+     * 那里才是提交路径真正读的那一个框。一个提示词只准有一个编辑入口。
+     */}
   {isConfig
-    ? <p className={css.configHint}>{tt('canvas.configHint')}</p>
+    ? configInputCount === 0
+      ? <p className={css.configHint}>{tt('canvas.configHint')}</p>
+      : /*
+         * 有输入时显示**将要发出去的那段提示词**，只读。
+         *
+         * 这一块替代了此前那个写 `metadata.text` 的 textarea——那个框的写入
+         * 根本没人读（生成取的是生成器里的值），是「看起来能编辑、实际被丢弃」
+         * 的假入口。但直接把正文留空也不行：卡片会变成一块空壳。
+         *
+         * 只读预览正好补上缺口，而且比编辑框更有用：用户能在一张一张卡片上
+         * 核对「这一格到底会发什么」，而不必逐个选中、在底部生成器里比对。
+         * 真正的编辑仍然只有生成器一处。
+         */
+        <>
+        {/* 套图徽标：这张卡跑一次会出 N 张，每张一个标题。只读——编辑入口在
+            composer 那一侧；卡片上再多一个写入口会撞 verify-ui-contracts 的
+            「一个提示词只准有一个编辑入口」那条守卫。 */}
+        {promptSetBadgeCount > 0
+          ? <span className={css.promptSetBadge} data-prompt-set-badge={node.id}>
+              {tt('canvas.promptSetBadge', { count: promptSetBadgeCount })}
+            </span>
+          : null}
+        <p className={css.configPrompt} data-config-prompt={node.id}>
+          {configReady !== null && configReady.prompt !== ''
+            ? configReady.prompt
+            : tt('canvas.configPromptElsewhere')}
+        </p>
+        </>
     : isTextual
     ? <textarea
         className={css.textArea}
@@ -347,6 +530,7 @@ return <>
     ? <S.StoryboardBody
         node={node}
         nodes={S.canvasDocument?.nodes ?? []}
+        defaultVideoModel={S.effectiveVideoModel}
         busy={busyLabel !== undefined}
         onChange={next => A.patchNode(node.id, { storyboard: next })}
         onRun={() => { void A.runStoryboard(node) }}
@@ -559,7 +743,21 @@ return <>
       <S.IconButton name="expand" label={tt('canvas.preview.expand')} onClick={() => A.openFileNode(node)} />
       <span className={css.toolbarDivider} aria-hidden="true" />
     </> : null}
-    {S.isAnnotationCard(node) ? null : <S.IconButton name="duplicate" label={tt('canvas.duplicate')} onClick={() => A.duplicateNode(node.id)} />}
+    {S.isAnnotationCard(node) ? null : <S.IconButton name="duplicate" label={S.labelWithKeys('canvas.duplicate')} onClick={() => A.duplicateNode(node.id)} />}
+    {/* 锁定 / 隐藏挂在悬停条上，而不是只放进右键菜单：菜单是「我想对这个对象做
+        点什么」的地方，而这两个开关更常是在「我马上就要拖它」的那一刻按下的，
+        那时手已经在卡片上了。 */}
+    <S.IconButton
+      name={isLocked(node) ? 'unlock' : 'lock'}
+      label={S.labelWithKeys(isLocked(node) ? 'canvas.lock.unlock' : 'canvas.lock.lock')}
+      active={isLocked(node)}
+      onClick={() => A.setNodeLocked(node.id, !isLocked(node))}
+    />
+    <S.IconButton
+      name="hide"
+      label={S.labelWithKeys('canvas.lock.hide')}
+      onClick={() => A.setNodeHidden(node.id, true)}
+    />
     <S.IconButton name="trash" label={tt('canvas.delete')} onClick={() => A.deleteNode(node.id)} />
   </div>
 </>

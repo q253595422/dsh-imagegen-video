@@ -379,6 +379,48 @@ await check('P8 a cut re-run, or a failed one, leaves the other shots untouched'
   assert.equal(state.nextShotIndex(board, nodes), -1, 'with every shot finished there is nothing to re-run')
 })
 
+/**
+ * 分镜不吃身份参考，是这条链路上唯一一个「界面里设置了、产物里没有」的洞：
+ * 用户把「阿禾」钉成角色参考后，composer 生成是对的，分镜连跑十条却一条都
+ * 没有阿禾的图。修法是让 `submitShot` 走和 composer 同一套 cast 函数，并把
+ * 模式从 text 升到 reference。
+ *
+ * 两半都必须断言，因为只有一半时缺陷都还在：
+ *  - 纯规则：哪种模式下带几张参考图。`carry` 的接缝占满帧槽时不能带（契约
+ *    禁止混用），这是刻意的取舍，不是遗漏；
+ *  - 源码接线：`submitShot` 真的调了那两个函数，而且去重规则和提示词都来自
+ *    同一份 cast.ts，不是在这里另写一遍。
+ */
+await check('P9 a shot carries the pinned cast, unless continuity owns the frame slots', async () => {
+  assert.deepEqual(state.shotVideoPlan({ continuity: 'cut', index: 0, castCount: 0 }), { mode: 'text', castSlots: 0 }, '没人被钉住就是纯文本')
+  assert.deepEqual(state.shotVideoPlan({ continuity: 'cut', index: 3, castCount: 2 }), { mode: 'reference', castSlots: 2 }, '钉住的人不连进这一镜也要带上')
+  // 第一镜没有上一镜可接，所以 carry 板的第一镜照样能带身份参考。
+  assert.deepEqual(state.shotVideoPlan({ continuity: 'carry', index: 0, castCount: 2 }), { mode: 'reference', castSlots: 2 }, 'carry 的第一镜没有接缝，可以带')
+  // 第二镜起，首帧被上一镜的尾帧占住；提供方契约禁止 reference_image 与
+  // first_frame 混用，所以身份参考不随行——宁可没有，也不发一个会被拒的请求。
+  assert.deepEqual(state.shotVideoPlan({ continuity: 'carry', index: 1, castCount: 2 }), { mode: 'keyframe', castSlots: 0 }, 'carry 的后续镜先保接缝')
+  assert.equal(state.shotVideoPlan({ continuity: 'cut', index: 0, castCount: 9 }).castSlots, state.MAX_SHOT_REFERENCES, '参考图上限仍是 composer 那四张')
+  assert.equal(state.shotVideoPlan({ continuity: 'cut', index: 0, castCount: -3 }).castSlots, 0, '负数按零处理，不产生负的槽位')
+
+  const { canvasSourceText } = await import('./lib/canvas-source.mjs')
+  const source = canvasSourceText()
+  const from = source.indexOf('const submitShot = useCallback')
+  assert.ok(from > 0, 'submitShot exists')
+  const body = source.slice(from, source.indexOf('const runStoryboard = useCallback'))
+  assert.match(body, /shotVideoPlan\(/, '分镜的模式由 shotVideoPlan 决定，不是就地手写一条 if')
+  assert.match(body, /castRefsFor\(/, '分镜要取被钉住的参考图')
+  assert.match(body, /castPromptOf\(/, '提示词要说明哪张参考图是谁')
+  assert.match(body, /referenceNodeIds/, '参考图的血缘要写进 canvas 元数据，和 composer 一个口径')
+  // 依赖数组漏了这两个，回调会闭包住上一次渲染的 document，钉了新的角色也
+  // 读不到。切出来的 body 尾部带着下一个函数的 JSDoc，所以取最后一个依赖数组
+  // 而不是要求它就是结尾；也不约束先后顺序，排序是风格不是缺陷。
+  const depLists = [...body.matchAll(/\}, \[([^\]]*)\]\)/g)]
+  assert.ok(depLists.length > 0, 'submitShot 有依赖数组')
+  const deps = depLists.at(-1)[1]
+  assert.match(deps, /castRefsFor/, 'castRefsFor 在依赖数组里')
+  assert.match(deps, /castPromptOf/, 'castPromptOf 在依赖数组里')
+})
+
 // ------------------------------------------------------------ run
 
 for (const { name, fn } of checks) {

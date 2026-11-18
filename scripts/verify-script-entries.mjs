@@ -43,6 +43,10 @@ const VERBOSE = process.argv.includes('--verbose')
 const MANUAL = {
   'studio-preview-shot.mjs':
     'produces a screenshot for a human to look at; it has no verdict to assert',
+  'studio-canvas-shot.mjs':
+    'the canvas-first-run variant of the shot above: writes one PNG for a person to look at, and no assertion it could fail',
+  'stage-preview-shot.mjs':
+    'the stage-panel variant of the two shots above: writes PNGs for a person to look at, and no assertion it could fail',
   // These four were previously counted as gated only because their command
   // existed in `package.json`. None of them runs in any workflow, and none
   // should: three have side effects (network, rewriting files) and the fourth
@@ -54,6 +58,8 @@ const MANUAL = {
     'checks the upstream project and writes a port plan; the README calls it a manual command, and it must never decide a push',
   'ppt-browser-test.mjs':
     'needs Playwright, which this repository does not depend on; its own header says it is deliberately outside `pnpm test`',
+  'benchmark-canvas-interaction.mjs':
+    'measures frame timings on a canvas already imported into a running host, addressed by `--url`; it has no fixture of its own and no pass/fail line, so running it in a gate would report numbers nobody reads and fail for lack of a host',
 }
 
 /* ------------------------------------------------------------ reachability */
@@ -107,7 +113,7 @@ function gatedPackageScripts(scripts, workflowTexts) {
   // those groups, several at a time, and is run by hand. It is not chained FROM
   // `test:negative` (it is the faster alternative to it), so it has to be named
   // as a gate root itself rather than discovered through the closure.
-  const MANUALLY_GATED_SUITES = ['test:negative']
+  const MANUALLY_GATED_SUITES = ['test:negative', 'test:stage']
   // A gate root that is itself a script, not a package.json entry: nothing
   // invokes it, a person types `node scripts/<name>`. `test:negative` is a
   // chain of `verify-negative.mjs <group>`; this is the same work, several

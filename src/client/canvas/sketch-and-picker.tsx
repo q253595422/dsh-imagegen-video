@@ -81,8 +81,12 @@ export function SketchBoard(props: {
     const ctx = canvas.getContext('2d')
     if (ctx === null) return
     ctx.setTransform(backingWidth / width, 0, 0, backingHeight / height, 0, 0)
-    ctx.fillStyle = '#ffffff'
-    ctx.fillRect(0, 0, width, height)
+    // Clear, don't paint: the sheet's fill is `.sketchBoard`'s background so
+    // the board and the canvas can differ in BOTH themes (see the note there).
+    // Painting #ffffff here would cover that background and put an empty board
+    // back to being invisible on a white canvas. The exported raster still
+    // fills white on purpose — that is the image the model receives.
+    ctx.clearRect(0, 0, width, height)
     for (const stroke of strokesRef.current) drawSketchStroke(ctx, stroke, width, height)
     const live = liveStrokeRef.current
     if (live !== null) drawSketchStroke(ctx, live, width, height)

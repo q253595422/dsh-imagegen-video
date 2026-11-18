@@ -44,7 +44,14 @@ export default {
   // them is the whole point (a stub cannot show whether the studio looks native).
   deps: {
     neverBundle: [],
-    alwaysBundle: ['react', 'react-dom', 'lucide-react', '@deepseek-ai/dsh-client-ui-primitives', 'clsx', '@xyflow/react'],
+    // `three` 必须在这里：导演台的 3D 渲染层（`canvas/stage-scene-3d.ts`）是
+    // 客户端代码的静态依赖，而浏览器 iife 包解析不了裸 `import 'three'`——
+    // 漏掉它，预览页整块白屏，报的是一句 `three is not defined`，读起来像是
+    // 3D 那一块的 bug，而真正缺的是这个打包清单。
+    // 子路径也要列：`alwaysBundle` 是按**说明符**匹配的，列了 `three` 不会连带
+    // 把它自己的 `three/examples/jsm/...` 也打进包——那些会退化成全局变量，
+    // 而页面里没有那个全局，于是整块白屏。
+    alwaysBundle: ['react', 'react-dom', 'lucide-react', '@deepseek-ai/dsh-client-ui-primitives', 'clsx', '@xyflow/react', 'three', 'three/examples/jsm/loaders/GLTFLoader.js'],
   },
   plugins: [
     // Must run BEFORE the shared css-modules plugin: that one only claims

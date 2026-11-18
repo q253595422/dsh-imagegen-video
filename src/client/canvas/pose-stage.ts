@@ -20,7 +20,9 @@
 
 import type {
   CanvasPoseActor, CanvasPoseCamera, CanvasPoseRig, CanvasPoseScene, CanvasPoseStage,
+  CanvasStageProp, CanvasStagePropKind,
 } from '../../protocol.ts'
+import { timelineOf } from './stage-timeline.ts'
 import { DEFAULT_CAMERA, emptyRig, type PoseCamera } from './pose-rig.ts'
 
 /** 默认场景：深色天空 + 略亮的地面，和 LibTV 导演台的观感一致。
@@ -51,6 +53,7 @@ export const DEFAULT_CAMERA_SPEC: CanvasPoseCamera = {
 /** 演员 id 与机位 id 的前缀。加一个新角色/机位时用它 + 序号，避免重名。 */
 const ACTOR_PREFIX = 'actor'
 const CAMERA_PREFIX = 'camera'
+const PROP_PREFIX = 'prop'
 
 /** 舞台缩放的单位是百分比（面板里显示 300%），渲染要的是倍数。 */
 export function scaleFactor(scene: CanvasPoseScene): number {
@@ -102,6 +105,63 @@ export function specFromCamera(camera: PoseCamera, base: CanvasPoseCamera): Canv
     targetZ,
     fov: camera.fov,
   }
+}
+
+/** 把一个可能缺字段的道具补完整。缺 id 的按序号补，缺 name 的按形状起名。 */
+function propOf(raw: Partial<CanvasStageProp> | undefined, index: number): CanvasStageProp {
+  const kind: CanvasStagePropKind = raw?.kind === 'sphere' || raw?.kind === 'glb' ? raw.kind : 'cube'
+  const fallbackName = kind === 'cube' ? '立方体' : kind === 'sphere' ? '球体' : 'GLB'
+  return {
+    id: raw?.id !== undefined && raw.id !== '' ? raw.id : `${PROP_PREFIX}-${index + 1}`,
+    name: raw?.name !== undefined && raw.name !== '' ? raw.name : `${fallbackName}${index + 1}`,
+    kind,
+    x: typeof raw?.x === 'number' && Number.isFinite(raw.x) ? raw.x : 0,
+    y: typeof raw?.y === 'number' && Number.isFinite(raw.y) ? raw.y : 0,
+    z: typeof raw?.z === 'number' && Number.isFinite(raw.z) ? raw.z : 0,
+    ...typeof raw?.rotateX === 'number' ? { rotateX: raw.rotateX } : {},
+    ...typeof raw?.rotateY === 'number' ? { rotateY: raw.rotateY } : {},
+    ...typeof raw?.rotateZ === 'number' ? { rotateZ: raw.rotateZ } : {},
+    ...typeof raw?.scaleX === 'number' ? { scaleX: raw.scaleX } : {},
+    ...typeof raw?.scaleY === 'number' ? { scaleY: raw.scaleY } : {},
+    ...typeof raw?.scaleZ === 'number' ? { scaleZ: raw.scaleZ } : {},
+    ...raw?.asset !== undefined && typeof raw.asset.assetId === 'string' && raw.asset.assetId !== '' ? { asset: raw.asset } : {},
+  }
+}
+
+/** 给舞台加一个道具。摆在已有道具的右前方，和角色一样不叠在同一点。 */
+export function addProp(stage: CanvasPoseStage, kind: CanvasStagePropKind): CanvasPoseStage {
+  const props = stage.props ?? []
+  const used = new Set(props.map(prop => prop.id))
+  let serial = props.length + 1
+  while (used.has(`${PROP_PREFIX}-${serial}`)) serial += 1
+  const label = kind === 'cube' ? '立方体' : kind === 'sphere' ? '球体' : 'GLB'
+  const prop: CanvasStageProp = {
+    id: `${PROP_PREFIX}-${serial}`,
+    name: `${label} ${serial}`,
+    kind,
+    // 前沿（+z）摆开：相机默认在 +z 侧，摆在正前方才看得见。
+    x: props.length === 0 ? 0 : Math.max(...props.map(item => item.x)) + 1.2,
+    y: 0,
+    z: 1.2,
+    scaleX: 1,
+    scaleY: 1,
+    scaleZ: 1,
+  }
+  return { ...stage, props: [...props, prop] }
+}
+
+/** 改一个道具的字段；id 指不到时原样返回。 */
+export function patchProp(stage: CanvasPoseStage, id: string, patch: Partial<CanvasStageProp>): CanvasPoseStage {
+  const props = stage.props ?? []
+  if (!props.some(prop => prop.id === id)) return stage
+  return { ...stage, props: props.map(prop => (prop.id === id ? { ...prop, ...patch, id: prop.id } : prop)) }
+}
+
+/** 删一个道具。`timeline` 里它的轨道由调用方用 `removeTrack` 一并清掉。 */
+export function removeProp(stage: CanvasPoseStage, id: string): CanvasPoseStage {
+  const props = stage.props ?? []
+  if (!props.some(prop => prop.id === id)) return stage
+  return { ...stage, props: props.filter(prop => prop.id !== id) }
 }
 
 /** 一个空舞台：一个标准站姿的角色 + 一台默认机位 + 默认场景。
@@ -185,8 +245,21 @@ export function stageOf(metadata: { pose?: CanvasPoseRig; stage?: CanvasPoseStag
       ? raw.cameras.map((camera, index) => cameraOf(camera, index))
       : emptyStage().cameras
     const cameraId = cameras.some(camera => camera.id === raw.cameraId) ? raw.cameraId : cameras[0]!.id
+    const props = Array.isArray(raw.props) ? raw.props.map((prop, index) => propOf(prop, index)) : undefined
+    // 时间轴只在文档真的带了它时才带出来：`timelineOf(undefined)` 会造出一份
+    // 默认 5 秒空时间轴，那会让每一份老文档都变成「有时间轴」，而 UI 正是靠
+    // 「有没有 timeline」判断该不该显示那条轨道栏。
+    const timeline = raw.timeline === undefined ? undefined : timelineOf(raw.timeline)
     // 提示词原样带出来：它不是渲染数据，但面板要能重新显示用户敲过的字。
-    return { actors, cameras, cameraId, scene: sceneOf(raw.scene), ...typeof raw.prompt === 'string' ? { prompt: raw.prompt } : {} }
+    return {
+      actors,
+      cameras,
+      cameraId,
+      scene: sceneOf(raw.scene),
+      ...typeof raw.prompt === 'string' ? { prompt: raw.prompt } : {},
+      ...props !== undefined && props.length > 0 ? { props } : {},
+      ...timeline !== undefined ? { timeline } : {},
+    }
   }
   const stage = emptyStage()
   if (metadata?.pose !== undefined) {

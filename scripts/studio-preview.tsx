@@ -112,8 +112,9 @@ const EMPTY_GALLERY = { entries: [] as HistoryEntry[], trash: [] as HistoryEntry
  * Kept here rather than imported from the store: the store pulls in `node:fs`
  * and the preview is a browser page. The field set mirrors
  * `canvas-store.ts`'s `defaultDocument` — if that grows a required field, this
- * goes out of date silently, which is why it carries no nodes of its own: the
- * client's `seedDocument` fills them, and that is the code under test here.
+ * goes out of date silently. It carries no nodes on purpose: a brand-new canvas
+ * is empty (the client draws its quick-start row over it), and nothing is
+ * written to disk until the first edit.
  */
 function previewCanvas(title?: string, id = 'preview-canvas'): CanvasDocument {
   const now = Date.now()

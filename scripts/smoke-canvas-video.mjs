@@ -916,6 +916,15 @@ await check('W1-W3 a finished studio clip lands a referenced node and states are
       pointerDown, nodeById, badgesNow, pickerMenu, openComposeMenu, closeSkillMenu,
       /** Swap what `/canvas/read` answers with (a document the fixture lacks). */
       setCanvasReadDocument: next => { canvasReadDocument = next },
+      /**
+       * What `/canvas/read` currently answers with.
+       *
+       * A check that edits ONE field has to start from the document the fixture
+       * already built; rebuilding it from `canvasDocument` would drop the nodes
+       * an earlier half of the same check added, and the board would vanish
+       * mid-assertion.
+       */
+      canvasReadDocumentNow: () => canvasReadDocument,
       otherCanvas,
       /** Hold the stitched run at "still working" until a check says otherwise. */
       setComposeReportsDone: next => { composeReportsDone = next },
@@ -1051,7 +1060,7 @@ await check('W1-W3 a finished studio clip lands a referenced node and states are
   })
 
 await check('SB1-SB4 the storyboard board renders and hands its clips to the stitch', async () => {
-  const { jsdomWindow, jsdomDocument, view, waitUntil, canvasSaves, canvasDocument, setCanvasReadDocument, reopenCanvas } = shared
+  const { jsdomWindow, jsdomDocument, view, waitUntil, canvasSaves, canvasDocument, setCanvasReadDocument, canvasReadDocumentNow, reopenCanvas } = shared
 
   // Seed a board the way a saved document carries one: three shots (one
   // finished, one still rendering, one blank) plus the two produced clips. The
@@ -1126,6 +1135,81 @@ await check('SB1-SB4 the storyboard board renders and hands its clips to the sti
   assert.ok(run() !== undefined, 'SB3: the board offers a run action')
   assert.equal(run().disabled, true, 'SB3: in carry mode the shot after a pending one cannot run yet')
 
+  // ---- SB6 the length picker narrows to the model this board will run on
+  //
+  // WHY a RUNTIME check: the board has no model picker of its own, so its model
+  // comes from two places — the board's own `model` field, else the model the
+  // composer resolved. When neither reached the render, `catalog` was undefined
+  // on every real board and the picker offered all seven lengths no matter what
+  // the model accepts. Every source-level assertion stayed green: the narrowing
+  // function was still called, just always with `undefined`. Only the rendered
+  // <option> list can tell those two apart.
+  //
+  // Written as a document edit rather than a settings swap: settings are read
+  // once when the panel mounts, so re-pointing them mid-run proves nothing. A
+  // board that NAMES a five-second model has to narrow regardless.
+  const secondsPicker = () => [...boardEl().querySelectorAll('select')]
+    .find(select => /^\d+\s*秒$/.test(select.getAttribute('aria-label') ?? ''))
+  const optionValues = () => {
+    const picker = secondsPicker()
+    return picker === undefined ? [] : [...picker.options].map(option => option.value)
+  }
+
+  // vela accepts exactly one length. A board naming it may only offer that one.
+  shared.setCanvasReadDocument({
+    ...canvasReadDocumentNow(),
+    revision: canvasReadDocumentNow().revision + 1,
+    nodes: canvasReadDocumentNow().nodes.map(item => item.id === 'node-board'
+      ? { ...item, metadata: { ...item.metadata, storyboard: { ...item.metadata.storyboard, model: 'vela-ai-video' } } }
+      : item),
+  })
+  await reopenCanvas()
+  assert.ok(await waitUntil(() => boardEl() !== null, 6000), 'SB6: the board comes back naming a model')
+  // Shot 1 is saved at 3 s, which vela does not accept. The picker keeps that
+  // value as a choice (a document must show what will be sent) and adds the
+  // model's own — anything else would silently rewrite the user's board.
+  assert.deepEqual(optionValues(), ['3', '5'], 'SB6: a five-second model drops every length but five, keeping the saved 3 s visible')
+
+  // grok-video speaks 6 / 10 / 15, which is a different subset: the narrowing
+  // must follow the model, not a hard-coded shorter list.
+  shared.setCanvasReadDocument({
+    ...canvasReadDocumentNow(),
+    revision: canvasReadDocumentNow().revision + 1,
+    nodes: canvasReadDocumentNow().nodes.map(item => item.id === 'node-board'
+      ? { ...item, metadata: { ...item.metadata, storyboard: { ...item.metadata.storyboard, model: 'grok-video' } } }
+      : item),
+  })
+  await reopenCanvas()
+  assert.ok(await waitUntil(() => boardEl() !== null, 6000), 'SB6: the board comes back on the second model')
+  assert.deepEqual(optionValues(), ['3', '6', '10', '15'], 'SB6: a 6/10/15 model offers exactly those plus the saved 3 s')
+
+  // Clearing the field hands the choice back to the composer's model. The
+  // fixture default (agnes) declares no durations, so the full editorial list
+  // comes back — that is the `undefined` branch, and it must be reachable too.
+  shared.setCanvasReadDocument({
+    ...canvasReadDocumentNow(),
+    revision: canvasReadDocumentNow().revision + 1,
+    nodes: canvasReadDocumentNow().nodes.map(item => item.id === 'node-board'
+      ? { ...item, metadata: { ...item.metadata, storyboard: { ...item.metadata.storyboard, model: undefined } } }
+      : item),
+  })
+  await reopenCanvas()
+  assert.ok(await waitUntil(() => boardEl() !== null, 6000), 'SB6: the board comes back with no model of its own')
+  assert.deepEqual(
+    optionValues(),
+    ['3', '4', '5', '6', '8', '10', '12', '15'],
+    'SB6: with no declared durations the full editorial list is offered (plus the saved value)',
+  )
+  // The signal that the composer's model really reached the board: the fixture
+  // default is agnes-video-2.5-**flash**, which is documented as 720P-only. A
+  // board that names no model must therefore offer ONE resolution tier. Reading
+  // no model at all leaves the generic four, which is the state the screenshot
+  // caught: a 720P board cheerfully offering 480P / 768P / 1080P.
+  const resolutionPicker = () => [...boardEl().querySelectorAll('select')]
+    .find(select => select.getAttribute('aria-label') === '分辨率')
+  const tiers = [...(resolutionPicker()?.options ?? [])].map(option => option.value)
+  assert.deepEqual(tiers, ['720P'], 'SB6: the board follows the 720P-only model it will actually run on')
+
   // Switch the board to independent shots: now shot 3 is free to run, and the
   // SAME button has to notice. This is the half that proves the rule is read
   // from the board rather than hard-coded.
@@ -1147,6 +1231,128 @@ await check('SB1-SB4 the storyboard board renders and hands its clips to the sti
     .find(button => (button.getAttribute('aria-label') ?? '') === '取尾帧续拍')
   assert.ok(continueButton !== undefined, 'SB4: the clip offers 取尾帧续拍')
   assert.equal(continueButton.disabled, false, 'SB4: the action is live on a finished clip')
+
+  // ---- SB7 a carried shot says it will not carry the pinned identity
+  //
+  // The fixture board is in `carry` mode and this document has nobody pinned, so
+  // it must stay QUIET — a board warning about nothing teaches the user to
+  // ignore the line. Pin one first, then the loss becomes real and the board has
+  // to name it on the affected rows.
+  assert.equal(boardEl().querySelector('[data-storyboard-cast-warn]'), null,
+    'SB7: a board with nothing pinned shows no cast warning')
+  assert.equal(boardEl().querySelector('[data-cast-chip]'), null,
+    'SB7: and no row claims to be missing an identity it never had')
+
+  const pinnedImage = {
+    id: 'node-cast-sb7', type: 'image', title: '阿禾', x: 40, y: 900, width: 240, height: 240,
+    metadata: {
+      status: 'success',
+      cast: { role: 'character', name: '阿禾' },
+      // `castMembers` requires real bytes: a pinned node with no URL is not a
+      // reference, it is an empty frame, and the board must not promise it.
+      asset: { assetId: 'he.png', url: 'data:image/png;base64,AAAA', mime: 'image/png', width: 1, height: 1, bytes: 1 },
+    },
+  }
+  shared.setCanvasReadDocument({
+    ...canvasReadDocumentNow(),
+    revision: canvasReadDocumentNow().revision + 1,
+    // Back to `carry`: SB3 switched it to `cut`, and the loss only exists on a
+    // carried board.
+    nodes: [
+      ...canvasReadDocumentNow().nodes
+        .filter(item => item.id !== 'node-cast-sb7')
+        .map(item => item.id === 'node-board'
+          ? { ...item, metadata: { ...item.metadata, storyboard: { ...item.metadata.storyboard, continuity: 'carry' } } }
+          : item),
+      pinnedImage,
+    ],
+  })
+  await reopenCanvas()
+  assert.ok(await waitUntil(() => boardEl() !== null, 6000), 'SB7: the board comes back with a pinned identity')
+  const dropped = [...boardEl().querySelectorAll('[data-cast-dropped]')]
+    .map(row => row.getAttribute('data-shot-id'))
+  assert.deepEqual(dropped, ['shot-2', 'shot-3'],
+    'SB7: in carry mode every shot after the first is marked as running without the pinned face')
+  assert.equal(boardEl().querySelector('[data-storyboard-cast-warn]') !== null, true,
+    'SB7: the board also summarises the loss once, above the list')
+  assert.match(boardEl().querySelector('[data-storyboard-cast-warn]').textContent ?? '', /2/,
+    'SB7: the summary counts the rows it is talking about')
+
+  // Switching to independent shots removes the loss entirely — and the warning
+  // with it. This is the half that proves the message is driven by the rule
+  // rather than by "somebody is pinned".
+  selectSetter.call(
+    [...boardEl().querySelectorAll('select')].find(select => select.getAttribute('aria-label') === '镜头衔接'),
+    'cut',
+  )
+  ;[...boardEl().querySelectorAll('select')].find(select => select.getAttribute('aria-label') === '镜头衔接')
+    .dispatchEvent(new jsdomWindow.Event('change', { bubbles: true }))
+  assert.ok(
+    await waitUntil(() => boardEl().querySelector('[data-storyboard-cast-warn]') === null, 4000),
+    'SB7: with independent shots nothing is lost, so the warning disappears',
+  )
+})
+
+/**
+ * SB5：分镜必须把「钉住的身份」真的送进上游。
+ *
+ * WHY 这条必须是运行时断言而不是源码正则：`submitShot` 里写出
+ * `castRefsFor(...)` 却把结果丢掉（`slice(0, 0)`、把 `plan.castSlots` 写死成
+ * 0），源码上每一个符号都还在，任何 grep 都绿，而用户的十条分镜一条都没有
+ * 阿禾的图。只有看**真正发出去的请求体**才能分辨这两种情况。
+ */
+await check('SB5 a storyboard shot submits the pinned cast as reference images', async () => {
+  const { jsdomWindow, view, waitUntil, videoSubmissions, canvasDocument, setCanvasReadDocument, reopenCanvas } = shared
+
+  // A data: URL is used on purpose: `assetToDataUrl` returns it as-is, so the
+  // assertion is about the request `submitShot` builds and not about whether
+  // jsdom's FileReader happens to cooperate.
+  const CAST_PIXEL = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg=='
+  const castNode = {
+    id: 'node-cast-he', type: 'image', title: '阿禾', x: 40, y: 560, width: 240, height: 240,
+    metadata: {
+      status: 'success',
+      cast: { role: 'character', name: '阿禾' },
+      asset: { assetId: 'he.png', url: CAST_PIXEL, mime: 'image/png', width: 1, height: 1, bytes: 1 },
+    },
+  }
+  const board = {
+    id: 'node-board-cast', type: 'storyboard', title: '分镜', x: 40, y: 40, width: 380, height: 420,
+    metadata: {
+      status: 'idle',
+      storyboard: {
+        // `cut`, so this shot has no join to protect and the cast has room.
+        shots: [{ id: 'shot-1', prompt: '她推开门，窗外在下雨', seconds: 5 }],
+        aspectRatio: '16:9', resolution: '720P', continuity: 'cut',
+      },
+    },
+  }
+  setCanvasReadDocument({
+    ...canvasDocument,
+    revision: canvasDocument.revision + 1,
+    nodes: [...canvasDocument.nodes.filter(node => node.id !== 'node-board' && node.id !== 'node-board-cast'), castNode, board],
+    connections: [],
+  })
+  await reopenCanvas()
+
+  const boardEl = () => view.querySelector('[data-node-id="node-board-cast"]')
+  assert.ok(await waitUntil(() => boardEl() !== null, 8000), 'SB5: the board renders on the reopened canvas')
+
+  const run = [...boardEl().querySelectorAll('button')]
+    .find(button => /生成剩余镜头|生成下一镜/.test(button.textContent ?? ''))
+  assert.ok(run !== undefined, 'SB5: the board offers a run action')
+  assert.equal(run.disabled, false, 'SB5: a blank shot with a prompt is runnable')
+
+  const before = videoSubmissions.length
+  run.dispatchEvent(new jsdomWindow.MouseEvent('click', { bubbles: true, cancelable: true }))
+  assert.ok(await waitUntil(() => videoSubmissions.length > before, 8000), 'SB5: the run reached the host')
+
+  const request = videoSubmissions.at(-1)
+  assert.equal(request.mode, 'reference', 'SB5: a pinned character turns the shot into a reference run, not a text run')
+  assert.equal(request.image, CAST_PIXEL, 'SB5: the pinned image itself travels, not just a sentence about it')
+  assert.deepEqual(request.canvas.referenceNodeIds, ['node-cast-he'], 'SB5: the lineage names the node the pixels came from')
+  assert.match(request.prompt, /参考图 1 是角色「阿禾」/, 'SB5: the prompt says which reference is who')
+  assert.match(request.prompt, /窗外在下雨/, 'SB5: the shot prompt is still there, cast text is appended not substituted')
 })
 
 await check('B1-B3 the stitch strip is a real button that opens the confirm card', async () => {

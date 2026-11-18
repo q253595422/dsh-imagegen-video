@@ -477,6 +477,11 @@ function isNode(value: unknown): value is CanvasNode {
   const metadata = node.metadata
   if (metadata !== undefined && (metadata === null || typeof metadata !== 'object')) return false
   const state = (metadata ?? {}) as Record<string, unknown>
+  // 锁定 / 隐藏是所有类型共有的两个开关。只拒绝「有但类型不对」的值，缺项一律
+  // 当作 false——校验器在这里过严的代价不是「拒收这次请求」，而是**这份文档
+  // 再也存不下去**：`coerceDocument` 变 undefined、`save()` 直接抛。
+  if (state.locked !== undefined && typeof state.locked !== 'boolean') return false
+  if (state.hidden !== undefined && typeof state.hidden !== 'boolean') return false
   if (node.type === 'image') {
     // A malformed recipe must not be accepted quietly: the editor re-renders
     // from it, and a half-valid document would either throw on open or silently
@@ -522,9 +527,32 @@ function isNode(value: unknown): value is CanvasNode {
     return true
   }
   if (node.type === 'config') {
-    return state.prompt === undefined || typeof state.prompt === 'string'
+    if (state.prompt !== undefined && typeof state.prompt !== 'string') return false
+    if (state.promptSet !== undefined && !isPromptSet(state.promptSet)) return false
+    return true
   }
   return state.text === undefined || typeof state.text === 'string'
+}
+
+/**
+ * 套图条目守卫：缺项放行、形状错拒收。
+ *
+ * 与 {@link isNode} 里其它字段的同一条取舍：校验器过严的代价是这一份文档再也
+ * 存不下去（读回来就丢，用户刚画的整板消失）。所以「没写 promptSet」和
+ * 「写了个空数组」都放行；只有**明明是个列表却装了别的东西**才拒收——那不是
+ * 「还没写完」，那是写坏了的数据。
+ *
+ * 只出现在非 config 节点上不校验：那条路径没人读，收得再紧也只是徒增
+ * 「复制粘贴之后画布打不开」的风险。
+ */
+function isPromptSet(value: unknown): boolean {
+  if (!Array.isArray(value)) return false
+  for (const entry of value) {
+    if (entry === null || typeof entry !== 'object') return false
+    const record = entry as Record<string, unknown>
+    if (typeof record.id !== 'string' || typeof record.title !== 'string' || typeof record.prompt !== 'string') return false
+  }
+  return true
 }
 
 function isDocument(value: unknown): value is CanvasDocument {
@@ -710,6 +738,9 @@ export class CanvasStore {
         createdAt: project.createdAt,
         updatedAt: project.updatedAt,
         ...project.favorite === true ? { favorite: true } : {},
+        // 老索引里没有这一格：缺省就是「没有缩略图」，界面退回到画布图标，
+        // 而不是整行读不出来。
+        ...typeof project.thumb === 'string' && project.thumb !== '' ? { thumb: project.thumb } : {},
       }]
     })
   }
@@ -1032,8 +1063,28 @@ export class CanvasStore {
       createdAt: document.createdAt,
       updatedAt: document.updatedAt,
       ...favorite ? { favorite: true } : {},
+      ...thumbOf(document) === undefined ? {} : { thumb: thumbOf(document)! },
     }
   }
+}
+
+/**
+ * 画布在列表里显示的那一格图：第一张带已渲染资产的图片节点。
+ *
+ * WHY 取「第一张」而不是「最新一张」或「缩略图拼图」：列表里这一格只回答
+ * 「这是哪张画布」，用户认的是自己最先放进来的那张底图。拼图或取最新一张
+ * 都需要遍历整份文档、还要解码图片，而这里是在**每次保存**时算的——保存
+ * 顺手取一个已有的 URL 是零成本，做重活就会让自动保存变慢。
+ *
+ * 视频节点也带 `video.url`，但它不是图片，`<img>` 解不出来，所以只要图片。
+ */
+function thumbOf(document: CanvasDocument): string | undefined {
+  for (const node of document.nodes) {
+    if (node.type !== 'image') continue
+    const asset = node.metadata?.asset
+    if (asset !== undefined && asset.url !== '') return asset.url
+  }
+  return undefined
 }
 
 export const canvasStore = new CanvasStore()

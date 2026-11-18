@@ -266,6 +266,10 @@ export class ImageGenerationRuntime {
         ...channel.id === undefined ? {} : { channelId: channel.id },
         channel: channel.name,
         ...plan === undefined ? {} : { plan },
+        // Persisted, not just echoed: the canvas reopens long after this task
+        // row is gone, and without the lineage a finished clip it can no longer
+        // claim a placeholder for looks like a lost render.
+        ...request.canvas === undefined ? {} : { canvas: request.canvas },
       })
       // The engine's bytes are not serializable; hand back the stored URLs.
       const stored = history.find(entry => entry.id === entryId)
@@ -366,6 +370,7 @@ export class ImageGenerationRuntime {
         files: [{ bytes: outcome.bytes, mime: outcome.kind === 'video' ? 'video/mp4' : 'image/png', duration }],
         renderer: 'code',
         ...request.channel === undefined ? {} : { channel: request.channel },
+        ...request.canvas === undefined ? {} : { canvas: request.canvas },
       })
       const stored = history.find(entry => entry.id === entryId)
       return {

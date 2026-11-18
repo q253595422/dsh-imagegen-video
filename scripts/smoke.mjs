@@ -5529,6 +5529,60 @@ await check('D3 sidebar entry mounts inside desktop and unknown sidebar shells, 
   assert.equal(hostForWheel.getAttribute('data-dsh-imagegen-wheel-owner'), '', 'a re-seat reinstalls the wheel ownership mark')
   assert.equal(hostForWheel.parentElement.className, 'xUkysG_regionArea', 'the re-seated host is the same element, in the same seat')
 
+  // --- unrelated DOM churn must not re-measure the sidebar --------------------
+  // 侧栏入口的 observer 挂在 `document.body` 上，而画布是这棵树里最活跃的部分：
+  // 平移时 React 每帧都在重排卡片。旧判据「只要有一段节点变更就重新测一次」让
+  // 每次真实平移都走一遍 `ensure()`，其中对整棵树的 `getComputedStyle` 会强制
+  // 重排——真机实测 200 节点画布 p95 56 ms、8 帧超过 33 ms；把无关变更排除后
+  // 是 18 ms、零帧超标。
+  //
+  // 这里直接数「重测发生了没有」：用 observer 自己调 `isVisible` 的次数当信号
+  // （`ensure` 每次都要拿它确认根还在画面上），比断言某个标记在不在更可信——
+  // 标记删掉了自然就没有，那种断言删不删都能过。
+  {
+    // 侧栏跑在 `vm.runInNewContext` 的沙箱里，它的 `globalThis` 是这个 sandbox
+    // 对象、不是 Node 的全局；桩挂错地方就一次都收不到（这里踩过一次：挂在
+    // `jsdomWindow` 和 Node 的 `globalThis` 上都拿到 0 次）。
+    const measureCounter = { count: 0 }
+    const realComputedStyle = sandbox.getComputedStyle ?? jsdomWindow.getComputedStyle
+    const countingComputedStyle = function (...args) {
+      measureCounter.count += 1
+      return realComputedStyle.apply(this, args)
+    }
+    sandbox.getComputedStyle = countingComputedStyle
+    jsdomWindow.getComputedStyle = countingComputedStyle
+    const settle = () => new Promise(resolve => setTimeout(resolve, 40))
+
+    const canvas = jsdomDocument.createElement('div')
+    canvas.setAttribute('data-canvas-workspace', '')
+    jsdomDocument.body.append(canvas)
+    await settle()
+
+    // 画布内部反复重排：这正是平移时发生的事（React 每帧重挂卡片）。
+    measureCounter.count = 0
+    for (let index = 0; index < 8; index += 1) {
+      const card = jsdomDocument.createElement('div')
+      card.setAttribute('data-node-id', `node-${index}`)
+      canvas.append(card)
+      await new Promise(resolve => setTimeout(resolve, 5))
+    }
+    await settle()
+    assert.equal(
+      measureCounter.count, 0,
+      `canvas churn never re-measures the sidebar (getComputedStyle ran ${measureCounter.count} times)`,
+    )
+
+    // 反过来：和侧栏同源的变更必须仍然重测，否则入口会留在被换掉的容器里。
+    // 用 body 直接追加来触发：它是侧栏根的祖先，这类变更正对应「宿主换掉了整
+    // 个壳层」。画布之外、壳层之内的普通节点本来就不影响座位，不该重测。
+    measureCounter.count = 0
+    jsdomDocument.body.append(jsdomDocument.createElement('span'))
+    await settle()
+    assert.ok(measureCounter.count > 0, `a change above the sidebar root still re-measures the entry (count=${measureCounter.count}, root=${jsdomDocument.querySelector('[data-dsh-imagegen-sidebar-root]')?.className ?? 'none'})`)
+    canvas.remove()
+    jsdomWindow.getComputedStyle = realComputedStyle
+  }
+
   disposeDesktop()
   assert.equal(jsdomDocument.querySelector('[data-dsh-imagegen-session-tabs]') === null, true, 'the disposer takes the tabs back out')
   assert.equal(jsdomDocument.querySelector('[data-dsh-imagegen-history-host]') === null, true, 'the disposer takes the history host back out')
@@ -6245,6 +6299,9 @@ await check('E1 client apply mounts the sidebar entry and studio (jsdom)', async
   const canvasTasks = []
   /** Documents the workspace persisted through /canvas/save. */
   const canvasSaves = []
+  /** 宿主真正接受（返回 ok）的画布写入。和 `canvasSaves` 的区别是：撞冲突和
+   *  被拒的请求也会进 `canvasSaves`，所以「有没有把内容写进去」只能看这一份。 */
+  const canvasCommitted = []
   /** Every gallery mutation the panel issued, in order (see the gallery stubs). */
   const galleryMutations = []
   const galleryAppends = []
@@ -6380,6 +6437,13 @@ await check('E1 client apply mounts the sidebar entry and studio (jsdom)', async
   const previewRequests = []
   /** Every fetch path the client issued (debug aid for the canvas tools). */
   const requestPaths = []
+  /** Canvases the client asked the host to create. A brand-new canvas is a
+   *  DRAFT until the first edit, so this must stay empty on a first-run screen
+   *  and become exactly one entry on the first node. */
+  const canvasCreations = []
+  /** When true, `/canvas/list` answers with an empty library — the state a fresh
+   *  install is in. */
+  let canvasLibraryEmpty = false
   const canvasDocument = {
     version: 2,
     id: 'canvas-smoke',
@@ -6408,6 +6472,21 @@ await check('E1 client apply mounts the sidebar entry and studio (jsdom)', async
   let failSaveBudget = 0
   /** How many save requests answered with a failure. */
   let failedSaveAttempts = 0
+  /**
+   * 另一个窗口在这张画布上的改动。设了之后，`/canvas/read` 返回它而不是 fixture，
+   * 且前 `conflictSaveBudget` 次 `/canvas/save` 一律回 `canvas-conflict`——这正是
+   * 浏览器在上面那个窗口里保存过、宿主 revision 已经变了的样子。
+   *
+   * 用「先撞一次冲突、再读回」复现真实现场：服务端不是拒绝写入，而是一个窗口的
+   * 保存把 revision 推到了另一个窗口看不见的地方。
+   */
+  let remoteCanvas = null
+  let conflictSaveBudget = 0
+  /**
+   * 有多少次保存被判定为与另一个窗口冲突。和 `failedSaveAttempts` 分开：冲突
+   * 会有后续读回和一次重试，混在一起数就看不出「是不是真的合并了」。
+   */
+  let conflictAttempts = 0
   /** PPT conversions this run submitted / sources it uploaded / tasks it lists. */
   const pptSubmissions = []
   const pptUploaded = []
@@ -6693,12 +6772,49 @@ await check('E1 client apply mounts the sidebar entry and studio (jsdom)', async
     }
     if (path.endsWith('/canvas/list')) {
       const summaryOfCanvas = doc => ({ id: doc.id, title: doc.title, revision: doc.revision, nodeCount: doc.nodes.length, createdAt: 1, updatedAt: 1 })
-      return { ok: true, json: async () => ({ ok: true, projects: [summaryOfCanvas(canvasDocument), summaryOfCanvas(canvasDocument2)] }) }
+      // A brand-new install has no canvases at all. Only the first-run check
+      // flips this: every other case assumes the two fixtures are there.
+      const projects = canvasLibraryEmpty
+        ? []
+        : [summaryOfCanvas(canvasDocument), summaryOfCanvas(canvasDocument2), ...canvasCreations.map(summaryOfCanvas)]
+      return { ok: true, json: async () => ({ ok: true, projects }) }
     }
     if (path.endsWith('/canvas/read')) {
       const requested = JSON.parse(init.body).id
+      if (remoteCanvas !== null && requested === remoteCanvas.id) {
+        return { ok: true, json: async () => ({ ok: true, document: remoteCanvas }) }
+      }
       const found = requested === canvasDocument2.id ? canvasDocument2 : canvasDocument
       return { ok: true, json: async () => ({ ok: true, document: found }) }
+    }
+    if (path.endsWith('/canvas/create')) {
+      const payload = JSON.parse(init.body ?? '{}')
+      const created = {
+        version: 2,
+        id: `canvas-created-${canvasCreations.length + 1}`,
+        title: payload.title ?? '未命名画布',
+        revision: 1,
+        viewport: { x: 0, y: 0, k: 1 },
+        background: 'lines',
+        nodes: [],
+        connections: [],
+        createdAt: 1,
+        updatedAt: 1,
+      }
+      canvasCreations.push(created)
+      return { ok: true, json: async () => ({ ok: true, document: created }) }
+    }
+    if (path.endsWith('/canvas/bundle/export')) {
+      // The client turns the bundle into a Blob and clicks a download link; this
+      // sandbox only needs the route answered so the flow completes.
+      const payload = JSON.parse(init.body ?? '{}')
+      return {
+        ok: true,
+        json: async () => ({
+          ok: true,
+          bundle: { version: 1, document: canvasSaves.at(-1) ?? { ...canvasDocument, id: payload.id }, assets: {}, unresolved: [] },
+        }),
+      }
     }
     if (path.endsWith('/canvas/save')) {
       const payload = JSON.parse(init.body)
@@ -6710,12 +6826,20 @@ await check('E1 client apply mounts the sidebar entry and studio (jsdom)', async
         // back and retries once, which would muddy the count below.
         return { ok: true, json: async () => ({ ok: false, code: 'write-failed', message: '宿主写入失败' }) }
       }
+      if (conflictSaveBudget > 0) {
+        conflictSaveBudget -= 1
+        conflictAttempts += 1
+        return { ok: true, json: async () => ({ ok: false, code: 'canvas-conflict', message: '画布已在其他窗口修改' }) }
+      }
       // Recorded before the hold: a check can see the request landed while its
       // answer is still parked.
       if (heldSaveBudget > 0) {
         heldSaveBudget -= 1
         await new Promise(resolve => { heldSaves.push(resolve) })
       }
+      // 只有真的被宿主接受的写入才进这里。`canvasSaves` 记的是「请求发出去了」，
+      // 撞冲突和被拒的请求同样在里面；判断「这一笔到底落没落盘」必须看这份。
+      canvasCommitted.push(payload.document)
       return { ok: true, json: async () => ({ ok: true, document: { ...payload.document, revision: payload.document.revision + 1 } }) }
     }
     if (path.endsWith('/ppt/tasks')) {
@@ -8329,12 +8453,37 @@ await check('E1 client apply mounts the sidebar entry and studio (jsdom)', async
     {
       const header = view.querySelector('[data-canvas-workspace] header')
       assert.ok(header !== null, 'canvas top bar is rendered')
-      const labels = [...header.querySelectorAll('button')].map(button => button.getAttribute('aria-label'))
-      assert.ok(labels.includes('导出画布'), `export button missing from the top bar; found ${JSON.stringify(labels)}`)
-      assert.ok(labels.includes('导入画布'), `import button missing from the top bar; found ${JSON.stringify(labels)}`)
-      // The layout guard measures every `[data-dock-item]`; these two live in the
-      // top bar and must not be counted as dock tiles.
+      // 这段比 `waitUntil` 的定义早（它是这个 case 后半段才声明的），所以自己等：
+      // 菜单是一次 React 状态翻转，落地要一个宏任务。
+      const settle = async (predicate, what) => {
+        for (let attempt = 0; attempt < 40; attempt += 1) {
+          if (await predicate()) return
+          await new Promise(resolve => setTimeout(resolve, 20))
+        }
+        throw new Error(`timed out waiting for ${what}`)
+      }
+      // 两枚在「画布文件」菜单里，不再平铺在顶栏：收藏 / 导出 / 导入 / 删除画布
+      // 四枚文件管理动作与画布上正在做的事无关，却和标题挤在同一条线上，760px
+      // 以下还把它挤到第二行。这里点开那枚 ⋯ 再点名，两条路径都验到：入口在
+      // 顶栏，条目真的渲染出来。
+      const menuButton = [...header.querySelectorAll('button')]
+        .find(button => (button.getAttribute('aria-label') ?? '').startsWith('画布文件'))
+      assert.ok(menuButton !== undefined, 'the canvas-file menu entry is on the top bar')
       assert.equal(header.querySelectorAll('[data-dock-item]').length, 0, 'top-bar buttons must not be tagged as dock tiles')
+      menuButton.dispatchEvent(new jsdomWindow.MouseEvent('click', { bubbles: true }))
+      await settle(() => view.querySelector('[class*="topBarMenu"]') !== null, 'the canvas-file menu to open')
+      const menuLabels = [...view.querySelector('[class*="topBarMenu"]').querySelectorAll('button')]
+        .map(button => (button.textContent ?? '').trim())
+      assert.ok(menuLabels.some(label => label.includes('导出画布')), `export entry missing from the canvas-file menu; found ${JSON.stringify(menuLabels)}`)
+      assert.ok(menuLabels.some(label => label.includes('导入画布')), `import entry missing from the canvas-file menu; found ${JSON.stringify(menuLabels)}`)
+      // 草稿上收藏/导出必须自己说清楚为什么不能点，而不是亮着一个只会 404 的按钮。
+      const exportRow = [...view.querySelector('[class*="topBarMenu"]').querySelectorAll('button')]
+        .find(button => (button.textContent ?? '').includes('导出画布'))
+      const draft = canvasDocument.id === ''
+      assert.equal(exportRow.disabled, draft, draft ? 'a draft canvas must not offer export' : 'a saved canvas must offer export')
+      if (draft) assert.ok((exportRow.title ?? '').length > 0, 'a disabled export row says why')
+      jsdomWindow.dispatchEvent(new jsdomWindow.KeyboardEvent('keydown', { key: 'Escape', bubbles: true }))
+      await settle(() => view.querySelector('[class*="topBarMenu"]') === null, 'Escape to close the canvas-file menu')
       const fileInput = header.querySelector('input[type="file"]')
       assert.ok(fileInput !== null, 'the import button needs a file input to open')
       assert.equal(fileInput.getAttribute('accept'), 'application/json,.json', 'only JSON bundles should be selectable')
@@ -8424,6 +8573,21 @@ await check('E1 client apply mounts the sidebar entry and studio (jsdom)', async
     // without the flush this edit never leaves the browser at all.
     await switchProject('second')
     assert.ok(await waitUntil(() => view.querySelector('[data-node-id="node-second"]') !== null), 'the second canvas is on screen')
+    // The picker's trigger names an ACTION, not the canvas. It used to print the
+    // current canvas's title while the title button right beside it printed the
+    // same string, so the toolbar showed one name twice and neither read as
+    // clickable — and a long canvas name was truncated to a stub in the 180px
+    // trigger while the full name sat next to it. `second` here is a short name,
+    // so the trigger must say "switch · <title>" and must never be JUST the
+    // title; the unnamed case must say the generic action.
+    {
+      const picker = view.querySelector('[data-canvas-workspace] [data-dsh-select][aria-label="画布项目"]')
+      assert.ok(picker !== null, 'the project selector is mounted')
+      const triggerText = (picker.textContent ?? '').trim()
+      const titleText = (view.querySelector('[data-canvas-workspace] button[title="双击重命名"]')?.textContent ?? '').trim()
+      assert.notEqual(triggerText, titleText, 'the project picker must not repeat the canvas title verbatim')
+      assert.match(triggerText, /切换/, `the picker trigger names the switch action (got "${triggerText}")`)
+    }
     await renameCanvas('second edited')
     await switchProject('smoke')
     assert.ok(
@@ -8535,6 +8699,53 @@ await check('E1 client apply mounts the sidebar entry and studio (jsdom)', async
     // The toast offers recovery instead of being a dead end.
     const failedToast = view.querySelector('[class*="errorToast"]')
     assert.ok(failedToast !== null, 'the failure is surfaced on screen')
+
+    // --------------- an unsaved edit blocks leaving, and never exports stale
+    // Run while the document IS unsynced (right after a rejected write):
+    // `newCanvas` / `selectProject` replace `document` right after the flush, so
+    // a failed flush used to throw the edit away — the toast said "saving
+    // failed" while the only copy was already gone. `exportBundle` was worse: it
+    // bundles the host's ON-DISK copy, so exporting during a failure handed back
+    // the version from before the edit and called it exported.
+    {
+      const bundleExportsBefore = requestPaths.filter(path => path.includes('/canvas/bundle/export')).length
+      const openFileMenu = async () => {
+        const trigger = [...view.querySelectorAll('[data-canvas-workspace] button')]
+          .find(button => (button.getAttribute('aria-label') ?? '').startsWith('画布文件'))
+        assert.ok(trigger !== undefined, 'the canvas-file menu is reachable while unsaved')
+        trigger.dispatchEvent(new jsdomWindow.MouseEvent('click', { bubbles: true }))
+        for (let attempt = 0; attempt < 40; attempt += 1) {
+          if (view.querySelector('[class*="topBarMenu"]') !== null) return
+          await new Promise(resolve => setTimeout(resolve, 20))
+        }
+        throw new Error('timed out waiting for the canvas-file menu while unsaved')
+      }
+      // New canvas: the current document must stay exactly as it is.
+      view.querySelector('[data-canvas-workspace] button[aria-label="新建画布"]').dispatchEvent(new jsdomWindow.MouseEvent('click', { bubbles: true }))
+      await new Promise(resolve => setTimeout(resolve, 120))
+      assert.ok(
+        view.querySelector('[data-node-id="node-image"]') !== null,
+        'a failed save keeps the current canvas instead of opening a blank draft',
+      )
+      assert.ok(
+        (view.querySelector('[data-canvas-workspace] button[title="双击重命名"]')?.textContent ?? '').includes('save will fail'),
+        'the blocked canvas keeps its unsaved title on screen',
+      )
+      // Export: must not ask the host for the on-disk (stale) copy at all.
+      await openFileMenu()
+      const blockedExport = [...view.querySelector('[class*="topBarMenu"]').querySelectorAll('button')]
+        .find(button => (button.textContent ?? '').includes('导出画布'))
+      assert.ok(blockedExport !== undefined, 'the export row exists while unsaved')
+      assert.equal(blockedExport.disabled, false, 'an unsaved edit must be what holds export, not a dead button')
+      blockedExport.dispatchEvent(new jsdomWindow.MouseEvent('click', { bubbles: true }))
+      await new Promise(resolve => setTimeout(resolve, 120))
+      assert.equal(
+        requestPaths.filter(path => path.includes('/canvas/bundle/export')).length, bundleExportsBefore,
+        'an unsaved canvas is never exported from the host’s stale copy',
+      )
+      jsdomWindow.dispatchEvent(new jsdomWindow.KeyboardEvent('keydown', { key: 'Escape', bubbles: true }))
+      await new Promise(resolve => setTimeout(resolve, 50))
+    }
     const retrySaving = [...failedToast.querySelectorAll('button')].find(button => button.textContent === '重试保存')
     assert.ok(retrySaving !== undefined, 'the toast offers an explicit retry')
     // Dismissing the toast must NOT mean "this edit is never saved": the × only
@@ -8560,6 +8771,150 @@ await check('E1 client apply mounts the sidebar entry and studio (jsdom)', async
     // The notice clears once the write lands.
     assert.ok(await waitUntil(() => view.querySelector('[class*="errorToast"]') === null, 2500), 'the toast clears after the retry succeeds')
 
+    // The guard only holds an UNSAVED edit: once every write has landed, the
+    // same export is allowed again — a blocked path must not stay blocked.
+    {
+      const bundleExportsBefore = requestPaths.filter(path => path.includes('/canvas/bundle/export')).length
+      const trigger = [...view.querySelectorAll('[data-canvas-workspace] button')]
+        .find(button => (button.getAttribute('aria-label') ?? '').startsWith('画布文件'))
+      trigger.dispatchEvent(new jsdomWindow.MouseEvent('click', { bubbles: true }))
+      for (let attempt = 0; attempt < 40; attempt += 1) {
+        if (view.querySelector('[class*="topBarMenu"]') !== null) break
+        await new Promise(resolve => setTimeout(resolve, 20))
+      }
+      const recoveredExport = [...view.querySelector('[class*="topBarMenu"]').querySelectorAll('button')]
+        .find(button => (button.textContent ?? '').includes('导出画布'))
+      assert.ok(recoveredExport !== undefined, 'the export row is back after recovery')
+      recoveredExport.dispatchEvent(new jsdomWindow.MouseEvent('click', { bubbles: true }))
+      assert.ok(
+        await waitUntil(() => requestPaths.filter(path => path.includes('/canvas/bundle/export')).length > bundleExportsBefore, 2500),
+        'an export with nothing pending still reaches the host',
+      )
+    }
+
+
+    // ---------------------- another window's edits survive a save (F14)
+
+    // 这个块整体用「节点拖动」当编辑来源，而不是改标题：标题栏那个值是从
+    // `document.title` 读的，而保存回来只会更新文档，读起来分不清「这一页写的」
+    // 和「服务端回来的」。坐标不一样——拖动改的是本地文档，合并结果里有它没有它
+    // 是一句话能验证的事实。
+
+    /** 真指针拖动一张卡。jsdom 没有 PointerEvent，React Flow 读的是 clientX/Y。 */
+    const dragNode = async (nodeId, dx, dy) => {
+      const element = view.querySelector(`[data-node-id="${nodeId}"]`)
+      assert.ok(element !== null, `the node ${nodeId} is on screen`)
+      const box = { left: 100, top: 100, width: 260, height: 150, right: 360, bottom: 250, x: 100, y: 100, toJSON: () => ({}) }
+      element.getBoundingClientRect = () => box
+      element.dispatchEvent(new jsdomWindow.MouseEvent('pointerdown', { bubbles: true, clientX: 120, clientY: 120, button: 0 }))
+      await new Promise(resolve => setTimeout(resolve, 20))
+      element.dispatchEvent(new jsdomWindow.MouseEvent('pointermove', { bubbles: true, clientX: 120 + dx, clientY: 120 + dy, button: 0 }))
+      await new Promise(resolve => setTimeout(resolve, 20))
+      element.dispatchEvent(new jsdomWindow.MouseEvent('pointerup', { bubbles: true, clientX: 120 + dx, clientY: 120 + dy, button: 0 }))
+      await new Promise(resolve => setTimeout(resolve, 20))
+    }
+
+    // 现场：这一页拖了卡 A。另一个窗口在这段时间里加了卡 B 并改了标题，它的保存
+    // 已经把宿主 revision 推到这一页看不见的地方。原来撞冲突时只看一眼 revision、
+    // 再拿本页整份快照盖回去——卡 B 和那个标题就没了，界面还说「已保存」。
+    {
+      const canvasId = canvasCommitted.at(-1)?.id ?? canvasDocument.id
+      remoteCanvas = {
+        ...(canvasCommitted.at(-1) ?? canvasDocument),
+        id: canvasId,
+        title: '另一个窗口改的标题',
+        revision: (canvasCommitted.at(-1)?.revision ?? 1) + 7,
+        nodes: [
+          ...((canvasCommitted.at(-1) ?? canvasDocument).nodes ?? []),
+          {
+            id: 'node-remote',
+            type: 'text',
+            title: '另一个窗口加的卡',
+            x: 640,
+            y: 420,
+            width: 260,
+            height: 150,
+            metadata: { text: '另一个窗口写的内容' },
+          },
+        ],
+        updatedAt: 2,
+      }
+      conflictSaveBudget = 1
+      const conflictsBefore = conflictAttempts
+      const committedBefore = canvasCommitted.length
+      await dragNode('node-image', 180, 90)
+      assert.ok(
+        await waitUntil(() => canvasCommitted.length > committedBefore, 4000),
+        'the edit still lands after the conflict is merged, instead of being dropped',
+      )
+      assert.ok(conflictAttempts > conflictsBefore, 'the host did answer with a canvas conflict first')
+      const committed = canvasCommitted.at(-1)
+      assert.ok(
+        committed.nodes.some(node => node.id === 'node-remote'),
+        'the other window\'s new card survives: the save is a merge, not this page\'s snapshot',
+      )
+      assert.equal(committed.title, '另一个窗口改的标题', 'a title this window did not touch follows the other window')
+      const localNode = committed.nodes.find(node => node.id === 'node-image')
+      assert.ok(localNode !== undefined, 'the dragged card is still in the merged document')
+      // 合并过就必须说：不提示时用户看到多出来一张卡，只会以为画布自己长东西。
+      assert.ok(
+        await waitUntil(() => {
+          const toast = view.querySelector('[class*="errorToast"][data-variant="notice"]')
+          return toast !== null && (toast.textContent ?? '').includes('已合并另一个窗口的改动')
+        }, 3000),
+        'the merge is announced instead of being silent',
+      )
+      remoteCanvas = null
+      conflictSaveBudget = 0
+    }
+
+    // ------------------------- a real conflict is surfaced, never resolved by guessing
+
+    // 两边把同一张卡改成不同的样子：没有任何一方能被判成正确答案。此时保存必须
+    // 失败并点名冲突对象，界面给出的是「加载对方的版本」而不是原地重试——同样的
+    // 三份内容再合并一次还是同一处冲突，重试只是在原地打转。
+    {
+      const committed = canvasCommitted.at(-1)
+      remoteCanvas = {
+        ...committed,
+        title: '另一个窗口的标题',
+        revision: committed.revision + 3,
+        nodes: committed.nodes.map(node => ({ ...node, x: node.x + 900, y: node.y + 900 })),
+      }
+      conflictSaveBudget = 1
+      const committedBefore = canvasCommitted.length
+      const attemptsBefore = conflictAttempts
+      await dragNode('node-image', -60, -40)
+      const toast = await (async () => {
+        for (let attempt = 0; attempt < 150; attempt += 1) {
+          const found = [...view.querySelectorAll('[class*="errorToast"]')]
+            .find(element => (element.textContent ?? '').includes('两边的改法不一样'))
+          if (found !== undefined) return found
+          await new Promise(resolve => setTimeout(resolve, 30))
+        }
+        return null
+      })()
+      assert.ok(toast !== null, 'the conflicting edit is refused with an explanation, not saved over the other window')
+      assert.ok(conflictAttempts > attemptsBefore, 'the host did answer with a conflict for this attempt')
+      // 关键：没有第二次写入。原来那条路会换个 revision 再写一遍，那就是拿本地
+      // 覆盖对方——正是这个缺陷本身。
+      assert.equal(
+        canvasCommitted.length, committedBefore,
+        'a refused merge writes nothing: no retry lands on top of the other window',
+      )
+      const loadTheirs = [...toast.querySelectorAll('button')].find(button => button.textContent === '加载对方的版本')
+      assert.ok(loadTheirs !== undefined, 'the recovery offered is “load their version”, not a retry that would conflict again')
+      loadTheirs.click()
+      // 对方那版每张卡都偏移了 900：标题栏变成对方的值，说明屏幕上的确实换成了
+      // 服务端那版，而不是本地这份留着没动。
+      assert.ok(
+        await waitUntil(() => (view.querySelector('[data-canvas-workspace] button[title="双击重命名"]')?.textContent ?? '').includes('另一个窗口的标题'), 3000),
+        'loading their version puts the host\'s copy on screen',
+      )
+      remoteCanvas = null
+      conflictSaveBudget = 0
+    }
+
     // ------------------------------------------- unified history (clips + images)
     // Clips and images share ONE sidebar list. Both stores are newest-first, so
     // the merge must interleave them by time while leaving each store's own
@@ -8568,7 +8923,13 @@ await check('E1 client apply mounts the sidebar entry and studio (jsdom)', async
     const histHost = jsdomDocument.querySelector('[data-dsh-imagegen-history-host]')
     assert.ok(histHost !== null, 'the history sidebar is mounted')
     const rowKinds = () => [...histHost.querySelectorAll('[data-kind]')].map(el => el.getAttribute('data-kind'))
-    const rowPrompts = () => [...histHost.querySelectorAll('[data-dsh-imagegen-history-main]')].map(el => el.querySelector('[class*="historyPrompt"]')?.textContent ?? '')
+    // Canvas rows share this same list as a third kind. This check is about the
+    // clips+images interleave — which store's row lands where — so canvas rows
+    // are excluded rather than having their own timestamps folded into the
+    // expected order; a canvas appearing in the list is not what it asserts.
+    const rowPrompts = () => [...histHost.querySelectorAll('[data-kind]')]
+      .filter(row => row.getAttribute('data-kind') !== 'canvas')
+      .map(row => row.querySelector('[data-dsh-imagegen-history-main] [class*="historyPrompt"]')?.textContent ?? '')
     assert.ok(rowKinds().includes('video'), 'clip rows appear in the same list as images')
     assert.ok(rowKinds().includes('image'), 'image rows are still present')
     // Chronological interleave: the newest clip (6) leads, then the ecommerce
@@ -8706,9 +9067,15 @@ await check('E1 client apply mounts the sidebar entry and studio (jsdom)', async
     await switchProject('Second canvas')
     await waitForSelector(view, '[data-canvas-workspace] [data-quick-card]')
     const quickCards = [...view.querySelectorAll('[data-canvas-workspace] [data-quick-card]')]
-    assert.equal(quickCards.length, 5, 'empty canvas shows the five quick-start cards')
+    // 六张：五个「加一种节点」加一张「载入示例」。示例那张是空画布的兜底，
+    // 前五张都要求用户自己知道要放什么、怎么连。
+    assert.equal(quickCards.length, 6, 'empty canvas shows the six quick-start cards')
+    // 这一步同时也是草稿落盘的检查：`Second canvas` 是宿主上已有的画布，所以
+    // 建节点不该再建一份；下面那条首屏用例盯的才是「草稿 → 真画布」。
+    const creationsBeforeCard = canvasCreations.length
     quickCards.find(card => card.getAttribute('data-quick-card') === 'text').click()
     assert.ok(await waitUntil(() => view.querySelector('[data-canvas-workspace] [data-node-id]') !== null), 'clicking a quick card creates a node')
+    assert.equal(canvasCreations.length, creationsBeforeCard, 'a card on an already-saved canvas creates no second canvas')
     assert.ok(await waitUntil(() => view.querySelector('[data-canvas-workspace] [data-quick-card]') === null), 'quick cards leave once the canvas has a node')
     // 真机陷阱的源码不变式：框选分支必须排除 no-zoom 面，否则 pointerdown
     // 会 preventDefault+setPointerCapture 抢走卡片的 click（jsdom 不模拟该默认行为）。
@@ -8717,6 +9084,75 @@ await check('E1 client apply mounts the sidebar entry and studio (jsdom)', async
       /const isBackground = closestOf\(target, '\[data-node-id\],\[data-connection-hit\],\[data-canvas-no-zoom\]'\) === null/,
       'marquee must ignore no-zoom surfaces so quick cards receive clicks',
     )
+    // First run: the library is EMPTY. Opening the canvas must not create one.
+    // This used to call `canvasCreate` on mount, so merely switching to the tab
+    // left a saved canvas behind — it showed up in the switcher next to real
+    // work, and the empty state (the five cards) never rendered because the
+    // seed had already put two nodes in it.
+    {
+      const creationsBeforeFirstRun = canvasCreations.length
+      canvasLibraryEmpty = true
+      // Remount the workspace: `canvasList` is read once, on mount.
+      normalSwitch.click()
+      await new Promise(resolve => setTimeout(resolve, 30))
+      canvasSwitch.click()
+      await waitForSelector(view, '[data-canvas-workspace] [data-quick-card]')
+      assert.equal(
+        canvasCreations.length,
+        creationsBeforeFirstRun,
+        'opening the canvas with an empty library creates no canvas on disk',
+      )
+      assert.equal(
+        view.querySelectorAll('[data-canvas-workspace] [data-node-id]').length,
+        0,
+        'a first-run canvas starts empty instead of carrying a seeded example',
+      )
+      assert.ok(
+        view.textContent.includes('未保存'),
+        'a canvas that is not on disk yet says so instead of claiming it is saved',
+      )
+      // The first edit is what makes it a canvas. 用「载入示例」而不是「文本」：
+      // 它一次落两个节点加一根线，因此这条同时验证了三件事——示例卡真的接了
+      // 动作、草稿被提升成真画布、以及一次动作只压一条历史（节点与连线一起来）。
+      const firstRunCreations = canvasCreations.length
+      view.querySelector('[data-canvas-workspace] [data-quick-card="example"]').click()
+      assert.ok(
+        await waitUntil(() => canvasCreations.length === firstRunCreations + 1),
+        'the first edit turns the draft into a real canvas',
+      )
+      assert.ok(
+        await waitUntil(() => view.querySelectorAll('[data-canvas-workspace] [data-node-id]').length === 2),
+        'the example card lays down both nodes in one edit',
+      )
+      assert.equal(
+        view.querySelectorAll('[data-canvas-workspace] [data-node-id]').length,
+        2,
+        'the example is exactly one prompt card and one config card',
+      )
+      // 提示词真的写进去了，不是一个空壳示例。读 <textarea> 的 value：innerText
+      // 永远读不到 textarea 的内容。
+      const examplePrompt = view.querySelector('[data-canvas-workspace] [data-node-id] textarea')
+      assert.ok(
+        (examplePrompt?.value ?? '').includes('柴犬'),
+        'the example carries a real prompt, not an empty shell',
+      )
+      assert.ok(
+        (view.textContent ?? '').includes('示例已放上画布'),
+        'the example says what to do next instead of silently landing nodes',
+      )
+      assert.equal(canvasCreations.at(-1).title, '未命名画布', 'the promoted canvas takes the untitled name')
+      // Restore the fixture library and drop the canvas this check made. The
+      // project list is read once per mount, so the remount is what re-reads it.
+      canvasLibraryEmpty = false
+      canvasCreations.length = 0
+      normalSwitch.click()
+      await new Promise(resolve => setTimeout(resolve, 30))
+      canvasSwitch.click()
+      // Remounting lands on the first canvas again (`canvasList` order), which is
+      // exactly where the assertions after this block expect to be.
+      await waitForSelector(view, '[data-canvas-workspace] [data-quick-card]')
+    }
+
     canvasDocument.nodes.push(...emptySavedNodes)
     canvasDocument2.nodes.push(...emptySavedNodes2)
     canvasDocument.connections.push(...emptySavedConnections)
@@ -8739,6 +9175,51 @@ await check('E1 client apply mounts the sidebar entry and studio (jsdom)', async
       || workflowMessage.includes('画布上还没有节点'),
       'workflow action explains why nothing was run when the chain is already complete',
     )
+
+    // 运行前预告：选项菜单里必须说清「有配置节点跑不起来，卡在哪一项」。
+    //
+    // 这条守的是一个**静默失败**：一个缺提示词的配置节点不会报错——执行器
+    // 把它当输入跳过，整轮显示「完成」，而它下游那条分支什么都没产出。用户
+    // 只会以为模型没画好。所以菜单是唯一在花钱之前能说话的地方。
+    //
+    // 断言读 `data-workflow-blocked` 而不是文案：文案随语言变，而那个属性
+    // 是「第一个阻塞项」这个事实本身。fixture 里 `node-config` 只接了一张
+    // 图片，没有文本上游，所以第一个阻塞项必须是 prompt。
+    // 按 aria-label 找那一半：CSS Module 会把 `.dockCaret` 哈希成随机类名，
+    // 拿类名做选择器在构建产物里永远匹配不到。
+    const workflowOptionsButton = view.querySelector('[data-dock-item][data-label="运行工作流（从选中节点往下）"] button[aria-label="工作流运行选项"]')
+    assert.ok(workflowOptionsButton !== null, 'workflow options caret is rendered')
+    workflowOptionsButton.click()
+    await waitForSelector(view, '[data-workflow-blocked]')
+    const blockedNote = view.querySelector('[data-workflow-blocked]')
+    assert.equal(
+      blockedNote.getAttribute('data-workflow-blocked'), 'prompt',
+      `the run menu must name the blocker before the run (got "${blockedNote.getAttribute('data-workflow-blocked')}")`,
+    )
+    assert.ok(
+      /\d/.test(blockedNote.textContent ?? ''),
+      'the note counts how many config nodes are blocked, not just that some are',
+    )
+    // 同一次打开里还要有**完整清单**：一句话只说得清「2 个卡不行」，说不清
+    // 「哪一个、为什么」。清单里每一条都要能点着跳到那张卡——只报不带路的
+    // 体检，把最难的那半件事留给了用户。
+    const healthIssues = [...view.querySelectorAll('[data-canvas-health] [data-health-issue]')]
+    assert.ok(healthIssues.length > 0, 'the run menu lists the individual problems, not just a count')
+    assert.ok(
+      healthIssues.some(issue => issue.textContent?.includes('跑不起来')),
+      'a blocked config says what it is missing',
+    )
+    // 点第一条：菜单收起、并且视野/选中落到那张卡上。这条卡是 fixture 里
+    // 唯一有问题的那一张（node-config，缺提示词）。
+    healthIssues[0].dispatchEvent(new jsdomWindow.MouseEvent('click', { bubbles: true }))
+    assert.ok(await waitUntil(() => view.querySelector('[data-canvas-health]') === null), 'clicking a problem closes the menu')
+    assert.ok(
+      view.querySelector('[data-canvas-workspace] [data-node-id][class*="nodeSelected"]') !== null,
+      'clicking a problem jumps to and selects the card it is about',
+    )
+    // 关掉菜单，后面的断言假设画布上没有浮层。
+    view.dispatchEvent(new jsdomWindow.KeyboardEvent('keydown', { key: 'Escape', bubbles: true }))
+    await waitUntil(() => view.querySelector('[data-workflow-blocked]') === null)
 
     // The background menu exposes an explicit performance-off action, and the
     // blank mode unmounts every animated background implementation (#27).
@@ -9219,9 +9700,14 @@ await check('E1 client apply mounts the sidebar entry and studio (jsdom)', async
     //
     // 用一个 100x80 的小文本节点去盖：包含关系要成立，被盖的那方必须真的比盖住它
     // 的小，而画布上现成的图片节点（240x240）比配置节点（320x190）还高。
+    //
+    // WHY 把它插在**数组开头**：绘制顺序就是数组顺序，末尾在最上面。探测节点
+    // 若追加在末尾，它自己是压在上面的那一个——拖进配置节点正中时它看得见，
+    // 而「被盖住」的判定（`coveredNodes`）只有在盖住它的那张确实更靠上时才
+    // 成立。插到开头才是用户真正会遇到的那种情形：先写下的字被后放的图压住。
     canvasDocument.nodes = [
-      ...canvasDocument.nodes,
       { id: 'node-covered', type: 'text', title: '会被盖住的小卡片', x: 0, y: 1200, width: 100, height: 80, metadata: { status: 'idle', text: '' } },
+      ...canvasDocument.nodes,
     ]
     ecommerceSwitch.click()
     await new Promise(resolve => setTimeout(resolve, 60))
@@ -9405,6 +9891,89 @@ await check('E1 client apply mounts the sidebar entry and studio (jsdom)', async
           await waitUntil(() => /\b1\b/.test(linksStrip.textContent ?? '')),
           `the strip counts only the INCOMING edge (got "${linksStrip.textContent ?? ''}")`,
         )
+        // 说明书只在**空的**配置节点上出现。它以前对每一张配置节点常驻，于是
+        // 一张有 6 个配置节点的画布会把同样三行灰字写 6 遍，而在空画布上那些
+        // 字又恰好是唯一有分量的内容——最显眼的东西成了「还没写的说明」。
+        // 连上输入之后小条已经说了数量，再重复一遍教程就是每次都要读过去的噪音。
+        const linkedHint = view.querySelector('[data-node-id="node-config-links"] p')
+        assert.equal(
+          linkedHint === null || !(linkedHint.textContent ?? '').includes('把图片节点连线到左侧'),
+          true,
+          'a config node with an input must not repeat the how-to hint',
+        )
+        // 反向：没有输入时必须还在，否则「空态」这个说法就不成立了。
+        const orphanHintNode = { id: 'node-config-orphan', type: 'config', title: '空配置', x: 360, y: 1900, width: 320, height: 190, metadata: { status: 'idle' } }
+        canvasDocument.nodes = [...canvasDocument.nodes, orphanHintNode]
+        ecommerceSwitch.click()
+        await new Promise(resolve => setTimeout(resolve, 60))
+        canvasSwitch.click()
+        await waitForSelector(view, '[data-node-id="node-config-orphan"]')
+        const orphanBody = view.querySelector('[data-node-id="node-config-orphan"]')
+        assert.ok(
+          await waitUntil(() => (orphanBody.textContent ?? '').includes('把图片节点连线到左侧')),
+          'a config node with no input still explains how to wire one up',
+        )
+        // 就绪徽标：画布上唯一一处「按下去之前就告诉你会发生什么」。
+        // 空配置节点必须报缺提示词——只说「无法生成」等于什么都没说，用户
+        // 还是不知道要去写框里那段字，还是去设置页填钥匙。
+        const orphanReady = orphanBody.querySelector('[data-config-ready], [data-config-blocker]')
+        assert.ok(orphanReady !== null, 'a config node carries a readiness badge')
+        assert.equal(
+          orphanReady.getAttribute('data-config-blocker'), 'prompt',
+          `an empty config node must name the missing prompt (got "${orphanReady.getAttribute('data-config-blocker')}")`,
+        )
+        assert.equal(orphanReady.getAttribute('data-config-ready'), null, 'a blocked node must not claim to be ready')
+
+        // 配置节点**不能**自带可编辑的提示词框——两条分支都要查。
+        //
+        // 这条守的是一个真实缺陷：那里曾经有个 textarea 写 `metadata.text`，
+        // 而生成的取值链是 `composerPrompt → 上游文本 → 标注卡`——它从头到尾
+        // 不读 `metadata.text`。用户写进去的提示词被静默丢弃，旁边的就绪徽标
+        // 还照样说「可生成」。一个提示词只准有一个编辑入口。
+        //
+        // 空节点查一次、有输入的查一次：那个假框当初只出现在「有输入」的
+        // 分支上，只查空节点会放过它。
+        assert.equal(
+          orphanBody.querySelector('textarea'), null,
+          'a config node must not offer a second prompt editor — writes there are discarded',
+        )
+        assert.equal(
+          view.querySelector('[data-node-id="node-config-links"] textarea'), null,
+          'a config node must not offer a second prompt editor — writes there are discarded',
+        )
+        // 有输入的配置节点必须显示「将要发出去的那段」，否则卡片就是一块空壳。
+        // 空节点走的是说明书那条分支（上面已断言），所以这里查的是连了线的那个。
+        const promptPreview = view.querySelector('[data-node-id="node-config-links"] [data-config-prompt]')
+        assert.ok(promptPreview !== null, 'a config node previews the prompt that will be sent')
+        assert.ok(
+          (promptPreview.textContent ?? '').includes('生成器'),
+          `a config node with no prompt yet points at the composer (got "${promptPreview.textContent ?? ''}")`,
+        )
+
+        // 连一条有内容的文本节点过来：缺提示词这条必须消失。只断言「徽标存在」
+        // 的话，一个永远显示「缺提示词」的徽标照样通过——而那正是用户最会被
+        // 误导的状态：他明明写了，卡片还说他没写。
+        const promptNode = {
+          id: 'node-config-prompt', type: 'text', title: '提示词', x: 720, y: 1900, width: 280, height: 150,
+          metadata: { text: '一只戴墨镜的柯基' },
+        }
+        canvasDocument.nodes = [...canvasDocument.nodes, promptNode]
+        canvasDocument.connections = [
+          ...canvasDocument.connections,
+          { id: 'edge-into-orphan', fromNodeId: 'node-config-prompt', toNodeId: 'node-config-orphan' },
+        ]
+        ecommerceSwitch.click()
+        await new Promise(resolve => setTimeout(resolve, 60))
+        canvasSwitch.click()
+        await waitForSelector(view, '[data-node-id="node-config-orphan"] [data-config-links]')
+        const wiredReady = view.querySelector('[data-node-id="node-config-orphan"] [data-config-ready], [data-node-id="node-config-orphan"] [data-config-blocker]')
+        assert.ok(
+          await waitUntil(() => wiredReady.getAttribute('data-config-blocker') !== 'prompt'),
+          'wiring a text node that has content must clear the missing-prompt blocker',
+        )
+        canvasDocument.nodes = canvasDocument.nodes.filter(entry => entry.id !== 'node-config-prompt')
+        canvasDocument.connections = canvasDocument.connections.filter(entry => entry.id !== 'edge-into-orphan')
+        canvasDocument.nodes = canvasDocument.nodes.filter(entry => entry.id !== 'node-config-orphan')
         canvasDocument.nodes = canvasDocument.nodes.filter(entry => entry.id !== 'node-config-links')
         canvasDocument.connections = canvasDocument.connections.filter(entry => entry.id !== 'edge-into-config')
       }
@@ -9940,6 +10509,267 @@ await check('E1 client apply mounts the sidebar entry and studio (jsdom)', async
 
     const undoLabel = view.querySelector('[data-canvas-workspace] [role="toolbar"] button[aria-label^="撤销"]')?.getAttribute('aria-label') ?? ''
     assert.ok(undoLabel.includes('Ctrl/⌘+Z'), `the undo control names its key (got "${undoLabel}")`)
+
+    // (7b) 全部功能目录（⌘K）。这一步要证明四件事，每一件都能单独坏掉：
+    //      打开、搜索真的缩小了列表、灰行按下去什么都不发生、能点的行按下去
+    //      真的执行并关掉弹窗。最后一条是最容易退化成「点了没反应」的。
+    {
+      const catalogButton = view.querySelector('[data-canvas-workspace] [role="toolbar"] button[aria-label^="全部功能"]')
+      assert.ok(catalogButton !== null, 'the dock carries the catalog entry')
+      catalogButton.dispatchEvent(new jsdomWindow.MouseEvent('click', { bubbles: true }))
+      assert.ok(await waitUntil(() => view.querySelector('[data-capability-catalog]') !== null), 'the dock entry opens the catalog')
+      const dialog = view.querySelector('[data-capability-catalog]')
+      const search = dialog.querySelector('[data-catalog-search]')
+      assert.ok(search !== null, 'the catalog carries a search field')
+
+      const rows = () => [...dialog.querySelectorAll('[data-capability]')]
+      const total = rows().length
+      assert.ok(total >= 30, `the catalog lists the whole surface, not a sample (got ${total})`)
+
+      // 搜索：`records` 是受控输入，直接改 value 不会触发 React 的 onChange，
+      // 所以走原生 setter 再派发 input —— 这是 jsdom 里唯一诚实的打字方式。
+      const type = value => {
+        const setter = Object.getOwnPropertyDescriptor(jsdomWindow.HTMLInputElement.prototype, 'value').set
+        setter.call(search, value)
+        search.dispatchEvent(new jsdomWindow.Event('input', { bubbles: true }))
+      }
+      type('排版')
+      assert.ok(await waitUntil(() => rows().length < total), 'searching narrows the list')
+      assert.deepEqual(rows().map(row => row.getAttribute('data-capability')), ['edit.arrange'], 'the synonym finds the one action it names')
+
+      // 灰行：按住不放也什么都不该发生。用一个现在必然不可用的动作验——
+      // 这张 fixture 上「粘贴」在没复制过任何节点时不可用，按下去若真的执行，
+      // 节点数会变。
+      type('粘贴')
+      assert.ok(await waitUntil(() => rows().length === 1), 'the paste row is findable')
+      const pasteRow = rows()[0]
+      assert.equal(pasteRow.getAttribute('data-blocked'), '', 'the paste row declares itself blocked on an empty clipboard')
+      const nodesBefore = view.querySelectorAll('[data-canvas-workspace] [data-node-id]').length
+      pasteRow.dispatchEvent(new jsdomWindow.MouseEvent('click', { bubbles: true }))
+      assert.equal(view.querySelector('[data-capability-catalog]') !== null, true, 'clicking a blocked row does not dismiss the dialog (that would read as "it ran")')
+      assert.equal(view.querySelectorAll('[data-canvas-workspace] [data-node-id]').length, nodesBefore, 'a blocked row runs nothing')
+
+      // 可用的行：回车执行，并且是把那件事真的做出来。选「缩略图」而不是「适应
+      // 全部内容」：这条 fixture 的画布只有一两个节点，适应内容可能算出与当前
+      // 完全相同的 viewport，于是「跑了」与「没跑」在断言里长得一样。缩略图是
+      // 一个开关，dock 上那枚按钮的 aria-label 会跟着翻，骗不了人。
+      type('缩略图')
+      assert.ok(await waitUntil(() => rows().length === 1), 'the minimap row is findable')
+      // 缩略图开关在左下 zoomDock 里，不在 role=toolbar 那排：按 aria-label
+      // 的前缀/后缀找，文案在「打开缩略图 / 关闭缩略图」之间翻，正好是我们要读
+      // 的那个状态。
+      const minimapToggle = () => view.querySelector('[data-canvas-workspace] button[aria-label$="缩略图"]')
+      const minimapLabel = () => minimapToggle()?.getAttribute('aria-label') ?? ''
+      const labelBefore = minimapLabel()
+      assert.notEqual(labelBefore, '', 'the minimap toggle is on the dock')
+      search.dispatchEvent(new jsdomWindow.KeyboardEvent('keydown', { key: 'Enter', bubbles: true, cancelable: true }))
+      assert.ok(await waitUntil(() => view.querySelector('[data-capability-catalog]') === null), 'Enter runs the highlighted row and closes the catalog')
+      assert.notEqual(minimapLabel(), labelBefore, 'the row that ran was the one highlighted, not a neighbour')
+      // 开关翻回来，别把后面的用例留在一个意外的状态里。
+      minimapToggle()?.dispatchEvent(new jsdomWindow.MouseEvent('click', { bubbles: true }))
+      await waitUntil(() => minimapLabel() === labelBefore)
+
+      // Esc 关闭：与快捷键表同一个约定，且不能顺手清掉画布选区。
+      jsdomWindow.dispatchEvent(new jsdomWindow.KeyboardEvent('keydown', { key: 'k', ctrlKey: true, bubbles: true, cancelable: true }))
+      assert.ok(await waitUntil(() => view.querySelector('[data-capability-catalog]') !== null), 'Ctrl/⌘+K opens the catalog too')
+      // 选中态挂在 CSS module 的类名上（构建时才有意义的名字），所以按子串找——
+      // 与本文件里找 `[class*="viewport"]` 的写法一致。
+      const selectedRows = () => view.querySelectorAll('[data-canvas-workspace] [data-node-id][class*="nodeSelected"]').length
+      const selectedBefore = selectedRows()
+      jsdomWindow.dispatchEvent(new jsdomWindow.KeyboardEvent('keydown', { key: 'Escape', bubbles: true }))
+      assert.ok(await waitUntil(() => view.querySelector('[data-capability-catalog]') === null), 'Escape closes the catalog')
+      assert.equal(selectedRows(), selectedBefore, 'closing the catalog leaves the canvas selection alone')
+    }
+
+    // (7c) 找节点（⌘F）与画布体检。两条都是「东西已经在画布上，用户却找不着 /
+    //      不知道它会不会跑」的场景，各自能单独坏掉：
+    //        找节点 —— 开了但搜不出东西、搜出来了但回车不跳、跳了但没选中；
+    //        体检   —— 菜单里不列问题，于是用户只知道「有 2 个卡不行」。
+    {
+      const searchEntry = view.querySelector('[data-canvas-workspace] button[aria-label^="找节点"]')
+      assert.ok(searchEntry !== null, 'the zoom dock carries the find-node entry')
+      searchEntry.dispatchEvent(new jsdomWindow.MouseEvent('click', { bubbles: true }))
+      assert.ok(await waitUntil(() => view.querySelector('[data-node-search]') !== null), 'the dock entry opens find-node')
+
+      const dialog = view.querySelector('[data-node-search]')
+      const input = dialog.querySelector('[data-node-search-input]')
+      assert.ok(input !== null, 'find-node opens with a search field')
+      // 空查询不该把整张画布列出来：那等于没有搜索。
+      assert.equal(dialog.querySelectorAll('[data-node-hit]').length, 0, 'an empty query lists nothing')
+
+      const typeInto = (element, value) => {
+        const setter = Object.getOwnPropertyDescriptor(jsdomWindow.HTMLInputElement.prototype, 'value').set
+        setter.call(element, value)
+        element.dispatchEvent(new jsdomWindow.Event('input', { bubbles: true }))
+      }
+      typeInto(input, '图片')
+      assert.ok(await waitUntil(() => dialog.querySelectorAll('[data-node-hit]').length > 0), 'typing finds the fixture card')
+      assert.deepEqual(
+        [...dialog.querySelectorAll('[data-node-hit]')].map(row => row.getAttribute('data-node-hit')),
+        ['node-image'],
+        'the one card whose title mentions 图片 is the one result',
+      )
+
+      // 选中一个**别的**节点，才能证明回车确实把它换掉了（原本可能就是它）。
+      view.querySelector('[data-node-id="node-config"]')?.dispatchEvent(new jsdomWindow.MouseEvent('pointerdown', { bubbles: true }))
+      input.dispatchEvent(new jsdomWindow.KeyboardEvent('keydown', { key: 'Enter', bubbles: true, cancelable: true }))
+      assert.ok(await waitUntil(() => view.querySelector('[data-node-search]') === null), 'Enter jumps and closes find-node')
+      assert.ok(
+        view.querySelector('[data-canvas-workspace] [data-node-id="node-image"][class*="nodeSelected"]') !== null,
+        'the node it jumped to is the one that ends up selected',
+      )
+
+      // Esc：与目录、快捷键表同一个约定，且不顺手清掉选区。
+      jsdomWindow.dispatchEvent(new jsdomWindow.KeyboardEvent('keydown', { key: 'f', ctrlKey: true, bubbles: true, cancelable: true }))
+      assert.ok(await waitUntil(() => view.querySelector('[data-node-search]') !== null), 'Ctrl/⌘+F opens find-node too')
+      jsdomWindow.dispatchEvent(new jsdomWindow.KeyboardEvent('keydown', { key: 'Escape', bubbles: true }))
+      assert.ok(await waitUntil(() => view.querySelector('[data-node-search]') === null), 'Escape closes find-node')
+      assert.ok(
+        view.querySelector('[data-canvas-workspace] [data-node-id="node-image"][class*="nodeSelected"]') !== null,
+        'closing find-node leaves the selection alone',
+      )
+    }
+
+    // (7d) 对齐条（2 张以上才出现）与撤销按钮的「这一步是什么」。
+    //
+    // 这两件事必须一起验：对齐是**一次** mutate，所以它同时是「撤销按钮说得
+    // 出这一步」的第一个真实动作。分开写的话，最容易坏的那一半（title 说
+    // 「撤销：移动了 N 个节点」而不是只说「撤销」）会没人守。
+    {
+      const nodeEl = id => view.querySelector(`[data-canvas-workspace] [data-node-id="${id}"]`)
+      const selectWith = (id, modifier) => nodeEl(id).dispatchEvent(new jsdomWindow.MouseEvent(
+        'pointerdown',
+        { bubbles: true, button: 0, clientX: 5, clientY: 5, ...(modifier === undefined ? {} : { [modifier]: true }) },
+      ))
+
+      // 先单选：对齐条不该出现。一枚常驻的「对齐」按钮在只选中一张卡时是
+      // 一段没有含义的界面，用户会去点它、然后以为它坏了。
+      selectWith('node-image')
+      await new Promise(resolve => setTimeout(resolve, 60))
+      assert.equal(
+        view.querySelector('[data-align-bar]') === null, true,
+        'one selected node is not something to align: the bar stays out of the way',
+      )
+
+      selectWith('node-config', 'ctrlKey')
+      assert.ok(await waitUntil(() => view.querySelector('[data-align-bar]') !== null), 'two selected nodes bring up the align bar')
+      const bar = view.querySelector('[data-align-bar]')
+      const buttons = [...bar.querySelectorAll('[data-align-mode]')]
+      assert.equal(buttons.length, 8, `the bar offers all eight alignments (got ${buttons.length})`)
+      // 两个节点时分布不可用，而且**说得出原因**：一枚只是灰着、不说为什么的
+      // 按钮会让用户以为自己的选择方式不对。
+      const distributeH = bar.querySelector('[data-align-mode="distributeH"]')
+      assert.equal(distributeH.disabled, true, 'two nodes are not enough to distribute')
+      assert.ok(distributeH.title.includes('三个'), `the disabled distribute explains itself (got "${distributeH.title}")`)
+
+      // 左对齐：两张卡的 x 必须变成同一个值，且只写一次（一次撤销）。
+      const beforeAlign = canvasSaves.at(-1)
+      const imageBefore = beforeAlign.nodes.find(node => node.id === 'node-image')
+      const configBefore = beforeAlign.nodes.find(node => node.id === 'node-config')
+      assert.notEqual(imageBefore.x, configBefore.x, 'the fixture starts unaligned, otherwise this proves nothing')
+      const savesBefore = canvasSaves.length
+      bar.querySelector('[data-align-mode="left"]').dispatchEvent(new jsdomWindow.MouseEvent('click', { bubbles: true }))
+      assert.ok(
+        await waitUntil(() => {
+          const saved = canvasSaves.at(-1)
+          const image = saved?.nodes.find(node => node.id === 'node-image')
+          const config = saved?.nodes.find(node => node.id === 'node-config')
+          return image !== undefined && config !== undefined && image.x === config.x
+        }),
+        'align-left puts both cards on the same x',
+      )
+      assert.ok(canvasSaves.length > savesBefore, 'the aligned positions actually reach disk')
+      // 撤销按钮的 title 现在该说得出这一步是什么。160ms 防抖后才算，所以要等。
+      const undoButton = () => view.querySelector('[data-canvas-workspace] [role="toolbar"] button[aria-label^="撤销"]')
+      assert.ok(
+        await waitUntil(() => (undoButton()?.getAttribute('aria-label') ?? '').includes('移动')),
+        `undo names what it will take back (got "${undoButton()?.getAttribute('aria-label') ?? ''}")`,
+      )
+
+      // 撤销真的把两张卡放回去，而 tooltip 回到纯「撤销」（栈空了）。
+      undoButton().dispatchEvent(new jsdomWindow.MouseEvent('click', { bubbles: true }))
+      assert.ok(
+        await waitUntil(() => {
+          const saved = canvasSaves.at(-1)
+          const image = saved?.nodes.find(node => node.id === 'node-image')
+          const config = saved?.nodes.find(node => node.id === 'node-config')
+          return image !== undefined && config !== undefined
+            && image.x === imageBefore.x && config.x === configBefore.x
+        }),
+        'one undo puts BOTH cards back — alignment is one step in the stack, not one per card',
+      )
+    }
+
+    // (7e) 层级顺序：右键菜单那四行必须真的改 `document.nodes` 的顺序。
+    //
+    // 纯函数 `reorderLayers` 有 12 条单测，`verify-ui-contracts` 挡住「接错方向」
+    // 与「一次写两遍」，但两者都证明不了**这个菜单项按下去后磁盘上的数组真的
+    // 变了**。菜单是最自然的入口（被压住时手指就在那张卡上），它坏掉的方式是
+    // 「点了、菜单关了、什么都没变」——界面上只有一次静默的失败。
+    {
+      const orderOf = saved => saved.nodes.map(node => node.id)
+      const beforeLayer = orderOf(canvasSaves.at(-1) ?? { nodes: [] })
+      assert.deepEqual(beforeLayer.slice(0, 2), ['node-image', 'node-config'], 'the fixture starts in document order')
+
+      const openMenuOn = id => {
+        view.querySelector(`[data-canvas-workspace] [data-node-id="${id}"]`).dispatchEvent(
+          new jsdomWindow.MouseEvent('contextmenu', { bubbles: true, cancelable: true, clientX: 40, clientY: 40 }),
+        )
+      }
+      const menuItem = text => [...view.querySelectorAll('[role="menu"] button[role="menuitem"]')]
+        .find(button => (button.textContent ?? '').startsWith(text))
+
+      openMenuOn('node-image')
+      await new Promise(resolve => setTimeout(resolve, 80))
+      // 四行都在，且都写着键位：少一行等于少一个方向，而方向是这四件事的
+      // 全部内容。
+      for (const label of ['置顶', '上移一层', '下移一层', '置底']) {
+        assert.ok(menuItem(label) !== undefined, `the node menu offers 「${label}」`)
+      }
+      assert.match(menuItem('置顶').textContent, /⌥\+Shift\+\]/, 'the menu names the layer key it stands for')
+      menuItem('置顶').dispatchEvent(new jsdomWindow.MouseEvent('click', { bubbles: true }))
+      assert.ok(
+        await waitUntil(() => {
+          const saved = canvasSaves.at(-1)
+          return saved !== undefined && saved.nodes[saved.nodes.length - 1]?.id === 'node-image'
+        }),
+        'bringing to front puts the card last in document order (last = topmost)',
+      )
+      assert.ok(view.querySelector('[role="menu"]') === null, 'choosing a layer action closes the menu')
+
+      // 置底再把它放回去，并留下「一次撤销就回到原样」的证据：层级调整在
+      // 撤销栈里必须是一条，逐张写会让 ⌘Z 只退一半。
+      openMenuOn('node-image')
+      await new Promise(resolve => setTimeout(resolve, 80))
+      menuItem('置底').dispatchEvent(new jsdomWindow.MouseEvent('click', { bubbles: true }))
+      assert.ok(
+        await waitUntil(() => (canvasSaves.at(-1)?.nodes ?? [])[0]?.id === 'node-image'),
+        'send to back puts the card first in document order (first = bottom)',
+      )
+      const undoLayer = () => view.querySelector('[data-canvas-workspace] [role="toolbar"] button[aria-label^="撤销"]')
+      undoLayer().dispatchEvent(new jsdomWindow.MouseEvent('click', { bubbles: true }))
+      assert.ok(
+        await waitUntil(() => (canvasSaves.at(-1)?.nodes ?? []).at(-1)?.id === 'node-image'),
+        'one undo puts the previous stacking order back — a layer change is one step in the stack',
+      )
+
+      // 已经在最下面再置底：必须说出来，且**不写文档**。一条什么都没改的
+      // 撤销比一句提示更糟：用户按了 ⌘Z，画面没动。
+      openMenuOn('node-image')
+      await new Promise(resolve => setTimeout(resolve, 80))
+      menuItem('置底').dispatchEvent(new jsdomWindow.MouseEvent('click', { bubbles: true }))
+      assert.ok(await waitUntil(() => (canvasSaves.at(-1)?.nodes ?? [])[0]?.id === 'node-image'), 'the card is at the bottom again')
+      const savesBeforeBlocked = canvasSaves.length
+      openMenuOn('node-image')
+      await new Promise(resolve => setTimeout(resolve, 80))
+      menuItem('置底').dispatchEvent(new jsdomWindow.MouseEvent('click', { bubbles: true }))
+      await new Promise(resolve => setTimeout(resolve, 900))
+      assert.equal(canvasSaves.length, savesBeforeBlocked, 'a no-op layer change writes nothing at all')
+      assert.ok(
+        [...view.querySelectorAll('[role="status"]')].some(node => (node.textContent ?? '').includes('最下面一层')),
+        'a no-op says which edge it is already against',
+      )
+    }
 
     // (5) The image picker must clear its file input, so re-picking the same
     // file after a failure still fires `change`. A stale value makes the retry

@@ -191,9 +191,12 @@ function paintActorMask(
       const nz = Math.sqrt(Math.max(0.05, 1 - nx * nx - ny * ny))
       const shade = nx * lx + ny * ly + nz * lz
       const tone = 0.94 + 0.14 * shade
-      image.data[i * 4] = Math.round(0xc8 * tone)
-      image.data[i * 4 + 1] = Math.round(0xcc * tone)
-      image.data[i * 4 + 2] = Math.round(0xd6 * tone)
+      // 与人偶的 3D 材质同一个木色（`MANNEQUIN_COLOR = #d9b483`）。两个渲染器
+      // 各写一个颜色时，没有 WebGL 的机器上人偶是灰的、有 WebGL 的是木色的——
+      // 同一台机器换台电脑，人会「换个颜色」。
+      image.data[i * 4] = Math.round(0xd9 * tone)
+      image.data[i * 4 + 1] = Math.round(0xb4 * tone)
+      image.data[i * 4 + 2] = Math.round(0x83 * tone)
       image.data[i * 4 + 3] = Math.round(alpha * 255)
     }
   }

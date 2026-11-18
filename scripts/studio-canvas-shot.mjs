@@ -5,7 +5,9 @@
  * visual-acceptance suite (both themes, contrast audit, drag probes, teardown),
  * so it takes a while and reports on the whole studio. This one exists to answer
  * a single question — what does a brand-new canvas look like — and to leave a
- * PNG behind that a person can look at.
+ * PNG behind that a person can look at. A brand-new canvas is empty: the
+ * first-run screen is the quick-start row, and no canvas is written to disk
+ * until the user puts something in it.
  *
  * The theme stylesheet is the one from the INSTALLED DSH, read through the same
  * helper the acceptance suite uses, so this picture is painted with the real
@@ -162,16 +164,20 @@ try {
   })()`)
   if (clicked !== true) throw new Error('could not find the 无限画布 workspace tab')
 
+  // A brand-new canvas is an EMPTY canvas with the quick-start row on it. It
+  // used to open on a seeded example pair instead, and this script asserted
+  // that — the assertion is now the opposite one, because creating that pair
+  // (and the canvas it lived on) the moment the tab was opened is exactly what
+  // the empty state was hiding.
   await waitFor(
-    `document.body.innerText.includes(${JSON.stringify('示例提示词')})`,
-    'the seed example node to render',
+    `document.querySelectorAll('[data-quick-card]').length === 6`,
+    'the six quick-start cards to render',
   )
-  // The seed document is created unsaved and written after the 650 ms autosave
-  // debounce. Shooting before that lands catches the "保存中…" state — a
-  // screenshot of a first-run canvas that looks stuck is worth nothing.
+  // Nothing is written until the first edit, so "已保存" would be a lie here:
+  // the status strip must say the canvas is a draft.
   await waitFor(
-    `document.body.innerText.includes(${JSON.stringify('已保存')})`,
-    'the seed canvas to finish its first save',
+    `document.body.innerText.includes(${JSON.stringify('未保存')})`,
+    'the draft state to show in the status strip',
   )
 
   await new Promise(resolve => setTimeout(resolve, 300))
@@ -183,30 +189,26 @@ try {
   writeFileSync(OUT, Buffer.from(data, 'base64'))
 
   /**
-   * Read the prompt out of the textarea's `value`, not `innerText`.
+   * Read the quick cards and the empty-state copy.
    *
-   * A text node's body is a `<textarea>`: its text is a property, not a child
-   * node, so `innerText` never contains it. Asserting on `innerText` reported
-   * the example as missing while it sat there filled in — a false negative that
-   * would have looked like a broken seed to anyone reading the failure.
+   * `[data-quick-card]` is the contract the smoke suite also uses, so this shot
+   * and that check cannot drift into describing two different first screens.
+   * `hasSeed` is asserted FALSE on purpose: a seeded node appearing here again
+   * would mean the first-run canvas is being written to disk before the user
+   * did anything.
    */
-  const seen = await page.evaluate(`(() => {
-    const node = document.querySelector('[data-node-id]')
-    const area = node === null ? null : node.querySelector('textarea')
-    const text = document.body.innerText
-    return {
-      hasTitle: text.includes('示例提示词'),
-      hasPrompt: area !== null && area.value.includes('柴犬'),
-      promptFits: area !== null && area.scrollHeight <= area.clientHeight,
-      hasConfig: text.includes('生成配置'),
-    }
-  })()`)
+  const seen = await page.evaluate(`(() => ({
+      cards: [...document.querySelectorAll('[data-quick-card]')].map(card => card.getAttribute('data-quick-card')),
+      hasTitle: document.body.innerText.includes('示例提示词'),
+      hasSeed: document.querySelectorAll('[data-node-id]').length > 0,
+      hasLeaveHint: document.body.innerText.includes('开始你的创作'),
+    }))()`)
   console.log(JSON.stringify({ out: OUT, ...seen }, null, 1))
-  if (seen.hasTitle !== true || seen.hasPrompt !== true || seen.hasConfig !== true) {
-    throw new Error(`the seed example did not render: ${JSON.stringify(seen)}`)
+  if (Array.isArray(seen.cards) !== true || seen.cards.length !== 6) {
+    throw new Error(`the quick-start row did not render: ${JSON.stringify(seen)}`)
   }
-  if (seen.promptFits !== true) {
-    console.error('WARN: the example prompt overflows its text node and will need scrolling to read.')
+  if (seen.hasSeed === true || seen.hasTitle === true) {
+    throw new Error(`a new canvas should start empty, but nodes were rendered: ${JSON.stringify(seen)}`)
   }
 } catch (error) {
   failure = error

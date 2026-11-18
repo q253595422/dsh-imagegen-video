@@ -52,10 +52,22 @@ export interface SelectProps extends Omit<ButtonHTMLAttributes<HTMLButtonElement
   emptyText?: string
   /** Placeholder of the filter box; falls back to the trigger's accessible name. */
   searchPlaceholder?: string
+  /**
+   * Text for the closed trigger when the selected option's own label is the
+   * wrong thing to show there.
+   *
+   * The default — `selected.label` — is right when the picker's value IS the
+   * answer ("gpt-image-2.5", "16:9"). It is wrong when the picker's job is an
+   * action rather than a value: the canvas picker was printing the current
+   * canvas's name, which the title button two elements to the right already
+   * shows, so the toolbar read the same name twice and neither read as
+   * "switch canvas". The accessible name still comes from `aria-label`.
+   */
+  label?: string
   onChange: (value: string) => void
 }
 
-export function Select({ value, options: suppliedOptions, children, variant = 'field', searchable = false, optionHint, emptyText, searchPlaceholder, onChange, className, disabled, id, onKeyDown, onClick, ...buttonProps }: SelectProps): React.JSX.Element {
+export function Select({ value, options: suppliedOptions, children, variant = 'field', searchable = false, optionHint, emptyText, searchPlaceholder, label, onChange, className, disabled, id, onKeyDown, onClick, ...buttonProps }: SelectProps): React.JSX.Element {
   const options = suppliedOptions ?? optionsFromChildren(children)
   /** Menu-only filter; an empty query shows every option. */
   const [query, setQuery] = useState('')
@@ -188,14 +200,14 @@ export function Select({ value, options: suppliedOptions, children, variant = 'f
       aria-haspopup="listbox"
       aria-expanded={open}
       aria-controls={open ? menuId : undefined}
-      title={buttonProps.title ?? selected?.label}
+      title={buttonProps.title ?? (label === undefined ? selected?.label : `${label} · ${selected?.label ?? ''}`.trim())}
       onClick={event => { onClick?.(event); if (!event.defaultPrevented) { if (open) dismiss(); else show() } }}
       onKeyDown={event => {
         onKeyDown?.(event)
         if (!event.defaultPrevented && (event.key === 'ArrowDown' || event.key === 'ArrowUp')) { event.preventDefault(); show(event.key === 'ArrowUp') }
       }}
     >
-      <span className={css.value}>{selected?.label ?? value}</span>
+      <span className={css.value}>{label ?? selected?.label ?? value}</span>
       <svg viewBox="0 0 16 16" width="12" height="12" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="m4 6 4 4 4-4" /></svg>
     </button>
     {open && position !== null ? createPortal(<div

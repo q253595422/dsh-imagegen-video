@@ -12,7 +12,7 @@ import {
   GitBranch, Keyboard, Layers, Magnet, Map as MapIcon, Maximize, Maximize2, MousePointer2, Palette, Pencil, Plus, Redo2, Scissors, SendHorizonal, Share2, Sparkles, Star,
   Shrink, SquareDashedMousePointer, Trash2, Type, Undo2, Upload, Video, Wand2, Wallpaper,
 } from 'lucide-react'
-import type { CanvasAnnotation, CanvasAssetRef, CanvasConnection, CanvasConnectionRole, CanvasDocument, CanvasProposal, CanvasFileKind, CanvasLayerInfo, CanvasLayerPlanItem, CanvasNode, CanvasRect, CanvasStoryboard, CanvasVideoRef, CanvasSkillConfigApplyResult, CanvasSkillConfigField, CanvasSkillConfigSaveResult, CanvasSkillConfigStep, CanvasSkillConfigView, CanvasSkillDescriptor, CanvasSkillLibrary, CanvasSkillOutput, CanvasSkillRunRequest, CanvasSkillTask, CanvasSketchStroke, CanvasPoseStage, CanvasPoseRig, GenerateRequest, GenerationTask, HistoryEntry, VideoGenerateRequest, VideoTaskSummary, VideoMode, VideoResolution } from '../protocol.ts'
+import type { CanvasAnnotation, CanvasAssetRef, CanvasConnection, CanvasPromptSetItem, CanvasConnectionRole, CanvasDocument, CanvasProposal, CanvasFileKind, CanvasLayerInfo, CanvasLayerPlanItem, CanvasNode, CanvasRect, CanvasStoryboard, CanvasVideoRef, CanvasSkillConfigApplyResult, CanvasSkillConfigField, CanvasSkillConfigSaveResult, CanvasSkillConfigStep, CanvasSkillConfigView, CanvasSkillDescriptor, CanvasSkillLibrary, CanvasSkillOutput, CanvasSkillRunRequest, CanvasSkillTask, CanvasSketchStroke, CanvasPoseStage, CanvasPoseRig, GenerateRequest, GenerationTask, HistoryEntry, VideoGenerateRequest, VideoHistoryEntry, VideoTaskSummary, VideoMode, VideoResolution } from '../protocol.ts'
 import type { CanvasBundleUnresolved } from '../canvas-bundle.ts'
 import { describeVideoModel, durationsOf, VIDEO_RESOLUTIONS } from '../video-model-catalog.ts'
 // The stitch order is a SHARED rule: the host builds its ffmpeg concat list with
@@ -24,9 +24,10 @@ import type { Timeline } from './timeline.ts'
 import { CastDialog, castLine } from './CastDialog.tsx'
 import { castMembers, castPromptLines, castReferenceIds, ROLE_LABELS } from './cast.ts'
 import { orderByPosition, orderIdsByPosition } from '../clip-order.ts'
-import { defaultStoryboard, MAX_SHOTS, SHOT_SECONDS, nextShotId, shotNodeOf, shotProblem, shotState, storyboardClipIds, storyboardOf, storyboardProgress, nextShotIndex, withAppendedShot, withMovedShot, withRemovedShot, withShot, withStaleDownstream, type ShotState } from './storyboard.ts'
+import { defaultStoryboard, MAX_SHOTS, nextShotId, shotNodeOf, shotProblem, shotState, shotVideoPlan, storyboardClipIds, storyboardOf, storyboardProgress, nextShotIndex, withAppendedShot, withMovedShot, withRemovedShot, withShot, withStaleDownstream, type ShotState } from './storyboard.ts'
 import { ImageGenApiError, type ImageGenApi } from './api.ts'
 import { errorMessage, tt } from './helpers.ts'
+import { mergeCanvasDocuments, type MergeConflict, type MergeSummary } from './canvas/canvas-merge.ts'
 import type { ImageGenKey } from './locales.ts'
 import { autoRemoveBackground, canvasToDataUrl, compositeAnnotatedResult, containRect, cropRaster, drawAnnotation, loadRaster, rectBetween, transparencyRatio } from './image-ops.ts'
 import { PosterEditor } from './PosterEditor.tsx'
@@ -47,12 +48,13 @@ import { nodesToFlow, viewportToFlow, viewportFromFlow, type CanvasFlowNode } fr
 import { onTablistKeyDown, tabIndexFor } from './tablist.ts'
 import css from './canvas-workspace.module.css'
 import { drawSketchStroke, rasterizeSketch } from './canvas/sketch-raster.ts'
-import { coveredNodes, SNAP_SCREEN_PX, snapOffset, type OverlapPair, type Point } from './canvas/geometry.ts'
+import { coveredNodes, SNAP_SCREEN_PX, snapGuides, snapOffset, type OverlapPair, type Point, type SnapGuide } from './canvas/geometry.ts'
 import { ComposerSelect, IconButton, labelWithKeys, ToolbarIcon, type ToolbarIconName } from './canvas/dock-controls.tsx'
 import { COMPOSE_SKILL_ID, composeGlyphs, PolishMenu, SkillConfigForm, SkillConfirmDialog, SkillLibraryDialog, SkillPicker, tierLabel } from './canvas/skill-dialogs.tsx'
 import { StoryboardBody } from './canvas/storyboard-board.tsx'
 import { PoseBoard, poseOf } from './canvas/pose-board.tsx'
 import { PoseStagePanel } from './canvas/pose-stage-panel.tsx'
+import { exportStageVideo, StageExportAborted } from './canvas/stage-export.ts'
 import { CanvasMinimap } from './canvas/minimap.tsx'
 import { ConnectionLayer } from './canvas/connection-layer.tsx'
 import { GroupLayer } from './canvas/group-layer.tsx'
@@ -66,16 +68,99 @@ import { ImagePicker, readImageSize, SketchBoard } from './canvas/sketch-and-pic
 import { RUN_NODE_SIZE, runRectOf, SkillRunCard, type SkillRunTrace } from './canvas/run-card.tsx'
 import { CanvasErrorToast, CanvasNoticeToast, CanvasVideoPreviewOverlay, CanvasWorkflowProgressBar } from './canvas/overlays.tsx'
 import { CanvasProposalBar } from './canvas/proposal-bar.tsx'
-import { BackgroundDockMenu, DockAddMenu, ImageDockMenu, NodeAddMenu, type DockAddKind } from './canvas/dock-menus.tsx'
+import { BackgroundDockMenu, DockAddMenu, ImageDockMenu, NodeAddMenu, TopBarMenu, type DockAddKind } from './canvas/dock-menus.tsx'
 import {
   annotationAnchor, assetOf, assetToDataUrl, attachedCards, bezierPath, clamp01, clampScale, cloneNodesWithCards, freeColumnX, imageDataUrl, isAnnotationCard, isPoseNode, isSketchNode, layerKindLabel, liveAnnotations, newId, nodeAnchor, nodeMetadata, nodeSizeFromRatio, nodesBounds, normalizeConfigNodeSizes, pruneAnnotations, removeNodesAndCards, resizedRect, sizeForAsset, textStyleOf, usableAsset, videoOf,
 } from './canvas/node-model.ts'
 import { CONFIG_NODE_SIZE, DROP_IMAGE_MAX_BYTES, WORLD_PAD, POSE_NODE_SIZE, SKETCH_ERASER_RADIUS, SKETCH_WIDTH_DOTS, FILE_NODE_SIZE, GRID_SIZE, IMAGE_NODE_SIZE, LEGACY_CONFIG_NODE_SIZE, MAX_SCALE, MIN_SCALE, PICKER_TABS, SKETCH_COLORS, SKETCH_EXPORT_WIDTH, SKETCH_NODE_SIZE, SKETCH_WIDTHS, STORYBOARD_NODE_SIZE, TEXT_NODE_SIZE } from './canvas/constants.ts'
+import { gridStepFor, invScaleFor, zoomBandOf } from './canvas/zoom-band.ts'
+import { ARRANGE_GAP, arrangePositions } from './canvas/arrange-model.ts'
+import { alignNodes, type AlignMode } from './canvas/align-model.ts'
+import { reorderLayers, type LayerMode } from './canvas/layer-order.ts'
+import { hiddenCount, isHidden, isLocked, unlockedIds, visibleConnections, visibleNodes } from './canvas/node-flags.ts'
+import { newPromptSetId, normalizePromptSet, promptSetJobsFromItems } from './canvas/prompt-set.ts'
+import { claimableClips } from './canvas/video-ledger.ts'
+import { AlignBar } from './canvas/align-bar.tsx'
+import { scanConfigReadiness, summarizeReadiness } from './canvas/readiness.ts'
+import { fullHealth, type GraphHealth, type GraphIssue } from './canvas/graph-health.ts'
+import { describeStep, historyRows } from './canvas/history-model.ts'
+import { HistoryPanel } from './canvas/history-panel.tsx'
+import { focusViewport, usableFocusHeight, type NodeHit } from './canvas/node-search.ts'
+import { NodeSearchDialog } from './canvas/node-search.tsx'
+import { exampleFlow } from './canvas/example-flow.ts'
+import { EMPTY_RUN_MARKS, hasMarks, runMarksFrom, withoutFailed, type RunMarks } from './canvas/run-marks.ts'
 import { POSE_PRESETS } from './canvas/pose-rig.ts'
 import { emptyStage, stagePatch, stageOf } from './canvas/pose-stage.ts'
+import { CapabilityCatalog } from './canvas/capability-catalog.tsx'
+import { CAPABILITIES, type CapabilityContext, type CapabilityId } from './canvas/capability-catalog.ts'
 
 type CanvasTool = 'select' | 'pan'
 type BackgroundMode = CanvasDocument['background']
+
+/**
+ * 对齐的键位：`event.code` → 对齐模式。
+ *
+ * WHY 用 `code`：Option 组合下的 `event.key` 是布局相关的组合字符（⌥H 是 `˙`），
+ * 按 `key` 判断的短路键在 macOS 上全都按不出来。`code` 是物理键位。
+ *
+ * 为什么是这四组（而不是像 Figma 那样一把 ⌥+字母）：
+ *
+ *  - ⌥⌘←/→ 左/右对齐，⌥⌘↑/↓ 顶/底对齐：方向键的语义就是「贴到哪一边」。
+ *  - ⌥⌘H / ⌥⌘V：H/V 即 horizontal / vertical，与 macOS 的「居中」同一套
+ *    字母直觉。加上 ⌘ 是必需的：⌥⌘H 是系统级「隐藏其他应用」，不带 ⌘ 的
+ *    ⌥H 在浏览器里会被当作字符输入。
+ *  - ⌥⌘E 水平等距：E 取「Equal」。不占用 ⇧：方向键 + ⇧ 是「从起点选到终点」
+ *    （画布上还没有这个手势），留给将来比现在抢过来更划算。
+ *
+ * 八枚按钮里只有七个进表：垂直等距是长画布才用得到的那个，给它配一个键等于
+ * 让快捷键表更长而没人按。它在 ⌘K 目录里按名字搜得到，那才是它的入口。
+ */
+const ALIGN_SHORTCUTS: Record<string, AlignMode> = {
+  ArrowLeft: 'left',
+  ArrowRight: 'right',
+  ArrowUp: 'top',
+  ArrowDown: 'bottom',
+  KeyH: 'centerH',
+  KeyV: 'centerV',
+  KeyE: 'distributeH',
+}
+
+/**
+ * 层级键位：`event.code` → 层级动作。键位与图例都在 `ShortcutHelp.tsx`，
+ * 这里是唯一把按键变成调用的地方。
+ *
+ * WHY 又是 `code`：⌥ 在 macOS 上是组合键修饰符，⌥] 的 `key` 是弯引号
+ * （`‘` / `’`），加了 ⇧ 再换一枚；中文输入法下还会变成全角。`]` / `[` 在
+ * 四组修饰符下恒定是 `BracketRight` / `BracketLeft`。
+ *
+ * WHY 四个方向各占一键而不是两键加反向：层级动作没有「切换」语义——没有
+ * 「按住再松开就回去」这种可以借用的手势，四个方向就是四件独立的事。
+ * ⇧ 与不带 ⇧ 成对，是因为它们本来就是「大跨一步」与「走一格」的关系。
+ */
+const LAYER_SHORTCUTS: Record<string, LayerMode> = {
+  BracketRight: 'forward',
+  BracketLeft: 'backward',
+}
+
+/** ⇧ 把同两枚括号键变成「一步跨到底」的两个端点动作。 */
+const LAYER_SHORTCUTS_SHIFT: Record<string, LayerMode> = {
+  BracketRight: 'front',
+  BracketLeft: 'back',
+}
+
+/**
+ * 锁定 / 隐藏：`event.code` → 动作。
+ *
+ * WHY ⌥⇧ 而不是 ⌥⌘：⌥⌘H 已经被对齐家族的「水平居中」占了（`ALIGN_SHORTCUTS`
+ * 的 `KeyH`），而它在 macOS 上还是系统级的「隐藏其他应用」——两个都撞。
+ * ⌥⇧ 这一档目前只有「整理画布」（⌥⇧F），三枚键互不冲突。
+ *
+ * WHY 认 code 不认 key：⌥⇧ 组合下 `event.key` 是组合字符，中文输入法下更不可靠。
+ */
+const FLAG_SHORTCUTS: Record<string, 'lock' | 'hide'> = {
+  KeyL: 'lock',
+  KeyH: 'hide',
+}
 
 const HISTORY_LIMIT = 60
 /**
@@ -89,6 +174,22 @@ const HISTORY_LIMIT = 60
  * explicit retry is still there for an immediate attempt.
  */
 const SAVE_RETRY_BACKOFF_MS = 15_000
+
+/**
+ * 两边把同一处改成不同样子：这次保存必须失败，并把冲突说清楚。
+ *
+ * WHY 模块级而不是组件里定义：组件里 `class` 每次渲染都是一副新身份，
+ * `instanceof` 只在同一个渲染里成立；而抛出它的那次写入和读它的那次 catch
+ * 之间隔着一次渲染，判断会静默失败——提示和按钮都退化成通用保存错误。
+ */
+class MergeRejectedError extends Error {
+  readonly conflict: MergeConflict
+  constructor (conflict: MergeConflict) {
+    super(tt('canvas.mergeConflict', { subject: conflict.subject }))
+    this.name = 'MergeRejectedError'
+    this.conflict = conflict
+  }
+}
 /** Footprint of the prompt card the 标注 tool drops next to a boxed image. */
 const ANNOTATION_TEXT_SIZE = { width: 268, height: 132 }
 /** Horizontal gap used when new nodes are laid out beside their source. */
@@ -100,6 +201,42 @@ const TEXT_COLORS = ['', '#1f2328', '#ffffff', '#e03131', '#1971c2', '#2f9e44', 
 /** Layer-split output column: node width and vertical gap (the gap also keeps
  *  a hover toolbar, which hangs below each image node, off its neighbour). */
 const LAYER_COLUMN_WIDTH = 280
+
+/**
+ * 一份撤销/重做快照与当前文档之间的差异，说成一句话。
+ *
+ * 返回 `null` 表示「这一步说不出话」——没有快照、快照坏了、或者文档除了视口
+ * 什么都没变。调用方那时退回纯「撤销 / 重做」：一条猜出来的说明比没有说明更
+ * 糟，用户会按下去找一件从未发生过的事。
+ *
+ * 判定顺序、连带结果吸收、`nodeIds` 范围全在 `history-model.ts`（19 条单测）；
+ * 这里只负责「解析快照 + 查三语文案」这两件接线上的事。
+ */
+function describeSnapshot(before: CanvasDocument | null, after: CanvasDocument | null): string | null {
+  if (before === null || after === null) return null
+  try {
+    const step = describeStep(before, after)
+    // `mixed` + 空 nodeIds 覆盖了两种「没有内容变化」：文档一模一样，或只动了
+    // 视口。两种情况都不该被说成「改了 N 项」。
+    if (step.kind === 'mixed' && step.nodeIds.length === 0) return null
+    // `detailKey` 是一个闭合的字符串联合，与字典 key 一一对应；断言在这里是
+    // 为了让「加一个 step kind 却忘了补三语」重新变成编译错误，而不是运行时
+    // 悄悄显示 key 本身。
+    return tt(step.detailKey as ImageGenKey, step.detailValues)
+  } catch {
+    return null
+  }
+}
+
+/** 栈顶那份 JSON 快照 → 文档；坏了就是 `null`（tooltip 退回纯「撤销」）。 */
+function parseSnapshot(json: string | undefined): CanvasDocument | null {
+  if (json === undefined) return null
+  try {
+    return JSON.parse(json) as CanvasDocument
+  } catch {
+    return null
+  }
+}
 const LAYER_COLUMN_GAP = 48
 /** Smallest footprint a node can be resized to. */
 const MIN_NODE_WIDTH = 96
@@ -150,6 +287,15 @@ interface CanvasWorkspaceProps {
   /** Video queue summaries, so video nodes can resolve their pending renders. */
   videoTasks?: VideoTaskSummary[]
   /**
+   * Persisted video history, so a clip that finished while its task row was
+   * gone (a host restart wipes the queue) can still be claimed by its node.
+   *
+   * Optional only so the many canvas harnesses that predate the ledger keep
+   * compiling; when absent the ledger simply never claims anything, which is
+   * the old behaviour rather than a wrong one.
+   */
+  videoHistory?: VideoHistoryEntry[]
+  /**
    * An import the parent asked for. A clip is imported BY REFERENCE (its served
    * URL), never copied into the canvas asset store — the same rule the
    * generated-clip nodes follow.
@@ -159,6 +305,18 @@ interface CanvasWorkspaceProps {
     | { source: 'video'; url: string; mime: string; duration?: number; title?: string }
   )
   onImportRequestHandled?: () => void
+  /**
+   * 从历史记录点进来时要打开的那张画布。
+   *
+   * WHY 单独一个 prop 而不复用 `importRequest`：那个是「往画布上加东西」，
+   * 这个「切到哪张画布」——把一个切文档的动作塞进一个加内容的通道，两边
+   * 都会开始长条件分支。
+   *
+   * 处理完必须调 `onOpenCanvasHandled`：否则同一张画布被点第二次时值没变，
+   * effect 不会再跑，用户会以为那次点击没生效。
+   */
+  openCanvasId?: string
+  onOpenCanvasHandled?: () => void
   /**
    * A skill run just persisted a clip into the video history. The panel reads
    * that list once per app session, so without this the sidebar keeps showing a
@@ -344,6 +502,30 @@ function projectLabel(project: ProjectSummary): string {
   return count > 0 ? `${project.title} · ${tt('canvas.proposal.pending', { count })}` : project.title
 }
 
+/**
+ * What the picker shows for the canvas you are already in.
+ *
+ * The picker's job is switching; the title button next to it is the one that
+ * names the canvas and renames it on double-click. But the picker printed the
+ * current canvas's title as its own value, so the tool bar read
+ * "未命名画布 … 未命名画布" — two identical strings, six pixels and a few icons
+ * apart, and neither read as an action. On top of that, a real canvas name can
+ * be a whole sentence, and the 180px trigger truncated it to a stub while the
+ * full name sat right beside it.
+ *
+ * So: name the ACTION when the answer is "the one you are looking at", and only
+ * fall back to the canvas's own name when it has a real one AND that name is
+ * short enough to be read in full. `canvas.openSwitcher` covers the unnamed
+ * case, `canvas.switchNamed` covers the named one.
+ */
+function pickerLabelOf(document: CanvasDocument, count: number): string {
+  if (count <= 1) return tt('canvas.openSwitcher')
+  const title = document.title.trim()
+  const untitled = title === '' || title === tt('canvas.untitled')
+  if (untitled || [...title].length > 12) return tt('canvas.openSwitcher')
+  return tt('canvas.switchNamed', { title })
+}
+
 function summaryOf(document: CanvasDocument, favorite = false): ProjectSummary {
   return {
     id: document.id,
@@ -354,6 +536,31 @@ function summaryOf(document: CanvasDocument, favorite = false): ProjectSummary {
     updatedAt: document.updatedAt,
     ...favorite ? { favorite: true } : {},
   }
+}
+
+/**
+ * 把一条体检问题的参数补齐成可以直接插进文案的值。
+ *
+ * WHY 单独一层：`graph-health.ts` 只给「缺哪些项」（`prompt,model` 这样的
+ * 机器值），而界面上要说「缺提示词、没有可用模型」。两个世界之间需要一次
+ * 翻译，且**只在这里**发生——那个纯模块不可能知道三语表，反过来让它在
+ * 输出里拼中文，就等于把语言从字典里搬进代码。
+ *
+ * `blockers` 里的每一项都有现成的文案（`canvas.configBlocked.*`，卡片角标
+ * 用的就是它），复用而不是另写一句：同一个缺失在画布上和清单里必须是同一个
+ * 说法，否则用户会以为是两件不同的事。
+ */
+function issueDetailValues(issue: GraphIssue): Record<string, string | number> {
+  const values: Record<string, string | number> = { ...issue.detailValues }
+  const blockers = issue.detailValues?.blockers
+  if (typeof blockers === 'string') {
+    values.blockers = blockers
+      .split(',')
+      .filter(blocker => blocker !== '')
+      .map(blocker => tt(`canvas.configBlocked.${blocker}` as ImageGenKey))
+      .join('、')
+  }
+  return values
 }
 
 /**
@@ -373,12 +580,36 @@ function WorkflowOptionsMenu(props: {
   parallel: boolean
   /** 选中节点数；0 时「强制重跑」没有作用对象，提示而不是静默无效。 */
   selectionCount: number
+  /**
+   * 这张画布上跑不起来的配置节点数，以及第一个卡在哪。
+   *
+   * WHY 出现在这个菜单里：用户打开它是在问「这一次怎么跑」。一个缺提示词 /
+   * 没选模型的配置节点不会报错——执行器把它当输入跳过，跑完显示「完成」，
+   * 而它下游那条分支什么都没产出。那是这个功能最坏的一种失败：看起来成功了。
+   */
+  blockedConfigs: number
+  firstBlocker: 'prompt' | 'model' | 'channel' | null
+  /** 上一次运行在画布上留下的标记数；0 时不给「清除标记」这个入口。 */
+  markCount: number
+  /**
+   * 整张画布的体检结果。
+   *
+   * WHY 和上面那个 `blockedConfigs` 并存：那个只数「配置节点缺什么」，是这
+   * 条菜单原有的结论（一句话、带数量）；体检多报的是结构问题（环、残线、
+   * 孤立产物），它们同样会让一次运行白跑，但没有任何配置节点能承载这句话。
+   * 两个数字必须出自同一份就绪结果（见 `canvasHealth`），否则用户会看到
+   * 「说有 2 个配置卡跑不了，清单里列了 3 条」。
+   */
+  health: GraphHealth
+  /** 点一条问题：跳到涉及的第一张卡。 */
+  onJumpIssue: (issue: GraphIssue) => void
   onEnter: () => void
   onLeave: () => void
   onToggleReuse: () => void
   onToggleRerun: () => void
   onToggleParallel: () => void
   onRun: () => void
+  onClearMarks: () => void
 }): React.JSX.Element {
   /** 三项长得一样，只有文案与状态不同；抽出来避免四处各写一遍。 */
   const item = (label: string, hint: string, checked: boolean, onToggle: () => void, disabled = false): React.JSX.Element =>
@@ -415,7 +646,47 @@ function WorkflowOptionsMenu(props: {
       props.selectionCount === 0,
     )}
     {item(tt('canvas.workflow.parallel'), tt('canvas.workflow.parallelHint'), props.parallel, props.onToggleParallel)}
+    {props.blockedConfigs > 0
+      ? <p className={css.workflowOptionWarn} data-workflow-blocked={props.firstBlocker ?? ''}>
+        {tt(`canvas.workflow.blocked.${props.firstBlocker ?? 'prompt'}` as const, { count: props.blockedConfigs })}
+      </p>
+      : null}
+    {/* 体检清单。没有问题时给一句「可以放心运行」而不是留空：菜单里空着的
+        位置会被读成「这一项还没做完」。 */}
+    <div className={css.healthList} data-canvas-health={props.health.blocking}>
+      {props.health.issues.length === 0
+        ? <p className={css.healthSummary} data-health-ok="">{props.health.checkedConfigs === 0 ? tt('canvas.health.empty') : tt('canvas.health.ok')}</p>
+        : <>
+            <p className={css.healthSummary} data-health-summary="">
+              {props.health.blocking > 0 ? tt('canvas.health.blocking', { count: props.health.blocking }) : tt('canvas.health.ok')}
+              {props.health.issues.length > props.health.blocking
+                ? ` ${tt('canvas.health.advisory', { count: props.health.issues.length - props.health.blocking })}`
+                : ''}
+            </p>
+            {props.health.issues.map(issue => <button
+              key={`${issue.kind}:${issue.nodeIds.join(',')}`}
+              type="button"
+              role="menuitem"
+              className={css.healthIssue}
+              data-health-issue={issue.kind}
+              data-severity={issue.severity}
+              disabled={issue.nodeIds.length === 0}
+              // 文案 key 与参数都由 `graph-health` 给出：那里是唯一知道「这条
+              // 问题说了什么」的地方，在这里按 kind 再拼一遍句子就等于给同一
+              // 句话造第二个来源。
+              title={tt(issue.detailKey, issueDetailValues(issue))}
+              onClick={() => props.onJumpIssue(issue)}
+            >{tt(issue.detailKey, issueDetailValues(issue))}</button>)}
+          </>}
+    </div>
     <span className={css.backgroundMenuDivider} />
+    {/* 「清掉上次运行的标记」是一个**动作**，而上面三条是「这一次怎么跑」的
+        开关。放进同一组会让人以为清标记也会影响这一次的运行。 */}
+    {props.markCount > 0
+      ? <button type="button" role="menuitem" data-clear-run-marks="" onClick={props.onClearMarks}>
+        {tt('canvas.workflow.clearMarks', { count: props.markCount })}
+      </button>
+      : null}
     <button type="button" role="menuitem" onClick={props.onRun}>{tt('canvas.workflow.run')}</button>
   </div>
 }
@@ -430,6 +701,35 @@ const BLOCKED_UPLOAD_EXTENSIONS = new Set([
 
 /** Cap mirroring MAX_CANVAS_FILE_BYTES on the host. */
 const MAX_UPLOAD_BYTES = 50 * 1024 * 1024
+
+/**
+ * 导演台导出视频的画幅（像素）。
+ *
+ * 16:9、两边都是偶数、也远在宿主 `stage-encode` 的 4096 上限之内——那一边
+ * 的 `evenSize()` 只对奇数边长做兜底裁剪，这里直接给偶数就不必走到兜底。
+ * 选 720p 而不是 1080p：逐帧要经 PNG 编码再 base64 上传，1080p 会把一次
+ * 5 秒导出的上行量翻一倍多，而这个产物是**给模型看的参考视频**，不是成片。
+ */
+const STAGE_VIDEO_SIZE = { width: 1280, height: 720 } as const
+
+/**
+ * 把全景图的 URL 加载成导出渲染器要用的 `<img>`。
+ *
+ * 失败返回 null 而不是抛错：背景图是装饰，一张取不到的全景图不该让整段
+ * 视频导不出来。空 URL 走同一条路——那只是「没有背景」，不是错误。
+ */
+async function loadStagePano(url: string | null): Promise<HTMLImageElement | null> {
+  if (url === null || url === '') return null
+  return await new Promise<HTMLImageElement | null>(resolve => {
+    const image = new Image()
+    // 画布资产与视频都是同源的；带上它也不会变成跨域请求，但缺了它，
+    // 一旦将来换了域名，`toDataURL` 会在导出时抛「画布已被污染」。
+    image.crossOrigin = 'anonymous'
+    image.onload = () => { resolve(image) }
+    image.onerror = () => { resolve(null) }
+    image.src = url
+  })
+}
 
 /**
  * Caps for a canvas drop of images: how many per drop, and how large each may be.
@@ -447,7 +747,7 @@ const MAX_UPLOAD_BYTES = 50 * 1024 * 1024
 const DROP_IMAGE_MAX_COUNT = 20
 
 export function CanvasWorkspace(props: CanvasWorkspaceProps): React.JSX.Element {
-  const { api, modelGroups, defaultChannelId, connected, connectedChannelIds, promptReady = connected, history, gallery, tasks, videoGroups, videoTasks, importRequest, onImportRequestHandled, onClipStored, onOpenSettings, active } = props
+  const { api, modelGroups, defaultChannelId, connected, connectedChannelIds, promptReady = connected, history, gallery, tasks, videoGroups, videoTasks, videoHistory, importRequest, onImportRequestHandled, openCanvasId, onOpenCanvasHandled, onClipStored, onOpenSettings, active } = props
   const [projects, setProjects] = useState<ProjectSummary[]>([])
   const [document, setDocument] = useState<CanvasDocument | null>(null)
   const [selectedIds, setSelectedIds] = useState<Set<string>>(() => new Set())
@@ -462,6 +762,57 @@ export function CanvasWorkspace(props: CanvasWorkspaceProps): React.JSX.Element 
    * from `?` — one of those two is what a user actually reaches for.
    */
   const [shortcutHelpOpen, setShortcutHelpOpen] = useState(false)
+  /**
+   * The searchable action catalog (⌘K / the dock's magnifier).
+   *
+   * WHY a separate surface from the shortcut legend even though both are
+   * "reference" overlays: the legend answers "what key does this", this one
+   * answers "where is that thing". Merging them would put 30 executable rows
+   * under a title that says "keyboard shortcuts", and the rows would then be the
+   * thing most people missed — the legend only lists gestures.
+   */
+  const [catalogOpen, setCatalogOpen] = useState(false)
+  /**
+   * 「找节点」（⌘F）。
+   *
+   * WHY 与目录分开：目录回答「这个动作在哪」，这里回答「那张卡在哪」。两者
+   * 都是搜索框，但一个执行、一个跳转；合成一个会让回车的行为取决于当前高亮
+   * 落在哪一类上——用户按下去之前无法预测会发生什么。
+   *
+   * 状态只留「开着没有」：查询串与高亮都在弹窗内部，画布不需要知道中间过程。
+   */
+  const [nodeSearchOpen, setNodeSearchOpen] = useState(false)
+  /** 历史面板。与目录 / 找节点同一类浮层：开一个先关另一个。 */
+  const [historyOpen, setHistoryOpen] = useState(false)
+  /**
+   * 历史面板里指针停在哪一步（那一行涉及的节点 id）。
+   *
+   * WHY 不放进 `historyOpen` 那一族：它是一个**预览**，不改任何东西，画布只是
+   * 借它把几张卡描一圈。用 state 而不是 ref，因为描边是渲染结果——ref 变了不会
+   * 重画。`null` = 没有预览，与「预览一个空数组」是两件事：前者清掉旧高亮，
+   * 后者表示「这一步没动任何节点」，两者都要能把上一步的描边擦掉。
+   */
+  const [historyPreviewIds, setHistoryPreviewIds] = useState<readonly string[] | null>(null)
+
+  /**
+   * 三个搜索/清单类浮层共用一条互斥规则。
+   *
+   * WHY 收成一个函数：目录、找节点、历史面板各自有多个入口（快捷键、底栏、
+   * 重做的右键、⌘K），每个入口各写一遍「先关另外两个」必然有人漏——漏掉的
+   * 那一条会叠出两个弹窗，而用户看到的是「我按 ⌘F，结果历史面板还压在上面」。
+   * 规则写在一处，新入口只能调它。
+   *
+   * 目录是**开关**（同一个键再按一次收起），所以它单独留一个 toggle 版本。
+   */
+  const openHistoryPanel = useCallback((): void => {
+    setCatalogOpen(false); setNodeSearchOpen(false); setHistoryOpen(true)
+  }, [])
+  const openNodeSearch = useCallback((): void => {
+    setCatalogOpen(false); setHistoryOpen(false); setNodeSearchOpen(true)
+  }, [])
+  const toggleCatalog = useCallback((): void => {
+    setNodeSearchOpen(false); setHistoryOpen(false); setCatalogOpen(open => !open)
+  }, [])
   /**
    * The latest `active` for the window-level listeners below.
    *
@@ -512,6 +863,14 @@ export function CanvasWorkspace(props: CanvasWorkspaceProps): React.JSX.Element 
   // 逻辑——状态各自独立时，Escape / 点画布 / 悬停离开每一条都只清自己认识
   // 的那两个，新加的这个就被漏下来，一直挂在底栏上面关不掉。
   const [workflowMenu, setWorkflowMenu] = useState<Point | null>(null)
+  /**
+   * 顶栏右侧「这份画布自己的事」菜单（收藏 / 导出 / 导入 / 删除画布）。
+   *
+   * 和底栏那几个浮层同一类，所以进同一份关闭名单（`closeDockMenus`）：
+   * 各自独立的话，Escape / 点画布 / 悬停离开每一条都只清自己认识的那几个，
+   * 新加的这个就被漏下来，成为画布上唯一关不掉的浮层。
+   */
+  const [topBarMenu, setTopBarMenu] = useState<Point | null>(null)
   const menuCloseTimer = useRef<number | null>(null)
   const clearMenuCloseTimer = (): void => {
     if (menuCloseTimer.current !== null) { window.clearTimeout(menuCloseTimer.current); menuCloseTimer.current = null }
@@ -524,7 +883,7 @@ export function CanvasWorkspace(props: CanvasWorkspaceProps): React.JSX.Element 
    *  点「运行工作流」把它带走——而那一次运行是会真花钱的。清单只写一份，
    *  下次再加浮层就不会再漏。 */
   const closeDockMenus = useCallback((): void => {
-    setBackgroundMenu(null); setImageMenu(null); setWorkflowMenu(null); setAddMenu(null)
+    setBackgroundMenu(null); setImageMenu(null); setWorkflowMenu(null); setAddMenu(null); setTopBarMenu(null)
   }, [])
   const scheduleMenuClose = useCallback((): void => {
     clearMenuCloseTimer()
@@ -599,6 +958,8 @@ export function CanvasWorkspace(props: CanvasWorkspaceProps): React.JSX.Element 
   const [timelineNodeIds, setTimelineNodeIds] = useState<string[]>([])
   /** 正在编辑的导演台节点；null = 面板关闭。 */
   const [stageNodeId, setStageNodeId] = useState<string | null>(null)
+  /** 导演台视频导出进度 0..1；null = 没有在导出。 */
+  const [stageExportProgress, setStageExportProgress] = useState<number | null>(null)
   const [timelineBusy, setTimelineBusy] = useState(false)
   /** 正在设置身份参考的图片节点；面板关掉时清空。 */
   const [castTarget, setCastTarget] = useState<string | null>(null)
@@ -614,6 +975,8 @@ export function CanvasWorkspace(props: CanvasWorkspaceProps): React.JSX.Element 
    *  panel breathes taller while hovered to make room for the labels. */
   const dockOuterRef = useRef<HTMLDivElement>(null)
   const dockRef = useRef<HTMLDivElement>(null)
+  /** 底栏那一整行（`.canvasChrome`）：对齐条、拼接条、缩略图列与底栏都在里面。 */
+  const chromeRef = useRef<HTMLDivElement>(null)
   const topBarRef = useRef<HTMLElement>(null)
   useEffect(() => {
     const outer = dockOuterRef.current
@@ -739,6 +1102,17 @@ export function CanvasWorkspace(props: CanvasWorkspaceProps): React.JSX.Element 
    * 用 ref：拖动每帧都在改位置，真正触发渲染的是文档更新，不需要在
    * pointermove 里额外 setState（那是每像素一次的无谓渲染）。 */
   const dragMovingIdsRef = useRef<ReadonlySet<string>>(new Set())
+  /**
+   * 当前这一帧里该画的吸附参考线。
+   *
+   * WHY 用 ref + 版本号而不是 state：它每帧都在变，而拖动本身已经靠 `updateNodes`
+   * 让画布重渲染了——再为线加一个 state 就是每帧两次渲染，长拖动会掉帧。拖动结
+   * 束时清空并 bump 一次版本，让「线消失」这一帧也真的画出来。
+   */
+  const snapGuidesRef = useRef<SnapGuide[]>([])
+  // 只需要那个「bump 一下就重渲染」的函数，不要值：值是给宿主调试用的，而这里
+  // 一旦真去读它，就会有人以为它在表达某个状态，然后据此写出会过期的判断。
+  const [, bumpSnapGuides] = useState(0)
   const [historyVersion, setHistoryVersion] = useState(0)
 
   // Image-node tools: 标注 (box -> prompt card), 移除背景 (local matting) and
@@ -749,6 +1123,14 @@ export function CanvasWorkspace(props: CanvasWorkspaceProps): React.JSX.Element 
   // 工作流运行：`null` 表示没在跑；中断控制器放在 ref 里，因为它不是渲染数据。
   const [workflowBusy, setWorkflowBusy] = useState(false)
   const [workflowProgress, setWorkflowProgress] = useState<WorkflowProgress | null>(null)
+  /**
+   * 上一次运行在画布上留下的痕迹：哪些节点失败了、哪些被上游挡住没跑。
+   *
+   * 不进 `CanvasDocument`：它是「刚刚这一次」的结论，不是画布的属性。存进
+   * 文档就会跟着导出、跟着同步，还得有人负责清理；放在 state 里，刷新即失效
+   * ——那正是它该有的寿命。
+   */
+  const [runMarks, setRunMarks] = useState<RunMarks>(EMPTY_RUN_MARKS)
   const workflowAbort = useRef<AbortController | null>(null)
   // 防重入读 ref 而不是 state：`runWorkflowFrom` 的闭包会捕获创建时的
   // `workflowBusy`，连点两下时第二次看到的仍是 false。
@@ -783,6 +1165,8 @@ export function CanvasWorkspace(props: CanvasWorkspaceProps): React.JSX.Element 
   const [composerSize, setComposerSize] = useState('auto')
   const [composerQuality, setComposerQuality] = useState('auto')
   const [composerCount, setComposerCount] = useState(1)
+  // 套图：composer 上的草稿。只有 composer 在编辑它；提交后清空。
+  const [composerPromptSet, setComposerPromptSet] = useState<CanvasPromptSetItem[]>([])
   const [composerBusy, setComposerBusy] = useState(false)
   // Video composer: the canvas shares one composer between images and clips, so
   // these hold the clip-side choices while `composerKind` picks which path the
@@ -1001,6 +1385,40 @@ export function CanvasWorkspace(props: CanvasWorkspaceProps): React.JSX.Element 
   const composerChannelConnected = channelIsConnected(composerChannelId)
   const composerVideoConnected = composerVideoChannelId === '' || channelIsConnected(composerVideoChannelId)
   const videoModelCount = (videoGroups ?? []).reduce((total, group) => total + group.models.length, 0)
+
+  /**
+   * 这张画布上有几个配置节点跑不起来、第一个卡在哪。
+   *
+   * 每次文档变化重算：`configReadiness` 只是几次字符串比较，节点数在几十到
+   * 几百的量级，重算比维护一张「哪些节点变过」的失效表便宜，也不会出现
+   * 「模型换了、菜单里的提示还停在旧结论」这类只有截图才能发现的偏差。
+   *
+   * 依赖里带 `composerPrompt`：活动编辑框里的文字是提交路径的第一来源，
+   * 它一变结论就可能变（写着写着从「缺提示词」变成「可生成」）。
+   */
+  const configReadiness = useMemo(() => scanConfigReadiness(document?.nodes ?? [], document?.connections ?? [], {
+    composerTextFor: nodeId => (selectedIds.has(nodeId) ? composerPrompt : ''),
+    modelFor: node => resolveModelChoice(modelGroups, { channelId: node.metadata?.channelId, model: node.metadata?.model }, defaultChannelId).model,
+    channelConnected: channelIsConnected,
+  }), [document, selectedIds, composerPrompt, modelGroups, defaultChannelId, channelIsConnected])
+  const configReadinessSummary = useMemo(() => summarizeReadiness([...configReadiness.values()]), [configReadiness])
+
+  /**
+   * 画布体检：结构问题 + 就绪问题，一次算全。
+   *
+   * WHY 读 `configReadiness` 而不是再扫一遍：那两份结论必须来自同一组事实。
+   * 各算一次的结果是「菜单说 2 个配置卡跑不了，体检列出 3 条」——两个数字都
+   * 出自我这里，用户没法判断该信哪个，只会两个都不信。
+   *
+   * 就绪结果按 `blockers` 传进去（`ConfigReadiness` 天然有这个字段），
+   * `graph-health` 只管把它和结构问题按严重度排在一起。
+   */
+  const canvasHealth = useMemo(() => fullHealth(
+    document?.nodes ?? [],
+    document?.connections ?? [],
+    new Map([...configReadiness].map(([nodeId, state]) => [nodeId, { ready: state.ready, blockers: state.blockers }])),
+  ), [document, configReadiness])
+
   /**
    * A pre-flight warning for the code path (today: no ffmpeg).
    *
@@ -1070,6 +1488,7 @@ export function CanvasWorkspace(props: CanvasWorkspaceProps): React.JSX.Element 
   const toggleFullscreen = useCallback((): void => {
     const root = rootRef.current
     if (root === null) return
+
     // Both branches swallow their rejection: a browser can refuse the request
     // (an 'allowfullscreen'-less iframe, a permissions policy), and an
     // unhandled rejection would surface as a console error with no user-facing
@@ -1166,6 +1585,14 @@ export function CanvasWorkspace(props: CanvasWorkspaceProps): React.JSX.Element 
   const pastRef = useRef<string[]>([])
   const futureRef = useRef<string[]>([])
   const composerTargetRef = useRef<string | null>(null)
+  /**
+   * 进行中的导演台导出。
+   *
+   * 用 ref 而不是 state：中止要能在一个已经渲染完的闭包里立刻拿到当前值，
+   * state 要等下一次渲染才更新。导出结束时把 ref 清空，`null` 同时表达
+   * 「没在导出」——这样重复点击不会起第二次导出。
+   */
+  const stageExportRef = useRef<AbortController | null>(null)
 
   documentRef.current = document
   selectedIdsRef.current = selectedIds
@@ -1233,10 +1660,240 @@ export function CanvasWorkspace(props: CanvasWorkspaceProps): React.JSX.Element 
     setDocument(previous => previous === null ? previous : updater(previous))
   }, [])
 
+  /**
+   * 把内存草稿变成宿主上的真画布——只在它真的有了内容之后。
+   *
+   * 首屏与「新建画布」都不再写盘（见 `draftDocument`），所以「落盘」这个
+   * 动作必须发生在用户第一次往里放东西的那一刻；放得晚了，一次编辑会被丢
+   * 在 `id: ''` 的文档上，而宿主根本不知道它存在。
+   *
+   * 为什么是一个效果而不是每个入口自己调：节点从六条路进来（底栏、快捷
+   * 卡、拖文件、粘贴、侧栏转交、技能输出），每条都自己记得这件事的话，
+   * 漏掉的那条就是用户白干活的那条。
+   */
+  const promotingRef = useRef(false)
+  useEffect(() => {
+    const current = document
+    if (current === null || current.id !== '' || current.nodes.length === 0) return
+    if (promotingRef.current) return
+    promotingRef.current = true
+    const untitled = current.title.trim() === '' || current.title === tt('canvas.untitled')
+    void (async () => {
+      try {
+        const created = await api.canvasCreate(untitled ? undefined : current.title)
+        // 历史快照是在 id 还为空时压的。不改写的话，此后按一次撤销就把 id
+        // 撤回 `''`，下一次编辑又会建第二份画布，而第一份变成磁盘上的孤儿。
+        const adopt = (snapshot: string): string => {
+          try {
+            const parsed = JSON.parse(snapshot) as CanvasDocument
+            return parsed.id === '' ? JSON.stringify({ ...parsed, id: created.id }) : snapshot
+          } catch { return snapshot }
+        }
+        pastRef.current = pastRef.current.map(adopt)
+        futureRef.current = futureRef.current.map(adopt)
+        const live = documentRef.current
+        if (live === null || live.id !== '') {
+          // 已经切走了：这份刚建出来的空画布没人要，删掉才不会留下一份用户
+          // 从没建过的画布（正是本函数存在的理由）。
+          await api.canvasRemove(created.id).catch(() => [])
+          return
+        }
+        const promoted: CanvasDocument = { ...live, id: created.id, revision: created.revision, createdAt: created.createdAt, updatedAt: created.updatedAt }
+        setDocument(promoted)
+        setProjects(previous => [summaryOf(promoted, previous.some(project => project.id === promoted.id)), ...previous])
+      } catch (caught) {
+        // 建不出来就把内容留在内存里，并如实报错：吞掉它比多一条空画布更糟。
+        setError(caught instanceof Error ? caught.message : String(caught))
+      } finally {
+        promotingRef.current = false
+      }
+    })()
+  }, [api, document])
+
   const mutate = useCallback((updater: (previous: CanvasDocument) => CanvasDocument): void => {
     beginHistory()
     updateDocument(updater)
   }, [beginHistory, updateDocument])
+
+  /**
+   * 整理画布：把流程排成从左到右的列。
+   *
+   * 走 `mutate` 而不是直接 `updateDocument`：这是一次用户动作，必须能一次 Ctrl+Z
+   * 回到整理前。整块坐标覆盖写在同一帧里，撤销栈里只有一条记录——逐节点 patch
+   * 会让撤销变成「按一次退一个节点」，那是这个动作最没用的形态。
+   *
+   * 不动视口。用户按下它的时候正看着那块内容；把视野也一起挪走，他会先看到
+   * 一片空白，再以为自己点错了。
+   *
+   * 定义在 `mutate` 之后、键盘监听之前：⌥⇧F 的处理函数要引用它，而那个
+   * effect 的依赖数组在文件中段。挪到 fitView 旁边（更符合「视图动作」的
+   * 阅读顺序）会让它在声明前被捕获，TypeScript 的块级作用域检查直接报错。
+   */
+  const arrangeCanvas = useCallback((): void => {
+    const current = documentRef.current
+    if (current === null || current.nodes.length === 0) return
+    // 锁定的卡片不进整理。整理是整体重排，它一定会挪动每一张上场的卡；把锁定的
+    // 那几张排除在外又会在它们身上叠出一片新位置——两种结果都不能接受。所以这
+    // 里直接拒绝，并说清是哪张卡拦住了：用户只需要解锁，而不是去猜为什么点了
+    // 没反应。
+    const lockedCount = current.nodes.reduce((count, node) => isLocked(node) ? count + 1 : count, 0)
+    if (lockedCount > 0) { setNotice(tt('canvas.lock.arrangeBlocked', { count: lockedCount })); return }
+    // 隐藏的卡片不参与：它们不在画面上，给它们排位置会让用户下次「全部显示」
+    // 时看到一群被悄悄挪过的卡。
+    const onStage = visibleNodes(current.nodes)
+    const result = arrangePositions(onStage, current.connections)
+    if (!result.ok) { setError(tt('canvas.arrangeCycle', { count: result.cycle.length })); return }
+    if (result.moved === 0) { setNotice(tt('canvas.arrangeAlready')); return }
+    mutate(previous => ({
+      ...previous,
+      nodes: previous.nodes.map(node => {
+        const next = result.positions.get(node.id)
+        return next === undefined ? node : { ...node, x: next.x, y: next.y }
+      }),
+    }))
+    // 说清「散卡被放到哪了」：用户看不见的那部分改动如果一声不响，下次打开
+    // 画布他会以为节点丢了。
+    setNotice(result.parked > 0
+      ? tt('canvas.arrangeDoneParked', { columns: result.columns, parked: result.parked })
+      : tt('canvas.arrangeDone', { columns: result.columns }))
+  }, [mutate])
+
+  /**
+   * 对齐 / 分布选中的节点。
+   *
+   * 规则全在 `align-model.ts`（分组是刚体、跑到不动点、结果都是整数，21 条
+   * 单测）。这里只做三件接线上的决定：
+   *
+   *  1. **一次 `mutate`**。逐节点 patch 会让撤销变成「按一次退一张卡」，而对齐
+   *     是用户眼里一个动作，撤销栈里就该是一条。
+   *  2. `moved === 0` 时**不写**。已经对齐的图按一下按钮不该多出一条空撤销，
+   *     那会让下一次 Cmd+Z 看起来什么都没做。
+   *  3. 拒绝与「没变」都要说出来。八枚按钮里有六枚几乎总是可点，一次静默的
+   *     无效点击和一次静默的成功在界面上是同一个画面。
+   */
+  const alignSelection = useCallback((mode: AlignMode): void => {
+    const current = documentRef.current
+    if (current === null) return
+    // 藏起来的卡不参与对齐。它们不在画面上，把它们挪到一条线上会让用户下次
+    // 「全部显示」时看到一群被悄悄挪过的卡；而把它们算进包围盒又会把可见的
+    // 那几张推到画外——两种都不是用户按这个按钮时想的事。
+    const result = alignNodes({ nodes: visibleNodes(current.nodes), selectedIds: selectedIdsRef.current, groups: groupsOf(current) }, mode)
+    if (!result.ok) {
+      const distributing = mode === 'distributeH' || mode === 'distributeV'
+      setNotice(tt(distributing ? 'canvas.align.distributeTooFew' : 'canvas.align.tooFew'))
+      return
+    }
+    if (result.moved === 0) { setNotice(tt('canvas.align.already')); return }
+    mutate(previous => ({
+      ...previous,
+      nodes: previous.nodes.map(node => {
+        const next = result.positions.get(node.id)
+        return next === undefined ? node : { ...node, x: next.x, y: next.y }
+      }),
+    }))
+    setNotice(tt('canvas.align.done', { count: result.moved }))
+  }, [mutate])
+
+  /**
+   * 置顶 / 置底 / 上移一层 / 下移一层。
+   *
+   * 规则全在 `layer-order.ts`（整组折叠成一个槽位再移动，12 条单测）。这里只
+   * 做三件接线上的决定，与 `alignSelection` 同一个形状：
+   *
+   *  1. **一次 `mutate`**。层级调整改的是 `nodes` 数组顺序，而保存、撤销、渲染
+   *     都读这一个数组；写两遍会让撤销栈里出现「退一步只退一半」的中间态。
+   *  2. `moved === false` 时**不写**。已经最上面那张再置顶一次，撤销栈里不该
+   *     多出一条什么都没改的步骤，否则下一次 Cmd+Z 看起来像没反应。
+   *  3. 「没动」也要**说出来**，而且要按方向说。同一个空操作有四种原因：置顶
+   *     时已在最上、置底时已在最下、上移时已顶、下移时已压底。它们合成一句
+   *     「已经是最上面一层了」会在置底那两次里说反话——用户按的是「下移」，
+   *     却被告知「已经是最上面」，那比什么都不说更糟。
+   */
+  const reorderSelection = useCallback((mode: LayerMode): void => {
+    const current = documentRef.current
+    if (current === null) return
+    const result = reorderLayers(current.nodes, selectedIdsRef.current, mode)
+    const upwards = mode === 'front' || mode === 'forward'
+    if (!result.moved) {
+      setNotice(tt(upwards ? 'canvas.layer.blockedFront' : 'canvas.layer.blockedBack'))
+      return
+    }
+    mutate(previous => ({ ...previous, nodes: [...result.nodes] }))
+    const moved = current.nodes.reduce((count, node) => selectedIdsRef.current.has(node.id) ? count + 1 : count, 0)
+    const doneKey = mode === 'front'
+      ? 'canvas.layer.doneFront'
+      : mode === 'back'
+        ? 'canvas.layer.doneBack'
+        : mode === 'forward'
+          ? 'canvas.layer.doneForward'
+          : 'canvas.layer.doneBackward'
+    setNotice(tt(doneKey, { count: moved }))
+  }, [mutate])
+
+  /**
+   * 锁定 / 解锁选中的卡片。
+   *
+   * 三个接线上的决定：
+   *
+   *  1. **一次 `mutate`**，和层级、对齐同一条规矩——用户眼里这是一个动作，
+   *     撤销栈里就该是一条。
+   *  2. **按「全是锁着的？」决定方向**，不是按某个开关状态：混选（锁的 + 没锁
+   *     的）时按下它应该把没锁的那些锁上，那是多数人此刻想要的；一个真正的
+   *     三态按钮会让用户永远猜不准下一次按下去会发生什么。
+   *  3. **说清楚做了什么**。锁上之后卡片看起来几乎没变（只多一枚小锁），
+   *     不吭声的话用户会以为按钮没生效，然后再按一次——于是又把它们解锁了。
+   */
+  const toggleLock = useCallback((): void => {
+    const current = documentRef.current
+    if (current === null) return
+    const targets = current.nodes.filter(node => selectedIdsRef.current.has(node.id))
+    if (targets.length === 0) return
+    const locking = targets.some(node => !isLocked(node))
+    const ids = new Set(targets.map(node => node.id))
+    mutate(previous => ({
+      ...previous,
+      nodes: previous.nodes.map(node => ids.has(node.id) ? { ...node, metadata: { ...nodeMetadata(node), locked: locking } } : node),
+    }))
+    setNotice(tt(locking ? 'canvas.lock.locked' : 'canvas.lock.unlocked', { count: ids.size }))
+  }, [mutate])
+
+  /**
+   * 隐藏 / 显示选中的卡片。
+   *
+   * 方向与 `toggleLock` 同一条规则：**只要有一张还看得见，这一下就是藏**。
+   * 藏起来的卡会立刻从选中集里退出——留着一个「选中的、看不见的」id，下一次
+   * Delete 就会删掉一张屏幕上没有的卡。
+   *
+   * 恢复的入口在底栏那条「N 张卡片已隐藏 / 全部显示」上，不在这里：一个自己把
+   * 自己藏起来的动作，没法同时是把它叫回来的入口。
+   */
+  const toggleHidden = useCallback((): void => {
+    const current = documentRef.current
+    if (current === null) return
+    const targets = current.nodes.filter(node => selectedIdsRef.current.has(node.id))
+    if (targets.length === 0) return
+    const hiding = targets.some(node => !isHidden(node))
+    const ids = new Set(targets.map(node => node.id))
+    mutate(previous => ({
+      ...previous,
+      nodes: previous.nodes.map(node => ids.has(node.id) ? { ...node, metadata: { ...nodeMetadata(node), hidden: hiding } } : node),
+    }))
+    if (hiding) setSelectedIds(new Set())
+    setNotice(tt(hiding ? 'canvas.lock.hid' : 'canvas.lock.shown', { count: ids.size }))
+  }, [mutate])
+
+  /** 把文档里所有隐藏的卡片一次性放回来。底栏那条提示的唯一动作。 */
+  const showAllHidden = useCallback((): void => {
+    const current = documentRef.current
+    if (current === null) return
+    const count = hiddenCount(current.nodes)
+    if (count === 0) return
+    mutate(previous => ({
+      ...previous,
+      nodes: previous.nodes.map(node => isHidden(node) ? { ...node, metadata: { ...nodeMetadata(node), hidden: false } } : node),
+    }))
+    setNotice(tt('canvas.lock.shown', { count }))
+  }, [mutate])
 
   const undo = useCallback((): void => {
     const snapshot = pastRef.current[pastRef.current.length - 1]
@@ -1260,9 +1917,81 @@ export function CanvasWorkspace(props: CanvasWorkspaceProps): React.JSX.Element 
     setSelectedIds(new Set()); setSelectedConnectionId(null)
   }, [])
 
+  /**
+   * 历史面板里点一行：一次退回到那一步。
+   *
+   * 实现上就是「连按 N 次撤销」，但**只写一次状态**：逐次调 `undo()` 会让面板
+   * 在中间态闪一下（N 行列表逐帧往回收），而且中间每一帧都会触发一次保存排期。
+   * 这里把要退的 N 条一次性挪到 `futureRef`，然后把栈顶那份设为文档——语义与
+   * 连按 N 次完全相同（`futureRef` 也回填了 N 条，所以「重做」能一步步走回来，
+   * 而不是一跳到底）。
+   *
+   * `stepsBack` 超出现有栈深时**夹到栈深**，不返回、不报错：面板是异步渲染的，
+   * 用户点下去的那一刻栈可能已经因为别处的编辑变短了一格，那时他想要的仍然是
+   * 「尽量往回退」，而不是一次静默的无效点击。
+   */
+  const jumpToHistoryStep = useCallback((stepsBack: number, nodeIds: readonly string[] = []): void => {
+    const current = documentRef.current
+    if (current === null || stepsBack <= 0) return
+    const past = pastRef.current
+    const depth = Math.min(stepsBack, past.length)
+    if (depth === 0) return
+    const target = past[past.length - depth]!
+    // 重做栈的顺序必须与「连按 N 次撤销」逐帧推演的结果逐字节相同：
+    //   第 1 次撤销把 **当前** 压进去、文档变成 past[n-1]；
+    //   第 2 次把 past[n-1] 压进去……
+    //   第 depth 次把 past[n-depth+1] 压进去、文档变成 past[n-depth]。
+    // 所以栈里追加的顺序是 [当前, past[n-1], past[n-2], …, past[n-depth+1]]，
+    // 最后压进去的那个正好是「最后一步的后态」，redo() 从它开始往回走。
+    const undone: string[] = [JSON.stringify(current)]
+    for (let index = past.length - 1; index > past.length - depth; index -= 1) undone.push(past[index]!)
+    futureRef.current = [...futureRef.current, ...undone].slice(-HISTORY_LIMIT)
+    pastRef.current = past.slice(0, past.length - depth)
+    const restored = JSON.parse(target) as CanvasDocument
+    setDocument(restored)
+    setHistoryVersion(version => version + 1)
+    // 退回去之后**选中这一步动过的那几张卡**。只清空选择的话，用户看到的是
+    // 一张「长得和刚才差不多」的画布，得自己在上百张卡里找回刚刚被撤掉的是
+    // 哪几张——而面板里那一行明明已经写着了。
+    //
+    // 必须与**目标文档**求交：`historyRows` 的 nodeIds 来自那一步的快照，其中
+    // 「删除」类步骤点名的节点在目标文档里已经不存在了，直接塞进 selectedIds
+    // 会让删除按钮以为自己选中了东西、而画布上一张卡都没亮。
+    const alive = new Set(restored.nodes.map(node => node.id))
+    setSelectedIds(new Set(nodeIds.filter(id => alive.has(id))))
+    setSelectedConnectionId(null)
+    // 预览随面板一起结束：面板已经关了，谁也不会再来清它。
+    setHistoryPreviewIds(null)
+  }, [])
+
   const setViewport = useCallback((viewport: CanvasDocument['viewport']): void => {
     updateDocument(previous => ({ ...previous, viewport }))
   }, [updateDocument])
+
+  /**
+   * 「按下去会退掉什么」——撤销/重做按钮的 tooltip 里那一句。
+   *
+   * WHY 要防抖：`document` 在拖动时每帧都换一个新对象，而这里每算一次
+   * `describeStep` 都要 `JSON.parse` 栈顶那份快照（一张大画布是几十 KB）。
+   * 挂在 `[document, historyVersion]` 上不防抖，等于每像素解析一次。160ms
+   * 是「手停下来才说话」的量级：拖动中没人读 tooltip，松手后才需要它准确。
+   *
+   * WHY 不在 `undo()` 里算：那里算的是「刚才发生了什么」，而 tooltip 要的是
+   * 「下一步会发生什么」——快照栈顶与当前文档之间的差，只有文档也落定了才成立。
+   *
+   * 任何一步解析失败都退成 `null`（按钮显示纯「撤销」）：一条说错的 tooltip
+   * 比没有 tooltip 更糟，它会让人相信一次并不存在的撤销。
+   */
+  const [undoHint, setUndoHint] = useState<string | null>(null)
+  const [redoHint, setRedoHint] = useState<string | null>(null)
+  useEffect(() => {
+    const timer = window.setTimeout(() => {
+      const current = documentRef.current
+      setUndoHint(describeSnapshot(parseSnapshot(pastRef.current[pastRef.current.length - 1]), current))
+      setRedoHint(describeSnapshot(current, parseSnapshot(futureRef.current[futureRef.current.length - 1])))
+    }, 160)
+    return () => window.clearTimeout(timer)
+  }, [document, historyVersion])
 
   // ------------------------------------------------------- node operations
 
@@ -1388,71 +2117,59 @@ export function CanvasWorkspace(props: CanvasWorkspaceProps): React.JSX.Element 
   }, [placeNewNode, createTextNode, createSketchNode, createPoseNode, createStoryboardNode, createConfigNode])
 
   /**
-   * 新建画布的第一屏。
+   * 空画布上的「载入示例」：放一条真的能跑通的 提示词 → 配置卡。
    *
-   * WHY 不是一对空节点：第一次装插件的人打开画布，看到的是一个空文本节点
-   * 加一张空配置卡——他不知道该往里写什么、写完之后会得到什么，也没有任何
-   * 现成的例子可以对照。所以种子节点自带一条能直接跑通的提示词：点「生成」
-   * 就有图，改几个字就是自己的东西。
+   * WHY 一次 `mutate` 写两个节点加一根线：分三次写会在撤销栈里留下三条记录，
+   * 用户按一次 Ctrl+Z 只撤回半条示例，剩下的半条挂在画布上既跑不了也删不干净。
    *
-   * WHY 用 `metadata.text` 而不是往提示词框里塞占位符：占位符一变真，用户
-   * 就得先删掉它才能写自己的。这里是一条真的、完整可用的提示词，删掉重写也
-   * 不损失什么。
-   *
-   * WHY 只预置一个案例而不是一张多案例教程画布（咖图AI 的做法）：我们的画布
-   * 是用户自己的第一屏，不是展示厅。一条跑得通的链比五条要读的链有用。
+   * 几何交给 `example-flow.ts`（有单测），这里只负责把它摆到视野中间。整对
+   * 节点按外框居中，不是按配置卡居中——后者会让文本卡伸到可视区外面去。
    */
-  const seedDocument = useCallback((created: CanvasDocument): CanvasDocument => {
-    if (created.nodes.length > 0) return created
-    const bounds = viewportRef.current?.getBoundingClientRect()
-    const viewport = created.viewport
-    // Same reservation as `canvasCenter`: the seed pair is the FIRST thing a
-    // user sees, and centring it behind the bottom dock is how a brand-new
-    // canvas opens with both nodes half-covered.
-    const freeHeight = bounds !== undefined ? Math.max(80, bounds.height - chromeHeight - 26) : 0
-    const middle = bounds !== undefined && bounds.width > 0 && bounds.height > 0
-      ? { x: (bounds.width / 2 - viewport.x) / viewport.k, y: (freeHeight / 2 - viewport.y) / viewport.k }
-      : { x: 480, y: 320 }
-    // Wider and a little taller than a default text node, but NOT a fixed 220:
-    // measured at 360px wide with the shipped `.textArea` metrics (14px type,
-    // 1.55 leading), the example is 121px tall in Chinese, 164 in English and
-    // 186 in Russian — 220 left two thirds of the card blank under a three-line
-    // prompt, which reads as a node that failed to render rather than as an
-    // example. 190 fits the longest of the three with a few pixels to spare;
-    // the config node beside it is 190 tall, so the pair also lines up.
-    const seedSize = { width: 360, height: 190 }
-    const GAP = 80
-    // Centre the PAIR, not the config node. `center` is a point, and
-    // `createConfigNode` turns it into top-left by subtracting half its own
-    // width — so building the text node off `config.x` put it a whole node plus
-    // a gap to the LEFT of centre, which at panel widths is off-screen: the
-    // example opened with its title cut in half ("例提示词").
-    const pairWidth = seedSize.width + GAP + CONFIG_NODE_SIZE.width
-    const pairLeft = middle.x - pairWidth / 2
-    const text: CanvasNode = {
-      ...createTextNode(),
-      title: tt('canvas.seedExampleTitle'),
-      x: Math.round(pairLeft),
-      y: Math.round(middle.y - seedSize.height / 2),
-      width: seedSize.width,
-      height: seedSize.height,
-      metadata: { text: tt('canvas.seedExamplePrompt'), fontSize: 14 },
-    }
-    const config: CanvasNode = {
-      ...createConfigNode(),
-      x: Math.round(pairLeft + seedSize.width + GAP),
-      y: Math.round(middle.y - CONFIG_NODE_SIZE.height / 2),
-    }
-    return {
-      ...created,
-      // A name the user can find in the switcher later. "未命名画布" plus an
-      // example in it reads as a scratch buffer; "示例：第一张图" says what it
-      // is and can be renamed in one click.
-      title: tt('canvas.seedExampleCanvasTitle'),
-      nodes: [text, config],
-      connections: [{ id: newId('edge'), fromNodeId: text.id, toNodeId: config.id }],
-    }
-  }, [createConfigNode, createTextNode, chromeHeight])
+  const loadExampleFlow = useCallback((): void => {
+    const center = canvasCenter()
+    const pairWidth = TEXT_NODE_SIZE.width + ARRANGE_GAP.x + CONFIG_NODE_SIZE.width
+    const flow = exampleFlow({
+      prompt: tt('canvas.example.prompt'),
+      textTitle: tt('canvas.example.title'),
+      configTitle: tt('canvas.configNode'),
+      origin: {
+        x: Math.round(center.x - pairWidth / 2 + ARRANGE_GAP.x + TEXT_NODE_SIZE.width),
+        y: Math.round(center.y - CONFIG_NODE_SIZE.height / 2),
+      },
+      newId,
+    })
+    mutate(previous => ({ ...previous, nodes: [...previous.nodes, ...flow.nodes], connections: [...previous.connections, ...flow.connections] }))
+    setSelectedIds(new Set([flow.focusNodeId]))
+    setSelectedConnectionId(null)
+    setNotice(tt('canvas.example.loaded'))
+  }, [mutate, canvasCenter])
+
+  /**
+   * 「还没落盘的新画布」的内存形态。
+   *
+   * 这里以前直接 `api.canvasCreate` + `seedDocument`：打开画布标签页就写一份
+   * 文件进 `~/.dsh/dsh-imagegen/canvas/`，于是刚装完插件、甚至只是切到这个
+   * 标签页，下拉里就已经躺着一份带着柴犬提示词、标题叫「示例：第一张图」的
+   * 画布——而用户从没建过它。那不是他的东西，删掉还得多按一次。
+   *
+   * 现在首屏只是一份**内存草稿**：它不进列表、不写盘、不参与保存。用户真的
+   * 往里放了东西（建节点、落图、粘贴、拖文件）时，`ensureDraftPersisted` 才把
+   * 它交给宿主。空态因此回到了「一排快捷卡」——那份草稿自己不占节点。
+   */
+  const draftDocument = useCallback((): CanvasDocument => ({
+    version: 2,
+    // 占位 id：只为满足类型与 key，永远不会被写到磁盘上（落盘走
+    // `canvasCreate`，拿回宿主发的真 id）。
+    id: '',
+    title: tt('canvas.untitled'),
+    revision: 0,
+    viewport: { x: 0, y: 0, k: 1 },
+    background: 'lines',
+    nodes: [],
+    connections: [],
+    createdAt: Date.now(),
+    updatedAt: Date.now(),
+  }), [])
 
   const updateNodes = useCallback((updater: (nodes: CanvasNode[]) => CanvasNode[]): void => {
     updateDocument(previous => ({ ...previous, nodes: updater(previous.nodes) }))
@@ -1525,13 +2242,34 @@ export function CanvasWorkspace(props: CanvasWorkspaceProps): React.JSX.Element 
     patchNode(nodeId, { asset, status: 'success' })
   }, [patchNode])
 
+  /**
+   * 取消进行中的导演台导出。
+   *
+   * 只置 abort 标志，不在这里清进度：真正的收尾在 `exportStageVideo` 抛出
+   * `StageExportAborted` 的那个 catch 里做一次，两处都清会让「取消」与
+   * 「正常结束」抢同一个状态。
+   */
+  const cancelStageExport = useCallback((): void => {
+    stageExportRef.current?.abort()
+  }, [])
+
   const deleteSelection = useCallback((): void => {
     const ids = selectedIdsRef.current
     const connectionId = selectedConnectionId
     if (ids.size === 0 && connectionId === null) return
     const current = documentRef.current
     if (current === null) return
-    const { removed } = removeNodesAndCards(current.nodes, ids)
+    // 锁定的卡片不参与批量删除。WHY 要在这里拦住而不是在删除之后修复：
+    // 「选中一片、按 Delete」是画布上最容易误操作的动作，而锁的意义正是它。
+    // 拦住之后必须说出来——一次静默的「少删了几张」在用户看来就是删除坏了。
+    const deletable = unlockedIds(current.nodes, ids)
+    const skipped = ids.size - deletable.size
+    if (deletable.size === 0 && connectionId === null) {
+      if (skipped > 0) setNotice(tt('canvas.lock.blockedDelete', { count: skipped }))
+      return
+    }
+    if (skipped > 0) setNotice(tt('canvas.lock.blockedDelete', { count: skipped }))
+    const { removed } = removeNodesAndCards(current.nodes, deletable)
     mutate(previous => {
       const result = removeNodesAndCards(previous.nodes, removed)
       return {
@@ -1562,6 +2300,12 @@ export function CanvasWorkspace(props: CanvasWorkspaceProps): React.JSX.Element 
   const deleteNode = useCallback((nodeId: string): void => {
     const current = documentRef.current
     if (current === null || !current.nodes.some(node => node.id === nodeId)) return
+    // 单张删除同样尊重锁定。右键菜单里那一行在锁定时会被换成「解锁」，但键盘、
+    // 卡片悬停条、右键都可能走到这里，所以真正的一道闸放在这里。
+    if (current.nodes.some(node => node.id === nodeId && isLocked(node))) {
+      setNotice(tt('canvas.lock.blockedDelete', { count: 1 }))
+      return
+    }
     const { removed } = removeNodesAndCards(current.nodes, new Set([nodeId]))
     mutate(previous => {
       const result = removeNodesAndCards(previous.nodes, removed)
@@ -1650,7 +2394,7 @@ export function CanvasWorkspace(props: CanvasWorkspaceProps): React.JSX.Element 
    *  centered against it, and wire source -> new node in one history step. The
    *  target spot walks right past any node already occupying it, and the
    *  viewport pans just enough to keep the new node visible. */
-  const addConnectedNode = useCallback((sourceId: string, factory: (position: Point) => CanvasNode): void => {
+  const addConnectedNode = useCallback((sourceId: string, factory: (position: Point) => CanvasNode, role?: CanvasConnectionRole): void => {
     const current = documentRef.current
     if (current === null) return
     const source = current.nodes.find(item => item.id === sourceId)
@@ -1670,7 +2414,7 @@ export function CanvasWorkspace(props: CanvasWorkspaceProps): React.JSX.Element 
     mutate(previous => ({
       ...previous,
       nodes: [...previous.nodes, node],
-      connections: [...previous.connections, { id: newId('edge'), fromNodeId: sourceId, toNodeId: node.id }],
+      connections: [...previous.connections, { id: newId('edge'), fromNodeId: sourceId, toNodeId: node.id, ...role === undefined || role === 'input' ? {} : { role } }],
     }))
     const bounds = viewportRef.current?.getBoundingClientRect()
     if (bounds === undefined) return
@@ -1686,6 +2430,91 @@ export function CanvasWorkspace(props: CanvasWorkspaceProps): React.JSX.Element 
     if (bottom > bounds.height - 24) dy = bottom - (bounds.height - 24)
     if (dx !== 0 || dy !== 0) setViewport({ x: viewport.x - dx, y: viewport.y - dy, k })
   }, [mutate, setViewport])
+
+  /**
+   * 导出导演台视频：逐帧渲染 → 宿主编成 mp4 → 落成一个普通视频节点并连线。
+   *
+   * 定义在 `addConnectedNode` 之后：节点要贴着导演台往右摆、并顺手把视口
+   * 拉到能看见它的位置，那套避让逻辑只在那里有一份。复制一遍坐标计算迟早
+   * 会和它分叉。
+   *
+   * 节点落成「导演台 → 参考视频」并带上 `reference` 角色：下游的视频节点按
+   * 连线角色决定把它当首帧、尾帧还是参考，导演台本身不该知道这件事。
+   *
+   * 取消与失败分开处理：用户点了取消不是错误，走 notice；真的编不出来才走
+   * error。混成一条会让「我取消的」变成一条红字。
+   */
+  const exportStageVideoClip = useCallback((): void => {
+    const node = documentRef.current?.nodes.find(item => item.id === stageNodeId)
+    if (node === undefined) return
+    // 一次只跑一个：第二次点击不该并发起第二个会话（宿主那边会留下两个
+    // 临时目录、两份 ffmpeg）。
+    if (stageExportRef.current !== null) return
+    const stage = stageOf(node.metadata)
+    if (stage.timeline === undefined) {
+      // 面板已经把按钮禁用了，这里再挡一次：面板与文档不同步时仍可能点进来，
+      // 而 stage-export 抛的是英文技术错误，不该直接甩给用户。
+      setNotice(tt('canvas.stage.exportNoTimeline'))
+      return
+    }
+    const controller = new AbortController()
+    stageExportRef.current = controller
+    setStageExportProgress(0)
+    void (async () => {
+      try {
+        const pano = await loadStagePano(stagePanoUrl)
+        const clip = await exportStageVideo(
+          { stageFrame: payload => api.stageFrame(payload), stageEncode: sessionId => api.stageEncode(sessionId) },
+          {
+            stage,
+            width: STAGE_VIDEO_SIZE.width,
+            height: STAGE_VIDEO_SIZE.height,
+            pano,
+            // 当前画布 id：宿主编好的成片写进视频历史时要带它，否则历史列表
+            // 认不出这条是画布产物，会当成一次独立生成留在那儿。这里没有
+            // `current` 局部变量（回调是按 ref 取的），所以照旧读 ref。
+            ...documentRef.current === null || documentRef.current.id === ''
+              ? {}
+              : { canvasId: documentRef.current.id },
+            signal: controller.signal,
+            onProgress: ratio => { setStageExportProgress(ratio) },
+          },
+        )
+        // 用户可能在编码那几秒里关掉了面板。渲染可以作废，但宿主已经编好的
+        // 成片不该丢——照样落节点。
+        const footprint = nodeSizeFromRatio('16:9', IMAGE_NODE_SIZE)
+        addConnectedNode(node.id, () => ({
+          id: newId('node'),
+          type: 'video',
+          title: `${node.title} ${tt('canvas.stage.referenceVideoNode')}`,
+          x: 0,
+          y: 0,
+          width: footprint.width,
+          height: footprint.height,
+          metadata: { status: 'success', video: { url: clip.url, mime: clip.mime, duration: clip.duration } },
+        }), 'reference')
+        setNotice(tt('canvas.stage.exportDone'))
+      } catch (caught) {
+        if (caught instanceof StageExportAborted) setNotice(tt('canvas.stage.exportCancelled'))
+        else setError(errorMessage(caught))
+      } finally {
+        stageExportRef.current = null
+        setStageExportProgress(null)
+      }
+    })()
+  }, [addConnectedNode, api, stageNodeId, stagePanoUrl])
+
+  /**
+   * 卸载时中止进行中的导出。
+   *
+   * 不中止的后果不只是「白跑」：剩下的帧会继续往宿主传，而组件已经没了，
+   * 那个会话永远等不到结果，临时目录要等宿主超时才清。
+   *
+   * 依赖数组故意为空：依赖导出函数本身会让这个 effect 在每次渲染后重跑，
+   * 从而在**组件还活着**的时候把正在进行的导出中止掉。ref 的读取永远拿到
+   * 的是当下那一份，不需要进依赖。
+   */
+  useEffect(() => () => { stageExportRef.current?.abort() }, [])
 
   /** Anchor the add-node menu at the source handle's on-screen position. The
    *  menu opens on hover (no click needed) and lingers briefly on leave. */
@@ -2925,9 +3754,13 @@ export function CanvasWorkspace(props: CanvasWorkspaceProps): React.JSX.Element 
       // Attached 标注 cards supply both the boxed reference and, when the
       // composer box is empty, the prompt itself.
       const annotationPlan = await annotationPlanOf(current, inputs).catch(() => undefined)
+      // 套图条目（草稿）优先：编辑器里正在写的这几条就是这次要跑的。
+      const setJobs = codeRenderer ? [] : promptSetJobsFromItems(composerPromptSet)
       const prompt = composerPrompt.trim() !== ''
         ? composerPrompt.trim()
-        : (upstreamText.length > 0 ? upstreamText.join('\n') : (annotationPlan?.texts ?? []).join('\n'))
+        : setJobs.length > 0
+          ? setJobs[0]!.prompt
+          : (upstreamText.length > 0 ? upstreamText.join('\n') : (annotationPlan?.texts ?? []).join('\n'))
       if (prompt === '') { setError(tt('canvas.needPrompt')); setComposerBusy(false); return }
       const composerChoice = codeRenderer
         ? { channelId: '', model: '' }
@@ -2977,6 +3810,66 @@ export function CanvasWorkspace(props: CanvasWorkspaceProps): React.JSX.Element 
         if (extras.length > 0) images = extras
       }
       const footprint = nodeSizeFromRatio(composerSize, IMAGE_NODE_SIZE)
+      // 套图：目标节点上挂着一组带标题的提示词。每条**各发一次**请求（n=1），
+      // 各拿自己的 taskId，各自的占位节点带着自己的标题——回填路径按 taskId
+      // 找 asset，天然就是「一个任务一个占位」。把 N 条塞进同一次请求（把 count
+      // 抬到 N、共享一个 taskId）会让它们拿同一句 prompt、同一个占位数组，标题
+      // 也全丢——那是 `count` 的语义，不是套图的语义。见 prompt-set.ts 头注释。
+      if (!codeRenderer && target !== null && setJobs.length > 0) {
+        const jobs = setJobs
+        const anchor = current.nodes.find(node => node.id === target.id)
+        const originX = anchor !== undefined ? anchor.x + anchor.width + 80 : Math.round(canvasCenter().x - footprint.width / 2)
+        const originY = anchor !== undefined ? anchor.y : Math.round(canvasCenter().y - footprint.height / 2)
+        for (let index = 0; index < jobs.length; index += 1) {
+          const job = jobs[index]!
+          // 每条都带同一池子的参考图与身份设定：一套三视图的每张都该认得同一个
+          // 角色，而不是只有第一条认得。
+          const jobPrompt = [job.prompt, castPrompt].filter(part => part !== '').join('\n\n')
+          const jobRequest: GenerateRequest = {
+            mode: image === undefined ? 'text' : 'edit', model, prompt: jobPrompt,
+            size: composerSize, quality: composerQuality, n: 1, detail: '',
+            ...(composerChoice.channelId === '' ? {} : { channelId: composerChoice.channelId }),
+            ...(image === undefined ? {} : { image, refName }),
+            ...(images === undefined ? {} : { images }),
+            canvas: {
+              canvasId: current.id,
+              sourceNodeId: annotationPlan?.sourceNodeId ?? referenceImages[0]?.id ?? target.id,
+              parentNodeId: target.id,
+              placement: 'right' as const,
+            },
+          }
+          const jobTask = await api.taskSubmit(jobRequest)
+          localTaskIds.current.add(jobTask.id)
+          const nodeId = newId('node')
+          mutate(previous => {
+            const nodes = [...previous.nodes]
+            nodes.push({
+              id: nodeId, type: 'image', title: job.title,
+              x: Math.round(originX), y: Math.round(originY + index * (footprint.height + 48)),
+              width: footprint.width, height: footprint.height,
+              metadata: {
+                status: 'generating', taskId: jobTask.id,
+                ...(anchor !== undefined ? { sourceNodeId: anchor.id } : {}),
+                prompt: jobPrompt, model,
+                ...(composerChoice.channelId === '' ? {} : { channelId: composerChoice.channelId }),
+              },
+            })
+            const connections = anchor !== undefined
+              ? [...previous.connections, { id: newId('edge'), fromNodeId: anchor.id, toNodeId: nodeId }]
+              : previous.connections
+            return { ...previous, nodes, connections }
+          })
+        }
+        // 落盘：卡片上的「套图 · N 条」徽标、以及下一次直接按运行工作流，读的都是
+        // 节点上的这一份。草稿只在编辑期间存在，提交时成为文档的一部分。
+        const saved = normalizePromptSet(composerPromptSet)
+        patchNode(target.id, { promptSet: saved.length === 0 ? undefined : saved })
+        setComposerPrompt('')
+        setComposerPromptSet([])
+        setError(null)
+        setComposerBusy(false)
+        return
+      }
       const request: GenerateRequest = {
         mode: image === undefined ? 'text' : 'edit', model, prompt: finalPrompt, size: composerSize, quality: composerQuality, n: count, detail: '',
         ...(composerChoice.channelId === '' ? {} : { channelId: composerChoice.channelId }),
@@ -3020,13 +3913,24 @@ export function CanvasWorkspace(props: CanvasWorkspaceProps): React.JSX.Element 
         return { ...previous, nodes, connections }
       })
       setComposerPrompt('')
+      setComposerPromptSet([])
       setError(null)
     } catch (caught) {
       setError(caught instanceof Error ? caught.message : String(caught))
     } finally {
       setComposerBusy(false)
     }
-  }, [annotationPlanOf, api, canvasCenter, castPromptOf, castRefsFor, composerBusy, composerChannelConnected, composerChannelId, composerCount, composerModel, composerPrompt, composerQuality, composerRenderer, composerSize, defaultChannelId, modelGroups, mutate, onOpenSettings, upstreamNodes])
+  }, [annotationPlanOf, api, canvasCenter, castPromptOf, castRefsFor, composerBusy, composerChannelConnected, composerChannelId, composerCount, composerModel, composerPrompt, composerPromptSet, composerQuality, composerRenderer, composerSize, defaultChannelId, modelGroups, mutate, onOpenSettings, patchNode, upstreamNodes])
+
+  // 套图：加一条空条目。`normalizePromptSet` 补 id、截标题、上限截断，这里只管
+  // 追加——上限（12）到了之后 normalize 会把多出来的那条丢掉，界面上看不到第
+  // 13 行，用户也就不会被「点了一下没反应」误导。
+  const addComposerPromptSetItem = useCallback((): void => {
+    setComposerPromptSet(previous => normalizePromptSet([
+      ...previous,
+      { id: newPromptSetId(previous.length), title: '', prompt: '' },
+    ]))
+  }, [])
 
   // ---------------------------------------------------------- task intake
 
@@ -3057,6 +3961,9 @@ export function CanvasWorkspace(props: CanvasWorkspaceProps): React.JSX.Element 
     const retryPair = (codeRenderer ? 'text' : metadata.videoMode ?? 'text') === 'keyframe'
       ? framePair(current.connections, id => current.nodes.find(item => item.id === id), node.id, item => item.type === 'image' && usableAsset(item) !== undefined)
       : {}
+    // 与图片重试同理：一旦重提，旧结论作废。视频节点的 `status: 'error'`
+    // 会在卡片里写明失败原因，比徽标更具体。
+    setRunMarks(previous => withoutFailed(previous, node.id))
     try {
       const frames: { image?: string; firstFrame?: string; lastFrame?: string; refName?: string } = {}
       const mode: VideoMode = codeRenderer ? 'text' : metadata.videoMode ?? 'text'
@@ -3249,9 +4156,21 @@ export function CanvasWorkspace(props: CanvasWorkspaceProps): React.JSX.Element 
     if (choice.model === '') { setError(tt('canvas.videoNoModel')); onOpenSettings?.(); return false }
     if (!(choice.channelId === '' || channelIsConnected(choice.channelId))) { setError(tt('canvas.needApi')); onOpenSettings?.(); return false }
 
-    let frames: { image?: string; firstFrame?: string; lastFrame?: string; refName?: string } = {}
-    let mode: VideoMode = 'text'
-    if (state.continuity === 'carry' && index > 0) {
+    // 身份参考：分镜没有上游连线可借（它的输入是上一镜的片段，不是画布上的
+    // 图），所以这里传空数组，只取「被钉住」的那批。规则本身在 cast.ts 里，
+    // 与 composer 共用同一份去重与排除逻辑。
+    //
+    // WHY 按模式决定要不要带：`carry` 的接缝是首/尾两个帧槽，提供方契约禁止
+    // 把 reference_image 与 first_frame 混在一起；此时精确的接缝优先，身份参考
+    // 不随行。宁可这一镜没有阿禾的图，也不要发一个上游会拒的请求，或者发一句
+    // 「参考图 1 是她」却没有附图。
+    const castNodes = castRefsFor(current, [])
+    const plan = shotVideoPlan({ continuity: state.continuity, index, castCount: castNodes.length })
+    const usedCast = plan.mode === 'reference' ? castNodes.slice(0, plan.castSlots) : []
+
+    let frames: { image?: string; firstFrame?: string; lastFrame?: string; images?: string[]; refName?: string } = {}
+    const mode: VideoMode = plan.mode
+    if (plan.mode === 'keyframe') {
       const previous = state.shots[index - 1]
       const previousNode = previous === undefined ? undefined : shotNodeOf(previous, current.nodes)
       const previousClip = previousNode?.metadata?.video
@@ -3263,13 +4182,33 @@ export function CanvasWorkspace(props: CanvasWorkspaceProps): React.JSX.Element 
         return false
       }
       try {
-        frames = { firstFrame: await frameFromClip(previousClip.url, 'last'), refName: 'storyboard-carry.png' }
-        mode = 'keyframe'
+        frames.firstFrame = await frameFromClip(previousClip.url, 'last')
+        frames.refName = 'storyboard-carry.png'
       } catch (caught) {
         setError(errorMessage(caught))
         return false
       }
+    } else if (plan.mode === 'reference') {
+      // 与视频 composer 的 reference 分支逐句一致：第一张进 `image`，其余进
+      // `images`，读不出来的那张跳过而不是整镜失败——一张坏图不该让这一镜
+      // 完全跑不了。
+      const first = usedCast[0] !== undefined ? usableAsset(usedCast[0]!) : undefined
+      if (first === undefined) { setError(tt('canvas.videoNeedReference')); return false }
+      frames.image = await assetToDataUrl(first)
+      frames.refName = 'storyboard-reference.png'
+      const extras: string[] = []
+      for (const reference of usedCast.slice(1, plan.castSlots)) {
+        const asset = usableAsset(reference)
+        if (asset === undefined) continue
+        try { extras.push(await assetToDataUrl(asset)) } catch { /* skip unreadable reference */ }
+      }
+      if (extras.length > 0) frames.images = extras
     }
+
+    // 说了「参考图 1 是她」就必须真把图送进去；非 reference 模式下这句话一律
+    // 不出现，免得模型凭空发挥。
+    const castPrompt = usedCast.length === 0 ? '' : castPromptOf(current, usedCast.map(node => node.id))
+    const prompt = castPrompt === '' ? shot.prompt.trim() : `${shot.prompt.trim()}\n\n${castPrompt}`
 
     const existing = shotNodeOf(shot, current.nodes)
     // Reusing the existing node (a retry) keeps the canvas from collecting a
@@ -3282,7 +4221,7 @@ export function CanvasWorkspace(props: CanvasWorkspaceProps): React.JSX.Element 
       const request: VideoGenerateRequest = {
         mode,
         model: choice.model,
-        prompt: shot.prompt.trim(),
+        prompt,
         aspectRatio: state.aspectRatio,
         resolution: state.resolution as VideoResolution,
         seconds: shot.seconds,
@@ -3292,6 +4231,7 @@ export function CanvasWorkspace(props: CanvasWorkspaceProps): React.JSX.Element 
           canvasId: current.id,
           sourceNodeId: board.id,
           nodeId,
+          ...(usedCast.length === 0 ? {} : { referenceNodeIds: usedCast.map(node => node.id) }),
         },
       }
       const task = await api.videoTaskSubmit(request)
@@ -3306,7 +4246,7 @@ export function CanvasWorkspace(props: CanvasWorkspaceProps): React.JSX.Element 
           x: Math.round(origin.x), y: Math.round(origin.y), width: size.width, height: size.height,
           metadata: {
             status: 'generating', taskId: task.id,
-            prompt: shot.prompt.trim(), model: choice.model, videoMode: mode,
+            prompt, model: choice.model, videoMode: mode,
             aspectRatio: state.aspectRatio, seconds: shot.seconds, resolution: state.resolution,
             ...(choice.channelId === '' ? {} : { channelId: choice.channelId }),
             sourceNodeId: board.id,
@@ -3351,7 +4291,7 @@ export function CanvasWorkspace(props: CanvasWorkspaceProps): React.JSX.Element 
       setError(errorMessage(caught))
       return false
     }
-  }, [api, channelIsConnected, clearBrokenVideo, defaultChannelId, frameFromClip, mutate, onOpenSettings, shotPlacement, videoGroups])
+  }, [api, castPromptOf, castRefsFor, channelIsConnected, clearBrokenVideo, defaultChannelId, frameFromClip, mutate, onOpenSettings, shotPlacement, videoGroups])
 
   /**
    * Run the board's next shot, or — in `cut` continuity — every shot that has
@@ -3443,6 +4383,10 @@ export function CanvasWorkspace(props: CanvasWorkspaceProps): React.JSX.Element 
     const directAsset = sourceNode !== undefined && sourceNode.type === 'image' ? usableAsset(sourceNode) : undefined
     const references = sourceId === undefined ? [] : upstreamNodes(current, sourceId).filter(item => item.type === 'image' && usableAsset(item) !== undefined)
     const baseAsset = directAsset ?? (references[0] !== undefined ? usableAsset(references[0]!) : undefined)
+    // 用户点了重试，旧结论就不再成立：留着红标等于在说「它还是坏的」，而
+    // 屏幕上马上就要出新图。真再次失败时，节点自己的 `status: 'error'` 会把
+    // 错误正文画在卡片里——那条比徽标更具体，不需要徽标替它说话。
+    setRunMarks(previous => withoutFailed(previous, node.id))
     try {
       let image: string | undefined
       let images: string[] | undefined
@@ -3633,6 +4577,9 @@ export function CanvasWorkspace(props: CanvasWorkspaceProps): React.JSX.Element 
     workflowAbort.current = controller
     workflowBusyRef.current = true
     setWorkflowBusy(true)
+    // 新一轮开始就把上一轮的痕迹清掉：叠在旧痕迹上的新结论，用户分不清哪个
+    // 节点是这一轮坏的。
+    setRunMarks(EMPTY_RUN_MARKS)
     setWorkflowProgress({ layer: 0, total: 0, running: [], done: 0, count: 0 })
     try {
       const result = await runWorkflow({
@@ -3659,8 +4606,18 @@ export function CanvasWorkspace(props: CanvasWorkspaceProps): React.JSX.Element 
         setError(tt('canvas.workflow.cycle', { count: result.cycle.length }))
         return
       }
-      if (result.status === 'cancelled') { setNotice(tt('canvas.workflow.cancelled')); return }
+      if (result.status === 'cancelled') {
+        // 取消本身不是失败，但「按停之前就已经失败」的节点是真的坏了，它们的
+        // 产物不可信。因此这里照样落痕——理由是「产物能不能用」，不是「这次
+        // 运行怎么结束的」。抹掉它们等于因为一次取消把已知的坏结果洗成好的。
+        setRunMarks(runMarksFrom(result))
+        setNotice(tt('canvas.workflow.cancelled'))
+        return
+      }
       if (result.status === 'failed') {
+        // 先落痕，再说话：toast 会自己消失，画布上的标记不会。用户回头看
+        // 这张图时，唯一能回答「哪些结果不能用」的就是这些标记。
+        setRunMarks(runMarksFrom(result))
         const failed = current.nodes.find(node => node.id === result.failedNodeId)
         setError(tt('canvas.workflow.failed', {
           node: failed?.title ?? (result.failedNodeId ?? ''),
@@ -3672,6 +4629,7 @@ export function CanvasWorkspace(props: CanvasWorkspaceProps): React.JSX.Element 
       // as plain success would swallow the failure; reporting it as `failed`
       // would claim nothing ran. Say both halves.
       if (result.status === 'partial') {
+        setRunMarks(runMarksFrom(result))
         const failed = current.nodes.find(node => node.id === result.failedNodeId)
         setError(tt('canvas.workflow.partial', {
           node: failed?.title ?? (result.failedNodeId ?? ''),
@@ -3753,8 +4711,38 @@ export function CanvasWorkspace(props: CanvasWorkspaceProps): React.JSX.Element 
 
   // Orphan reconciliation: a generating placeholder whose task no longer exists
   // in the host feed (e.g. the host restarted) can never complete on its own.
+  //
+  // 判定顺序很重要：先看**落盘的历史**里有没有这段成片，再判丢失。队列重启
+  // 即空，只看队列会让「上游早已出片、字节已落盘」的节点被批量误判成丢失。
   useEffect(() => {
     if (document === null) return
+
+    // 第一步：认领。历史里有属于这些节点的成片，就填进去；被认领的节点同时
+    // 从孤儿判定里排除，否则同一轮里它刚拿到片段又被判成丢失。这一支同时
+    // 修好「已经被误判成丢失」的旧节点（用户截图里那一类）。
+    const claims = videoHistory === undefined || videoHistory.length === 0
+      ? []
+      : claimableClips({ document, videoHistory, lostError: tt('canvas.videoTaskLost') })
+    const claimedByNode = new Map(claims.map(claim => [claim.nodeId, claim.video]))
+    if (claims.length > 0) {
+      updateNodes(nodes => nodes.map(node => {
+        const video = claimedByNode.get(node.id)
+        if (video === undefined) return node
+        return {
+          ...node,
+          metadata: {
+            ...nodeMetadata(node),
+            status: 'success' as const,
+            error: undefined,
+            // 丢失标记也要一起清：留着它，下一次判定会把一个已经成功的节点
+            // 当成「又丢了一次」，认领与孤儿回收两条规则会互相打架。
+            failure: undefined,
+            video,
+          },
+        }
+      }))
+    }
+
     const feedFresh = tasks.length > 0 || Date.now() - mountedAtRef.current > 8000
     if (!feedFresh) return
     const feedIds = new Set(tasks.map(task => task.id))
@@ -3763,6 +4751,7 @@ export function CanvasWorkspace(props: CanvasWorkspaceProps): React.JSX.Element 
     const videoFeedFresh = (videoTasks?.length ?? 0) > 0 || Date.now() - mountedAtRef.current > 8000
     const videoFeedIds = new Set((videoTasks ?? []).map(task => task.id))
     const orphans = document.nodes.filter(node => {
+      if (claimedByNode.has(node.id)) return false
       if (nodeMetadata(node).status !== 'generating') return false
       const taskId = nodeMetadata(node).taskId
       if (taskId === undefined) return false
@@ -3772,17 +4761,18 @@ export function CanvasWorkspace(props: CanvasWorkspaceProps): React.JSX.Element 
     })
     if (orphans.length === 0) return
     updateNodes(nodes => nodes.map(node => {
+      if (claimedByNode.has(node.id)) return node
       if (nodeMetadata(node).status !== 'generating') return node
       const taskId = nodeMetadata(node).taskId
       if (taskId === undefined) return node
       if (node.type === 'video') {
         if (!videoFeedFresh || videoFeedIds.has(taskId) || localVideoTaskIds.current.has(taskId)) return node
-        return { ...node, metadata: { ...nodeMetadata(node), status: 'error', error: tt('canvas.videoTaskLost') } }
+        return { ...node, metadata: { ...nodeMetadata(node), status: 'error', error: tt('canvas.videoTaskLost'), failure: 'task-lost' as const } }
       }
       if (node.type !== 'image' || feedIds.has(taskId) || localTaskIds.current.has(taskId)) return node
       return { ...node, metadata: { ...nodeMetadata(node), status: 'error', error: tt('canvas.taskLost') } }
     }))
-  }, [document, tasks, videoTasks, updateNodes])
+  }, [document, tasks, videoTasks, videoHistory, updateNodes])
 
   // Fill placeholder video nodes from the video queue.
   //
@@ -4002,16 +4992,102 @@ export function CanvasWorkspace(props: CanvasWorkspaceProps): React.JSX.Element 
     let disposed = false
     void api.canvasList().then(async list => {
       if (disposed) return
-      const created = list[0] === undefined ? await api.canvasCreate(tt('canvas.untitled')) : null
-      const first = created === null ? await api.canvasRead(list[0]!.id) : seedDocument(created)
+      // A library with no canvases opens on an EMPTY canvas that does not exist
+      // on disk yet. It used to call `canvasCreate` right here, so merely
+      // opening the tab left a saved canvas behind — one the user never made,
+      // which then sat in the switcher next to their real work. The draft is
+      // handed to the host by the first edit that puts something in it.
+      if (list[0] === undefined) {
+        const draft = draftDocument()
+        setProjects([])
+        setDocument(draft)
+        syncedRef.current = JSON.stringify(draft)
+        setSaveState('saved')
+        return
+      }
+      // 从历史记录点进来的那次打开，目标是被点的那张，不是列表第一张。
+      // 读不到（刚被别的窗口删了）时退回第一张，并把这件事说出来——静默
+      // 打开另一张画布比报错更像 bug。
+      const wanted = list.find(project => project.id === openCanvasId)
+      const first = await api.canvasRead((wanted ?? list[0]!).id)
       if (disposed) return
-      setProjects(created === null ? list : [summaryOf(first)])
+      if (openCanvasId !== undefined && wanted === undefined) setNotice(tt('canvas.openMissing'))
+      setProjects(list)
       setDocument(normalizeConfigNodeSizes(first))
-      syncedRef.current = JSON.stringify(created ?? first)
+      syncedRef.current = JSON.stringify(first)
       setSaveState('saved')
+      if (openCanvasId !== undefined) onOpenCanvasHandled?.()
     }).catch(caught => { if (!disposed) { setError(caught instanceof Error ? caught.message : String(caught)); setSaveState('error') } })
     return () => { disposed = true }
-  }, [api, seedDocument])
+    // `openCanvasId` 故意不进依赖：它只决定**首次**打开哪一张。挂载之后
+    // 再点历史里的画布由下面的 effect 接住，这里重跑会把当前编辑中的文档
+    // 丢掉（还会和自动保存抢同一份 revision）。
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [api, draftDocument])
+
+  /**
+   * 加载服务端那一版，丢掉本地未保存的改动。
+   *
+   * 只在合并被拒时由用户主动触发：那意味着两边把同一处改成了不同的样子，
+   * 继续保存会覆盖对方。此时能选的路只有两条——放弃本地这版，或者明知冲突
+   * 仍以本地覆盖（后者就在「继续保存」里）；这里做的是前一条。
+   *
+   * 页面会跳回对方那版的位置，所以先把「你放弃了什么」说清楚，别让用户以为
+   * 是画布自己刷新了。
+   */
+  const reloadFromHost = useCallback(async (conflict: MergeConflict): Promise<void> => {
+    const live = documentRef.current
+    if (live === null || live.id === '') return
+    try {
+      const server = await api.canvasRead(live.id)
+      const next = normalizeConfigNodeSizes(server)
+      documentRef.current = next
+      setDocument(next)
+      syncedRef.current = JSON.stringify(next)
+      setSaveState('saved')
+      setError(null)
+      setErrorAction(null)
+      setNotice(tt('canvas.reloadDone', { subject: conflict.subject }))
+    } catch (caught) {
+      setError(caught instanceof Error ? caught.message : String(caught))
+    }
+  }, [api, normalizeConfigNodeSizes, tt])
+
+  /**
+   * 本地最后一次成功写回的那份快照；三方合并里它就是 base。 */
+  const parseSyncedCanvas = useCallback((): CanvasDocument | null => {
+    const raw = syncedRef.current
+    if (raw === '') return null
+    try {
+      return JSON.parse(raw) as CanvasDocument
+    } catch {
+      return null
+    }
+  }, [])
+
+  /**
+   * 合并成功后告诉用户「替他保住了哪些改动」。
+   *
+   * 不提示也能用——合并本来就是对的；但不提示时用户不知道自己看到的内容比
+   * 刚编辑的多，会以为画布自己长出了卡。摘要只说数量和是否换了标题，不列 id：
+   * 用户认不出 id。
+   */
+  const announceMerge = useCallback((applied: MergeSummary): void => {
+    const parts: string[] = []
+    const nodes = new Set([...applied.addedNodes, ...applied.changedNodes])
+    if (nodes.size > 0) parts.push(tt('canvas.mergeKeptNodes', { count: nodes.size }))
+    if (applied.removedNodes.length > 0) {
+      // 对方删掉的节点也在这句里说清楚，否则用户会先看到卡少了、再去找原因。
+      parts.push(tt('canvas.mergeKeptNodes', { count: applied.removedNodes.length }))
+    }
+    const connections = applied.addedConnections.length + applied.removedConnections.length
+    if (connections > 0) parts.push(tt('canvas.mergeKeptConnections', { count: connections }))
+    const groups = applied.addedGroups.length + applied.removedGroups.length
+    if (groups > 0) parts.push(tt('canvas.mergeKeptGroups', { count: groups }))
+    if (applied.adoptedTitle) parts.push(tt('canvas.mergeKeptTitle'))
+    if (parts.length === 0) return
+    setNotice(tt('canvas.mergeKept', { summary: parts.join('、') }))
+  }, [tt])
 
   /**
    * Persist one canvas snapshot and reconcile the answer with the screen.
@@ -4024,6 +5100,9 @@ export function CanvasWorkspace(props: CanvasWorkspaceProps): React.JSX.Element 
    * and that document's stale `revision` then rode along on the next save.
    */
   const writeCanvas = useCallback(async (snapshot: CanvasDocument): Promise<boolean> => {
+    // 草稿没有宿主 id（见 `draftDocument`）：发出去只会拿回 not-found，而
+    // 提升成真画布是 `document.nodes` 变非空时那个效果的事。
+    if (snapshot.id === '') return true
     const seq = saveSeqRef.current + 1
     saveSeqRef.current = seq
     const key = JSON.stringify(snapshot)
@@ -4037,7 +5116,20 @@ export function CanvasWorkspace(props: CanvasWorkspaceProps): React.JSX.Element 
         // matching the message: that copy is translated and may be reworded.
         if (!(caught instanceof ImageGenApiError) || caught.code !== 'canvas-conflict') throw caught
         const server = await api.canvasRead(snapshot.id)
-        return await api.canvasSave(snapshot, server.revision)
+        // 只换 revision 再写一次，等于拿本页整份快照盖掉对方在这段时间里的
+        // 所有改动——对方新建的卡、删的卡、改的标题全没了，而界面显示「已保存」。
+        // 所以这里必须先合并：base 是本地最后一次成功写回的样子（`syncedRef`），
+        // 只有它能分清「这个字段是谁动的」。
+        const base = parseSyncedCanvas()
+        if (base === null || base.id !== snapshot.id) throw caught
+        const merged = mergeCanvasDocuments(base, snapshot, server)
+        if (!merged.ok) {
+          // 两边把同一张卡改成不同的样子，合并不了。宁可这次保存失败、把冲突
+          // 说清楚，也不替用户选一个版本让他无声丢掉另一边。
+          throw new MergeRejectedError(merged.conflicts[0]!)
+        }
+        announceMerge(merged.applied)
+        return await api.canvasSave(merged.document, server.revision)
       }
     }
     try {
@@ -4064,7 +5156,8 @@ export function CanvasWorkspace(props: CanvasWorkspaceProps): React.JSX.Element 
       return true
     } catch (caught) {
       if (seq === saveSeqRef.current) {
-        setError(caught instanceof Error ? caught.message : String(caught))
+        const message = caught instanceof Error ? caught.message : String(caught)
+        setError(message)
         // WHY the action and not just the message: `syncedRef` only advances on
         // a SUCCESSFUL write, so while an edit stays unsynced the autosave
         // effect below re-ran on every `saveState` change and re-armed its
@@ -4073,9 +5166,15 @@ export function CanvasWorkspace(props: CanvasWorkspaceProps): React.JSX.Element 
         // why dismissing it looked broken: the next tick put it straight back).
         // Failing stops the loop; the user decides when to try again.
         setErrorAction({
-          label: tt('canvas.saveRetry'),
-          forError: caught instanceof Error ? caught.message : String(caught),
+          // 合并被拒时「重试保存」没有意义：同样的三份内容再算一次还是同一处
+          // 冲突。此时真正有用的是把对方那版拉回来，所以按钮换成「加载对方版本」。
+          label: caught instanceof MergeRejectedError ? tt('canvas.loadTheirs') : tt('canvas.saveRetry'),
+          forError: message,
           run: () => {
+            if (caught instanceof MergeRejectedError) {
+              void reloadFromHost(caught.conflict)
+              return
+            }
             const live = documentRef.current
             if (live !== null) void writeCanvas(live)
           },
@@ -4099,7 +5198,10 @@ export function CanvasWorkspace(props: CanvasWorkspaceProps): React.JSX.Element 
    */
   const flushPendingCanvas = useCallback(async (): Promise<boolean> => {
     const live = documentRef.current
-    if (live === null || JSON.stringify(live) === syncedRef.current) return true
+    // 草稿不持有任何宿主状态，也就没有可冲的写入。不拦住的话，退出/切画布
+    // 那一刻会打一个注定失败的请求，还会把「保存失败」弹给一个从没编辑过
+    // 任何东西的用户。
+    if (live === null || live.id === '' || JSON.stringify(live) === syncedRef.current) return true
     flushRef.current = true
     try { return await writeCanvas(live) } finally { flushRef.current = false }
   }, [writeCanvas])
@@ -4108,8 +5210,46 @@ export function CanvasWorkspace(props: CanvasWorkspaceProps): React.JSX.Element 
   // 时候 `flushPendingCanvas` 已经有值，而 ref 的读取总是发生在那之后。
   flushPendingRef.current = flushPendingCanvas
 
+  /**
+   * 挂载期间又点了历史里的另一张画布：直接切过去。
+   *
+   * WHY 不在首次加载那个 effect 里做：那条路会重新 `canvasList` 并整套重置
+   * 状态（选中、视口、撤销栈），而这里只是换一张文档。分成两处是因为
+   * 「启动」与「切换」对草稿与撤销栈的处理不一样，混在一起必然有一边出错。
+   *
+   * 已经打开着同一张时不重复切：`openCanvasId` 被同一个值触发第二次（用户
+   * 又点了一下那一行），重切会白清一次撤销栈。
+   */
+  useEffect(() => {
+    if (openCanvasId === undefined) return
+    // 首次加载还在飞的时候不要动：那一次加载已经会读 `openCanvasId` 指向的
+    // 文档，这里再发一次就是两个请求抢着写同一份 state，谁后到谁赢——而
+    // 「谁后到」取决于网络，用户看到的是偶尔打开错的画布。
+    if (saveState === 'loading') return
+    if (documentRef.current?.id === openCanvasId) { onOpenCanvasHandled?.(); return }
+    void (async () => {
+      try {
+        if (!await flushPendingCanvas()) return
+        const next = await api.canvasRead(openCanvasId)
+        documentRef.current = normalizeConfigNodeSizes(next)
+        setDocument(normalizeConfigNodeSizes(next))
+        setSelectedIds(new Set()); setSelectedConnectionId(null)
+        syncedRef.current = JSON.stringify(next); setSaveState('saved')
+        pastRef.current = []; futureRef.current = []; setHistoryVersion(version => version + 1)
+        onOpenCanvasHandled?.()
+      } catch (caught) {
+        setNotice(tt('canvas.openMissing'))
+        setError(caught instanceof Error ? caught.message : String(caught))
+        onOpenCanvasHandled?.()
+      }
+    })()
+  }, [api, flushPendingCanvas, onOpenCanvasHandled, openCanvasId, saveState])
+
   useEffect(() => {
     if (document === null || saveState === 'loading') return
+    // 草稿还没有宿主 id：它一旦有内容就会先被提升成真画布（见 `promotingRef`
+    // 那个效果），在那之前写出去只会拿到 not-found。
+    if (document.id === '') return
     // A failed write leaves the document unsynced, so the plain 650 ms debounce
     // must not re-arm: that was a request every 650 ms for as long as the host
     // stayed unreachable. Retry on a slow backoff instead of stopping outright
@@ -4144,6 +5284,33 @@ export function CanvasWorkspace(props: CanvasWorkspaceProps): React.JSX.Element 
   const composeIds = useMemo(
     () => document === null ? [] : composeClipIds(document.nodes, selectedIds),
     [document, selectedIds],
+  )
+
+  /**
+   * 真的在画布上的选中数。
+   *
+   * 用 `selectedIds.size` 会多算：选择集在删除、撤销、换画布之后可能留着已经
+   * 不存在的 id（撤销会清空选择，但「宿主推来一份新文档」这一类路径不会）。
+   * 多算一张卡会让对齐条在两枚真卡时显示「对齐 3 个节点」，而按下去只动两张——
+   * 数字与行为对不上，比不显示数字更让人怀疑。
+   */
+  const selectedNodeCount = useMemo(
+    () => document === null ? 0 : document.nodes.reduce((count, node) => selectedIds.has(node.id) ? count + 1 : count, 0),
+    [document, selectedIds],
+  )
+
+  /**
+   * 历史面板的行。
+   *
+   * 只在面板真的开着时算：`historyRows` 会 `JSON.parse` 整摞快照（最多 60 条），
+   * 而面板大部分时间是关的。`historyVersion` 在每次压栈/撤销时 +1，所以面板
+   * 开着时栈一变它就会重算。
+   */
+  const historyList = useMemo(
+    () => historyOpen ? historyRows(pastRef.current, document) : [],
+    // `historyVersion` 是刻意放进来的：`pastRef.current` 是可变数组，React 看不见
+    // 它变了；这个计数器就是「栈动过一次」的信号。
+    [historyOpen, document, historyVersion],
   )
 
   /**
@@ -4219,6 +5386,17 @@ export function CanvasWorkspace(props: CanvasWorkspaceProps): React.JSX.Element 
       .map(card => (nodeMetadata(card).text ?? '').trim())
       .filter(text => text !== ''), [composerInputs, composerTarget, document])
   const composerVisible = composerTarget !== null
+  /**
+   * 目标节点上**已经落盘**的套图条目（含空条目，编辑态要保留光标位置）。
+   *
+   * 与 `composerPromptSet` 的关系：那份是正在编辑的草稿，这份是文档里的。切换
+   * 到一张卡时草稿从这份播种，提交时草稿再写回这份。只有一条规则——文档是
+   * 持久值，草稿是活动值，两者不能各读一半。
+   */
+  const composerSavedPromptSet = useMemo(() => {
+    const raw = composerTarget?.metadata?.promptSet
+    return Array.isArray(raw) ? raw.filter(entry => entry !== null && typeof entry === 'object') : []
+  }, [composerTarget])
 
   // Prefill the prompt from connected text nodes whenever the target changes.
   useEffect(() => {
@@ -4234,6 +5412,9 @@ export function CanvasWorkspace(props: CanvasWorkspaceProps): React.JSX.Element 
       .filter(node => node.type === 'text' && nodeMetadata(node).annotation === undefined && (nodeMetadata(node).text ?? '').trim() !== '')
       .map(node => nodeMetadata(node).text!.trim())
     setComposerPrompt(texts.join('\n'))
+    // 套图草稿跟着目标一起换：这张卡上存着一套，就把它摊进编辑器；没有就清空，
+    // 否则上一张卡的条目会跟着借到这一张上，按下生成时跑错东西。
+    setComposerPromptSet(composerSavedPromptSet.map(item => ({ ...item })))
     // Adopt the model chosen on a connected image node, so the node-level model
     // selector drives the generation it feeds.
     const upstreamChoice = upstream
@@ -4244,7 +5425,7 @@ export function CanvasWorkspace(props: CanvasWorkspaceProps): React.JSX.Element 
       setComposerChannelId(upstreamChoice.channelId)
       setComposerModel(upstreamChoice.model)
     }
-  }, [composerTarget, document, defaultChannelId, modelGroups])
+  }, [composerTarget, composerSavedPromptSet, document, defaultChannelId, modelGroups])
 
   // Transient success notices (background removal / layer split).
   useEffect(() => {
@@ -4304,6 +5485,13 @@ export function CanvasWorkspace(props: CanvasWorkspaceProps): React.JSX.Element 
       if (event.key === 'Escape') {
         setContextMenu(null); setCreateMenu(null); setNodeAddMenu(null); setZoomMenuOpen(false)
         setColorPickerNodeId(null)
+        // 找节点在最上面：与目录同一层，谁开着谁先收。
+        if (nodeSearchOpen) { setNodeSearchOpen(false); return }
+        // 历史面板与它们同一层：开着时 Esc 先收它，别顺手清掉选区。
+        // 预览也要一起清：Esc 之后面板没了，谁也不会再来发一次「指针离开了」。
+        if (historyOpen) { setHistoryOpen(false); setHistoryPreviewIds(null); return }
+        // 目录是最高层的浮层：它开着时 Esc 先收它，别顺手把画布选区也清了。
+        if (catalogOpen) { setCatalogOpen(false); return }
         // 工作流选项菜单和那几个底栏菜单是同一类浮层，Esc 必须一视同仁地清掉。
         // 漏掉它的话，它就成了画布上唯一「Esc 关不掉」的东西，用户只能点
         // 「运行工作流」把它带走——而那一次运行是要花钱的。
@@ -4359,6 +5547,56 @@ export function CanvasWorkspace(props: CanvasWorkspaceProps): React.JSX.Element 
         // claims a key nothing else wanted.
         event.preventDefault()
         setShortcutHelpOpen(open => !open)
+      } else if (mod && event.key.toLowerCase() === 'k') {
+        // ⌘K / Ctrl+K：同类工具里已经是「找东西」的通用键（LibTV 用同一个）。
+        // 它必须排在上面那几条 mod 分支之后，且自己先 preventDefault——不然
+        // Safari 会先拿它去开地址栏搜索框。
+        event.preventDefault()
+        toggleCatalog()
+      } else if (mod && event.key.toLowerCase() === 'f') {
+        // ⌘F / Ctrl+F 原本会把整个页面切到浏览器的「在页内查找」——在一个
+        // 铺满画布的应用里，那个框永远找不到用户想找的**卡片**。这里认领它。
+        // `wasF` 之外没有别的副作用：不 preventDefault 的话，Safari 会在
+        // 我们打开弹窗的同时把页内查找也拉出来。
+        event.preventDefault()
+        openNodeSearch()
+      } else if (event.altKey && !mod && (LAYER_SHORTCUTS_SHIFT[event.code] !== undefined || LAYER_SHORTCUTS[event.code] !== undefined)) {
+        // ⌥] / ⌥[ 走一格，⌥⇧] / ⌥⇧[ 走到底。认 code 不认 key，理由见 `LAYER_SHORTCUTS`。
+        //
+        // WHY 必须 `!mod`：⌥⌘ 是对齐家族的地盘，⌥⌘] 在未来可能是别的东西；
+        // 两层快捷键共用一个 ⌥ 前缀时，谁更具体谁先判——这里不带 ⌘ 的两个
+        // 分支写成「不带 ⌘」，就不会和下面那条 ⌥⌘ 抢同一个按键。
+        const mode = LAYER_SHORTCUTS_SHIFT[event.code] ?? LAYER_SHORTCUTS[event.code]
+        if (mode !== undefined) {
+          event.preventDefault()
+          reorderSelection(mode)
+        }
+      } else if (event.altKey && mod && ALIGN_SHORTCUTS[event.code] !== undefined) {
+        // ── ⌥ 系列必须认 `event.code`，不能认 `event.key` ──
+        //
+        // 真机实测（headless Chrome，CDP 派发原生键码，与 macOS 走同一条路）：
+        // 按住 Option 再敲字母，`event.key` 是**该键盘布局下的组合字符**——
+        // ⌥F 给 `ƒ`，⌥A 给 `å`，⌥H 给 `˙`。所以原来的
+        // `event.altKey && event.key.toLowerCase() === 'f'` 在 macOS 上从来没
+        // 成立过：⌥⇧F「整理画布」这个快捷键自上线起就是按了没反应。
+        // `event.code` 是物理键位，不受布局与修饰键影响。
+        const mode = ALIGN_SHORTCUTS[event.code]
+        if (mode !== undefined) {
+          event.preventDefault()
+          alignSelection(mode)
+        }
+      } else if (event.altKey && event.shiftKey && event.code === 'KeyF') {
+        // ⌥⇧F 整理画布（LibTV 同键）。认 code 的理由见上一条：认 key 的话这条
+        // 分支在 macOS 上永远不成立，而它已经这样死了整整一版。
+        event.preventDefault()
+        arrangeCanvas()
+      } else if (event.altKey && event.shiftKey && !mod && FLAG_SHORTCUTS[event.code] !== undefined) {
+        // ⌥⇧L 锁定 / ⌥⇧H 隐藏。`!mod` 排除 ⌥⌘⇧ 那一档：对齐家族占着 ⌥⌘H，
+        // 而「隐藏」与「水平居中」按同一个键是两件完全不同的事，不能被一档
+        // 修饰键的差别混在一起。
+        event.preventDefault()
+        if (FLAG_SHORTCUTS[event.code] === 'lock') toggleLock()
+        else toggleHidden()
       } else if (mod && event.key.toLowerCase() === 'y') {
         event.preventDefault(); redo()
       } else if (mod && event.key.toLowerCase() === 'c') {
@@ -4369,7 +5607,9 @@ export function CanvasWorkspace(props: CanvasWorkspaceProps): React.JSX.Element 
         event.preventDefault(); duplicateSelection()
       } else if (mod && event.key.toLowerCase() === 'a') {
         event.preventDefault()
-        const nodes = documentRef.current?.nodes ?? []
+        // ⌘A 只选画面上的：隐藏的卡片选中了也点不动、看不到，只会让底部
+        // 「已选 N 项」与眼睛看到的不一致。
+        const nodes = visibleNodes(documentRef.current?.nodes ?? [])
         setSelectedIds(new Set(nodes.map(node => node.id)))
       } else if (event.key === 'Delete' || event.key === 'Backspace') {
         event.preventDefault(); deleteSelection()
@@ -4408,7 +5648,7 @@ export function CanvasWorkspace(props: CanvasWorkspaceProps): React.JSX.Element 
       window.removeEventListener('blur', onBlur)
       window.removeEventListener('paste', onPaste)
     }
-  }, [addAssets, annotateNodeId, api, canvasCenter, closeDockMenus, copySelection, deleteNode, deleteSelection, duplicateSelection, pasteClipboard, pickerOpen, polishNode, redo, shortcutHelpOpen, skillLibraryOpen, skillMenu, undo, videoPreviewNodeId, pendingSkill, timelineOpen, castTarget])
+  }, [addAssets, alignSelection, annotateNodeId, api, arrangeCanvas, canvasCenter, catalogOpen, closeDockMenus, copySelection, deleteNode, deleteSelection, duplicateSelection, historyOpen, nodeSearchOpen, pasteClipboard, pickerOpen, polishNode, redo, reorderSelection, toggleHidden, toggleLock, shortcutHelpOpen, skillLibraryOpen, skillMenu, undo, videoPreviewNodeId, pendingSkill, timelineOpen, castTarget])
 
   // ------------------------------------------------------ viewport events
 
@@ -4435,28 +5675,50 @@ export function CanvasWorkspace(props: CanvasWorkspaceProps): React.JSX.Element 
    *
    * Not the chrome's own height: the minimap is 220px wide at the left and does
    * not cover the middle, so reserving its full 150px would waste most of the
-   * canvas on a wide panel. What a centred node can collide with is the job
-   * dock, so the number is `viewport bottom - dock top`. It is measured rather
-   * than assumed because the row wraps to a second line on a narrow panel.
+   * canvas on a wide panel. What a centred node can collide with is the chrome
+   * row, so the number is `viewport bottom - the top of the highest piece in
+   * that row`.
+   *
+   * WHY the highest piece and not just the dock: the row grows UPWARD. When two
+   * or more nodes are selected the compose strip and/or the align bar appear as
+   * extra full-width lines above the dock, and measuring only the dock left the
+   * generation composer thinking those 40–80px were free canvas — it sat on top
+   * of the align buttons, so a click meant for 左对齐 landed in the composer. A
+   * real screenshot showed the whole align bar hidden behind it.
+   *
+   * Measured rather than assumed for the same reason as before: the row wraps
+   * to a second line on a narrow panel, and now also gains lines conditionally.
    */
   useEffect(() => {
     const viewport = viewportRef.current
-    // `.dock`, not `.dockOuter`: the outer box has a height the spring engine
-    // animates, and the wrapped dock can be taller than it. The dock is what
-    // the user sees, so it is what the canvas reserves.
-    const dock = dockRef.current
-    if (viewport === null || dock === null) return
+    const chrome = chromeRef.current
+    if (viewport === null || chrome === null) return
     const measure = (): void => {
       const viewportBox = viewport.getBoundingClientRect()
-      const dockBox = dock.getBoundingClientRect()
-      setChromeHeight(Math.max(0, Math.round(viewportBox.bottom - dockBox.top)))
+      // `.dock`, not `.dockOuter`: the outer box has a height the spring engine
+      // animates, and the wrapped dock can be taller than it. The dock is what
+      // the user sees, so it is what the canvas reserves. Same for the strips:
+      // their `.alignRow` / `.composeBar` boxes are the real footprint.
+      const tops = [...chrome.children]
+        .map(child => child.getBoundingClientRect())
+        .filter(box => box.height > 0)
+        .map(box => box.top)
+      // 没有任何子元素（空画布、底栏还没挂上）时不保留任何高度：算出一个
+      // 「整屏高」的 chromeHeight 会让输入条永远翻到节点上方、贴着顶栏。
+      if (tops.length === 0) { setChromeHeight(0); return }
+      setChromeHeight(Math.max(0, Math.round(viewportBox.bottom - Math.min(...tops))))
     }
     measure()
     const observer = new ResizeObserver(measure)
     observer.observe(viewport)
-    observer.observe(dock)
+    observer.observe(chrome)
+    for (const child of chrome.children) observer.observe(child)
     return () => { observer.disconnect() }
-  }, [])
+    // 两条药丸是**条件渲染**的：ResizeObserver 只盯得住在观测那一刻已经存在的
+    // 子元素，刚出现的那一条没人盯。所以它出现/消失时重跑一遍 effect，重新
+    // 收集子元素。代价是每次多选变化重挂两个 observer，比一个看不见的 40px
+    // 缺口便宜得多。
+  }, [selectedNodeCount, composeIds.length])
 
   useEffect(() => {
     const bar = topBarRef.current
@@ -4551,29 +5813,90 @@ export function CanvasWorkspace(props: CanvasWorkspaceProps): React.JSX.Element 
     const current = documentRef.current
     const bounds = viewportRef.current?.getBoundingClientRect()
     if (current === null || bounds === undefined) return
-    if (current.nodes.length === 0) {
+    // 只框画面上的卡：隐藏的卡若也参与，视野会被几张贴在很远处的隐形卡片撑
+    // 得极小，用户看到的是「明明只有三张卡，却全都缩成邮票」。
+    const onStage = visibleNodes(current.nodes)
+    if (onStage.length === 0) {
+      // 全部藏起来时回到原点，而不是随便挑一个坐标：`fitView` 在空画布上的
+      // 语义是「回到起点」，一条藏起来的卡都没有时它就是空的。
       setViewport({ x: 0, y: 0, k: 1 })
       return
     }
-    const content = nodesBounds(current.nodes)
+    const content = nodesBounds(onStage)
     const padding = 80
     // The bottom chrome (minimap + zoom dock + job dock) floats OVER the canvas,
     // so padding alone lets a fitted node land underneath it. Reserve its real
     // height instead of a guess: it is one row on a wide panel and two on the
     // three-column studio, which is exactly where "fitted" still looked cramped.
     const bottomInset = chromeHeight + 22
+    // The top bar floats over the canvas too (`.topBar` is absolute), and it was
+    // NOT reserved: "fit all content" centred the graph in the full viewport, so
+    // the topmost node slid under the translucent bar. It is worst exactly where
+    // the bar is tallest — below 760px it wraps to two rows and grows from ~47px
+    // to ~83px — and a node peeking out from under a blurred header also lost
+    // its grab affordance, because the bar owns those pixels.
+    const topInset = topBarHeight + 12
     const contentWidth = Math.max(1, content.maxX - content.minX)
     const contentHeight = Math.max(1, content.maxY - content.minY)
     const scale = clampScale(Math.min(
       (bounds.width - padding * 2) / contentWidth,
-      Math.max(1, bounds.height - padding - bottomInset) / contentHeight,
+      Math.max(1, bounds.height - topInset - bottomInset) / contentHeight,
     ))
+    const usableHeight = Math.max(1, bounds.height - topInset - bottomInset)
     setViewport({
       k: scale,
       x: (bounds.width - contentWidth * scale) / 2 - content.minX * scale,
-      y: (bounds.height - bottomInset - contentHeight * scale) / 2 - content.minY * scale,
+      y: topInset + (usableHeight - contentHeight * scale) / 2 - content.minY * scale,
     })
-  }, [setViewport, chromeHeight])
+  }, [setViewport, chromeHeight, topBarHeight])
+
+  /**
+   * 把视野对准一张卡，并选中它。
+   *
+   * WHY 不用 `focusNodeId`（那个是「把光标送进文本框」）：找节点的结果是
+   * 「我想看看这张卡」，用户可能只是要确认它长什么样、要拖它，而不是要改写
+   * 它的文字。把光标塞进 textarea 会让一次「看一眼」变成一次编辑状态的切换，
+   * Esc 退出时还可能丢掉未提交的输入。
+   *
+   * 视野计算交给纯函数 `focusViewport`（有单测钉住 NaN 与夹取），这里只负责
+   * 补上两件事：顶栏与底栏是浮在画布上的，几何中心要落在那块**真正空着**的
+   * 区域里；以及选中它，让用户一眼知道跳到了哪一张。
+   */
+  const jumpToNode = useCallback((nodeId: string): void => {
+    const current = documentRef.current
+    const node = current?.nodes.find(candidate => candidate.id === nodeId)
+    if (current === null || node === undefined) return
+    // 找节点能搜到隐藏的卡（否则藏起来的卡就再也找不回来了），但「跳过去并
+    // 选中」对一张看不见的卡没有意义——画面会移过去，然后什么都没有，选中框
+    // 也画不出来。所以跳转顺手把它叫回来，一次 mutate 可撤销。
+    if (isHidden(node)) {
+      mutate(previous => ({
+        ...previous,
+        nodes: previous.nodes.map(candidate => candidate.id === nodeId ? { ...candidate, metadata: { ...nodeMetadata(candidate), hidden: false } } : candidate),
+      }))
+    }
+    const bounds = viewportRef.current?.getBoundingClientRect()
+    const width = bounds?.width ?? viewportSize.width
+    const height = bounds?.height ?? viewportSize.height
+    const topInset = topBarHeight + 12
+    const bottomInset = chromeHeight + 22
+    // 窄画幅里边距会比视口还高；`usableFocusHeight` 保证那时仍给卡片留下
+    // 看得清的高度，而不是把比例压到 MIN_SCALE。
+    const usableHeight = usableFocusHeight(height, topInset, bottomInset)
+    const focused = focusViewport(
+      { x: node.x, y: node.y, width: node.width, height: node.height },
+      { width, height: usableHeight },
+      current.viewport.k,
+      { padding: 80, minScale: MIN_SCALE, maxScale: 1.6 },
+    )
+    // `focusViewport` 的盒子从 0 开始；真实可画区域从顶栏下面才开始，所以把
+    // 整块结果下移 topInset。少了这一步，跳过去的卡会贴在顶栏底下。
+    // 不做 `bounds.left` 的平移：viewport 的 transform 是相对它自己的盒子算的，
+    // 而 `getBoundingClientRect` 给的是屏幕坐标，混进来一次就会偏半屏。
+    setViewport({ k: focused.k, x: focused.x, y: focused.y + topInset })
+    setSelectedIds(new Set([nodeId]))
+    setSelectedConnectionId(null)
+  }, [mutate, setViewport, viewportSize, topBarHeight, chromeHeight])
 
   // -------------------------------------------------- global move / up
 
@@ -4618,11 +5941,28 @@ export function CanvasWorkspace(props: CanvasWorkspaceProps): React.JSX.Element 
           // moved by the previous frame, so adding dx to it double-counts.
           const primary = documentRef.current?.nodes.find(node => node.id === drag.primaryId)
           const origin = drag.origins.get(drag.primaryId)
+          const moving = new Set(drag.origins.keys())
+          // 吸附与参考线都必须只看画面上的卡：对着几张被藏起来的卡吸附，用户看到
+          // 的是「卡片凭空空了一段」；而对着它们画线则更糟——线上没有对应的卡。
+          const others = visibleNodes(documentRef.current?.nodes ?? []).filter(node => !moving.has(node.id))
           let snap = { x: 0, y: 0 }
           if (snapEnabledRef.current && primary !== undefined && origin !== undefined) {
-            const moving = new Set(drag.origins.keys())
-            const others = (documentRef.current?.nodes ?? []).filter(node => !moving.has(node.id))
             snap = snapOffset({ ...primary, x: origin.x, y: origin.y }, others, dx, dy, SNAP_SCREEN_PX / scale)
+          }
+          if (snapEnabledRef.current && primary !== undefined && origin !== undefined) {
+            // 参考线按**落位之后**的位置算：先吸附、再问「谁跟谁重合」。反过来（拿
+            // 未吸附的位置去算）会在吸附生效的那一帧漏掉线，而那恰好是用户唯一需
+            // 要它的那一帧。
+            const landed = { ...primary, x: Math.round(origin.x + dx + snap.x), y: Math.round(origin.y + dy + snap.y) }
+            const next = snapGuides(landed, others)
+            // 只在**真的变了**时 bump：一条线都没吸上的绝大多数帧不该触发一次渲染。
+            if (next.length > 0 || snapGuidesRef.current.length > 0) {
+              snapGuidesRef.current = next
+              bumpSnapGuides(version => version + 1)
+            }
+          } else if (snapGuidesRef.current.length > 0) {
+            snapGuidesRef.current = []
+            bumpSnapGuides(version => version + 1)
           }
           const place = (nodes: readonly CanvasNode[]): CanvasNode[] => nodes.map(node => {
             const nodeOrigin = drag.origins.get(node.id)
@@ -4697,6 +6037,14 @@ export function CanvasWorkspace(props: CanvasWorkspaceProps): React.JSX.Element 
       const drag = dragRef.current
       if (drag !== null) {
         dragRef.current = null
+        // 参考线必须在这里清，而且与上面那条恰好相反：`dragMovingIds` 描述的
+        // 是「这张卡现在被盖着」这个**仍然成立的事实**，线描述的是「我正贴着
+        // 谁的边」这个**只在这一秒成立的暂时态**。留一条线在静止的画布上，会
+        // 被读成一次真正的对齐结果。
+        if (snapGuidesRef.current.length > 0) {
+          snapGuidesRef.current = []
+          bumpSnapGuides(version => version + 1)
+        }
         // 刻意**不**在这里清 dragMovingIds：松手之后那个节点依然被盖着、依然
         // 看不见，正是它需要提示的时候。提示本来就在「下一次拖动」时重算，
         // 用户把节点删掉或拖开也会立刻消失；留到那时候比在松手这一秒抹掉更对。
@@ -4725,7 +6073,8 @@ export function CanvasWorkspace(props: CanvasWorkspaceProps): React.JSX.Element 
         const minY = Math.min(activeMarquee.start.y, activeMarquee.current.y)
         const maxX = Math.max(activeMarquee.start.x, activeMarquee.current.x)
         const maxY = Math.max(activeMarquee.start.y, activeMarquee.current.y)
-        const nodes = documentRef.current?.nodes ?? []
+        // 只框可见的卡片：藏起来的那张连屏幕都没有，框选它等于凭空多选一个。
+        const nodes = visibleNodes(documentRef.current?.nodes ?? [])
         const hits = nodes.filter(node => node.x < maxX && node.x + node.width > minX && node.y < maxY && node.y + node.height > minY).map(node => node.id)
         if (Math.abs(activeMarquee.current.x - activeMarquee.start.x) < 4 && Math.abs(activeMarquee.current.y - activeMarquee.start.y) < 4) {
           setSelectedConnectionId(null)
@@ -4779,10 +6128,17 @@ export function CanvasWorkspace(props: CanvasWorkspaceProps): React.JSX.Element 
     setSelectedIds(nextSelection)
     setSelectedConnectionId(null)
     const origins = new Map<string, Point>()
+    let lockedInSelection = 0
     for (const id of nextSelection) {
       const item = current.nodes.find(candidate => candidate.id === id)
-      if (item !== undefined) origins.set(id, { x: item.x, y: item.y })
+      // 锁定的卡片不跟着走。它仍然可以被选中（不然没法解锁），但拖动时它留在
+      // 原地——这正是锁要防的那一下误操作。静默地少拖一张会被当成「画布卡了」，
+      // 所以真的跳过时下面会说出来。
+      if (item === undefined) continue
+      if (isLocked(item)) { lockedInSelection += 1; continue }
+      origins.set(id, { x: item.x, y: item.y })
     }
+    if (lockedInSelection > 0) setNotice(tt('canvas.lock.excluded', { count: lockedInSelection }))
     // Annotation prompt cards are attached to their image node: they ride along
     // with it without joining the selection (which would hide the composer).
     for (const id of nextSelection) {
@@ -4795,7 +6151,7 @@ export function CanvasWorkspace(props: CanvasWorkspaceProps): React.JSX.Element 
     // 往里塞人会让「拖一下」变成「改了选择」。这里只让它们跟着位移。
     for (const siblingId of siblingsInGroup(groupsOf(current), nodeId, new Set(origins.keys()))) {
       const sibling = current.nodes.find(candidate => candidate.id === siblingId)
-      if (sibling === undefined) continue
+      if (sibling === undefined || isLocked(sibling)) continue
       origins.set(sibling.id, { x: sibling.x, y: sibling.y })
       // 被带动的成员自己的标注卡也得跟上，否则整组一拖，卡片全留在原地
       // 漂成一堆不知属于谁的便签。
@@ -4819,6 +6175,9 @@ export function CanvasWorkspace(props: CanvasWorkspaceProps): React.JSX.Element 
   const handleResizeStart = useCallback((event: ReactPointerEvent<HTMLDivElement>, node: CanvasNode, corner: ResizeCorner): void => {
     if (event.button !== 0) return
     event.stopPropagation(); event.preventDefault()
+    // 锁定的卡片改不了大小。缩放角还画着（它是卡片体型的一部分，藏起来会让
+    // 卡片看起来「少了一角」），但按下去不动，并说一句为什么。
+    if (isLocked(node)) { setNotice(tt('canvas.lock.excluded', { count: 1 })); return }
     const asset = assetOf(node)
     const ratio = node.type === 'image' && asset !== undefined && asset.width > 0 && asset.height > 0 ? asset.height / asset.width : null
     resizeRef.current = { nodeId: node.id, corner, startX: event.clientX, startY: event.clientY, width: node.width, height: node.height, x: node.x, y: node.y, ratio }
@@ -4883,19 +6242,20 @@ export function CanvasWorkspace(props: CanvasWorkspaceProps): React.JSX.Element 
 
   const newCanvas = useCallback(async (): Promise<void> => {
     try {
-      await flushPendingCanvas()
-      const created = await api.canvasCreate(tt('canvas.untitled'))
-      const next = seedDocument(created)
-      setProjects(previous => [summaryOf(next), ...previous])
-      setDocument(next); setSelectedIds(new Set()); setSelectedConnectionId(null)
-      syncedRef.current = JSON.stringify(created); setSaveState('saved')
+      if (!await flushPendingCanvas()) return
+      // `+` opens a blank canvas, not a saved empty one. Same reason as the
+      // first-run path: an empty canvas is not a document yet, and a library of
+      // "未命名画布" entries nobody typed into is what it used to produce.
+      const draft = draftDocument()
+      setDocument(draft); setSelectedIds(new Set()); setSelectedConnectionId(null)
+      syncedRef.current = JSON.stringify(draft); setSaveState('saved')
       pastRef.current = []; futureRef.current = []; setHistoryVersion(version => version + 1)
     } catch (caught) { setError(caught instanceof Error ? caught.message : String(caught)) }
-  }, [api, seedDocument, flushPendingCanvas])
+  }, [draftDocument, flushPendingCanvas])
 
   const selectProject = useCallback(async (id: string): Promise<void> => {
     try {
-      await flushPendingCanvas()
+      if (!await flushPendingCanvas()) return
       const next = await api.canvasRead(id)
       setDocument(normalizeConfigNodeSizes(next)); setSelectedIds(new Set()); setSelectedConnectionId(null)
       syncedRef.current = JSON.stringify(next); setSaveState('saved')
@@ -4922,6 +6282,8 @@ export function CanvasWorkspace(props: CanvasWorkspaceProps): React.JSX.Element 
     if (current === null || bundleExporting) return
     setBundleExporting(true)
     try {
+      // The host bundles its on-disk document, not the editor’s pending changes.
+      if (!await flushPendingCanvas() || documentRef.current?.id !== current.id) return
       const bundle = await api.canvasBundleExport(current.id)
       const json = JSON.stringify(bundle)
       const url = URL.createObjectURL(new Blob([json], { type: 'application/json' }))
@@ -4947,7 +6309,7 @@ export function CanvasWorkspace(props: CanvasWorkspaceProps): React.JSX.Element 
     } finally {
       setBundleExporting(false)
     }
-  }, [api, bundleExporting])
+  }, [api, bundleExporting, flushPendingCanvas])
 
   /**
    * Import a bundle as a brand new canvas.
@@ -4972,10 +6334,10 @@ export function CanvasWorkspace(props: CanvasWorkspaceProps): React.JSX.Element 
         setError(tt('canvas.bundle.importNotJson'))
         return
       }
-      await flushPendingCanvas()
+      if (!await flushPendingCanvas()) return
       const { document: imported, unresolved } = await api.canvasBundleImport(parsed)
-      // Deliberately NOT `seedDocument`: an import restores what was exported,
-      // and a bundle of an empty canvas must come back empty. `seedDocument`
+      // Deliberately NOT a draft promotion: an import restores what was
+      // exported, and a bundle of an empty canvas must come back empty.
       // adds a text + config pair to any canvas with no nodes — right for a
       // canvas the user just created, wrong for one they shipped between
       // machines.
@@ -5029,25 +6391,58 @@ export function CanvasWorkspace(props: CanvasWorkspaceProps): React.JSX.Element 
       setConfirmDeleteProject(false)
       const nextId = remaining[0]?.id
       if (nextId === undefined) {
-        const created = await api.canvasCreate(tt('canvas.untitled'))
-        const created2 = seedDocument(created)
-        setProjects([summaryOf(created2)]); setDocument(created2)
-        syncedRef.current = JSON.stringify(created); setSaveState('saved')
+        // Deleting the last canvas leaves an empty draft rather than silently
+        // creating a replacement: the replacement used to arrive saved and
+        // titled, which reads as "my delete did not work".
+        const draft = draftDocument()
+        setProjects([]); setDocument(draft)
+        syncedRef.current = JSON.stringify(draft); setSaveState('saved')
       } else {
         setProjects(remaining)
         await selectProject(nextId)
       }
       setSelectedIds(new Set()); setSelectedConnectionId(null)
     } catch (caught) { setError(caught instanceof Error ? caught.message : String(caught)) }
-  }, [api, selectProject, seedDocument])
+  }, [api, draftDocument, selectProject])
 
-  // -------------------------------------------------------------- derived
+  // ------------------------------------------------------------ derived
 
-  const nodeById = useMemo(() => new Map((document?.nodes ?? []).map(node => [node.id, node])), [document])
+  // 视口不是内容：缩放/平移会换掉 document 对象，但 nodes 数组引用不变。
+  // 依赖写 `document?.nodes` 而不是 `document`，才不会在读一帧画面时把整份
+  // 文档当成「内容变了」——200 节点实测里这是缩放卡顿的主因。
+  const nodeById = useMemo(() => new Map((document?.nodes ?? []).map(node => [node.id, node])), [document?.nodes])
+  /**
+   * 画面上的节点：隐藏的那些不在里面。
+   *
+   * WHY 单独派生一份、而不是在每个读者里各写一次过滤：隐藏的卡片必须同时从
+   * 三个地方消失（渲染、框选、⌘A），漏掉一处就是「看不见但还是能选中」，
+   * 那种状态下用户按下删除会删掉一张屏幕上根本没有的卡。
+   *
+   * 注意 `nodeById` 仍然是**全量**的：连线层与分组框要靠它解析两端，它们各自
+   * 判断可见性（隐藏的端点不画线、不画框）。
+   */
+  const visibleNodesOf = useMemo(() => visibleNodes(document?.nodes ?? []), [document?.nodes])
+  /**
+   * 藏了几张。底栏那条提示的开关，也是它的读数。
+   *
+   * 数**整份文档**而不是当前视口：用户需要知道这份画布里一共藏了什么，否则
+   * 藏起来的卡就真的从他的记忆里消失了。为 0 时那条提示整个不渲染——空画布
+   * 上不该常驻一条「0 张卡片已隐藏」。
+   */
+  const hiddenTotal = useMemo(() => hiddenCount(document?.nodes ?? []), [document?.nodes])
+  /**
+   * 画面上的节点索引：分组框按它算包围盒。
+   *
+   * WHY 不复用 `nodeById`（全量）：组里藏了一张卡之后，框仍按它原来的坐标撑
+   * 出去，画面上就是一个抱住空气的大框——而框的作用恰恰是「这几张是一伙
+   * 的」，对着空处画框等于在说反话。全组成员都被藏起来时 `groupFrame` 返回
+   * null，框整个不画。
+   */
+  const visibleNodeById = useMemo(() => new Map(visibleNodesOf.map(node => [node.id, node])), [visibleNodesOf])
   // 右键菜单要在连线上显示/切换用途，与 nodeById 同一套读法。
-  const connectionById = useMemo(() => new Map((document?.connections ?? []).map(connection => [connection.id, connection])), [document])
+  const connectionById = useMemo(() => new Map((document?.connections ?? []).map(connection => [connection.id, connection])), [document?.connections])
   /** 分组：老画布没有这个字段，`groupsOf` 读作空数组，这里无需额外判空。 */
-  const groups = useMemo(() => groupsOf(document), [document])
+  const groups = useMemo(() => groupsOf(document), [document?.groups, document?.nodes])
   const groupById = useMemo(() => new Map(groups.map(group => [group.id, group])), [groups])
   /** 正在设置身份参考的节点；节点被删掉时面板自然消失，不留一个悬空面板。 */
   const castNode = useMemo(() => castTarget === null ? undefined : nodeById.get(castTarget), [castTarget, nodeById])
@@ -5125,9 +6520,28 @@ export function CanvasWorkspace(props: CanvasWorkspaceProps): React.JSX.Element 
     setSkillLibraryOpen(false)
   }, [canvasCenter, createConfigNode, createTextNode, mutate])
 
-  const gridSize = GRID_SIZE * (document?.viewport.k ?? 1)
-  const gridOffsetX = (document?.viewport.x ?? 0) % gridSize
-  const gridOffsetY = (document?.viewport.y ?? 0) % gridSize
+  /**
+   * 网格与描边的缩放补偿。
+   *
+   * 这两件事都坏在同一个前提下：世界里的尺寸乘上缩放之后会小到看不见。网格
+   * 48 世界像素在 17% 下是 8px，格线糊成一层噪声；节点边框 1.5px 在 17% 下
+   * 是 0.26px，等于没有边框——于是浅色主题下一张白卡片浮在白画布上，只剩
+   * 里面那点糊掉的影儿。所以：
+   *
+   *  - 网格按「屏幕上的格距不低于 16px」翻倍世界步长（见 `gridStepFor`），
+   *    效果/节奏与地图软件的经纬网一致；
+   *  - 边框按 `1/k` 补偿（上限 8 倍，见 `invScaleFor`），厚度在屏幕上恒定。
+   *
+   * 两者都写成 CSS 变量而不是直接改属性：`--canvas-inv-scale` 被 `.node` 的
+   * border-width 读到，而那些规则写在样式表里，只能在变量上做手脚。
+   */
+  const zoomScale = document?.viewport.k ?? 1
+  const zoomBand = zoomBandOf(zoomScale)
+  const { step: gridStep, size: gridSize } = gridStepFor(zoomScale, GRID_SIZE)
+  // 偏移用世界步长取模：网格是按世界坐标锚定的，换挡时线不能跳位置。用屏幕
+  // 尺寸取模的话，每次跨过阈值整片网格会平移一格，读起来像画布抖了一下。
+  const gridOffsetX = ((document?.viewport.x ?? 0) % (gridStep * zoomScale))
+  const gridOffsetY = ((document?.viewport.y ?? 0) % (gridStep * zoomScale))
 
   // ------------------------------------------------------------- render
 
@@ -5143,10 +6557,12 @@ export function CanvasWorkspace(props: CanvasWorkspaceProps): React.JSX.Element 
    */
   const liveOverlap = (() => {
     if (document === null || dragMovingIdsRef.current.size === 0) return null
-    const pairs = coveredNodes(document.nodes, dragMovingIdsRef.current)
+    // 只算画面上的卡：藏起来的那张既不占视野也不显示徽标，把它算进「被盖住」
+    // 会在画面上留一句指向空处的提示。
+    const pairs = coveredNodes(visibleNodesOf, dragMovingIdsRef.current)
     const hit = pairs[0]
     if (hit === undefined) return null
-    const coverTitle = document.nodes.find(node => node.id === hit.coverId)?.title ?? ''
+    const coverTitle = nodeById.get(hit.coverId)?.title ?? ''
     return { ids: new Set([hit.coveredId, hit.coverId]), coveredId: hit.coveredId, coverTitle }
   })()
 
@@ -5160,7 +6576,16 @@ export function CanvasWorkspace(props: CanvasWorkspaceProps): React.JSX.Element 
     const isRelated = relatedIds.has(node.id)
     const isConnectTarget = connecting?.targetId === node.id
     const isOverlapping = liveOverlap !== null && liveOverlap.ids.has(node.id)
-    return `${css.node} ${isSketch ? css.sketchNode : isPose ? css.poseNode : isStoryboard ? css.storyboardNode : isConfig ? css.configNode : isTextual ? css.textNode : css.imageNode} ${isSelected ? css.nodeSelected : ''} ${isRelated ? css.nodeRelated : ''} ${isConnectTarget ? css.nodeConnectTarget : ''} ${isOverlapping ? css.nodeOverlap : ''}`
+    // 运行痕迹分两个类名而不是一个：虚线 / 实线、警告色 / 错误色都要分开，
+    // 而 CSS 里做「属性选择器 + 一个类」的组合比在类名字符串里拼 data 属性
+    // 干净——react-flow 只吃 className。
+    const isRunFailed = runMarks.failed.has(node.id)
+    const isRunBlocked = !isRunFailed && runMarks.blocked.has(node.id)
+    // 历史面板的悬停预览。它只画一圈虚线描边，不改任何尺寸与坐标：预览的目的
+    // 是让用户认出手上要退的那一步是哪几张卡，若连位置都跟着动，他看到的就
+    // 不再是「现在」，而是一张只存在于想象中的中间态。
+    const isHistoryPreview = historyPreviewIds !== null && historyPreviewIds.includes(node.id)
+    return `${css.node} ${isSketch ? css.sketchNode : isPose ? css.poseNode : isStoryboard ? css.storyboardNode : isConfig ? css.configNode : isTextual ? css.textNode : css.imageNode} ${isSelected ? css.nodeSelected : ''} ${isRelated ? css.nodeRelated : ''} ${isConnectTarget ? css.nodeConnectTarget : ''} ${isOverlapping ? css.nodeOverlap : ''} ${isRunFailed ? css.nodeRunFailed : ''} ${isRunBlocked ? css.nodeRunBlocked : ''} ${isHistoryPreview ? css.nodeHistoryPreview : ''}`
   }
 
   const handleNodeDoubleClick = (event: React.MouseEvent, node: CanvasNode): void => {
@@ -5203,18 +6628,47 @@ export function CanvasWorkspace(props: CanvasWorkspaceProps): React.JSX.Element 
     annotateNodeId, busyNodes, annotationDraft, annotationDragRef,
     colorPickerNodeId, brokenVideoIds, polishBusy,
     api, modelGroups, videoGroups, defaultChannelId,
+    effectiveVideoModel: composerVideoModel,
     fileUploadRef, imageFileRef, connectRef,
     IconButton, ToolbarIcon, ModelPicker, SketchBoard, PoseBoard, StoryboardBody, CanvasFileBody,
+    labelWithKeys,
     ROLE_LABELS, TEXT_COLORS,
-    nodeMetadata, assetOf, videoOf, isSketchNode, isPoseNode, poseOf, isAnnotationCard, layerKindLabel,
+    nodeMetadata, assetOf, usableAsset, videoOf, isSketchNode, isPoseNode, poseOf, isAnnotationCard, layerKindLabel,
     liveAnnotations, fileKindOfAsset, fileKindLabel, fileSizeLabel,
     storyboardOf, storyboardProgress, resolveModelChoice, textStyleOf,
+    channelIsConnected, composerPrompt, composerPromptSet,
+    runMarks,
   }), [document, selectedIds, relatedIds, connecting, liveOverlap, skillRuns, composeIds,
     annotateNodeId, busyNodes, annotationDraft, colorPickerNodeId, brokenVideoIds, polishBusy,
-    api, modelGroups, videoGroups, defaultChannelId])
+    // `composerVideoModel` 是分镜板收窄时长/分辨率所依据的「这一镜会用哪个模型」。
+    // 漏掉它，切换模型后分镜板仍按旧模型给出选项——用户选了一个新模型，面板却
+    // 还在列它不接受的值。
+    api, modelGroups, videoGroups, defaultChannelId, composerVideoModel, channelIsConnected, composerPrompt, composerPromptSet, runMarks])
 
   const nodeBodyActions: NodeBodyActions = useMemo(() => ({
     patchNode, deleteNode, duplicateNode, downloadNode, downloadFileNode, downloadVideoNode,
+    // 单张卡的两个开关走 `mutate` 而不是 `patchNode`：`patchNode` 直接改文档
+    // 不进撤销栈，而「锁错了、藏错了」是用户最常要退回去的一类操作。
+    setNodeLocked: (nodeId: string, locked: boolean) => {
+      mutate(previous => ({
+        ...previous,
+        nodes: previous.nodes.map(node => node.id === nodeId ? { ...node, metadata: { ...nodeMetadata(node), locked } } : node),
+      }))
+      setNotice(tt(locked ? 'canvas.lock.locked' : 'canvas.lock.unlocked', { count: 1 }))
+    },
+    setNodeHidden: (nodeId: string, hidden: boolean) => {
+      mutate(previous => ({
+        ...previous,
+        nodes: previous.nodes.map(node => node.id === nodeId ? { ...node, metadata: { ...nodeMetadata(node), hidden } } : node),
+      }))
+      setSelectedIds(previous => {
+        if (!previous.has(nodeId)) return previous
+        const next = new Set(previous)
+        next.delete(nodeId)
+        return next
+      })
+      setNotice(tt(hidden ? 'canvas.lock.hid' : 'canvas.lock.shown', { count: 1 }))
+    },
     openImageNode, openFileNode, openSkillMenu, openNodeAddMenu, scheduleNodeAddMenuClose,
     handleConnectStart, handleResizeStart, beginAnnotationDrag, moveAnnotationDrag, endAnnotationDrag,
     toggleAnnotate, removeNodeBackground, splitLayers, retryGeneration, retryVideoGeneration,
@@ -5229,7 +6683,7 @@ export function CanvasWorkspace(props: CanvasWorkspaceProps): React.JSX.Element 
     handleConnectStart, handleResizeStart, beginAnnotationDrag, moveAnnotationDrag, endAnnotationDrag,
     toggleAnnotate, removeNodeBackground, splitLayers, retryGeneration, retryVideoGeneration,
     grabVideoFrame, continueFromClip, favoriteVideoNode, runStoryboard, submitShot,
-    startStoryboardStitch, clearBrokenVideo, patchSketchStrokes, patchSketchAsset, patchStageRig])
+    startStoryboardStitch, clearBrokenVideo, patchSketchStrokes, patchSketchAsset, patchStageRig, mutate])
 
   const renderNodeBody = (node: CanvasNode): React.JSX.Element =>
     <NodeBody node={node} S={nodeBodyState} A={nodeBodyActions} />
@@ -5238,7 +6692,7 @@ export function CanvasWorkspace(props: CanvasWorkspaceProps): React.JSX.Element 
   // 渲染都会重建几十个箭头函数，这些 props 会被下游整体当成新值。
   const composerState: ComposerState = useMemo(() => ({
     canvasDocument: document,
-    viewportSize, viewportRef,
+    viewportSize, viewportRef, chromeHeight,
     modelGroups, videoGroups,
     composerVisible, composerTarget, composerKind, composerPrompt, composerRenderer,
     composerBusy, composerReferenceCount, composerTextCount, composerAnnotationTexts, composerAutoLinkCount,
@@ -5247,15 +6701,16 @@ export function CanvasWorkspace(props: CanvasWorkspaceProps): React.JSX.Element 
     composerAspect, composerAspectOptions, composerSeconds, composerDurationOptions,
     composerResolution, composerResolutionOptions, composerSize, composerQuality, composerCount,
     composerProbeWarning, composerVideoCatalog, videoModelCount,
+    composerPromptSet,
   }), [
-    document, viewportSize, viewportRef, modelGroups, videoGroups,
+    document, viewportSize, viewportRef, chromeHeight, modelGroups, videoGroups,
     composerVisible, composerTarget, composerKind, composerPrompt, composerRenderer,
     composerBusy, composerReferenceCount, composerTextCount, composerAnnotationTexts, composerAutoLinkCount,
     composerChannelConnected, composerChannelId, composerModel,
     composerVideoChannelId, composerVideoModel, composerVideoConnected, composerVideoMode,
     composerAspect, composerAspectOptions, composerSeconds, composerDurationOptions,
     composerResolution, composerResolutionOptions, composerSize, composerQuality, composerCount,
-    composerProbeWarning, composerVideoCatalog, videoModelCount,
+    composerProbeWarning, composerVideoCatalog, videoModelCount, composerPromptSet,
   ])
 
   const composerActions: ComposerActions = useMemo(() => ({
@@ -5265,6 +6720,8 @@ export function CanvasWorkspace(props: CanvasWorkspaceProps): React.JSX.Element 
     setComposerVideoChannelId, setComposerVideoModel, setComposerVideoMode,
     setComposerAspect, setComposerSeconds, setComposerResolution,
     setComposerSize, setComposerQuality, setComposerCount,
+    setComposerPromptSet,
+    addComposerPromptSetItem,
   }), [
     submitComposer, submitVideoComposer,
     setComposerPrompt, setComposerKind, setComposerRenderer,
@@ -5272,6 +6729,7 @@ export function CanvasWorkspace(props: CanvasWorkspaceProps): React.JSX.Element 
     setComposerVideoChannelId, setComposerVideoModel, setComposerVideoMode,
     setComposerAspect, setComposerSeconds, setComposerResolution,
     setComposerSize, setComposerQuality, setComposerCount,
+    setComposerPromptSet, addComposerPromptSetItem,
   ])
 
   const renderComposer = (): ReactNode =>
@@ -5281,7 +6739,9 @@ export function CanvasWorkspace(props: CanvasWorkspaceProps): React.JSX.Element 
     canvasDocument: document,
     contextMenu, createMenu, nodeById, connectionById, groupById, fileUploadRef,
     selectedCount: selectedIds.size,
-    assetOf, videoOf, nodeMetadata, isAnnotationCard,
+    // 层级四项的开关条件：整张画布只有一张卡时没有可跨的对象。
+    nodeCount: document?.nodes.length ?? 0,
+    assetOf, videoOf, nodeMetadata, isAnnotationCard, labelWithKeys,
     createTextNode, createSketchNode, createPoseNode, createStoryboardNode,
     createImageNode, createEmptyFileNode, createConfigNode,
   }), [
@@ -5372,6 +6832,122 @@ export function CanvasWorkspace(props: CanvasWorkspaceProps): React.JSX.Element 
     setGroupRenameBoth({ groupId, value: group?.title ?? '' })
   }, [setGroupRenameBoth])
 
+  /**
+   * 「全部功能」目录的可用性事实。每一项都是画布已经算好的东西，这里只是把它们
+   * 摆成一个对象交给纯函数——目录不自己记「能不能用」，否则它和按钮迟早会分叉
+   * 成「亮着但按下去没反应」。
+   *
+   * `composeClips` 用 `composeIds.length` 而不是 `selectedIds.size`：拼接要的是
+   * 「选中的是视频」，选了三张图时这一行不该亮（技能选择器里的同一条判定）。
+   *
+   * 位置在 `createGroup` 之后：那是个 `useCallback`，放进前面那个「derived」
+   * 段落会让 TS2448（块级变量在声明前使用）——这正是上次 `arrangeCanvas`
+   * 踩过的同一个坑。
+   */
+  const catalogContext: CapabilityContext = useMemo(() => ({
+    nodeCount: document?.nodes.length ?? 0,
+    selectedCount: selectedIds.size,
+    clipboardFilled: (internalClipboard.current?.nodes.length ?? 0) > 0,
+    canUndo: pastRef.current.length > 0,
+    canRedo: futureRef.current.length > 0,
+    savedCanvas: document !== null && document.id !== '',
+    composeClips: composeIds.length,
+  }), [document, selectedIds, composeIds, historyVersion])
+
+  /**
+   * 目录里每一行背后的真实动作。
+   *
+   * WHY 一张显式 Record 而不是在目录数据里塞回调：目录要能被 Node 单测加载
+   * （纯数据、不碰 React），而这里每个值都必须指向一个**已经存在**的函数——
+   * `Record<CapabilityId, …>` 让「目录里加了一行、没人接」变成编译错误，那正是
+   * 这条功能最容易静默坏掉的地方（点下去什么都不发生）。
+   *
+   * 调用方一律先关目录再执行：那张弹窗盖在画布上，点完想看见结果，而不是一层
+   * 蒙着结果的遮罩（见 `runCatalogItem`）。
+   */
+  const catalogActions = useMemo<Record<CapabilityId, () => void>>(() => ({
+    'create.image': () => { setPickerTab('upload'); setPickerOpen(true) },
+    'create.video': () => setVideoPickerOpen(true),
+    'create.text': () => addDockNode('text'),
+    'create.sketch': () => addDockNode('sketch'),
+    'create.pose': () => addDockNode('pose'),
+    'create.storyboard': () => addDockNode('storyboard'),
+    'create.file': () => addDockNode('file'),
+    'create.config': () => addDockNode('config'),
+    'run.workflow': () => { void runWorkflowFrom([...selectedIdsRef.current]) },
+    // 体检不另开面板：它复用运行选项菜单（那里已经写着「这一次怎么跑」），
+    // 打开菜单就等于把体检结果摆出来。两个入口指向同一个表面，用户不必学两遍。
+    'run.health': () => {
+      const caret = rootRef.current?.querySelector<HTMLElement>('[data-workflow-caret]')
+      const bounds = caret?.getBoundingClientRect()
+      const rootRect = rootRef.current?.getBoundingClientRect()
+      if (bounds === undefined) return
+      closeDockMenus()
+      setWorkflowMenu({ x: bounds.left + bounds.width / 2 - (rootRect?.left ?? 0), y: bounds.top - (rootRect?.top ?? 0) })
+    },
+    // 拼接走「多选条」那张确认卡：它是用户唯一能核对 ①②③ 顺序的地方，从目录
+    // 直接开跑等于绕过那道检查，而 ffmpeg 一旦拼错顺序，返工的是整条片子。
+    'run.compose': () => startComposeFromBar(),
+    'run.timeline': () => openTimeline(),
+    'edit.undo': () => undo(),
+    'edit.redo': () => redo(),
+    // 从目录打开历史面板时，目录本身已经关掉了（`runCatalogItem` 先关再执行），
+    // 这里只需要把面板翻上来。
+    'edit.history': () => openHistoryPanel(),
+    'edit.duplicate': () => duplicateSelection(),
+    'edit.copy': () => copySelection(),
+    'edit.paste': () => pasteClipboard(),
+    'edit.group': () => createGroup(),
+    'edit.arrange': () => arrangeCanvas(),
+    // 四行层级与快捷键、右键菜单走同一个 `reorderSelection`：顺序规则只在
+    // `layer-order.ts` 里有一份，三个入口各算一遍迟早会散成三种行为。
+    'edit.layerFront': () => reorderSelection('front'),
+    'edit.layerBack': () => reorderSelection('back'),
+    'edit.layerForward': () => reorderSelection('forward'),
+    'edit.layerBackward': () => reorderSelection('backward'),
+    'edit.lock': () => toggleLock(),
+    'edit.hide': () => toggleHidden(),
+    // 八行对齐与多选对齐条走同一个 `alignSelection`：规则只在 `align-model.ts`
+    // 里有一份，目录不该另算一遍。
+    'edit.alignLeft': () => alignSelection('left'),
+    'edit.alignCenterH': () => alignSelection('centerH'),
+    'edit.alignRight': () => alignSelection('right'),
+    'edit.alignTop': () => alignSelection('top'),
+    'edit.alignCenterV': () => alignSelection('centerV'),
+    'edit.alignBottom': () => alignSelection('bottom'),
+    'edit.distributeH': () => alignSelection('distributeH'),
+    'edit.distributeV': () => alignSelection('distributeV'),
+    'edit.delete': () => deleteSelection(),
+    'view.fit': () => fitView(),
+    'view.search': () => openNodeSearch(),
+    'view.minimap': () => setMinimapOpen(open => !open),
+    'view.connections': () => setConnectionsHidden(hidden => !hidden),
+    // 与底栏那枚按钮同一个写法：ref 与 state 一起改，否则拖动时的吸附读的
+    // 还是旧值，表现为「开关看着变了、手底下没变」。
+    'view.snap': () => { snapEnabledRef.current = !snapEnabledRef.current; setSnapEnabled(snapEnabledRef.current) },
+    // 全屏中时这一行要能退出去，所以接的是 current 状态决定的那个动作。
+    'view.fullscreen': () => toggleFullscreen(),
+    'canvas.new': () => { void newCanvas() },
+    'canvas.favorite': () => { void toggleCurrentFavorite() },
+    'canvas.export': () => { void exportBundle() },
+    // 导入走顶栏那个隐藏 input：那条路径负责清空 value（同一份文件选两次
+    // 才会再触发 change），在这里另起一个 input 会漏掉那个细节。
+    'canvas.import': () => { bundleFileRef.current?.click() },
+    'help.shortcuts': () => setShortcutHelpOpen(true),
+    'help.skills': () => openSkillLibrary(),
+  }), [
+    addDockNode, alignSelection, arrangeCanvas, copySelection, createGroup, deleteSelection, duplicateSelection,
+    reorderSelection,
+    toggleLock, toggleHidden,
+    exportBundle, fitView, newCanvas, openSkillLibrary, openTimeline, pasteClipboard, redo,
+    runWorkflowFrom, startComposeFromBar, toggleCurrentFavorite, toggleFullscreen, undo, closeDockMenus,
+  ])
+
+  const runCatalogItem = useCallback((id: CapabilityId): void => {
+    setCatalogOpen(false)
+    catalogActions[id]()
+  }, [catalogActions])
+
   const contextMenuActions: CanvasContextMenuActions = useMemo(() => ({
     setContextMenu, setCreateMenu, setFileTargetNodeId, setPickerOpen, setSelectedConnectionId,
     setVideoPreviewNodeId, setPosterTarget, setCastTarget, setPolishNode, setNotice,
@@ -5379,13 +6955,34 @@ export function CanvasWorkspace(props: CanvasWorkspaceProps): React.JSX.Element 
     downloadNode, downloadFileNode, downloadVideoNode, continueFromClip,
     duplicateNode, deleteNode, patchNode, placeNewNode, pasteClipboard, fitView, mutate,
     setConnectionRole, createGroup, renameGroup: beginGroupRename, ungroup,
+    reorderLayers: reorderSelection,
+    setNodeLocked: (nodeId: string, locked: boolean) => {
+      mutate(previous => ({
+        ...previous,
+        nodes: previous.nodes.map(node => node.id === nodeId ? { ...node, metadata: { ...nodeMetadata(node), locked } } : node),
+      }))
+      setNotice(tt(locked ? 'canvas.lock.locked' : 'canvas.lock.unlocked', { count: 1 }))
+    },
+    setNodeHidden: (nodeId: string, hidden: boolean) => {
+      mutate(previous => ({
+        ...previous,
+        nodes: previous.nodes.map(node => node.id === nodeId ? { ...node, metadata: { ...nodeMetadata(node), hidden } } : node),
+      }))
+      setSelectedIds(previous => {
+        if (!previous.has(nodeId)) return previous
+        const next = new Set(previous)
+        next.delete(nodeId)
+        return next
+      })
+      setNotice(tt(hidden ? 'canvas.lock.hid' : 'canvas.lock.shown', { count: 1 }))
+    },
   }), [
     setContextMenu, setCreateMenu, setFileTargetNodeId, setPickerOpen, setSelectedConnectionId,
     setVideoPreviewNodeId, setPosterTarget, setCastTarget, setPolishNode, setNotice,
     openImageNode, openFileNode, openSkillMenu,
     downloadNode, downloadFileNode, downloadVideoNode, continueFromClip,
     duplicateNode, deleteNode, patchNode, placeNewNode, pasteClipboard, fitView, mutate,
-    setConnectionRole, createGroup, beginGroupRename, ungroup,
+    setConnectionRole, createGroup, beginGroupRename, ungroup, reorderSelection,
   ])
 
   const renderContextMenu = (): ReactNode =>
@@ -5396,8 +6993,16 @@ export function CanvasWorkspace(props: CanvasWorkspaceProps): React.JSX.Element 
   // screenToWorld/canvasCenter/fitView 仍读写 document.viewport（经 onViewportChange
   // 同步），所以原样可用。拖拽历史走 onNodeDragStart/Stop（保 3px 阈值语义）。
   const flowNodes = useMemo(
-    () => nodesToFlow(document?.nodes ?? []).map(node => ({ ...node, selected: selectedIds.has(node.id) })),
-    [document, selectedIds],
+    () => nodesToFlow(visibleNodesOf).map((node, index) => ({
+      ...node,
+      selected: selectedIds.has(node.id),
+      // 数组下标就是层级：末尾在最上面（见 `layer-order.ts`）。显式写 zIndex
+      // 而不是靠 DOM 顺序，是因为 react-flow 在 `onlyRenderVisibleElements`
+      // 之类的开关下会重排节点元素，那时「谁在后面」就不再等于「谁在上面」；
+      // 而 z-index 是浏览器唯一认账的那个数。
+      zIndex: index,
+    })),
+    [visibleNodesOf, selectedIds],
   )
   // 这里不再派生 flow 边：react-flow 的 `edges` 传的是空数组，连线由
   // `ConnectionLayer` 自己按 document.connections 画，「两端都在且都不是标注卡」
@@ -5465,6 +7070,12 @@ export function CanvasWorkspace(props: CanvasWorkspaceProps): React.JSX.Element 
   const handleNodeDragStop = useCallback((): void => {
     commitSnapshot(dragSnapshotRef.current)
     dragSnapshotRef.current = null
+    // 线属于「这次拖动」，拖动结束就必须消失：留一条静止不动的线在画布上，
+    // 会被读成一次真正的对齐结果，而它描述的只是上一帧的暂时状态。
+    if (snapGuidesRef.current.length > 0) {
+      snapGuidesRef.current = []
+      bumpSnapGuides(version => version + 1)
+    }
   }, [commitSnapshot])
 
   const handlePaneClick = useCallback((): void => {
@@ -5499,12 +7110,46 @@ export function CanvasWorkspace(props: CanvasWorkspaceProps): React.JSX.Element 
     </svg>
   }
 
+  /**
+   * 吸附参考线。画在世界坐标里，跟着视口一起平移缩放——它标的是「这两条边在
+   * 世界坐标里重合」，不是「屏幕上看起来齐」；缩放后仍画在原处的才是对的线。
+   *
+   * 竖线与横线分开画，是为了让 `left` / `top` 各用一条 CSS 变量：一条线只有
+   * 一根坐标是实值，另一根铺满整个画布。
+   *
+   * 用 `snapGuideVersion` 当 key 的一部分没有必要；`snapGuidesRef` 是可变引用，
+   * 这里读的是它**当前**的快照——而拖动每帧都会 bump 版本触发重渲染，所以读到
+   * 的一定是这一帧的值。
+   */
+  const renderSnapGuides = (): React.JSX.Element | null => {
+    const guides = snapGuidesRef.current
+    if (guides.length === 0) return null
+    return <div className={css.snapGuideLayer} data-snap-guides={guides.length} aria-hidden="true">
+      {guides.map((guide, index) => guide.axis === 'x'
+        ? <span
+            key={`x${index}`}
+            className={css.snapGuide}
+            data-snap-guide="x"
+            style={{ left: guide.at, top: guide.from, height: Math.max(1, guide.to - guide.from) }}
+          />
+        : <span
+            key={`y${index}`}
+            className={css.snapGuide}
+            data-snap-guide="y"
+            style={{ top: guide.at, left: guide.from, width: Math.max(1, guide.to - guide.from) }}
+          />)}
+    </div>
+  }
+
   // ---- renderComposer 已搬出：见 canvas/composer.tsx / canvas/context-menu.tsx
 
   const renderMinimap = (): React.JSX.Element | null => {
     if (document === null || viewportSize.width === 0) return null
+    // 缩略图是「版图」，版图上不该出现已经被藏起来的卡：缩略图是用来确认
+    // 「我要找的东西在哪」的，多画几个方框会让它跟画面对不上。连线同理。
     return <CanvasMinimap
-      nodes={document.nodes}
+      nodes={visibleNodesOf}
+      connections={visibleConnections(document.connections, visibleNodesOf)}
       viewport={document.viewport}
       size={viewportSize}
       selectedIds={selectedIds}
@@ -5536,6 +7181,13 @@ export function CanvasWorkspace(props: CanvasWorkspaceProps): React.JSX.Element 
           <button type="button" className={css.quickCard} data-quick-card="file" onClick={() => placeNewNode(createEmptyFileNode())}>
             <span className={css.quickIcon}><ToolbarIcon name="file" size={18} /></span>{tt('canvas.quickFile')}
           </button>
+          {/* 第六张：一张卡片、两秒上手。前五张都是「添加一个空节点」，用户
+              还得自己想怎么连、写什么；这一张直接把一条能跑通的链摆出来。
+              WHY 排在最后而不是最前：空画布上多数人已经知道自己要放什么，
+              示例是给「不知道从哪开始」的人准备的兜底。 */}
+          <button type="button" className={css.quickCard} data-quick-card="example" title={tt('canvas.example.hint')} onClick={loadExampleFlow}>
+            <span className={css.quickIcon}><ToolbarIcon name="sparkle" size={18} /></span>{tt('canvas.example.load')}
+          </button>
         </div>
       </div>
     : null
@@ -5548,7 +7200,24 @@ export function CanvasWorkspace(props: CanvasWorkspaceProps): React.JSX.Element 
     return { left: x1, top: y1, width: x2 - x1, height: y2 - y1 }
   })()
 
-  return <section ref={rootRef} className={css.root} data-canvas-workspace="">
+  /**
+   * 缩放状态挂在根节点上，不是挂在 `.world` 上。
+   *
+   * 理由：这两件事要影响的是**不随内容缩放**的东西（节点边框、网格、低缩放
+   * 下的对比策略），而 `.world` 自己带着 `scale()`，把变量挂在它上面等于让
+   * 变量和内容一起被缩放——那就白算了。根节点是没有 transform 的那一层。
+   */
+  return <section
+    ref={rootRef}
+    className={css.root}
+    data-canvas-workspace=""
+    data-zoom-band={zoomBand}
+    style={{
+      // 边框补偿是「屏幕像素恒定」语义，交给 CSS 变量传下去：`.node` 的
+      // border-width 写在样式表里，只能通过变量影响。
+      ['--canvas-inv-scale' as string]: String(invScaleFor(zoomScale)),
+    }}
+  >
     {/* Overlays that used to portal to <body> render here instead.
         A fullscreen element is promoted to the browser's TOP LAYER, which
         paints above the whole document — so a menu appended to <body> is
@@ -5579,6 +7248,9 @@ export function CanvasWorkspace(props: CanvasWorkspaceProps): React.JSX.Element 
           return tt('canvas.projectMeta', { count: project.nodeCount, time: new Date(project.updatedAt).toLocaleString() })
         }}
         onChange={value => { void selectProject(value) }}
+        /* 触发器上写的是动作，不是画布名：右边那枚标题按钮才是「这块画布叫
+           什么」。同一个名字在一行里出现两遍，两边都不像可点的东西。 */
+        label={document === null ? undefined : pickerLabelOf(document, projects.length)}
       >
         {favoriteProjects.length > 0 ? <optgroup label={tt('canvas.favoriteProjects', { count: favoriteProjects.length })}>
           {favoriteProjects.map(project => <option key={project.id} value={project.id}>★ {projectLabel(project)}</option>)}
@@ -5588,16 +7260,6 @@ export function CanvasWorkspace(props: CanvasWorkspaceProps): React.JSX.Element 
         </optgroup> : null}
       </Select>
       <IconButton name="new" label={tt('canvas.newCanvas')} onClick={() => { void newCanvas() }} />
-      <IconButton
-        name={currentFavorite ? 'favoriteFilled' : 'favorite'}
-        label={currentFavorite ? tt('canvas.unfavoriteCanvas') : tt('canvas.favoriteCanvas')}
-        active={currentFavorite}
-        disabled={document === null}
-        onClick={() => { void toggleCurrentFavorite() }}
-      />
-      <IconButton name="deleteProject" label={confirmDeleteProject ? tt('canvas.deleteCanvasConfirm') : tt('canvas.deleteCanvas')} active={confirmDeleteProject} disabled={document === null} onClick={() => {
-        if (confirmDeleteProject) { void removeCurrentProject() } else { setConfirmDeleteProject(true); window.setTimeout(() => setConfirmDeleteProject(false), 3000) }
-      }} />
       {renamingTitle && document !== null
         ? <input
             className={css.titleInput}
@@ -5609,6 +7271,10 @@ export function CanvasWorkspace(props: CanvasWorkspaceProps): React.JSX.Element 
             onKeyDown={event => { if (event.key === 'Enter' || event.key === 'Escape') setRenamingTitle(false) }}
           />
         : <button type="button" className={css.titleButton} onDoubleClick={() => setRenamingTitle(true)} title={tt('canvas.renameHint')}>{document?.title ?? ''}</button>}
+      {/* 保存状态就贴在标题旁边，而不是被 spacer 推到最右。
+          标题是「这是什么」，状态是「它落盘了没有」——两句读起来是同一个句子的
+          两半。原来它孤零零挂在顶栏另一头，眼睛要跨过整条画布去找。 */}
+      <span className={css.saveState} data-state={document?.id === '' ? 'draft' : saveState}>{document?.id === '' ? tt('canvas.draft') : saveState === 'saving' ? tt('canvas.saving') : saveState === 'saved' ? tt('canvas.saved') : saveState === 'error' ? tt('canvas.saveFailed') : tt('canvas.loading')}</span>
       {/* Beside the title, not in the bottom dock: the dock is the canvas's
           object-building verbs, while this changes the surface itself. */}
       <IconButton
@@ -5617,21 +7283,27 @@ export function CanvasWorkspace(props: CanvasWorkspaceProps): React.JSX.Element 
         active={fullscreen}
         onClick={toggleFullscreen}
       />
-      {/* Same row as fullscreen: both operate on the canvas as a whole rather
-          than on an object inside it, which is the line the bottom dock draws.
-          No `data-dock-item` on these — that attribute marks dock tiles and the
-          layout guard measures every one of them. */}
+      <span className={css.topBarSpacer} />
+      {/* 「这份画布自己的事」收进一枚 ⋯。
+          WHY：收藏 / 导出 / 导入 / 删除画布原来各自平铺一格，它们全是文件管理，
+          与画布上正在做的事无关，却和标题、保存状态挤在同一条线上；760px 以下
+          这条线换行，标题被挤到第二行。收起来之后顶栏读起来是一个句子：
+          「切换画布 / 画布名 / 未保存 / 全屏 / ⋯」。新建与全屏留在外面——前者
+          每次开工都要按，后者试用时会被反复按，藏一层等于给最常用的事加一次点击。
+          不带 `data-dock-item`：那个属性标记的是底栏格子，布局守卫会逐个测量。 */}
       <IconButton
-        name="download"
-        label={bundleExporting ? tt('canvas.bundle.exporting') : tt('canvas.bundle.export')}
-        disabled={document === null || bundleExporting}
-        onClick={() => { void exportBundle() }}
-      />
-      <IconButton
-        name="upload"
-        label={bundleImporting ? tt('canvas.bundle.importing') : tt('canvas.bundle.import')}
-        disabled={bundleImporting}
-        onClick={() => { bundleFileRef.current?.click() }}
+        name="more"
+        label={tt('canvas.canvasMenu')}
+        active={topBarMenu !== null}
+        onClick={event => {
+          if (topBarMenu !== null) { setTopBarMenu(null); return }
+          const bounds = event.currentTarget.getBoundingClientRect()
+          const rootRect = rootRef.current?.getBoundingClientRect()
+          closeDockMenus()
+          // 右对齐而不是居中：菜单从顶栏最右一枚按钮展开，居中会让它有一半伸出
+          // 画布外（`.root` 之外的部分被裁掉）。
+          setTopBarMenu({ x: bounds.right - (rootRect?.left ?? 0), y: bounds.bottom - (rootRect?.top ?? 0) })
+        }}
       />
       <input
         ref={bundleFileRef}
@@ -5646,8 +7318,6 @@ export function CanvasWorkspace(props: CanvasWorkspaceProps): React.JSX.Element 
           if (file !== undefined) void importBundle(file)
         }}
       />
-      <span className={css.topBarSpacer} />
-      <span className={css.saveState} data-state={saveState}>{saveState === 'saving' ? tt('canvas.saving') : saveState === 'saved' ? tt('canvas.saved') : saveState === 'error' ? tt('canvas.saveFailed') : tt('canvas.loading')}</span>
     </header>
 
     <div
@@ -5714,6 +7384,15 @@ export function CanvasWorkspace(props: CanvasWorkspaceProps): React.JSX.Element 
                 elementsSelectable={false}
                 nodesDraggable={false}
                 nodesConnectable={false}
+                // 选中提权必须关掉。react-flow 默认给选中的节点加 `z-index: 1000`
+                // （`SELECTED_NODE_Z`），于是「置底」的那张卡一被点中就跳回最上
+                // 层——用户看到的是「置底没生效」，或更糟：「置底之后它又自己回
+                // 来了」。关掉之后叠放顺序只由 `document.nodes` 的数组顺序决定，
+                // 与「末尾在最上面」这一条约定一致，也才能被截图验证。
+                //
+                // 代价是被压住的卡片在选中时仍可能被遮住一半（这正是用户按下
+                // 「置底」时想要的），要编辑它就先置顶。
+                elevateNodesOnSelect={false}
                 // 空格是主路径；Ctrl 是快捷键表里「Ctrl/⌘ + Space」那条的第二枚键。
                 // 必须显式列出 Ctrl：d3-zoom 默认拒绝带 ctrlKey 的拖拽（它把
                 // Ctrl+拖当成捏合缩放），只有 panActivationKeyPressed 为真才放行。
@@ -5736,7 +7415,7 @@ export function CanvasWorkspace(props: CanvasWorkspaceProps): React.JSX.Element 
             的中段，而连线恰恰是用户要看清「这张图接到了哪」的东西。 */}
         <GroupLayer
           groups={groups}
-          nodeById={nodeById}
+          nodeById={visibleNodeById}
           activeGroupId={(() => {
             // 只在「选中的节点全部属于同一个组」时高亮。选中集合为空、或跨了
             // 两个组时不高亮任何一个：那种状态下用户做的是跨组的事（对比、
@@ -5760,7 +7439,7 @@ export function CanvasWorkspace(props: CanvasWorkspaceProps): React.JSX.Element 
           // transform 一并带上，输入框跟着画布缩放——这是刻意的，它标的是画布
           // 上的一个对象，不是屏幕上的一个弹窗。
           const group = groupById.get(groupRename.groupId)
-          const frame = group === undefined ? null : groupFrame(group, nodeById)
+          const frame = group === undefined ? null : groupFrame(group, visibleNodeById)
           // 组在这一瞬间被删掉/解散（撤销、别的窗口保存）时直接不画：
           // 画一个飘在原地的输入框比什么都不画更让人困惑。
           if (frame === null) return null
@@ -5784,7 +7463,7 @@ export function CanvasWorkspace(props: CanvasWorkspaceProps): React.JSX.Element 
           />
         })()}
         <div style={{ pointerEvents: 'auto' }}><ConnectionLayer
-          connections={document?.connections ?? null}
+          connections={document === null ? null : visibleConnections(document.connections, visibleNodesOf)}
           nodeById={nodeById}
           hidden={connectionsHidden}
           selectedConnectionId={selectedConnectionId}
@@ -5800,34 +7479,87 @@ export function CanvasWorkspace(props: CanvasWorkspaceProps): React.JSX.Element 
           onDismiss={dismissSkillRun}
           onRetry={retrySkillRun}
         /></div>)}
+        {/* 「这张被整张盖住了」的徽标画在覆盖层上，不画在卡片里。
+            WHY：它要说明的正是「这张卡你看不见」，而挂在卡片内就等于和它一起
+            压在下面——以前只是靠着 react-flow 给选中节点的 `z-index: 1000`
+            碰巧浮上来，一旦关掉选中提权（层级功能要求关掉）它就彻底消失。徽标
+            说的是画布层面的事实（谁压着谁），所以它属于画布这一层，不属于卡片。
+            位置用世界坐标：跟着 `.world` 的 transform 一起平移缩放，缩到 30% 时
+            它仍在被盖住那张卡的右下角。 */}
+        {liveOverlap === null ? null : (() => {
+          const covered = nodeById.get(liveOverlap.coveredId)
+          if (covered === undefined) return null
+          return <span
+            className={css.overlapBadge}
+            data-node-covered={covered.id}
+            role="status"
+            style={{
+              left: covered.x + covered.width,
+              top: covered.y + covered.height,
+              pointerEvents: 'none',
+            }}
+            aria-label={`${tt('canvas.overlapBadge', { title: liveOverlap.coverTitle })}。${tt('canvas.overlapHint')}`}
+          >
+            {tt('canvas.overlapBadge', { title: liveOverlap.coverTitle })}
+          </span>
+        })()}
+        {renderSnapGuides()}
         {renderAnnotationLinks()}
       </div>
       {marqueeRect !== null ? <div className={css.marquee} style={marqueeRect} aria-hidden="true" /> : null}
       {emptyState}
     </div>
 
-    {composeIds.length >= 2 ? <div className={css.composeBar} data-compose-bar="" data-canvas-no-zoom="" aria-live="polite">
-      <span className={css.composeBarIcon} aria-hidden="true">⛓</span>
-      <span>{tt('canvas.composeBar', { count: composeIds.length })}</span>
-      <span className={css.composeBarOrder}>{composeGlyphs(composeIds.length)}</span>
-      <button
-        type="button"
-        className={css.composeBarRun}
-        data-compose-bar-run=""
-        disabled={composeSkill === null}
-        title={composeSkill === null
-          ? tt('canvas.composeUnavailable', { reason: composeUnavailableReason })
-          : tt('canvas.composeStart', { count: composeIds.length })}
-        onClick={startComposeFromBar}
-      >{tt('canvas.composeStart', { count: composeIds.length })}</button>
-    </div> : null}
-
-    <div className={css.canvasChrome} data-canvas-no-zoom="">
+    <div className={css.canvasChrome} ref={chromeRef} data-canvas-no-zoom="">
+      {/* 拼接条与对齐条都是这一行的成员，各自独占一行（见 `.composeBar` /
+          `.alignBar`）。它们曾经是 `bottom: 66px` 一类的绝对层——各自定位的
+          浮层不知道对方有多高，谁后渲染谁盖住谁，而画布上「顺序说明」压在
+          「对齐按钮」上，用户点下去就拼错了片子。 */}
+      {composeIds.length >= 2 ? <div className={css.composeBar} data-compose-bar="" aria-live="polite">
+        <span className={css.composeBarIcon} aria-hidden="true">⛓</span>
+        <span>{tt('canvas.composeBar', { count: composeIds.length })}</span>
+        <span className={css.composeBarOrder}>{composeGlyphs(composeIds.length)}</span>
+        <button
+          type="button"
+          className={css.composeBarRun}
+          data-compose-bar-run=""
+          disabled={composeSkill === null}
+          title={composeSkill === null
+            ? tt('canvas.composeUnavailable', { reason: composeUnavailableReason })
+            : tt('canvas.composeStart', { count: composeIds.length })}
+          onClick={startComposeFromBar}
+        >{tt('canvas.composeStart', { count: composeIds.length })}</button>
+      </div> : null}
+      {/* 对齐条排在拼接条下面、底栏上面：三个都是「选中之后才出现」的东西，
+          顺序读起来就是「先说这一刀切几段 → 再调位置 → 最后动手」。 */}
+      {selectedNodeCount >= 2 ? <AlignBar count={selectedNodeCount} onAlign={alignSelection} /> : null}
+      {/* 行与药丸分成两层，和 `.alignRow` / `.alignBar` 完全同一套：
+          `flex-basis: 100%` 只放在行上，药丸自己 `width: fit-content`。
+          两者挤在一层时 flex-basis 会盖掉 width，整条提示就横贯整个画布
+          （真机截图里是一条从左边一直接到右边的虚线框），而它只有十来个字。 */}
+      {hiddenTotal > 0 ? <div className={css.hiddenRow}>
+        <div className={css.hiddenBar} data-hidden-bar="" aria-live="polite">
+          <span className={css.hiddenBarIcon} aria-hidden="true">◌</span>
+          <span>{tt('canvas.lock.hiddenBar', { count: hiddenTotal })}</span>
+          {/* 藏起来是单向动作，这个按钮是唯一的回路。它不能和「隐藏」共用同一
+              个键位或同一个按钮位置——一个自己把自己收起来的入口，没法同时是
+              把它叫回来的入口。 */}
+          <button type="button" className={css.hiddenBarShow} data-hidden-bar-show="" onClick={showAllHidden}>{tt('canvas.lock.showAll')}</button>
+        </div>
+      </div> : null}
       <div className={css.chromeSide}>
         {minimapOpen ? renderMinimap() : null}
         <div className={css.zoomDock}>
           <IconButton name="minimap" label={minimapOpen ? tt('canvas.minimapClose') : tt('canvas.minimapOpen')} active={minimapOpen} onClick={() => setMinimapOpen(previous => !previous)} />
+          {/* 找节点与「适应全部内容」并排：两者都是「我找不到那张卡」时的动作，
+              一个按名字找、一个按版面找。放在这条左下排而不是底栏，是因为底栏
+              已经装不下下一个动作了（目录就是为这件事生的）。 */}
+          <IconButton name="search" label={labelWithKeys('canvas.search.open')} disabled={document === null || document.nodes.length === 0} onClick={openNodeSearch} />
           <IconButton name="fit" label={tt('canvas.fitView')} onClick={fitView} />
+          {/* 整理画布：与「适应全部内容」并排，因为两者都是「把眼前这堆东西
+              重新摆一下」的视图动作，而不是新建任何东西。放在 dock 里会与
+              「运行工作流」这类真会花钱的动作混成一排。 */}
+          <IconButton name="arrange" label={labelWithKeys('canvas.arrange')} disabled={document === null || document.nodes.length === 0} onClick={arrangeCanvas} />
           {/* LibTV 式左下工具排：吸附与连线显隐从缩放菜单里铺平出来，
               状态一眼可见（aria-pressed + 高亮），不用先开菜单找。 */}
           <IconButton name="connections" label={tt('canvas.showConnections')} pressed={!connectionsHidden} active={!connectionsHidden} onClick={() => setConnectionsHidden(hidden => !hidden)} />
@@ -5939,6 +7671,7 @@ export function CanvasWorkspace(props: CanvasWorkspaceProps): React.JSX.Element 
           <button
             type="button"
             className={css.dockCaret}
+            data-workflow-caret=""
             aria-label={tt('canvas.workflow.options')}
             title={tt('canvas.workflow.options')}
             data-active={workflowMenu !== null ? '' : undefined}
@@ -5980,11 +7713,34 @@ export function CanvasWorkspace(props: CanvasWorkspaceProps): React.JSX.Element 
         <div className={css.dockItem} data-dock-item="" data-label={tt('canvas.shortcuts.button')}>
           <IconButton name="help" size={18} label={tt('canvas.shortcuts.button')} active={shortcutHelpOpen} onClick={() => setShortcutHelpOpen(open => !open)} />
         </div>
+        {/* 「全部功能」紧挨快捷键：两枚都是「我不记得在哪」的入口，放一起才不会
+            让人以为其中一枚是另一枚的重复。数量比排布重要——底栏已经装不下
+            第 15 个动作，而目录能装下全部 30 个。 */}
+        <div className={css.dockItem} data-dock-item="" data-label={tt('canvas.catalog.button')}>
+          <IconButton name="catalog" size={18} label={labelWithKeys('canvas.catalog.button')} active={catalogOpen} onClick={toggleCatalog} />
+        </div>
         <div className={css.dockItem} data-dock-item="" data-label={tt('canvas.undo')}>
-          <IconButton name="undo" size={18} label={labelWithKeys('canvas.undo')} disabled={pastRef.current.length === 0} onClick={undo} />
+          {/* 撤销按钮一钮两用：普通点击撤销一步，Shift+点击 / 右键打开历史面板。
+              不做成底栏第 15 格：底栏已经到顶，而这枚按钮的「更多」本来就是
+              同一个动作的延伸——用户想撤很多步时，手已经在它上面了。
+              `disabled` 只在「连一步都没有」时置灰；面板本身仍然可以从 ⌘K
+              目录打开（那里会给出「没有可以撤销的改动」）。 */}
+          <IconButton
+            name="undo"
+            size={18}
+            label={undoHint === null ? labelWithKeys('canvas.undo') : tt('canvas.undo.step', { step: undoHint })}
+            disabled={pastRef.current.length === 0}
+            onClick={event => {
+              // Shift 或 ⌥ 是「我想看清单」，不是「撤一步」——两者的意图差别很
+              // 大，而误触一次撤销会真的改画布。
+              if (event.shiftKey || event.altKey) { openHistoryPanel(); return }
+              undo()
+            }}
+            onContextMenu={event => { event.preventDefault(); openHistoryPanel() }}
+          />
         </div>
         <div className={css.dockItem} data-dock-item="" data-label={tt('canvas.redo')}>
-          <IconButton name="redo" size={18} label={labelWithKeys('canvas.redo')} disabled={futureRef.current.length === 0} onClick={redo} />
+          <IconButton name="redo" size={18} label={redoHint === null ? labelWithKeys('canvas.redo') : tt('canvas.redo.step', { step: redoHint })} disabled={futureRef.current.length === 0} onClick={redo} />
         </div>
         <span className={css.dockGap} aria-hidden="true" />
         <div className={css.dockItem} data-dock-item="" data-label={tt('canvas.delete')}>
@@ -5999,6 +7755,30 @@ export function CanvasWorkspace(props: CanvasWorkspaceProps): React.JSX.Element 
       onEnter={clearMenuCloseTimer}
       onLeave={scheduleMenuClose}
       onAdd={kind => { addDockNode(kind); setAddMenu(null) }}
+    /> : null}
+    {topBarMenu !== null ? <TopBarMenu
+      anchor={topBarMenu}
+      onEnter={clearMenuCloseTimer}
+      onLeave={scheduleMenuClose}
+      favorite={currentFavorite}
+      saved={document !== null && document.id !== ''}
+      favoriteLabel={currentFavorite ? tt('canvas.unfavoriteCanvas') : tt('canvas.favoriteCanvas')}
+      exportLabel={bundleExporting ? tt('canvas.bundle.exporting') : tt('canvas.bundle.export')}
+      importLabel={bundleImporting ? tt('canvas.bundle.importing') : tt('canvas.bundle.import')}
+      deleteLabel={confirmDeleteProject ? tt('canvas.deleteCanvasConfirm') : tt('canvas.deleteCanvas')}
+      confirmingDelete={confirmDeleteProject}
+      onFavorite={() => { setTopBarMenu(null); void toggleCurrentFavorite() }}
+      onExport={() => { setTopBarMenu(null); void exportBundle() }}
+      // 导入不关菜单：它打开的是系统文件框，用户可能顺手取消，菜单留着才好再点一次。
+      onImport={() => { bundleFileRef.current?.click() }}
+      onDelete={() => {
+        // 二次确认就地做：第一次点击把这一行变成红问句，三秒内再点才真删。
+        // 菜单不关——关掉的话第二次点击就落在画布上了，那是一次误操作。
+        if (confirmDeleteProject) { setTopBarMenu(null); void removeCurrentProject() } else {
+          setConfirmDeleteProject(true)
+          window.setTimeout(() => setConfirmDeleteProject(false), 3000)
+        }
+      }}
     /> : null}
     {imageMenu !== null ? <ImageDockMenu
       anchor={imageMenu}
@@ -6161,6 +7941,10 @@ export function CanvasWorkspace(props: CanvasWorkspaceProps): React.JSX.Element 
         }
       }}
       onPrompt={text => patchStage(stageNode.id, { ...stageOf(stageNode.metadata), prompt: text })}
+      videoExportable={stageOf(stageNode.metadata).timeline !== undefined}
+      videoExportProgress={stageExportProgress}
+      onExportVideo={exportStageVideoClip}
+      onCancelVideoExport={cancelStageExport}
       container={overlayHostRef.current}
       onClose={() => setStageNodeId(null)}
       onError={message => setError(message)}
@@ -6193,12 +7977,25 @@ export function CanvasWorkspace(props: CanvasWorkspaceProps): React.JSX.Element 
       rerunSelected={workflowRerunSelected}
       parallel={workflowParallel}
       selectionCount={selectedIds.size}
+      blockedConfigs={configReadinessSummary.blocked}
+      firstBlocker={configReadinessSummary.first}
+      markCount={runMarks.failed.size + runMarks.blocked.size}
+      health={canvasHealth}
+      // 跳到问题涉及的第一张卡。空数组（两端都被删掉的残线）没有目标，
+      // 那一行本身也是 disabled，这里不会被调到。
+      onJumpIssue={issue => {
+        const first = issue.nodeIds[0]
+        if (first === undefined) return
+        closeDockMenus()
+        jumpToNode(first)
+      }}
       onEnter={clearMenuCloseTimer}
       onLeave={scheduleMenuClose}
       onToggleReuse={() => setWorkflowReuse(value => !value)}
       onToggleRerun={() => setWorkflowRerunSelected(value => !value)}
       onToggleParallel={() => setWorkflowParallel(value => !value)}
       onRun={() => { setWorkflowMenu(null); void runWorkflowFrom([...selectedIds]) }}
+      onClearMarks={() => { setRunMarks(EMPTY_RUN_MARKS); setWorkflowMenu(null) }}
     /> : null}
     {workflowProgress !== null ? <CanvasWorkflowProgressBar progress={workflowProgress} onCancel={cancelWorkflow} /> : null}
     {/* 时间线：排序/裁剪/转场都在这里改，提交时把整条时间线交给既有拼接链路。 */}
@@ -6291,6 +8088,33 @@ export function CanvasWorkspace(props: CanvasWorkspaceProps): React.JSX.Element 
       onAddAsset={asset => { placeNewNode(createFileNode(asset)); setVideoPickerOpen(false) }}
     /> : null}
     {shortcutHelpOpen ? <ShortcutHelp onClose={() => setShortcutHelpOpen(false)} /> : null}
+    {/* 目录盖在快捷键表之上（它后渲染，且自己带独立的 z 档）：两枚入口挨在一起，
+        同时开着时想按的是「刚点开的那个」。它同样渲染在画布根节点内，全屏时
+        才能跟着进 top layer。 */}
+    {catalogOpen ? <CapabilityCatalog
+      entries={CAPABILITIES}
+      context={catalogContext}
+      onRun={runCatalogItem}
+      onClose={() => setCatalogOpen(false)}
+    /> : null}
+    {/* 找节点排在目录之后：两者互斥打开（各自的入口都会先关另一个），
+        顺序只影响「万一同开谁在上面」，而目录带着可执行动作，更该被看见。 */}
+    {nodeSearchOpen ? <NodeSearchDialog
+      // 这里刻意传**全量**节点，而不是 `visibleNodesOf`：搜索是找回一张藏起来
+      // 的卡的入口之一。只搜画面上的东西，用户把卡藏起来之后就只剩「全部显示」
+      // 一条路——而他可能根本不记得自己藏过什么。
+      nodes={document?.nodes ?? []}
+      onPick={(hit: NodeHit) => { setNodeSearchOpen(false); jumpToNode(hit.nodeId) }}
+      onClose={() => setNodeSearchOpen(false)}
+    /> : null}
+    {/* 历史面板与目录、找节点互斥（入口都会先关另外两个）。它排在最后渲染，
+        所以三者万一同时打开时它在最上面——它带着「点了会改画布」的动作。 */}
+    {historyOpen ? <HistoryPanel
+      rows={historyList}
+      onJump={(stepsBack, nodeIds) => { setHistoryOpen(false); jumpToHistoryStep(stepsBack, nodeIds) }}
+      onHover={setHistoryPreviewIds}
+      onClose={() => { setHistoryOpen(false); setHistoryPreviewIds(null) }}
+    /> : null}
   </section>
 }
 

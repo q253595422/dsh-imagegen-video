@@ -15,9 +15,12 @@
 
 import type { ReactNode } from 'react'
 import { tt } from '../helpers.ts'
+import type { ImageGenKey } from '../locales.ts'
 import type { CanvasDocument, CanvasNode, CanvasAssetRef, CanvasConnection, CanvasConnectionRole, CanvasGroup } from '../../protocol.ts'
 import { CONNECTION_ROLE_LABELS, CONNECTION_ROLES, roleOf } from './connection-role.ts'
 import type { Point } from './geometry.ts'
+import type { LayerMode } from './layer-order.ts'
+import { isHidden, isLocked } from './node-flags.ts'
 import { ToolbarIcon, type ToolbarIconName } from './dock-controls.tsx'
 import css from '../canvas-workspace.module.css'
 
@@ -46,11 +49,20 @@ export interface CanvasContextMenuState {
   groupById: Map<string, CanvasGroup>
   /** 空白处右键是否给「成组」：不足两个节点时这个动作没有意义。 */
   selectedCount: number
+  /**
+   * 画布上的节点总数。
+   *
+   * 层级四件事只在「有别人可以跨过」时才有意义：画布上只有一张卡时，「置顶」
+   * 是一枚按下去什么都不变的按钮，而它出现在菜单里就等于承诺了一个动作。
+   */
+  nodeCount: number
   fileUploadRef: { current: { click: () => void } | null }
   assetOf: (node: CanvasNode) => CanvasAssetRef | undefined
   videoOf: (node: CanvasNode) => { url: string } | undefined
   nodeMetadata: (node: CanvasNode) => { cast?: unknown }
   isAnnotationCard: (node: CanvasNode) => boolean
+  /** 同 `node-body`：菜单项要带键位，而键位只从快捷键表取。 */
+  labelWithKeys: (key: ImageGenKey) => string
   createTextNode: (world: Point) => CanvasNode
   createSketchNode: (world: Point) => CanvasNode
   createPoseNode: (world: Point) => CanvasNode
@@ -94,6 +106,14 @@ export interface CanvasContextMenuActions {
   pasteClipboard: (world: Point) => void
   fitView: () => void
   mutate: (updater: (previous: CanvasDocument) => CanvasDocument) => void
+  /**
+   * 层级四件事。菜单只传方向，规则与落盘在 `CanvasWorkspace` 的
+   * `reorderSelection` 里——右键菜单不该知道「整组折成一个槽位」这件事。
+   */
+  reorderLayers: (mode: LayerMode) => void
+  /** 单张卡的两个开关。菜单只给一张卡用，所以是 (id, 值) 而不是批量方向。 */
+  setNodeLocked: (nodeId: string, locked: boolean) => void
+  setNodeHidden: (nodeId: string, hidden: boolean) => void
 }
 
 /**
@@ -140,8 +160,49 @@ if (contextMenu !== null) {
     if (node !== undefined && node.type === 'text' && !S.isAnnotationCard(node)) {
       items.push({ label: tt('canvas.polish.button'), icon: 'sparkle', action: () => A.setPolishNode({ screen: { x: contextMenu.screen.x, y: contextMenu.screen.y }, nodeId: node.id }) })
     }
-    if (node === undefined || !S.isAnnotationCard(node)) items.push({ label: tt('canvas.duplicate'), icon: 'duplicate', action: () => A.duplicateNode(contextMenu.nodeId) })
-    items.push({ label: tt('canvas.delete'), icon: 'trash', action: () => A.deleteNode(contextMenu.nodeId), danger: true })
+    // 键位由 `labelWithKeys` 补，不写进文案：写死的 `(Ctrl+D)` 在 macOS 上
+    // 是错的（那里按的是 ⌘D），而它与快捷键表是两个会走散的地方。
+    if (node === undefined || !S.isAnnotationCard(node)) items.push({ label: S.labelWithKeys('canvas.duplicate'), icon: 'duplicate', action: () => A.duplicateNode(contextMenu.nodeId) })
+    // 层级四件事。WHY 放进右键菜单：用户的动机永远是「这张被压住了」，而
+    // 「被压住」这个判断是眼睛在卡片上做的——他此刻的手指就在这张卡上，让
+    // 他先回到 ⌘K 搜「置顶」再选中它，是一段没有必要的往返。
+    //
+    // WHY 只有画布上有第二张卡时才给：只有一个节点时这四项都是空操作，而
+    // 菜单里出现按下去不动的项，用户会怀疑是自己点错了而不是「没得动」。
+    if (S.nodeCount >= 2) {
+      const label = (key: ImageGenKey): string => S.labelWithKeys(key)
+      items.push({ label: label('canvas.layer.front'), icon: 'layerFront', action: () => A.reorderLayers('front') })
+      items.push({ label: label('canvas.layer.forward'), icon: 'layerForward', action: () => A.reorderLayers('forward') })
+      items.push({ label: label('canvas.layer.backward'), icon: 'layerBackward', action: () => A.reorderLayers('backward') })
+      items.push({ label: label('canvas.layer.back'), icon: 'layerBack', action: () => A.reorderLayers('back') })
+    }
+    // 锁定 / 隐藏。锁定时那一条变成「解锁」——一个锁着的卡上写「锁定」是恒真命题，
+    // 按下去也没反应，而用户此刻真正想做的只有一件事：把它解开。
+    if (node !== undefined) {
+      // 判定走 `node-flags`，不在这里再写一次 `=== true`：将来「锁的判定」若
+      // 要从单张扩到整组继承，改一个函数就够了；两处各写一份，菜单和画布迟
+      // 早会在「什么算锁」上分叉。
+      const locked = isLocked(node)
+      items.push({
+        label: S.labelWithKeys(locked ? 'canvas.lock.unlock' : 'canvas.lock.lock'),
+        icon: locked ? 'unlock' : 'lock',
+        action: () => A.setNodeLocked(node.id, !locked),
+      })
+      // 「显示」这一行在正常路径上摸不到（藏起来的卡不在画面上，没有右键可
+      // 点），但菜单是按文档节点构建的，将来若有别的入口（比如图表/大纲）复用
+      // 同一套，这一行就得是对的，而不是一句恒真的「隐藏」。
+      const hidden = isHidden(node)
+      items.push({
+        label: S.labelWithKeys(hidden ? 'canvas.lock.show' : 'canvas.lock.hide'),
+        icon: hidden ? 'show' : 'hide',
+        action: () => A.setNodeHidden(node.id, !hidden),
+      })
+    }
+    // 锁定时不给删除：一条按下去必然被拒绝的菜单项，比把它藏起来更让人困惑，
+    // 而且用户会以为自己点错了。要删就先解锁，那一行就在上面两行。
+    if (node === undefined || !isLocked(node)) {
+      items.push({ label: tt('canvas.delete'), icon: 'trash', action: () => A.deleteNode(contextMenu.nodeId), danger: true })
+    }
   } else if (contextMenu.type === 'connection') {
     // 连线的用途。首帧/尾帧只对视频有意义，但这里不按下游节点类型过滤：
     // 用户先标好再改节点类型是常态，藏起来反而让人以为这个功能不存在。
@@ -184,7 +245,7 @@ if (contextMenu !== null) {
     items.push({ label: tt('canvas.addSketchNode'), icon: 'sketch', action: () => A.placeNewNode(S.createSketchNode(contextMenu.world)) })
     items.push({ label: tt('canvas.addPoseNode'), icon: 'expand', action: () => A.placeNewNode(S.createPoseNode(contextMenu.world)) })
     items.push({ label: tt('canvas.storyboardNode'), icon: 'layers', action: () => A.placeNewNode(S.createStoryboardNode(contextMenu.world)) })
-    items.push({ label: tt('canvas.paste'), icon: 'duplicate', action: () => A.pasteClipboard(contextMenu.world) })
+    items.push({ label: S.labelWithKeys('canvas.paste'), icon: 'duplicate', action: () => A.pasteClipboard(contextMenu.world) })
     items.push({ label: tt('canvas.fitView'), icon: 'fit', action: A.fitView })
   }
   return <div className={css.contextMenu} style={{ left: contextMenu.screen.x, top: contextMenu.screen.y }} data-canvas-no-zoom="" role="menu">

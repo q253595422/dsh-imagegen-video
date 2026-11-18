@@ -1,0 +1,215 @@
+/**
+ * 「找节点」弹窗（⌘F）。
+ *
+ * 与「全部功能」目录同一套表面配方，但更小：这里一屏只放搜索结果，没有分组、
+ * 没有说明文字。宽度取 480px 而不是 620px —— 结果行只有「卡片类型 + 一句话」，
+ * 再宽也只是一行更长的空白，反而让视线从搜索框移得更远。
+ *
+ * 颜色全部走 alias token：DSH 在活页面上切主题，写死的值会留在旧配色里。
+ */
+
+.backdrop {
+  position: fixed;
+  inset: 0;
+  /* 与目录同一档：两者互斥打开，谁在上面都不影响对方；共用一个 rung 才不会
+     为「搜索框比菜单高一点」这种无人能察觉的差别新增一档 z。 */
+  z-index: var(--z-modal-backdrop);
+  display: flex;
+  align-items: flex-start;
+  justify-content: center;
+  padding: 12vh 20px 20px;
+  background: var(--dsw-alias-bg-mask-1);
+  color: var(--dsw-alias-label-primary);
+  font-family: var(--dsw-font-family, system-ui, sans-serif);
+  font-size: 13px;
+  line-height: 1.5;
+}
+
+.dialog {
+  display: flex;
+  flex-direction: column;
+  width: min(480px, 100%);
+  max-height: min(60vh, 520px);
+  border: 1px solid var(--dsw-alias-border-l1);
+  border-radius: var(--dsw-radius-lg);
+  background: var(--dsw-alias-bg-layer-1);
+  box-shadow: var(--dsw-shadow-lv3);
+  overflow: hidden;
+}
+
+/* 焦点落在搜索框上（这个弹窗就是为打字而开的）；容器自己不该出现焦点环。 */
+.dialog:focus { outline: none; }
+
+.header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 12px;
+  border-bottom: 1px solid var(--dsw-alias-border-l1);
+}
+
+.search {
+  flex: 1;
+  min-width: 0;
+  height: 32px;
+  padding: 0 10px;
+  border: 1px solid var(--dsw-alias-border-l1);
+  border-radius: var(--dsw-radius-sm);
+  background: var(--dsw-alias-bg-layer-2);
+  color: var(--dsw-alias-label-primary);
+  font-family: inherit;
+  font-size: 13px;
+}
+
+.search:focus-visible {
+  outline: 2px solid var(--dsw-alias-brand-primary);
+  outline-offset: 1px;
+}
+
+.close {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 26px;
+  height: 26px;
+  flex: none;
+  border: 1px solid var(--dsw-alias-border-l1);
+  border-radius: var(--dsw-radius-sm);
+  background: var(--dsw-alias-bg-layer-2);
+  color: var(--dsw-alias-label-secondary);
+  font-size: 16px;
+  line-height: 1;
+  cursor: pointer;
+}
+
+.close:hover { background: var(--dsw-alias-interactive-bg-hover); color: var(--dsw-alias-label-primary); }
+.close:focus-visible { outline: 2px solid var(--dsw-alias-brand-primary); outline-offset: 2px; }
+
+.body {
+  padding: 8px;
+  overflow-y: auto;
+  /* 最后一行贴边时给键盘高亮留一段余量，否则它看起来像被裁掉了。 */
+  scroll-padding-bottom: 24px;
+}
+
+.row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  padding: 8px 10px;
+  border: none;
+  border-radius: var(--dsw-radius-sm);
+  background: transparent;
+  color: var(--dsw-alias-label-primary);
+  font-family: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+/* 鼠标悬停与键盘高亮是同一件事：都指向「回车会跳过去的那一行」。 */
+.row:hover,
+.row[data-active] { background: var(--dsw-alias-interactive-bg-hover); }
+
+.row:focus-visible {
+  outline: 2px solid var(--dsw-alias-brand-primary);
+  outline-offset: -2px;
+}
+
+.kind {
+  flex: none;
+  min-width: 56px;
+  color: var(--dsw-alias-label-tertiary);
+  font-size: 11px;
+}
+
+.text {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  gap: 1px;
+}
+
+.text strong {
+  font-size: 13px;
+  font-weight: 500;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* 命中的那段原文。用 secondary 而不是 tertiary：它才是这一行的「为什么」，
+   而上面的标题可能一个查询词都不含（搜「樱花」命中正文时就是这样）。 */
+.text small {
+  color: var(--dsw-alias-label-secondary);
+  font-size: 12px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.field {
+  flex: none;
+  color: var(--dsw-alias-label-tertiary);
+  font-size: 11px;
+}
+
+/* 「这张卡是藏着的」。用边框而不是填充色：它不是状态角标，是一句说明，
+   一旦用了实底色就会抢走标题的注意力，而用户真正要找的是标题。
+   放在 field 旁边而不是 kind 旁边——kind 说的是「这是哪一种卡」，这句说的是
+   「它现在什么状态」，两者挨着会被读成同一个字段。 */
+.hiddenBadge {
+  flex: none;
+  padding: 0 6px;
+  border: 1px solid var(--dsw-alias-border-l1);
+  border-radius: 999px;
+  color: var(--dsw-alias-label-secondary);
+  font-size: 10px;
+  line-height: 16px;
+  white-space: nowrap;
+}
+
+.empty {
+  margin: 20px 10px;
+  color: var(--dsw-alias-label-tertiary);
+  text-align: center;
+}
+
+.footer {
+  padding: 8px 14px;
+  border-top: 1px solid var(--dsw-alias-border-l1);
+  color: var(--dsw-alias-label-tertiary);
+  font-size: 12px;
+}
+
+/* ------------------------------------------------------- 历史面板 */
+
+/* 标题：与「找节点」共用同一个弹窗外壳，但它没有搜索框，标题要自己占位。
+   用 flex:1 顶开右侧的关闭键，与有输入框那一版左右对齐。 */
+.panelTitle {
+  flex: 1;
+  min-width: 0;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--dsw-alias-label-primary);
+}
+
+/* 「当前状态」那一行：不可点，所以不该有 hover 反馈——一个会亮的行在暗示
+   「点我可以做什么」，而它什么都不做。 */
+.row[data-history-current] {
+  cursor: default;
+  color: var(--dsw-alias-label-secondary);
+}
+
+.row[data-history-current]:hover { background: transparent; }
+
+/* 序号列（1、2、3…）比「卡片类型」窄。复用 `.kind` 的样式会留出 56px 空白，
+   而那正是这一列唯一的内容。 */
+.row[data-history-step] .kind {
+  min-width: 20px;
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+
+/* 删除类步骤在列表里标红一点：用户往回翻时最容易找的就是「删除之前」。 */
+.row[data-step-kind='remove'] .text strong { color: var(--dsw-alias-state-error-primary); }

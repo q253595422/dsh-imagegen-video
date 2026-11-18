@@ -201,7 +201,7 @@ const CASES = [
     to: 'const emptyState = document !== null && document.nodes.length === -1',
     // 空态不渲染时 waitForSelector 先抛 "selector did not render: …"，
     // 断言消息在其后；两种输出都认。
-    expect: /data-quick-card|empty canvas shows the five quick-start cards/,
+    expect: /data-quick-card|empty canvas shows the six quick-start cards/,
   },
   {
     // 框选把 no-zoom 面当空白：pointerdown preventDefault+指针捕获抢走卡片
@@ -557,6 +557,98 @@ const CASES = [
     to: '    return [shot.nodeId ?? "missing"]',
     expect: /list order, ready clips only/,
   },
+  {
+    // The reported defect itself: `submitShot` never asks who is pinned. Every
+    // other symbol in the handler still exists, so only the wiring assertion in
+    // P9 can see it -- which is why P9 checks the call, not the imports.
+    name: 'a storyboard shot stops looking for pinned identities',
+    runner: 'storyboard',
+    file: 'src/client/CanvasWorkspace.tsx',
+    from: '    const castNodes = castRefsFor(current, [])',
+    to: '    const castNodes = []',
+    expect: /分镜要取被钉住的参考图/,
+  },
+  {
+    // Same defect, one layer out and much more dangerous: the reference nodes
+    // are collected and then thrown away, so the request still says
+    // `mode: reference` and carries no image. A static check cannot tell the
+    // two apart (every symbol is still there), which is exactly why SB5 reads
+    // the request body the host received.
+    name: 'a storyboard shot collects the pinned cast and drops it',
+    runner: 'canvas-video',
+    file: 'src/client/CanvasWorkspace.tsx',
+    from: "    const usedCast = plan.mode === 'reference' ? castNodes.slice(0, plan.castSlots) : []",
+    to: '    const usedCast = []',
+    expect: /SB5: the run reached the host|SB5: the pinned image itself travels/,
+  },
+  {
+    // The off-by-one this round found: the prompt said 参考图 0, a reference the
+    // model does not have. A reader skims past it; the model reads it as an
+    // instruction about nothing.
+    name: 'the identity sentence numbers its references from zero',
+    runner: 'canvas-video',
+    file: 'src/client/CastDialog.tsx',
+    from: '  return tt(castPromptKey(member.role), { index: index + 1, name: member.name })',
+    to: '  return tt(castPromptKey(member.role), { index, name: member.name })',
+    expect: /SB5: the prompt says which reference is who/,
+  },
+  {
+    // The dead-code defect a screenshot found: the board narrowed its length
+    // picker "to the model", but no model ever reached it for a board that
+    // names none, so `catalog` was undefined on every real board and all seven
+    // lengths were offered regardless. Every source-level assertion stayed
+    // green because the narrowing call was still there — it was just always
+    // fed `undefined`. Only SB6, which reads the rendered <option> list, sees it.
+    //
+    // The injected defect drops the FALLBACK, which is the half that mattered:
+    // a board naming its own model still narrows (that path is untouched), so
+    // deleting the prop alone is not enough to reach the bug.
+    name: 'the board ignores the model its shots will run on',
+    runner: 'canvas-video',
+    file: 'src/client/canvas/storyboard-board.tsx',
+    from: "  const effectiveModel = named !== '' ? named : (props.defaultVideoModel ?? '').trim()",
+    to: "  const effectiveModel = named",
+    // The resolution line is the one that can ONLY pass when a model reached the
+    // render: the fixture default is a 720P-only id, so a board that sees it
+    // offers one tier and a board that sees nothing offers all four. The length
+    // lines above it also go red, but they go red for a weaker reason (the
+    // "no declared durations" fallback happens to be a longer list too).
+    expect: /SB6: the board follows the 720P-only model it will actually run on/,
+  },
+  // -------------------------------------------------------- storyboard-spec
+  {
+    // Dropping the performance margin turns the rule into "a shot must be as
+    // long as the words take", which is exactly the clip that cuts off
+    // mid-sentence: the actor gets no room to breathe or react. S9 names it.
+    name: 'the speech rule forgets the performance margin',
+    runner: 'storyboard-spec',
+    file: 'src/client/storyboard.ts',
+    from: '  const required = speech + SPEECH_MARGIN_SECONDS',
+    to: '  const required = speech',
+    expect: /4 s of speech needs 6 s/,
+  },
+  {
+    // Putting the old five-value list back is the reported limitation itself:
+    // an 8-15 s paragraph with two cuts inside it becomes unwritable, and the
+    // picker silently offers nothing above ten seconds. S12 has to say so.
+    name: 'the shot length list stops at ten seconds again',
+    runner: 'storyboard-spec',
+    file: 'src/client/storyboard.ts',
+    from: 'export const SHOT_SECONDS = [4, 5, 6, 8, 10, 12, 15] as const',
+    to: 'export const SHOT_SECONDS = [4, 5, 6, 8, 10] as const',
+    expect: /12 s is offered/,
+  },
+  {
+    // The ceiling is the ONLY thing keeping a board with nine pinned identities
+    // from sending nine reference images: the providers reject the body, and
+    // the four that matter get diluted on the way. S16 pins it.
+    name: 'a shot is allowed to carry more references than the provider takes',
+    runner: 'storyboard-spec',
+    file: 'src/client/storyboard.ts',
+    from: '  const castSlots = Math.max(0, Math.min(MAX_SHOT_REFERENCES, Math.floor(input.castCount)))',
+    to: '  const castSlots = Math.max(0, Math.floor(input.castCount))',
+    expect: /never more than four/,
+  },
   // --------------------------------------------------------------- workflow
   {
     // Treating a self-loop as "no dependency" makes the run start a node that
@@ -813,6 +905,27 @@ const CASES = [
     expect: /never declared/,
   },
   {
+    // 分镜设置条退回「三格等分」：`flex: 1` 的 basis 是 0，三格平分 364px，
+    // 「镜头衔接」那一格只剩 65px，而它的选项文案需要 94px（英文 186、俄文
+    // 203），用户在下拉里看到的是「接上一…」——偏偏下面那条警告说的正是
+    // 「接上一镜会丢身份参考」。只有真浏览器量得出这件事：原生 select 不报
+    // overflow，源码里每个类都还在。
+    name: 'the storyboard settings row goes back to three equal columns',
+    runner: 'canvas-layout',
+    file: 'src/client/canvas-workspace.module.css',
+    from: [
+      '  flex-wrap: wrap;\n  row-gap: 6px;\n}',
+      '  flex: 1 1 auto;\n  min-width: 0;\n  display: flex;',
+      '  flex: 0 1 auto;\n  min-width: 0;\n  height: 26px;',
+    ],
+    to: [
+      '  flex-wrap: nowrap;\n}',
+      '  flex: 1;\n  min-width: 0;\n  display: flex;',
+      '  flex: 1;\n  min-width: 0;\n  height: 26px;',
+    ],
+    expect: /truncated label/,
+  },
+  {
     // The token is declared on the canvas root, not on documentElement, so a
     // reader without the origin element gets an empty string and silently falls
     // back to the literal -- which is exactly the drift the token exists to
@@ -859,6 +972,298 @@ const CASES = [
     from: '              onKeyDown={event => { onTablistKeyDown(event, { count: availableModes.length, index, select: next => { setMode(availableModes[next]!) } }) }}\n',
     to: '',
     expect: /never calls onTablistKeyDown/,
+  },
+  {
+    // 低缩放的那一圈补偿轮廓如果被挪到 `border-width` 上，卡片的**世界外框**
+    // 会随缩放变胖，而连线锚点 / 吸附 / 缩略图投影全部按 `node.width` 算。
+    // 几何错位在截图上看不出来（线还连着），只有这条断言能抓住。
+    name: 'the low-zoom outline is painted as a border (enters layout)',
+    runner: 'canvas-layout',
+    file: 'src/client/canvas-workspace.module.css',
+    from: '.root[data-zoom-band="far"] .node:not(.nodeSelected):not(.nodeRelated):not(.nodeConnectTarget):not(.nodeOverlap) {\n  box-shadow: var(--dsw-shadow-lv2), inset 0 0 0 calc(1.5px * var(--canvas-inv-scale, 1)) var(--canvas-node-edge-far);\n}',
+    to: '.root[data-zoom-band="far"] .node:not(.nodeSelected):not(.nodeRelated):not(.nodeConnectTarget):not(.nodeOverlap) {\n  border-width: calc(1.5px * var(--canvas-inv-scale, 1));\n}',
+    expect: /no compensating outline/,
+  },
+  {
+    // 状态优先级的反向：低缩放的通用规则盖住了选中态，「哪个节点被选中」就
+    // 被「这是一张卡片」压过去了。用户点了一张卡、看不到它被选中。
+    name: 'the low-zoom outline overrides the selected state',
+    runner: 'canvas-layout',
+    file: 'src/client/canvas-workspace.module.css',
+    from: '.root[data-zoom-band="far"] .node:not(.nodeSelected):not(.nodeRelated):not(.nodeConnectTarget):not(.nodeOverlap) {',
+    to: '.root[data-zoom-band="far"] .node {',
+    expect: /painted over a SELECTED card/,
+  },
+  {
+    // 缩略图退回「图 = 黑块 / 文本 = 灰块」两色：草稿和产物又分不开了。
+    name: 'the minimap loses the sketch / product distinction',
+    runner: 'canvas-layout',
+    file: 'src/client/canvas-workspace.module.css',
+    from: '.minimapKindSketch {\n  background: color-mix(in srgb, var(--dsw-alias-label-primary) 45%, transparent);\n  border: 1px dashed color-mix(in srgb, var(--dsw-alias-label-primary) 70%, transparent);\n}',
+    to: '.minimapKindSketch {\n  background: var(--dsw-alias-label-primary);\n}',
+    expect: /same block on the minimap/,
+  },
+  {
+    // 空节点填实：一版还没产出的画布在缩略图上和「全都做完了」一模一样。
+    name: 'an empty minimap block paints as produced',
+    runner: 'canvas-layout',
+    file: 'src/client/canvas-workspace.module.css',
+    from: '.minimapNode[data-state="empty"] {\n  background: transparent;\n  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--dsw-alias-label-primary) 38%, transparent);\n}',
+    to: '.minimapNode[data-state="empty"] {\n  background: var(--dsw-alias-label-primary);\n}',
+    expect: /EMPTY minimap block is filled/,
+  },
+  {
+    // 连线消失：缩略图只剩一堆方块，回答不了「流程长什么样」。
+    name: 'the minimap stops drawing connections',
+    runner: 'canvas-layout',
+    file: 'src/client/canvas-workspace.module.css',
+    from: '.minimapEdge {\n  stroke: var(--dsw-alias-label-primary);\n  stroke-opacity: 0.28;\n  stroke-width: 1.2;',
+    to: '.minimapEdge {\n  stroke: var(--dsw-alias-label-primary);\n  stroke-opacity: 0.28;\n  stroke-width: 0;',
+    expect: /draws no connection lines/,
+  },
+  {
+    // 两种运行痕迹合成一色：用户看到一片红，不知道该重试哪个节点、也不知道
+    // 哪个是「根本没跑」。这条只有真浏览器算得出合成后的颜色。
+    name: 'failed and skipped nodes share one run-mark colour',
+    runner: 'canvas-layout',
+    file: 'src/client/canvas-workspace.module.css',
+    from: '.runMark[data-run-mark="blocked"] {\n  background: color-mix(in srgb, var(--dsw-alias-state-warn-primary, #f59e0b) 18%, var(--dsw-alias-bg-layer-1));\n  color: var(--dsw-alias-state-warn-primary, #f59e0b);\n}',
+    to: '.runMark[data-run-mark="blocked"] {\n  background: var(--dsw-alias-state-error-primary);\n  color: var(--dsw-alias-label-primary-foreground, #fff);\n}',
+    expect: /same chip|resolve to the same/,
+  },
+  {
+    // 两种痕迹只剩颜色差别：缩到 40% 时颜色先糊成一片，线型是最后一层信息。
+    name: 'run marks lose their border-style distinction',
+    runner: 'canvas-layout',
+    file: 'src/client/canvas-workspace.module.css',
+    from: '.nodeRunBlocked {\n  border-style: dashed;',
+    to: '.nodeRunBlocked {\n  border-style: solid;',
+    expect: /do not use different border styles/,
+  },
+  {
+    // 就绪徽标退回「永远只显示缺提示词」。用户明明连了一条有内容的文本节点，
+    // 卡片还说「缺提示词」——那比没有徽标更糟：它让人怀疑自己写的东西没进去。
+    name: 'the readiness badge ignores connected prompts',
+    runner: 'smoke',
+    file: 'src/client/canvas/readiness.ts',
+    // 注意转义：这里的 `\\n` 是源码里的两个字符，不是换行。写成 `\n` 的话
+    // 锚点会变成一个真换行，而源码里那个位置是 `join('\n')` 的字面量——
+    // 结果就是 anchor not found，被报成 HARNESS BROKEN，看起来像套件坏了。
+    //
+    // 锚点跟着实现走过一次：取值顺序现在是「活动编辑 → 节点持久值 → 上游」，
+    // 三段的判定本身才是这条用例要测的东西，所以整条链都留在 `from` 里——
+    // 只截最后一段 `own : upstream` 的话，将来再插入一个来源又会失配。
+    from: "  const prompt = composer !== '' ? composer : own !== '' ? own : upstream.join('\\n')",
+    to: "  const prompt = composer !== '' ? composer : own",
+    expect: /clear the missing-prompt blocker/,
+  },
+  {
+    // 整理画布把「从没接线的散卡」当成第一层：它们排在流程源头前面，真正的
+    // 起点被淹没在一堆还没接线的卡片里。A4/A5 必须变红。
+    name: 'arrange canvas mixes unwired cards into the first column',
+    runner: 'geometry',
+    file: 'src/client/canvas/arrange-model.ts',
+    from: "  const flow = visualOrder.filter(node => wired.has(node.id))",
+    to: '  const flow = visualOrder',
+    expect: /parked|落在流程下方/,
+  },
+  {
+    // 标注卡被当成上游提示词：那些是给图上某个局部写的备注，混进提示词会变成
+    // 一句莫名其妙的注释，而用户找不到它是从哪来的。
+    name: 'the canvas forwards annotation-card text as a prompt',
+    runner: 'geometry',
+    file: 'src/client/canvas/readiness.ts',
+    from: "        .filter(candidate => candidate.type === 'text' && candidate.metadata?.annotation === undefined)",
+    to: "        .filter(candidate => candidate.type === 'text')",
+    expect: /标注卡/,
+  },
+  {
+    // 「被跳过」和「失败」合成一条红：用户看到一片红，不知道该点谁的重试，
+    // 或者会去重试一个根本没跑过的节点。F1 必须变红。
+    name: 'run marks collapse failed and skipped into one',
+    runner: 'geometry',
+    file: 'src/client/canvas/run-marks.ts',
+    from: "  if (marks.failed.has(nodeId)) return 'failed'\n  if (marks.blocked.has(nodeId)) return 'blocked'",
+    to: '  if (marks.failed.has(nodeId) || marks.blocked.has(nodeId)) return \'failed\'',
+    expect: /失败与被跳过是两种标记/,
+  },
+  {
+    // 取消时把「按停之前就已经失败」的节点一起洗成好的：用户按了一次停，
+    // 屏幕上那些已知的坏结果就不再有任何标记，而它们确实还是坏的。
+    name: 'a cancelled run washes away failures that already happened',
+    runner: 'geometry',
+    file: 'src/client/canvas/run-marks.ts',
+    from: "  if (result.status === 'completed' || result.status === 'cycle') return EMPTY_RUN_MARKS",
+    to: '  if (result.status !== \'failed\' && result.status !== \'partial\') return EMPTY_RUN_MARKS',
+    expect: /取消.*保留|取消会保留/,
+  },
+  {
+    // 单节点重试把下游的「没跑」标记也一起清了：那个节点从此既没有产物、
+    // 也没有任何标记，看起来像是跑过了。
+    name: 'retrying one node also clears its blocked downstream',
+    runner: 'geometry',
+    file: 'src/client/canvas/run-marks.ts',
+    from: '  return { failed, blocked: marks.blocked }',
+    to: '  return { failed, blocked: new Set() }',
+    expect: /仍然存在|被跳过的下游不动/,
+  },
+  {
+    // 空 asset 的图片节点被算成参考图：画布上每个新建的空图片卡都会让菜单
+    // 声称「这次是图生图」，而提交路径一张参考图都拿不到。
+    name: 'an empty image node counts as a reference',
+    runner: 'geometry',
+    file: 'src/client/canvas/readiness.ts',
+    from: "      referenceCount: upstream.filter(candidate => candidate.type === 'image' && (candidate.metadata?.asset?.url ?? '') !== '').length,",
+    to: "      referenceCount: upstream.filter(candidate => candidate.type === 'image').length,",
+    expect: /空 asset 的图片节点不算参考图|不算参考图/,
+  },
+  {
+    // 环被当成「没有依赖」直接排：画布会得到一张井然有序、却根本跑不起来的图，
+    // 而用户没有任何线索说明为什么「运行工作流」报环。
+    name: 'arrange canvas lays out a cyclic graph instead of refusing',
+    runner: 'geometry',
+    file: 'src/client/canvas/arrange-model.ts',
+    from: '  if (plan.cycle.length > 0) return { ok: false, cycle: plan.cycle }',
+    to: '  void plan.cycle',
+    expect: /环|cycle/,
+  },
+  {
+    // 层内按「边的插入顺序」排而不是用户的上下顺序：他有意放在上面那张卡被
+    // 挪到下面。这条只在几何层看得见，界面上只会显得「整理不听话」。
+    name: 'arrange canvas ignores the order the user placed things in',
+    runner: 'geometry',
+    file: 'src/client/canvas/arrange-model.ts',
+    from: '    const layer = [...planned].sort((a, b) => (visualRank.get(a) ?? 0) - (visualRank.get(b) ?? 0))',
+    to: '    const layer = [...planned]',
+    expect: /原来在上面的那个整理后还在上面/,
+  },
+  {
+    // 只搜标题、不搜同义词与说明：目录立刻退化成「你得先知道它叫什么」。而用户
+    // 打开这张表的**原因**恰恰是他不知道。C3/C4 必须变红。
+    name: 'the catalog searches only the row titles',
+    runner: 'geometry',
+    file: 'src/client/canvas/capability-catalog.ts',
+    from: '      const haystack = [translate(entry.labelKey), translate(entry.hintKey), ...entry.keywords]',
+    to: '      const haystack = [translate(entry.labelKey)]',
+    expect: /接片|同义词|排版|缩略图|英文同义词/,
+  },
+  {
+    // 「不可用」退回「不显示」：用户搜「撤销」得到空列表，于是认为这张画布没有
+    // 撤销——而他真正需要的只是先改点什么。C6 必须变红（数量对不上）。
+    name: 'the catalog hides actions that cannot run right now',
+    runner: 'geometry',
+    file: 'src/client/canvas/capability-catalog.ts',
+    from: '    matched.push({ entry, blockedBy: entry.blocked?.(context) ?? null })',
+    to: '    const blockedBy = entry.blocked?.(context) ?? null\n    if (blockedBy !== null) continue\n    matched.push({ entry, blockedBy })',
+    expect: /藏起来|不可用的项被藏起来|一条都不能少/,
+  },
+  {
+    // 方向键停在灰行上：按回车什么都不发生，而用户以为是自己按错了键。这正是
+    // 「灰行占着坑」这件事唯一的可见症状，C7 守它。
+    name: 'arrow keys stop on rows that cannot run',
+    runner: 'geometry',
+    file: 'src/client/canvas/capability-catalog.ts',
+    from: '  return sections.flatMap(section => section.items).filter(item => item.blockedBy === null)',
+    to: '  return sections.flatMap(section => section.items)',
+    expect: /方向键|撤销是灰的/,
+  },
+  {
+    // 分组里把灰行排到前面：一屏里最先看到的几行全是按不动的，用户会以为整张表
+    // 都不能用。C6 的组内顺序断言守它。
+    name: 'blocked rows sort above the ones that work',
+    runner: 'geometry',
+    file: 'src/client/canvas/capability-catalog.ts',
+    from: '    items.sort((a, b) => Number(a.blockedBy !== null) - Number(b.blockedBy !== null))',
+    to: '    items.sort((a, b) => Number(b.blockedBy !== null) - Number(a.blockedBy !== null))',
+    expect: /排在了灰行后面/,
+  },
+  {
+    // 整理之后视口跟着跑：用户按下按钮的瞬间可见内容全部飞出屏幕，看起来像
+    // 一次误点。contracts 组守的正是这条「动作副作用」。
+    name: 'arrange canvas drags the viewport along',
+    runner: 'contracts',
+    file: 'src/client/canvas',
+    from: "    setNotice(result.parked > 0\n      ? tt('canvas.arrangeDoneParked', { columns: result.columns, parked: result.parked })\n      : tt('canvas.arrangeDone', { columns: result.columns }))",
+    to: "    setViewport({ ...current.viewport })\n    setNotice(result.parked > 0\n      ? tt('canvas.arrangeDoneParked', { columns: result.columns, parked: result.parked })\n      : tt('canvas.arrangeDone', { columns: result.columns }))",
+    expect: /moves the viewport as well/,
+  },
+  {
+    // 取消分支忘了落痕：按停之前已经失败的节点被静默洗成好的，而它们的产物
+    // 确实不可用。纯函数对、接线漏，是这条功能最可能的坏法。
+    name: 'cancelling swallows the failures that already happened',
+    runner: 'contracts',
+    file: 'src/client/canvas',
+    from: "      if (result.status === 'cancelled') {\n        // 取消本身不是失败，但「按停之前就已经失败」的节点是真的坏了，它们的\n        // 产物不可信。因此这里照样落痕——理由是「产物能不能用」，不是「这次\n        // 运行怎么结束的」。抹掉它们等于因为一次取消把已知的坏结果洗成好的。\n        setRunMarks(runMarksFrom(result))\n        setNotice(tt('canvas.workflow.cancelled'))",
+    to: "      if (result.status === 'cancelled') {\n        setNotice(tt('canvas.workflow.cancelled'))",
+    expect: /取消 \/ 失败 \/ 部分成功|有运行结局没有写进画布状态/,
+  },
+  {
+    // 目录里多出一行、没人接：它长得和别的一模一样，按下去什么都不发生，用户
+    // 会以为「这个功能不存在」。契约组最后一条断言守的正是这张表和目录的对齐。
+    name: 'a catalog row is listed but left unwired',
+    runner: 'contracts',
+    file: 'src/client/canvas',
+    from: "    'help.shortcuts': () => setShortcutHelpOpen(true),",
+    to: "    'help.shortcuts.disabled': () => setShortcutHelpOpen(true),",
+    expect: /no action|wires ids the catalog does not list|unwired/,
+  },
+  {
+    // 目录不关就执行：动作真的跑了，但结果被那张弹窗盖着，用户看到的是「点了，
+    // 屏幕没动」。这是「接线对了但体验是死的」那一类缺陷。
+    name: 'the catalog stays open while the action runs',
+    runner: 'contracts',
+    file: 'src/client/canvas',
+    from: '  const runCatalogItem = useCallback((id: CapabilityId): void => {\n    setCatalogOpen(false)',
+    to: '  const runCatalogItem = useCallback((id: CapabilityId): void => {',
+    expect: /closes before running|no longer closes/,
+  },
+  {
+    // 顶栏退回「文件管理」：四枚低频动作重新平铺，标题在窄面板被挤到第二行。
+    // 真浏览器只看得到「换行了」，看不出是谁挤的；这条守的是布局的**意图**。
+    name: 'file management buttons grow back onto the top bar',
+    runner: 'contracts',
+    file: 'src/client/canvas',
+    from: '        name="more"\n        label={tt(\'canvas.canvasMenu\')}',
+    to: '        name="favorite"\n        label={tt(\'canvas.favoriteCanvas\')}',
+    expect: /file management is back in the top bar/,
+  },
+  {
+    // 保存状态被 spacer 推回顶栏另一头：它与标题读不成一句话，而 760px 以下
+    // 顶栏一换行，的那枚橙色「未保存」会孤零零落在第二行最右边。
+    name: 'the save state drifts away from the canvas title',
+    runner: 'contracts',
+    file: 'src/client/canvas',
+    from: "<span className={css.saveState} data-state={document?.id === '' ? 'draft' : saveState}>",
+    to: "<span className={css.topBarSpacer} /><span className={css.saveState} data-state={document?.id === '' ? 'draft' : saveState}>",
+    // 这条注入把「状态紧跟在标题后」的结构拆开：正则要求 titleButton 之后、
+    // spacer 之前出现 saveState，注入后中间多了一个 spacer，不再匹配。
+    expect: /save state drifted away/,
+  },
+  {
+    // 运行前预告退回「只数不给原因」：菜单说「有 2 个节点不行」，用户不知道
+    // 是缺提示词还是缺钥匙，只能一个个点开找。属性一没有，smoke 里那条
+    // 「说清卡在哪」的断言就必须红。
+    name: 'the run menu counts blocked configs without naming the cause',
+    runner: 'smoke',
+    file: 'src/client/canvas',
+    from: ' data-workflow-blocked={props.firstBlocker ?? \'\'}',
+    to: '',
+    expect: /data-workflow-blocked/,
+  },
+  {
+    // 那个假输入框回来：配置节点又长出一个写 `metadata.text` 的 textarea，
+    // 而没有任何路径读它。用户写进去的提示词被静默丢弃，旁边还挂着「可生成」。
+    //
+    // 用 contracts 而不是 smoke：这个缺陷是**结构**问题（多了一个不该存在的
+    // 编辑入口），不是渲染时序问题，源码级断言就够。走 smoke 的话每验一次要
+    // 重建 + 跑整个 jsdom 套件，还会和别的用例抢内存（曾经整条链被 SIGKILL，
+    // 报成 HARNESS BROKEN，看起来像套件坏了）。
+    name: 'a config node grows a second, discarded prompt editor',
+    runner: 'contracts',
+    file: 'src/client/canvas/node-body.tsx',
+    from: '        <p className={css.configPrompt} data-config-prompt={node.id}>\n          {configReady !== null && configReady.prompt !== \'\'\n            ? configReady.prompt\n            : tt(\'canvas.configPromptElsewhere\')}\n        </p>',
+    to: '        <textarea className={css.configPrompt} data-config-prompt={node.id} value={metadata.text ?? \'\'} onChange={event => A.patchNode(node.id, { text: event.target.value })} />',
+    expect: /renders an editable prompt input/,
   },
   {
     // The sidebar switcher is built imperatively, so it is the one tablist the
@@ -2048,23 +2453,749 @@ const CASES = [
     to: '    return parsed.toString()',
     expect: /query 里可能有密钥，报错不带/,
   },
+  {
+    // 这条守门自己就差点假绿过三次（见文件头）：注释掉的赋值、字符串字面量、
+    // 「恢复原值」都被当成过隔离证据。把最常见的那一种注入回去——把真正的
+    // mkdtempSync 赋值注掉——守门必须报红，否则它就是一个永远绿的摆设。
+    name: 'a canvas test script stops isolating its data root',
+    runner: 'isolation',
+    file: 'scripts/smoke.mjs',
+    from: "process.env.DSH_HOME = mkdtempSync(join(tmpdir(), 'dsh-imagegen-smoke-'))",
+    to: "// process.env.DSH_HOME = mkdtempSync(join(tmpdir(), 'dsh-imagegen-smoke-'))",
+    expect: /会写画布，却没有把数据目录指到临时目录/,
+  },
+  // ------------------------------------------- 空态示例链（example）
+  {
+    // 中心线不对齐：两个节点看起来像两张碰巧靠近的卡，而不是一条流程的两步。
+    // 这条只在几何层看得见——界面上它「也没坏」，只是读起来不对。
+    name: 'the example pair is not centred on one line',
+    runner: 'example',
+    file: 'src/client/canvas/example-flow.ts',
+    from: '  const textOffsetY = (CONFIG_NODE_SIZE.height - TEXT_NODE_SIZE.height) / 2',
+    to: '  const textOffsetY = 0',
+    expect: /中心线没对齐/,
+  },
+  {
+    // 列间距自造一个数：整理画布排出来是 96，示例是 40。用户点一次「整理」，
+    // 示例自己会挪位置——看起来像整理动了它不该动的卡。
+    name: 'the example invents its own column gap',
+    runner: 'example',
+    file: 'src/client/canvas/example-flow.ts',
+    from: '    x: origin.x - ARRANGE_GAP.x - TEXT_NODE_SIZE.width,',
+    to: '    x: origin.x - 40 - TEXT_NODE_SIZE.width,',
+    expect: /隔了 .*px|与整理画布同档/,
+  },
+  {
+    // 连线方向反了：示例的「提示词喂给生成」变成「生成喂给提示词」，按下运行
+    // 什么都不会发生，而画布上看起来完全正常。
+    name: 'the example wires the config card into the prompt',
+    runner: 'example',
+    file: 'src/client/canvas/example-flow.ts',
+    from: '    fromNodeId: textId,\n    toNodeId: configId,',
+    to: '    fromNodeId: configId,\n    toNodeId: textId,',
+    expect: /连线的起点不是文本节点|连线的终点不是配置节点/,
+  },
+  // ------------------------------------------- 画布体检（health）
+  {
+    // 环的下游被一起描红：用户顺着高亮找那根首尾相接的线，会找不到——被描红的
+    // 那个节点根本不在环上。H3b 守它。
+    name: 'the cycle report blames the downstream too',
+    runner: 'health',
+    file: 'src/client/canvas/graph-health.ts',
+    from: '    const ring = nodesOnCycle(plan.cycle, live)\n    const nodeIds = (ring.length > 0 ? ring : plan.cycle).slice().sort(compareText)',
+    to: '    const nodeIds = plan.cycle.slice().sort(compareText)',
+    expect: /下游污染|不在环里|环上节点/,
+  },
+  {
+    // 残线被当成有效连线：删掉一个上游之后，留在原地的图片不再算孤立产物，
+    // 而它确实没人喂、也没接出去。H4 守它。
+    name: 'a dangling edge still counts as a connection',
+    runner: 'health',
+    file: 'src/client/canvas/graph-health.ts',
+    // 让残线「落进」有效连线：删掉那条 `continue`，它就会继续走到
+    // `incoming.add(connection.toNodeId)`——那个指向已删除节点的残线于是
+    // 把还活着的图片算成「有上游」，孤立产物再也报不出来。
+    from: '      continue\n    }\n    live.push(connection)',
+    to: '    }\n    live.push(connection)',
+    expect: /残线|孤立/,
+  },
+  {
+    // 未就绪的配置被报成「结构没问题」：菜单说能跑，按下去跳过整条分支，跑完
+    // 显示「完成」——这是这条功能最坏的一种失败。H7 守它。
+    name: 'a blocked config is not reported at all',
+    runner: 'health',
+    file: 'src/client/canvas/graph-health.ts',
+    from: '    if (state === undefined || state.ready) continue',
+    to: '    if (state === undefined || !state.ready) continue',
+    expect: /blockedConfig|未就绪/,
+  },
+  {
+    // 严重度排序反了：一条「这张图有环」排在「有张图没人用」后面，用户可能
+    // 根本滚不到那条真正不能跑的。H8 守它。
+    name: 'the blocking issues sort below the advisories',
+    runner: 'health',
+    file: 'src/client/canvas/graph-health.ts',
+    from: '    SEVERITY_RANK[a.severity] - SEVERITY_RANK[b.severity]',
+    to: '    SEVERITY_RANK[b.severity] - SEVERITY_RANK[a.severity]',
+    expect: /kind 顺序|按固定顺序/,
+  },
+  // ------------------------------------------- 找节点（search）
+  {
+    // 空查询返回整张画布：下拉里列出上百张卡等于没有搜索，还会让下一次输入
+    // 多等一帧渲染。S1 守它。
+    name: 'an empty query lists the whole canvas',
+    runner: 'search',
+    file: 'src/client/canvas/node-search.ts',
+    from: '  if (terms.length === 0) return []',
+    to: '  if (terms.length === 0) return nodes.slice(0, 20).map(node => ({ nodeId: node.id, nodeType: node.type, snippet: node.title, field: \'title\', score: 60 }))',
+    expect: /空查询|不该列出整张画布/,
+  },
+  {
+    // 同一节点出两条结果：搜「猫」得到同一张卡的两行，用户还要自己分辨哪行
+    // 才是那张图。S8 守它。
+    name: 'one node yields two results from two fields',
+    runner: 'search',
+    file: 'src/client/canvas/node-search.ts',
+    from: '      break\n    }\n  }',
+    to: '      continue\n    }\n  }',
+    expect: /只出一条结果|一个节点只出一条/,
+  },
+  {
+    // 视口尺寸为 0 时照样相除：0/0 得 NaN，`.world` 的 transform 里一进 NaN，
+    // 整块画布直接消失，控制台一个字都不吭。V5 守它。
+    name: 'the viewport maths divides by a zero-sized viewport',
+    runner: 'search',
+    file: 'src/client/canvas/node-search.ts',
+    from: '  if (!(viewportSize.width > 0) || !(viewportSize.height > 0)) {\n    return { k: safeCurrent, x: 0, y: 0 }\n  }',
+    to: '',
+    expect: /视口还没量出尺寸|NaN|有限数/,
+  },
+  {
+    // 缩放不夹：一个 240×240 的小卡会被放大到十几倍，跳过去看到的是它的一角；
+    // 一张超大画布会被缩到看不见。V3/V4/V8 守它。
+    name: 'focusing a card ignores the zoom limits',
+    runner: 'search',
+    file: 'src/client/canvas/node-search.ts',
+    from: '  const k = Math.min(maxScale, Math.max(minScale, fit))',
+    to: '  const k = fit',
+    expect: /夹在|无限放大|缩到看不见/,
+  },
+  // ---------------------------------- 多窗口保存的合并（merge）
+  {
+    // 只认「对方也改过」这一条，把「本地改过、对方没碰」也当成冲突：两边都在
+    // 正常编辑时，任何一次并发保存都会弹冲突，用户被逼着选边丢掉自己刚做的改动。
+    // M4 守它。
+    name: 'a change only this window made is reported as a conflict',
+    runner: 'merge',
+    file: 'src/client/canvas/canvas-merge.ts',
+    from: "    if (!theirsChanged) {",
+    to: "    if (!theirsChanged && false) {",
+    expect: /本地拖了一张卡|保留本地位置|false/,
+  },
+  {
+    // 两边把同一处改成不同样子时挑一边：这就是原来的整图覆盖，换了形式而已。
+    // 不在这时报冲突，用户的某一次编辑必然无声消失。M8 / M9 守它。
+    name: 'a real conflict picks a side instead of reporting it',
+    runner: 'merge',
+    file: 'src/client/canvas/canvas-merge.ts',
+    from: "    conflicts.push({ kind, id, subject: labelOf(mine) })\n    result.push(mine)\n  }",
+    to: "    result.push(mine)\n  }",
+    expect: /报冲突|不静默挑一边|true/,
+  },
+  {
+    // 合并时把 revision 也一起换成自己的：宿主那边的乐观锁就永远拦不住第二次
+    // 并发写入，冲突检测本身失效。M18 守它。
+    name: 'the merged document invents its own revision',
+    runner: 'merge',
+    file: 'src/client/canvas/canvas-merge.ts',
+    from: "      revision: theirs.revision,",
+    to: "      revision: ours.revision,",
+    expect: /revision|对方看到的那个/,
+  },
+  // ------------------------------------------- 三处接线的契约（contracts）
+  {
+    // 找节点不关弹窗就先跳：动作真的执行了，但结果被那张全屏遮罩盖着，用户
+    // 看到的是「按了回车，屏幕没动」。
+    name: 'find-node jumps while its own overlay still covers the canvas',
+    runner: 'contracts',
+    file: 'src/client/canvas',
+    from: 'onPick={(hit: NodeHit) => { setNodeSearchOpen(false); jumpToNode(hit.nodeId) }}',
+    to: 'onPick={(hit: NodeHit) => { jumpToNode(hit.nodeId) }}',
+    expect: /先关弹窗再跳过去|closes before jumping/,
+  },
+  {
+    // 跳过去但不选中：用户被带到一张卡前，它和旁边每张长得一样，不知道自己
+    // 刚才被带到了哪一张。
+    name: 'find-node moves the viewport but selects nothing',
+    runner: 'contracts',
+    file: 'src/client/canvas',
+    from: '    setSelectedIds(new Set([nodeId]))\n    setSelectedConnectionId(null)\n  }, [mutate, setViewport, viewportSize, topBarHeight, chromeHeight])',
+    to: '  }, [mutate, setViewport, viewportSize, topBarHeight, chromeHeight])',
+    expect: /不再选中那张卡/,
+  },
+  {
+    // 体检清单退回「只报不带路」：告诉用户三个节点绕成了环，然后让他在上百张
+    // 卡里自己找。
+    name: 'the check-up lists problems it will not take you to',
+    runner: 'contracts',
+    file: 'src/client/canvas',
+    from: '              onClick={() => props.onJumpIssue(issue)}',
+    to: '              onClick={() => undefined}',
+    expect: /只报不带你去看/,
+  },
+  {
+    // 示例拆成两次写：撤销一次只退半条示例，剩下的半条既跑不了也删不干净。
+    name: 'the example lands in two separate edits',
+    runner: 'contracts',
+    file: 'src/client/canvas',
+    from: '    mutate(previous => ({ ...previous, nodes: [...previous.nodes, ...flow.nodes], connections: [...previous.connections, ...flow.connections] }))',
+    to: '    mutate(previous => ({ ...previous, nodes: [...previous.nodes, ...flow.nodes] }))\n    mutate(previous => ({ ...previous, connections: [...previous.connections, ...flow.connections] }))',
+    expect: /一次写入|half-applied/,
+  },
+  {
+    // 空态的「载入示例」被拿掉：剩下五张卡都在要求用户先知道要放什么、怎么连，
+    // 而第一次打开画布的人恰恰不知道。
+    name: 'the empty canvas loses its load-an-example card',
+    runner: 'contracts',
+    file: 'src/client/canvas',
+    from: '          <button type="button" className={css.quickCard} data-quick-card="example"',
+    to: '          <button type="button" className={css.quickCard} data-quick-card="example-removed"',
+    expect: /不再提供「载入示例」|load-an-example/,
+  },
+  {
+    // 对齐逐节点写：撤销一次只退一张卡，用户得按 N 次才回到对齐前，而按到
+    // 一半时画布既不是旧的也不是新的。契约守「一次 mutate」。
+    name: 'alignment writes one undo step per card',
+    runner: 'contracts',
+    file: 'src/client/canvas',
+    from: '    if (result.moved === 0) { setNotice(tt(\'canvas.align.already\')); return }\n    mutate(',
+    to: '    if (result.moved === 0) { setNotice(tt(\'canvas.align.already\')); return }\n    for (const node of current.nodes) { const next = result.positions.get(node.id); if (next !== undefined) mutate(previous => ({ ...previous, nodes: previous.nodes.map(item => item.id === node.id ? { ...item, x: next.x, y: next.y } : item) })) }\n    mutate(',
+    expect: /一次 mutate|一次写入|one edit/,
+  },
+  {
+    // 对齐条常驻：只选中一张卡时也出现，用户去点它，然后以为它坏了（一个节点
+    // 没有可对齐的对象）。
+    name: 'the align bar shows up even for a single node',
+    runner: 'contracts',
+    file: 'src/client/canvas',
+    from: '    {selectedNodeCount >= 2 ? <AlignBar',
+    to: '    {selectedNodeCount >= 1 ? <AlignBar',
+    expect: /对齐条|两张|two selected/,
+  },
+  {
+    // 撤销按钮退回只说「撤销」：连按三次之后用户不知道自己退掉了哪一步。
+    name: 'the undo button stops saying what it will take back',
+    runner: 'contracts',
+    file: 'src/client/canvas',
+    from: 'label={undoHint === null ? labelWithKeys(\'canvas.undo\') : tt(\'canvas.undo.step\', { step: undoHint })}',
+    to: 'label={labelWithKeys(\'canvas.undo\')}',
+    expect: /describeStep|撤销|undo/,
+  },
+  {
+    // 接线时不把分组传进去：纯函数里「组是刚体」那 5 条单测照样全绿，画布上却
+    // 每次只对齐组里被选中的那一张、把组拆开——两层各自都对，接起来是错的。
+    name: 'the align wiring forgets the canvas groups',
+    runner: 'contracts',
+    file: 'src/client/canvas',
+    from: 'groups: groupsOf(current) }, mode)',
+    to: 'groups: [] }, mode)',
+    expect: /alignNodes|align-model/,
+  },
+  {
+    // 输入条退回硬编码阈值：多选时对齐条 / 拼接条让底栏整行变高，输入条判定
+    // 「下面放得下」就压在按钮上——真机截图里八枚对齐按钮全被盖住。
+    name: 'the composer keeps its hard-coded flip threshold and covers the strips',
+    runner: 'contracts',
+    file: 'src/client/canvas',
+    from: 'const top = belowY > S.viewportSize.height + topOffset - (170 + S.chromeHeight)',
+    to: 'const top = belowY > S.viewportSize.height + topOffset - 170',
+    expect: /翻转判据|扣掉底栏|chromeHeight/,
+  },
+  {
+    // chromeHeight 只量底栏那一格：两条药丸出现时没人重新量，输入条照旧压上去。
+    name: 'the chrome height measurement ignores the strips above the dock',
+    runner: 'contracts',
+    file: 'src/client/canvas',
+    from: '    const tops = [...chrome.children]',
+    to: '    const tops = [...chrome.children].slice(-1)',
+    expect: /最高成员|量出来|chromeHeight/,
+  },
+  {
+    // 历史面板点一行时不先关面板：跳转把画布换成了另一版，而面板还盖在上面，
+    // 用户看不到自己退到了哪里，得再关一次才知道；下一次编辑还落在旧的地图上。
+    name: 'a history row jumps with the panel still covering the canvas',
+    runner: 'contracts',
+    file: 'src/client/canvas',
+    from: 'onJump={(stepsBack, nodeIds) => { setHistoryOpen(false); jumpToHistoryStep(stepsBack, nodeIds) }}',
+    to: 'onJump={(stepsBack, nodeIds) => { jumpToHistoryStep(stepsBack, nodeIds) }}',
+    expect: /先关面板|history/,
+  },
+  {
+    // 回退多步改成循环调用 undo()：栈是同步改的、document state 不是，中间的帧
+    // 读到的 documentRef 还是旧的，最后落下的快照与用户点的那一行对不上。
+    name: 'jumping back several steps loops undo instead of one document write',
+    runner: 'contracts',
+    file: 'src/client/canvas',
+    from: '    setDocument(restored)',
+    to: '    setDocument(restored)\n    setDocument(restored)',
+    expect: /一次文档替换|jumpToHistoryStep/,
+  },
+  {
+    // 对齐快捷键退回 event.key：macOS 按住 Option 时 key 是组合字符（⌥F = ƒ），
+    // 这条分支在真机上永远不成立，而单元测试和源码读起来都「有」这个快捷键。
+    name: 'the align shortcuts go back to matching the composed character',
+    runner: 'contracts',
+    file: 'src/client/canvas',
+    from: '      } else if (event.altKey && mod && ALIGN_SHORTCUTS[event.code] !== undefined) {',
+    to: '      } else if (event.altKey && mod && ALIGN_SHORTCUTS[event.key] !== undefined) {',
+    expect: /event\.code|physical code|对齐快捷键/,
+  },
+  {
+    // 文案里又把键位写死：macOS 上用户按 ⌘D，读到的是 Ctrl+D；而目录按 labelKey
+    // 反查时也读不到文案里的括号。契约组同时扫「有没有硬编码」和「查不查得到」。
+    name: 'a menu label hard-codes the key instead of reading the shortcut table',
+    runner: 'contracts',
+    file: 'src/client/locales.ts',
+    from: "  'canvas.duplicate': '创建副本',",
+    to: "  'canvas.duplicate': '创建副本 (Ctrl+D)',",
+    expect: /把键位写死|literal key/,
+  },
+  {
+    // 目录的动作在快捷键表里只有 label、没有 action：目录拿 labelKey 去查，
+    // 那一行就永远没有徽章，看起来像「这个动作没有快捷键」。
+    name: 'a catalog action resolves to no key because the binding names another label',
+    runner: 'contracts',
+    file: 'src/client/ShortcutHelp.tsx',
+    from: "      { keys: ['Ctrl/⌘', 'D'], label: 'canvas.shortcuts.duplicate', action: 'canvas.duplicate' },",
+    to: "      { keys: ['Ctrl/⌘', 'D'], label: 'canvas.shortcuts.duplicate' },",
+    expect: /查不到|no shortcut/,
+  },
+  {
+    // 右键菜单那一枚退回写死的文案：它和目录是同一个动作，键位却各写一份。
+    name: 'the context menu writes its own copy of the duplicate key',
+    runner: 'contracts',
+    file: 'src/client/canvas',
+    from: "items.push({ label: S.labelWithKeys('canvas.duplicate'), icon: 'duplicate', action: () => A.duplicateNode(contextMenu.nodeId) })",
+    to: "items.push({ label: tt('canvas.duplicate'), icon: 'duplicate', action: () => A.duplicateNode(contextMenu.nodeId) })",
+    expect: /创建副本|快捷键表|reads the same table/,
+  },
+  {
+    // 按下对齐什么都不写：按钮、文案、读数全对，只有画布没变——用户看到的唯一
+    // 证据是「点了没反应」。这一条只有真正驱动 UI 的套件看得见（契约读源码，
+    // 它只关心「有没有那一次 mutate」），所以挂在 smoke 组。
+    name: 'the align button announces success and writes nothing',
+    runner: 'smoke',
+    file: 'src/client/canvas',
+    from: '    if (result.moved === 0) { setNotice(tt(\'canvas.align.already\')); return }',
+    to: '    if (result.moved === 0) { setNotice(tt(\'canvas.align.already\')); return }\n    if (result.moved > 0) { setNotice(tt(\'canvas.align.done\', { count: result.moved })); return }',
+    expect: /align-left puts both cards on the same x/,
+  },
+  // ------------------------------------------- 层级顺序（layer order）
+  //
+  // 四件事各自会让「置顶 / 置底」在界面上坏成不同的样子，而且全都长得对：
+  // 按钮在、点得动、有时候还真的动了。
+  {
+    // 逐节点写：撤销一次只退一张卡的层级。选中三张卡一起置顶之后，用户要按
+    // 三次才回到原样，而按到一半时那三张散在三个高度——正是「整组当刚体」
+    // 这条约定要防的画面。
+    name: 'layer order writes one undo step per card',
+    runner: 'contracts',
+    file: 'src/client/canvas',
+    from: '    mutate(previous => ({ ...previous, nodes: [...result.nodes] }))',
+    to: '    for (const node of result.nodes) { mutate(previous => ({ ...previous, nodes: previous.nodes.map(item => item.id === node.id ? node : item) })) }\n    mutate(previous => ({ ...previous, nodes: [...result.nodes] }))',
+    expect: /一次编辑/,
+  },
+  {
+    // 「一个都没动」时照样写：undo 栈里多一条空步骤，下一次 ⌘Z 看起来没反应。
+    name: 'layer order writes even when nothing moved',
+    runner: 'contracts',
+    file: 'src/client/canvas',
+    from: '    if (!result.moved) {',
+    to: '    if (false) {',
+    expect: /一个都没动/,
+  },
+  {
+    // 目录那一行接到了反方向：两行都能点，只有一行做的是反的。界面上完全看
+    // 不出来——除非有人真的按下去。
+    name: 'a catalog row is wired to the opposite direction',
+    runner: 'contracts',
+    file: 'src/client/canvas',
+    from: "    'edit.layerFront': () => reorderSelection('front'),",
+    to: "    'edit.layerFront': () => reorderSelection('back'),",
+    expect: /没有接到/,
+  },
+  {
+    // react-flow 的选中提权回来了：被置底的那张卡一被点中就用内联 z-index 1000
+    // 跳回最上层。用户看到的是「置底没生效」，刷新后又是对的——最难复现的一类。
+    name: 'react-flow elevates the selected node again',
+    runner: 'contracts',
+    file: 'src/client/canvas',
+    from: '                elevateNodesOnSelect={false}',
+    to: '',
+    expect: /选中提权/,
+  },
+  {
+    // 叠放顺序退回「靠 react-flow 的渲染顺序」：`onlyRenderVisibleElements` 之类
+    // 的开关会重排节点元素，那时谁在后面就不再等于谁在上面。
+    name: 'flow nodes stop carrying their document index as zIndex',
+    runner: 'contracts',
+    file: 'src/client/canvas',
+    from: '      zIndex: index,',
+    to: '',
+    expect: /按下标写 zIndex/,
+  },
+  {
+    // 遮盖提示挪回卡片内部：它要说明的正是「这张你看不见」，挂进卡片就等于和
+    // 它一起被压住。以前靠着选中提权碰巧可见，提权一关就彻底消失——真机截图
+    // 里只剩一圈黄边，而那圈边也在下面。
+    name: 'the covered badge moves back inside the covered card',
+    runner: 'contracts',
+    file: 'src/client/canvas/node-body.tsx',
+    from: '  {composeIndex >= 0',
+    to: '  <span data-node-covered={node.id} />\n  {composeIndex >= 0',
+    expect: /画回卡片里/,
+  },
+  {
+    // 提示不画了：被完全盖住的卡片就是彻底看不见——黄边也在下面。
+    name: 'the overlay stops drawing the covered badge',
+    runner: 'contracts',
+    file: 'src/client/canvas',
+    from: '            data-node-covered={covered.id}',
+    to: '            data-covered-removed=""',
+    expect: /找不到遮盖提示/,
+  },
+  // ------------------------------------------- 锁定 / 隐藏（lock & hide）
+  //
+  // 五个缺陷，每一个都在界面上长得完全正常：锁看起来锁上了、卡看起来藏起
+  // 来了、复制粘贴看起来成功了。它们的共同点是只有用户按下那一下才暴露。
+  {
+    // 删除不再跳过锁定项：一张锁不住 Delete 的卡等于没锁，而用户正因为相
+    // 信它锁上了才敢把它留在那里。
+    name: 'delete takes locked cards away anyway',
+    runner: 'contracts',
+    file: 'src/client/canvas',
+    from: '    const deletable = unlockedIds(current.nodes, ids)',
+    to: '    const deletable = new Set(ids)',
+    expect: /删除不再跳过锁定的节点/,
+  },
+  {
+    // 渲染不过滤隐藏项：菜单说「已隐藏」，画布上那张卡还在，还继续吃点击。
+    // 这是这个功能最坏的一种失败——用户会反复点「隐藏」，然后怀疑是不是自
+    // 己点错了卡。
+    name: 'hidden cards stay in the render',
+    runner: 'contracts',
+    file: 'src/client/canvas',
+    from: '    () => nodesToFlow(visibleNodesOf).map((node, index) => ({',
+    to: '    () => nodesToFlow(document?.nodes ?? []).map((node, index) => ({',
+    expect: /渲染不再用 visibleNodesOf/,
+  },
+  {
+    // 复制照抄标记：复制一张锁住的卡得到的是另一张拖不动的卡，用户第一反应
+    // 是「粘贴坏了」；复制一张藏起来的卡更糟，粘完屏幕上什么都没有。
+    name: 'duplicating a locked card produces another locked card',
+    runner: 'contracts',
+    file: 'src/client/canvas/node-model.ts',
+    from: 'metadata: withoutFlags(metadata ?? { ...nodeMetadata(node) })',
+    to: 'metadata: metadata ?? { ...nodeMetadata(node) }',
+    expect: /复制路径不再清掉/,
+  },
+  {
+    // 拖动不再检查锁定：一框选一拖，锁住的卡跟着走。而更贵的是它把「锁定」
+    // 这个词在用户心里的含义整个换掉了——他下次不会再用它。
+    name: 'a locked card still follows the pointer',
+    runner: 'contracts',
+    file: 'src/client/canvas',
+    from: '      if (isLocked(item)) { lockedInSelection += 1; continue }',
+    to: '      if (false) { lockedInSelection += 1; continue }',
+    expect: /拖动入口不再跳过锁定的卡片/,
+  },
+  {
+    // 底栏那条提示没了：藏起来的卡既不在渲染里，也不在框选和 ⌘A 里，用户
+    // 再也没有把它叫回来的入口。隐藏于是变成「删除，但还占着导出」。
+    name: 'the hidden-cards strip loses its only action',
+    runner: 'contracts',
+    file: 'src/client/canvas',
+    from: 'data-hidden-bar-show=""',
+    to: 'data-hidden-strip-removed=""',
+    expect: /底栏没有「全部显示」的入口/,
+  },
+  {
+    // 锁定逐张写：一次「锁定三张」在撤销栈里变成三步，而按到一半时那批卡
+    // 一半锁着、一半没锁——用户从画面上看不出这个中间态。
+    name: 'lock writes one undo step per card',
+    runner: 'contracts',
+    file: 'src/client/canvas',
+    from: "    setNotice(tt(locking ? 'canvas.lock.locked' : 'canvas.lock.unlocked', { count: ids.size }))",
+    to: "    mutate(previous => previous)\n    setNotice(tt(locking ? 'canvas.lock.locked' : 'canvas.lock.unlocked', { count: ids.size }))",
+    expect: /不再是「一次编辑」/,
+  },
+  {
+    // ⌥⇧L 退回认 `event.key`：macOS 按住 Option 时它给的是组合字符，这条
+    // 分支永远不成立，按了没反应也没有任何报错。
+    name: 'the lock shortcut reads event.key again',
+    runner: 'contracts',
+    file: 'src/client/canvas',
+    from: '        if (FLAG_SHORTCUTS[event.code] === \'lock\') toggleLock()',
+    to: '        if (FLAG_SHORTCUTS[event.key] === \'lock\') toggleLock()',
+    expect: /锁定 \/ 隐藏的键位不再读 event\.code/,
+  },
+  // ------------------------------------------- 吸附参考线（snap guides）
+  //
+  // 两种坏法都不报错、都不崩：线没画出来（吸附仍生效，用户看到卡片自己跳），
+  // 或松手后线还留着（静止画布上一条红线，读起来像一次真正的对齐）。
+  {
+    name: 'the snap guides are computed but never drawn',
+    runner: 'contracts',
+    file: 'src/client/canvas',
+    from: '        {renderSnapGuides()}',
+    to: '        {null}',
+    expect: /不再渲染吸附参考线/,
+  },
+  {
+    name: 'the snap guides are computed from the un-snapped position',
+    runner: 'contracts',
+    file: 'src/client/canvas',
+    from: '            const landed = { ...primary, x: Math.round(origin.x + dx + snap.x), y: Math.round(origin.y + dy + snap.y) }\n            const next = snapGuides(landed, others)',
+    to: '            const landed = { ...primary, x: Math.round(origin.x + dx), y: Math.round(origin.y + dy) }\n            const next = snapGuides(primary, others)',
+    expect: /不再按吸附后的位置计算/,
+  },
+  {
+    name: 'the guides survive the pointer release',
+    runner: 'contracts',
+    file: 'src/client/canvas',
+    from: '        if (snapGuidesRef.current.length > 0) {\n          snapGuidesRef.current = []\n          bumpSnapGuides(version => version + 1)\n        }\n        // 刻意**不**在这里清 dragMovingIds',
+    to: '        // 刻意**不**在这里清 dragMovingIds',
+    expect: /松手之后吸附参考线还留在画布上/,
+  },
+  {
+    // 对着藏起来的卡吸附：可见的那张会停在一片空处，而画面上没有任何东西解释
+    // 它为什么停在那里。
+    name: 'snapping still targets hidden cards',
+    runner: 'contracts',
+    file: 'src/client/canvas',
+    from: 'const others = visibleNodes(documentRef.current?.nodes ?? []).filter(node => !moving.has(node.id))',
+    to: 'const others = (documentRef.current?.nodes ?? []).filter(node => !moving.has(node.id))',
+    expect: /不再只看画面上的节点/,
+  },
+  // ------------------------------------------- 对齐（align）
+  {
+    // 把「只动选中」改成「所有节点都跑去对齐」：界面上看起来一切正常，
+    // 只是每按一次对齐，用户没圈中的卡也挪了位置。A2/A3/A10 守它。
+    name: 'align moves the nodes the user did not select',
+    runner: 'align',
+    file: 'src/client/canvas/align-model.ts',
+    from: '  const selected = nodes.filter(node => selectedIds.has(node.id))',
+    to: '  const selected = [...nodes]',
+    expect: /动了未选中的|未选中的/,
+  },
+  {
+    // 居中改成按左边缘对齐：六个模式里只有两种的差别是「中心 vs 边缘」，
+    // 其余四种一模一样，所以这个错只在中/右下的语义里露头。A5 守它。
+    name: 'centre alignment lands the left edge on the midline',
+    runner: 'align',
+    file: 'src/client/canvas/align-model.ts',
+    from: '      else offset = deltaRound(mid - (box.start + box.end) / 2)',
+    to: '      else offset = deltaRound(mid - box.start)',
+    expect: /居中不是左边缘对齐|中心应落在|a 中心应落在/,
+  },
+  {
+    // 分布按「中心等距」而不是「空隙相等」：四张等宽卡时两者算出来一模一样，
+    // 一旦宽窄不一，中间那几张就会挤在一起——而用户按下按钮前看不出区别。
+    // A7/A8 守它。
+    name: 'distribute spaces the centres evenly instead of the gaps',
+    runner: 'align',
+    file: 'src/client/canvas/align-model.ts',
+    from: '  const gap = (span - occupied) / (ordered.length - 1)',
+    to: '  const gap = (span - occupied) / (ordered.length - 1) * 0',
+    expect: /等间距|中心等距|空隙/,
+  },
+  {
+    // 整组成员都被选中时仍当成一个刚体：用户圈住整组去对齐，结果每张卡都
+    // 到了基准线上却保持彼此原来的间距，一张都没落到位。A13 守它。
+    name: 'a whole group selected still moves as one rigid body',
+    runner: 'align',
+    file: 'src/client/canvas/align-model.ts',
+    from: '    if (members.length > 0 && members.every(node => selectedIds.has(node.id))) fullGroups.add(group.id)',
+    to: '    void members',
+    expect: /整组选中|b 应独立对齐|全组/,
+  },
+  {
+    // 组的未选中成员不跟着走：用户以为自己只对齐了一张卡，实际把组拆了。
+    // A12/A15 守它。
+    name: 'aligning part of a group tears the group apart',
+    runner: 'align',
+    file: 'src/client/canvas/align-model.ts',
+    from: '    const members = liveMembersOf(group, byId).map(at)',
+    to: '    const members = liveMembersOf(group, byId).map(at).filter(member => selectedIds.has(member.id))',
+    expect: /跟着动|组内 dx|组内 dy/,
+  },
+  // ------------------------------------------- 撤销摘要（history）
+  {
+    // 删节点带走的线被当成第二次改动：于是每次删卡都变成「混合操作」，
+    // tooltip 永远说不出「撤销删除」。H1 守它。
+    name: 'deleting a node counts its wires as a second change',
+    runner: 'history',
+    file: 'src/client/canvas/history-model.ts',
+    from: '      if (!touches(previous, removedNodeIds)) removedConnections += 1',
+    to: '      removedConnections += 1',
+    expect: /删节点应报 remove|连带结果|不算第二项/,
+  },
+  {
+    // 新节点自带的自动连线被当成独立的 connect：加一张配置卡报「混合操作」，
+    // 而用户只做了一件事。H2 守它。
+    name: 'a node arriving with its auto-wire reads as two actions',
+    runner: 'history',
+    file: 'src/client/canvas/history-model.ts',
+    from: '    if (touches(current, addedNodeIds)) continue',
+    to: '',
+    expect: /自动连线|add，不报 connect/,
+  },
+  {
+    // 只动视口被说成「改了 1 项」：滚动一下画布，撤销按钮就承诺能退掉一件事，
+    // 按下去屏幕不动。H11 守它。
+    name: 'a viewport-only change is announced as an edit',
+    runner: 'history',
+    file: 'src/client/canvas/history-model.ts',
+    from: '  return makeStep(\'mixed\', viewportChanged ? 1 : 0, [], beforeNodes, afterNodes)',
+    to: '  return makeStep(\'mixed\', 1, [], beforeNodes, afterNodes)',
+    expect: /视口|nodeIds \[\]|0/,
+  },
+  {
+    // 坏快照被跳过而不是截断：`stepsBack` 与真实栈深从此错开一格，下面每点一
+    // 行都会退到错的地方。H22 守它。
+    name: 'a corrupt snapshot is skipped instead of ending the list',
+    runner: 'history',
+    file: 'src/client/canvas/history-model.ts',
+    from: '    } catch {\n      break',
+    to: '    } catch {\n      continue',
+    expect: /坏快照|stepsBack|退错步/,
+  },
+  {
+    // limit 从最旧的一端截：面板明明只放得下十几行，却给出「很早以前」的几步，
+    // 而用户要退的几乎总是最近发生的那件事。H21 守它。
+    name: 'the history list fills its budget from the oldest step',
+    runner: 'history',
+    file: 'src/client/canvas/history-model.ts',
+    from: '  for (let index = frames.length - 1; index >= 0 && rows.length < limit; index -= 1) {',
+    to: '  for (let index = 0; index < frames.length && rows.length < limit; index += 1) {',
+    expect: /截断取最近|limit|最旧/,
+  },
+  {
+    // 空提示词条目不再丢弃：它会变成一个白跑的任务，而卡片上还占着一行让人以为
+    // 算进了这一套。T2 守它。
+    name: 'an empty prompt-set item is submitted as a real task',
+    runner: 'prompt-set',
+    file: 'src/client/canvas/prompt-set.ts',
+    from: "    const prompt = typeof entry.prompt === 'string' ? entry.prompt.trim() : ''\n    if (prompt === '') continue",
+    to: "    const prompt = typeof entry.prompt === 'string' ? entry.prompt.trim() : ''",
+    expect: /空提示词|白跑|T2/,
+  },
+  {
+    // 套图条目总数不再封顶：一次提交十几条就是十几个付费请求，而按钮上只写着
+    // 「12 条」。T7 / T14 守它。
+    name: 'the prompt-set item cap is lifted',
+    runner: 'prompt-set',
+    file: 'src/client/canvas/prompt-set.ts',
+    from: "export const MAX_PROMPT_SET_ITEMS = 12",
+    to: "export const MAX_PROMPT_SET_ITEMS = 200",
+    expect: /上限|12|T7|T14/,
+  },
+  {
+    // 套图编辑器回到参数排里：那一排是单行 flex，多行子元素会把旁边的
+    // 下拉压成一两个字（真机上「自动清晰度」直接退成「自…」）。
+    name: 'the prompt-set editor moves back into the parameter row',
+    runner: 'contracts',
+    file: 'src/client/canvas/composer.tsx',
+    from: "  {S.composerKind === 'image' && S.composerRenderer === 'model' ? <ComposerPromptSetEditor S={S} A={A} /> : null}",
+    to: "  {S.composerKind === 'image' && S.composerRenderer === 'model' ? null : null}\n  <div className={css.composerControls}><ComposerPromptSetEditor S={S} A={A} /></div>",
+    expect: /multi-line prompt-set editor|parameter row|squeeze/,
+  },
+  {
+    // 发送按钮不再看套图草稿：用户写满三条、主输入框空着，按钮是灰的，点不动。
+    name: 'the send button ignores the prompt-set draft',
+    runner: 'contracts',
+    file: 'src/client/canvas/composer.tsx',
+    from: "              && S.composerPromptSet.every(item => item.prompt.trim() === '')))",
+    to: "              )))",
+    expect: /ignores the prompt-set draft|must be live/,
+  },
+  {
+    // 草稿执行清单不丢空条目：与读侧那一条相反，这里是**提交**用的清单，
+    // 空条目必须被剔掉，否则每条都换来一次白跑。T13 守它。
+    name: 'the draft job list keeps empty items',
+    runner: 'prompt-set',
+    file: 'src/client/canvas/prompt-set.ts',
+    from: "    const prompt = item.prompt.trim()\n    if (prompt === '') continue",
+    to: "    const prompt = item.prompt.trim()",
+    expect: /全空草稿|白跑|T13/,
+  },
+  {
+    // 「画布生成的东西不要进历史记录」那条要求的失败形态：投影漏掉 `canvas`，
+    // 写盘时字段还在、读回来却没了。当次会话里一切正常（返回值来自内存里那
+    // 一份），重启之后所有画布产物都变成独立生成——所以这一条必须落在
+    // 「写盘 → 重新读」的断言上，只比返回值测不出来。
+    name: 'the canvas lineage is dropped when the index is written',
+    runner: 'history-canvas',
+    file: 'src/video-store.ts',
+    from: "    ...entry.canvas === undefined ? {} : { canvas: entry.canvas },\n  }\n}",
+    to: "  }\n}",
+    expect: /写入盘、读回来还在|survive a write \+ read/,
+  },
+  {
+    // 缩略图写进了索引、读的时候又丢掉：保存那一步是对的，列表里却全是图标。
+    // 这类错只在「写完之后再列一次」时现形，所以反向用例落在读侧。
+    name: 'the canvas thumbnail is written but never read back',
+    runner: 'history-canvas',
+    file: 'src/canvas-store.ts',
+    from: "        ...typeof project.thumb === 'string' && project.thumb !== '' ? { thumb: project.thumb } : {},",
+    to: "",
+    expect: /第一张图片节点记成缩略图|first IMAGE node/,
+  },
 ]
 
 const RUNNERS = {
+  // 「会写画布的测试必须隔离数据目录」。读源码，零构建：守门看的是脚本怎么写，
+  // 不是它跑出什么。这条的存在理由是 2026-10-13~15 那三天攒下的 1408 条残渣。
+  isolation: { script: 'scripts/verify-test-isolation.mjs', build: false },
   contracts: { script: 'scripts/verify-ui-contracts.mjs', build: false },
   // The canvas's bottom chrome (dock / zoom dock / minimap) is a layout
   // question that only a real browser can answer: jsdom has no layout engine,
   // and `.canvasChrome` wraps based on the PANEL's width, which no media query
   // measures. No rebuild: the guard reads the stylesheet and the component.
   'canvas-layout': { script: 'scripts/verify-canvas-layout.mjs', build: false },
+  // 画布的纯函数（吸附 / 遮挡 / 缩略图投影 / 缩放分档 / 就绪判定 / 整理排版）
+  // 直接从源码 import，零构建。整理画布的「分层与环」这类规则只有这一层能守：
+  // 界面上看不出「这一版把环当成了无依赖」。
+  geometry: { script: 'scripts/smoke-canvas-geometry.mjs', build: false },
+  // 空态「载入示例」的几何与 metadata：纯数据模块，直接从源码 import。
+  example: { script: 'scripts/smoke-canvas-example.mjs', build: false },
+  // 画布体检：环 / 残线 / 空配置 / 未就绪，纯函数 + `planLayers`，零构建。
+  health: { script: 'scripts/smoke-canvas-health.mjs', build: false },
+  // 找节点：搜索排序与视野计算，纯函数，零构建。
+  search: { script: 'scripts/smoke-canvas-node-search.mjs', build: false },
+  // 多窗口保存的合并：纯函数，直接从源码 import，零构建。
+  merge: { script: 'scripts/smoke-canvas-merge.mjs', build: false },
+  // 对齐 / 分布：分组刚体、幂等、取整，纯函数，零构建。
+  align: { script: 'scripts/smoke-canvas-align.mjs', build: false },
+  // 撤销摘要：把两份快照说成一句话，纯函数，零构建。
+  history: { script: 'scripts/smoke-canvas-history.mjs', build: false },
+  // 套图：清理 / 兜底 / 上限 / 草稿执行清单，纯函数，零构建。
+  'prompt-set': { script: 'scripts/smoke-canvas-prompt-set.mjs', build: false },
   smoke: { script: 'scripts/smoke.mjs', build: true },
   video: { script: 'scripts/smoke-video.mjs', build: true },
   // The gallery/store half of the video chain: smoke-canvas-video drives the
   // real store in a temp home, which smoke-video does not touch at all.
   'canvas-video': { script: 'scripts/smoke-canvas-video.mjs', build: true },
+  // 历史记录里的画布行：产物过滤、缩略图、画布来源落盘。跑真实存储（临时
+  // home + 构建产物），因为「来源没写进盘」这类错只有在重新读盘时才现形。
+  'history-canvas': { script: 'scripts/smoke-history-canvas.mjs', build: true },
   // The board's persisted state and its pure rules, driven against the real
   // modules in a temp home. No build needed: the source is imported directly.
   storyboard: { script: 'scripts/smoke-storyboard.mjs', build: false },
+  // 分镜的写作规范（台词时长 / 可选时长 / 参考图上限）是另一套纯函数，
+  // 与上面那组的「状态」问题无关，所以单列一组：一个组名只挂一个 script，
+  // 两个无关的失败模式混在一起，红的那一行永远分不清是谁坏了。
+  'storyboard-spec': { script: 'scripts/smoke-storyboard-spec.mjs', build: false },
   // The workflow planner and run loop are imported straight from source, so
   // this group needs no build: it is pure functions plus a promise loop.
   workflow: { script: 'scripts/smoke-workflow.mjs', build: false },
@@ -2147,8 +3278,15 @@ for (const testCase of CASES) {
   // group name, because the chain guard below counts RUNNERS keys against
   // `test:negative` — every extra group is another line that can be forgotten.
   const script = testCase.script ?? runner.script
+  // 子检查的输出由 run 捕获；在调用边界报告进度，避免整组长跑时只能看到空日志。
+  const caseStarted = Date.now()
+  console.log(`START [${testCase.runner}] ${testCase.name}`)
+  console.log('  copying test inputs')
   freshCopy(runner.git === true)
+  console.log(`  copy ready (${((Date.now() - caseStarted) / 1000).toFixed(2)}s); running baseline: ${script}`)
+  const baselineStarted = Date.now()
   const baseline = run(script)
+  console.log(`  baseline ${baseline.ok ? 'PASS' : 'FAIL'} (${((Date.now() - baselineStarted) / 1000).toFixed(2)}s)`)
   if (!baseline.ok) {
     results.push({ name: testCase.name, verdict: 'HARNESS BROKEN', detail: baseline.out.slice(-3000) })
     continue
@@ -2161,12 +3299,18 @@ for (const testCase of CASES) {
     // case reports RED for a reason it never meant to test. `also` applies the
     // rest of the mutation so the case can reach the check it is about.
     for (const extra of testCase.also ?? []) patch(extra.file, extra.from, extra.to)
-    if (runner.build) build()
+    if (runner.build) {
+      console.log('  rebuilding mutated copy')
+      build()
+    }
   } catch (error) {
     results.push({ name: testCase.name, verdict: 'HARNESS BROKEN', detail: String(error.message) })
     continue
   }
+  console.log('  running mutated check')
+  const mutationStarted = Date.now()
   const mutated = run(script)
+  console.log(`  mutated check ${mutated.ok ? 'PASS (defect missed)' : 'FAIL (matching expected diagnostic next)'} (${((Date.now() - mutationStarted) / 1000).toFixed(2)}s)`)
   if (mutated.ok) {
     results.push({ name: testCase.name, verdict: 'FALSE GREEN', detail: 'check still passed with the defect re-introduced' })
     continue

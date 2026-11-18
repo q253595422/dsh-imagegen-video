@@ -447,6 +447,7 @@ export function createClipComposer(): ClipComposer {
         aspectRatio: '16:9',
         resolution: `${TARGET_WIDTH}x${TARGET_HEIGHT}`,
         seconds: input.duration ?? 0,
+        ...input.canvasId === undefined ? {} : { canvas: { canvasId: input.canvasId } },
         files: [{
           bytes: Buffer.from(input.bytes),
           mime: input.mime,

@@ -3,7 +3,7 @@
  * data access path the panel uses — plain fetch, same origin.
  */
 
-import { MODEL_API, CANVAS_API, CANVAS_SKILL_API, CODE_RENDER_API, CONVERSATION_IMAGE_API, DATA_FOLDER_API, DIAGNOSTICS_API, GALLERY_API, GENERATE_API, HISTORY_API, LISTING_COPY_API, ECOMMERCE_LINK_API, PROMPT_ENHANCE_API, SIGNALS_API, STORAGE_API, TASK_API, TEMPLATE_FAVORITES_API, TEMPLATES_API, UPDATE_API, VIDEO_API, type CanvasAssetRef, type CanvasDocument, type CanvasFilePreview, type CanvasLayerPlan, type CanvasSkillCatalog, type CanvasSkillConfigApplyRequest, type CanvasSkillConfigApplyResult, type CanvasSkillConfigSaveRequest, type CanvasSkillConfigSaveResult, type CanvasSkillInstallRequest, type CanvasSkillInstallResult, type CanvasSkillLibrary, type CanvasSkillRemoveResult, type CanvasSkillRunRequest, type CanvasSkillTask, type CanvasProposal, type CanvasSummary, type CodeRenderResponse, type CodeTarget, type DiagnosticEntry, type GenerateRequest, type GenerateResult, type ListingCopyRequest, type ListingCopyResult, type EcommerceLinkResult, type GenerationTask, type GenerationTaskSummary, type HistoryEntry, type HistoryEntryInput, type PptRunRequest, type PptRuntimeStatus, type SignalReportSummary, type TemplateCase, type TemplateFavorite, type TemplateListResult, type TemplateRefreshResult, type TemplateSample, type UpdateInfo, type VideoDirectorPlan, type VideoGenerateRequest, type VideoGenerateResult, type VideoHistoryEntry, type VideoTask, type VideoTaskSummary } from '../protocol.ts'
+import { MODEL_API, CANVAS_API, CANVAS_SKILL_API, CODE_RENDER_API, CONVERSATION_IMAGE_API, DATA_FOLDER_API, DIAGNOSTICS_API, GALLERY_API, GENERATE_API, HISTORY_API, LISTING_COPY_API, ECOMMERCE_LINK_API, PROMPT_ENHANCE_API, SIGNALS_API, STORAGE_API, TASK_API, TEMPLATE_FAVORITES_API, TEMPLATES_API, UPDATE_API, VIDEO_API, type CanvasAssetRef, type CanvasDocument, type CanvasFilePreview, type CanvasLayerPlan, type CanvasSkillCatalog, type CanvasSkillConfigApplyRequest, type CanvasSkillConfigApplyResult, type CanvasSkillConfigSaveRequest, type CanvasSkillConfigSaveResult, type CanvasSkillInstallRequest, type CanvasSkillInstallResult, type CanvasSkillLibrary, type CanvasSkillRemoveResult, type CanvasSkillRunRequest, type CanvasSkillTask, type CanvasProposal, type CanvasSummary, type CodeRenderResponse, type CodeTarget, type DiagnosticEntry, type GenerateRequest, type GenerateResult, type ListingCopyRequest, type ListingCopyResult, type EcommerceLinkResult, type GenerationTask, type GenerationTaskSummary, type HistoryEntry, type HistoryEntryInput, type PptRunRequest, type PptRuntimeStatus, type SignalReportSummary, type TemplateCase, type TemplateFavorite, type TemplateListResult, type TemplateRefreshResult, type TemplateSample, type UpdateInfo, type VideoDirectorPlan, type VideoGenerateRequest, type VideoGenerateResult, type VideoHistoryEntry, type VideoTask, type VideoTaskSummary, type StageFrameUpload, type StageEncodeResult } from '../protocol.ts'
 // The bundle contract lives in its own module rather than in `protocol.ts`,
 // because the host is the one that builds and parses bundles and only the
 // client's two thin wrappers need the constants. Importing it directly keeps
@@ -555,6 +555,28 @@ export class ImageGenApi {
   async canvasImport(source: 'history' | 'gallery', entryId: string, imageIndex: number, width: number, height: number): Promise<CanvasAssetRef> {
     const response = await fetch(CANVAS_API.assetImport, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ source, entryId, imageIndex, width, height }) })
     return (await readEnvelope<{ ok: true; asset: CanvasAssetRef }>(response)).asset
+  }
+
+  /**
+   * 导演台导出视频：上传一帧。
+   *
+   * 逐帧 POST 而不是攒成一个大 body：5 秒 30fps 是 150 帧、每帧 1–3MB，
+   * 攒起来是一个几百 MB 的请求，浏览器与宿主都会在中途放弃。逐帧传，任何
+   * 一帧失败都能立刻定位到「第几帧」。
+   *
+   * 宿主可能在最后一帧的响应里直接带上编码结果（见 `StageEncodeResult`）；
+   * 不带就由调用方再调一次 `stageEncode`。这条分支留在返回类型上
+   * （`Partial<StageEncodeResult>`），而不是让两边各自猜。
+   */
+  async stageFrame(payload: StageFrameUpload): Promise<{ ok: true } & Partial<StageEncodeResult>> {
+    const response = await fetch(CANVAS_API.stageFrame, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(payload) })
+    return await readEnvelope<{ ok: true } & Partial<StageEncodeResult>>(response)
+  }
+
+  /** 取一次导出会话编好的 mp4。 */
+  async stageEncode(sessionId: string): Promise<StageEncodeResult> {
+    const response = await fetch(CANVAS_API.stageEncode, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ sessionId }) })
+    return await readEnvelope<{ ok: true } & StageEncodeResult>(response)
   }
 
   /** Ask the host's chat model to decompose one image into editable layers. */

@@ -374,7 +374,11 @@ html[data-dsh-imagegen-active] [data-dsh-imagegen-sidebar-root][data-dsh-imagege
 }
 
 .entry:hover {
-  background: var(--dsw-specific-sidebar-nav-item-hover);
+  /* `--dsw-specific-sidebar-nav-item-hover` 从未定义（宿主只定义了
+     `-nav-item-active` 与 `-nav-item-active-accent`）：整条 background 声明被
+     浏览器丢弃，于是侧栏入口悬停时毫无反应——看起来像不可点的纯文本。用契约里
+     给的通用交互色，它在侧栏的两种主题下都成立。 */
+  background: var(--dsw-alias-interactive-bg-hover);
   color: var(--dsw-alias-label-primary);
 }
 
@@ -636,12 +640,16 @@ html[data-dsh-imagegen-active] .sidebarHistoryHost {
 
 .panelHeading {
   display: flex;
-  align-items: baseline;
+  /* 品牌标是图形不是文字，和 GitHub 图标一样按中线对齐；baseline 会让 SVG 下坠。 */
+  align-items: center;
   gap: 10px;
   min-width: 0;
 }
 
 .panelTitle {
+  /* 品牌标是 SVG：h2 只作为语义标题的容器，不参与文字排版。 */
+  display: flex;
+  align-items: center;
   margin: 0;
   font-size: 16px;
   font-weight: 700;
@@ -4559,10 +4567,9 @@ a.galleryCardAction {
     order: 1;
   }
   .panelHeader .panelTitle {
-    overflow: hidden;
-    text-overflow: ellipsis;
+    /* 品牌标是图形：压低宽度只会把它整体缩小，不如保持原大。 */
+    flex: none;
     min-width: 0;
-    flex: 0 1 auto;
   }
   .panelHeader .panelHeaderActions {
     flex: none;

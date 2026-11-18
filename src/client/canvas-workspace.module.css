@@ -68,6 +68,15 @@
   --canvas-node-border: var(--dsw-alias-border-l1);
   /* Light: `border-l2` and nothing else — the exact hover this shipped with. */
   --canvas-node-hover-edge: var(--dsw-alias-border-l2);
+  /**
+   * 低缩放下的卡片轮廓。
+   *
+   * `border-l1` 在浅色主题里几乎就是白色，1.5px 缩到 17% 之后只剩 0.26px，
+   * 于是整块画布上「哪一格是卡片」只能靠里面的内容去猜——而低缩放下内容本身
+   * 已经糊成一片。这一圈只在 mid / far 两档出现，用 22% 的墨色，在两种主题
+   * 里都是「比底色深一档但仍属于背景」的强度。
+   */
+  --canvas-node-edge-far: color-mix(in srgb, var(--dsw-alias-label-primary) 22%, transparent);
 }
 
 /*
@@ -180,6 +189,8 @@
 
 .saveState[data-state="error"] { color: var(--dsw-alias-state-error-primary, #ec1313); }
 .saveState[data-state="saving"] { color: var(--dsw-alias-state-warn-primary, var(--dsw-alias-label-secondary)); }
+/* 草稿和「保存中」同一档：都不是终态，都不该用「已保存」那档普通色念过去。 */
+.saveState[data-state="draft"] { color: var(--dsw-alias-state-warn-primary, var(--dsw-alias-label-secondary)); }
 
 /* ---------------------------------------------------------- icon button */
 
@@ -274,6 +285,31 @@
     linear-gradient(90deg, color-mix(in srgb, var(--dsw-alias-label-primary) 9%, transparent) 1px, transparent 1px);
 }
 
+/*
+ * 低缩放下的网格。
+ *
+ * 格距的下限由 JS 那边翻倍世界步长来保（`gridStepFor`），这里只管**强度**：
+ * 放大时格线是排版参考，应当淡到几乎看不见；缩小时格线是「这里是一块画布」
+ * 的唯一证据，太淡就会让整片区域读成空白背景。所以两档各加深一点，而不是
+ * 全局调深——全局调深会让 100% 下的画布变成方格纸。
+ */
+.root[data-zoom-band="mid"] .grid[data-mode="lines"] {
+  background-image:
+    linear-gradient(color-mix(in srgb, var(--dsw-alias-label-primary) 12%, transparent) 1px, transparent 1px),
+    linear-gradient(90deg, color-mix(in srgb, var(--dsw-alias-label-primary) 12%, transparent) 1px, transparent 1px);
+}
+
+.root[data-zoom-band="far"] .grid[data-mode="lines"] {
+  background-image:
+    linear-gradient(color-mix(in srgb, var(--dsw-alias-label-primary) 16%, transparent) 1px, transparent 1px),
+    linear-gradient(90deg, color-mix(in srgb, var(--dsw-alias-label-primary) 16%, transparent) 1px, transparent 1px);
+}
+
+.root[data-zoom-band="mid"] .grid[data-mode="dots"],
+.root[data-zoom-band="far"] .grid[data-mode="dots"] {
+  background-image: radial-gradient(circle, color-mix(in srgb, var(--dsw-alias-label-primary) 42%, transparent) 1.1px, transparent 1.4px);
+}
+
 .grid[data-mode="blank"] { background-image: none; }
 
 .grid[data-mode="image"] { background-image: none; }
@@ -328,6 +364,51 @@
   background: var(--dsw-alias-border-l1);
 }
 
+/* ------------------------------------------------ 顶栏「这份画布自己的事」 */
+/*
+ * 顶栏最右边那枚 ⋯ 的菜单。锚在按钮下方（顶栏本身贴顶，向上没有空间），
+ * 表面配方与 dock 的浮层一致，不新增 z 档：它和背景菜单是同一类东西。
+ *
+ * 收起来的是四枚低频的「文件管理」动作（收藏 / 导出 / 导入 / 删除画布）。
+ * 它们原来并排占掉顶栏一半宽度，在 760px 以下把标题挤到第二行。
+ */
+.topBarMenu {
+  position: absolute;
+  z-index: var(--z-anchored-menu);
+  min-width: 176px;
+  padding: 5px;
+  border-radius: var(--dsw-radius-md);
+  border: 1px solid var(--dsw-alias-border-l1);
+  background: color-mix(in srgb, var(--dsw-alias-bg-layer-1) 96%, transparent);
+  box-shadow: var(--dsw-shadow-lv3);
+  display: flex;
+  flex-direction: column;
+}
+
+.topBarMenu button {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  justify-content: flex-start;
+  border: none;
+  border-radius: var(--dsw-radius-sm);
+  background: transparent;
+  color: var(--dsw-alias-label-primary);
+  font-size: 12px;
+  padding: 7px 10px;
+  cursor: pointer;
+  text-align: left;
+}
+
+.topBarMenu button:hover:not(:disabled) { background: var(--dsw-alias-interactive-bg-hover); }
+.topBarMenu button:focus-visible { outline: 2px solid var(--dsw-alias-brand-primary); outline-offset: -2px; }
+
+/* 草稿上没有可收藏/导出的对象。禁用但保留一行说明（title），而不是让它消失：
+   用户点过一次就会明白「先放点东西进去」，而消失只会让他以为功能没做。 */
+.topBarMenu button:disabled { color: var(--dsw-alias-label-tertiary); cursor: not-allowed; }
+
+.topBarMenu button[data-danger] { color: var(--dsw-alias-state-error-primary, #ec1313); }
+
 /* ------------------------------------------------ workflow options menu */
 
 /* `.backgroundMenu button` is a single horizontal row (an icon and a label).
@@ -371,6 +452,25 @@
   white-space: normal;
 }
 
+/**
+ * 「有节点跑不起来」的提示条。
+ *
+ * 用 warn 的**文字色**而不是 error 的红：这不是一次失败，是一次还没发生的
+ * 缺条件——红色会让人以为刚才那一下就出错了。它不是可点的选项（没有 hover、
+ * 没有 pointer），因为它描述的是当前状态，不是一个动作。
+ *
+ * 上边框把它和上面的开关分开：它是结论，不是第四个开关。
+ */
+.workflowOptionWarn {
+  margin: 2px 0 0;
+  padding: 6px 8px 0;
+  border-top: 1px solid var(--dsw-alias-border-l1);
+  font-size: 11px;
+  line-height: 1.5;
+  white-space: normal;
+  color: var(--dsw-alias-state-warn-primary);
+}
+
 /* "Force rerun" with nothing selected: the hint explains why it cannot be used
  * instead of the item simply swallowing the click. Dimmed via the label colour
  * rather than opacity so the explanatory line keeps its contrast in both
@@ -380,6 +480,73 @@
   background: transparent;
   color: var(--dsw-alias-label-tertiary);
 }
+
+/* ------------------------------------------------ 画布体检（运行选项菜单内） */
+
+/**
+ * 一次「按下运行会怎样」的完整清单。
+ *
+ * 放在运行选项菜单里而不是另开一个弹窗：菜单已经是用户问「这一次怎么跑」的
+ * 地方，体检回答的是同一个问题的前提。另开一层的结果是「开着菜单，又想看
+ * 一眼清单」，得先关掉它。
+ *
+ * 宽度上限：菜单本身是窄条，一行原因动辄二十几个字。不设上限会让菜单撑到
+ * 半屏宽——那就不再像一个挂靠底栏的浮层了。
+ */
+.healthList {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  max-width: 300px;
+  max-height: 220px;
+  overflow-y: auto;
+  margin: 2px 0 0;
+  padding: 6px 4px 0;
+  border-top: 1px solid var(--dsw-alias-border-l1);
+}
+
+.healthSummary {
+  padding: 0 6px 4px;
+  color: var(--dsw-alias-label-secondary);
+  font-size: 11px;
+  line-height: 1.5;
+  white-space: normal;
+}
+
+/**
+ * 一条问题。可点：点它跳到那张卡。
+ *
+ * WHY 值得做成可点：体检列出「哪三个节点绕成了环」之后，用户下一步必然是在
+ * 上百张卡里找它们。让清单只负责报、不负责带路，等于把最难的那半件事留给
+ * 用户自己。
+ *
+ * 阻断项与提醒项只差左边线颜色：两者的形状必须是同一种，否则用户会以为「红
+ * 色那一块是另一个面板」。
+ */
+.healthIssue {
+  display: flex;
+  align-items: flex-start;
+  gap: 6px;
+  padding: 5px 6px;
+  border: none;
+  border-left: 2px solid var(--dsw-alias-state-error-primary, #ec1313);
+  border-radius: var(--dsw-radius-xs);
+  background: transparent;
+  color: var(--dsw-alias-label-primary);
+  font-family: inherit;
+  font-size: 11px;
+  line-height: 1.5;
+  text-align: left;
+  white-space: normal;
+  cursor: pointer;
+}
+
+.healthIssue[data-severity="advisory"] { border-left-color: var(--dsw-alias-state-warn-primary); }
+.healthIssue:hover:not(:disabled) { background: var(--dsw-alias-interactive-bg-hover); }
+.healthIssue:focus-visible { outline: 2px solid var(--dsw-alias-brand-primary); outline-offset: -2px; }
+/* 没有可跳转的目标（两端都被删掉的残线）：仍然要能读到这句话，所以只去掉
+   指针与悬停反馈，不压暗——那会让它看起来像「这个功能没做完」。 */
+.healthIssue:disabled { cursor: default; }
 
 .world {
   position: absolute;
@@ -435,6 +602,29 @@
 }
 
 .node:active { cursor: grabbing; }
+
+/*
+ * 低缩放下的卡片轮廓。
+ *
+ * 为什么不是 `border-width: calc(1.5px * var(--canvas-inv-scale))`：边框进布局。
+ * 卡片的世界外框是文档里的 `node.width`，而连线锚点、吸附判定、缩略图投影全
+ * 按它算；把边框按 1/k 加粗会让外框在低缩放下每边涨几个世界像素，几何静默
+ * 错位。`box-shadow` 不进布局，所以补偿只走它。
+ *
+ * 为什么用 `inset` 而不是外扩：外扩的阴影在相邻卡片靠近时会互相盖住，读起来
+ * 像它们在打架。内描边始终长在自己身上，边界归属没有歧义。
+ *
+ * `var(--canvas-inv-scale)` 由根节点按当前 k 写进来（见 CanvasWorkspace 的
+ * `data-zoom-band` 那段）。缺省 1：没拿到缩放时描边就是 1px，不会因为变量
+ * 缺失而整条声明被丢弃、轮廓凭空消失。
+ */
+.root[data-zoom-band="mid"] .node:not(.nodeSelected):not(.nodeRelated):not(.nodeConnectTarget):not(.nodeOverlap) {
+  box-shadow: var(--dsw-shadow-lv2), inset 0 0 0 calc(1px * var(--canvas-inv-scale, 1)) var(--canvas-node-edge-far);
+}
+
+.root[data-zoom-band="far"] .node:not(.nodeSelected):not(.nodeRelated):not(.nodeConnectTarget):not(.nodeOverlap) {
+  box-shadow: var(--dsw-shadow-lv2), inset 0 0 0 calc(1.5px * var(--canvas-inv-scale, 1)) var(--canvas-node-edge-far);
+}
 
 /*
  * Hover strengthens the resting ring, and only the resting ring.
@@ -858,8 +1048,25 @@
   height: 100%;
   display: block;
   border-radius: var(--dsw-radius-md);
-  background: var(--dsw-alias-bg-layer-2);
-  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--dsw-alias-label-primary) 16%, transparent);
+  /**
+   * The paper has to be visibly the paper.
+   *
+   * `bg-layer-2` is the wrong token here: DSH resolves bg-layer-1, -2 and -3 to
+   * the SAME #ffffff in a light theme (this file's own note at the top says so).
+   * So a "white sheet" painted on a white canvas was one continuous surface,
+   * and an empty board read as nothing at all — the only trace of it was the
+   * floating brush toolbar, which looked like an orphaned palette.
+   *
+   * A paper needs to be a different MATERIAL from the desk it lies on, so this
+   * is a hair of the theme ink rather than the next layer token: 6% lands at
+   * ~#f2f2f2 on white and ~#2b2b2b on near-black, i.e. "card on canvas" in
+   * both palettes from one declaration. The inset ring goes one step darker so
+   * the sheet's edge survives at 100% zoom where the fill alone is subtle.
+   */
+  background: color-mix(in srgb, var(--dsw-alias-label-primary) 6%, var(--dsw-alias-bg-layer-1));
+  box-shadow:
+    inset 0 0 0 1px color-mix(in srgb, var(--dsw-alias-label-primary) 14%, transparent),
+    inset 0 1px 3px color-mix(in srgb, var(--dsw-alias-label-primary) 7%, transparent);
   cursor: crosshair;
   touch-action: none;
 }
@@ -876,7 +1083,9 @@
   text-align: center;
   font-size: 11px;
   line-height: 1.7;
-  color: var(--dsw-alias-label-tertiary);
+  /* 纸面本身比画布深，次级灰在它上面读不清；空状态的这句话是这张卡片
+   * 唯一的说明，值得用 label-secondary。 */
+  color: var(--dsw-alias-label-secondary);
   pointer-events: none;
 }
 
@@ -1118,9 +1327,23 @@
   height: 40px;
   padding: 0 14px;
   border-radius: var(--dsw-radius-md);
-  border: 1px solid color-mix(in srgb, var(--dsw-alias-brand-primary) 34%, transparent);
-  background: color-mix(in srgb, var(--dsw-alias-brand-primary) 14%, transparent);
-  color: var(--dsw-alias-brand-primary);
+  /**
+   * Filled like a primary button, because that is what it is.
+   *
+   * It used to be `brand-primary` at 14% fill / 34% border. In this theme
+   * `brand-primary` is the NEUTRAL inverse (near-black in light, near-white in
+   * dark), so at 14% it was a pale grey pill with a grey outline — visually
+   * indistinguishable from the disabled tiles beside it, while the one solid
+   * black `+` next to it was doing all the shouting. Two elements claimed to be
+   * the primary action and neither read as one.
+   *
+   * `button-primary-fill` + `label-primary-foreground` is exactly the pair DSH's
+   * own primary button uses, so the pill now reads as "this is the action",
+   * the `+` stays the single structural anchor, and neither was invented here.
+   */
+  border: 1px solid transparent;
+  background: var(--dsw-alias-button-primary-fill);
+  color: var(--dsw-alias-label-primary-foreground);
   font-size: 12px;
   line-height: 1;
   white-space: nowrap;
@@ -1128,10 +1351,13 @@
 }
 
 .dockAction:not(:disabled):hover {
-  background: color-mix(in srgb, var(--dsw-alias-brand-primary) 22%, transparent);
+  background: var(--dsw-alias-button-primary-hover);
 }
 
-.dockAction:disabled { opacity: 0.35; cursor: not-allowed; }
+/* A filled pill fades differently from a ghost tile: 0.35 would leave the
+ * label sitting on a half-strength block of ink and read as a rendering
+ * glitch. DSH's own disabled primary button uses 0.4, so use that. */
+.dockAction:disabled { opacity: 0.4; cursor: not-allowed; background: var(--dsw-alias-button-primary-fill); }
 
 /* 主动作里的两半：左边运行、右边只开菜单。它们不可分割地同属一块药丸，
  * 所以分割线比 `.dockGap` 更淡、更短，读起来是一条缝而不是一个分组。 */
@@ -1150,7 +1376,7 @@
 
 .dockAction > button:disabled { cursor: not-allowed; }
 
-.dockAction > button:not(:disabled):hover { color: var(--dsw-alias-label-primary); }
+.dockAction > button:not(:disabled):hover { color: var(--dsw-alias-label-primary-foreground); }
 
 .dockAction > .dockCaret {
   margin-left: 2px;
@@ -1159,7 +1385,7 @@
   gap: 0;
 }
 
-.dockAction > .dockCaret[data-active] { color: var(--dsw-alias-label-primary); }
+.dockAction > .dockCaret[data-active] { color: var(--dsw-alias-label-primary-foreground); }
 
 .dockItem::after {
   content: attr(data-label);
@@ -1227,7 +1453,11 @@
 .composer {
   position: absolute;
   z-index: var(--z-composer);
+  /* 560px 是经验值。参数排排不下时折行（见 `.composerControls`），所以这里
+     不需要跟着内容变宽——输入条宽度稳定，面板多窄都放得下。 */
   width: 560px;
+  max-width: calc(100% - 24px);
+  box-sizing: border-box;
   display: flex;
   flex-direction: column;
   gap: 8px;
@@ -1262,7 +1492,16 @@
   outline-offset: 2px;
 }
 
-.composerMeta { display: flex; }
+.composerMeta {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  /* 左：连接情况；右：出图方式。`min-height` 保证只有切换按钮、没有徽标时
+     这一行也有实体高度，不至于把输入条抖一下。 */
+  min-height: 28px;
+}
+
+.composerMetaSpacer { flex: 1 1 auto; }
 
 .composerChip {
   display: inline-flex;
@@ -1280,7 +1519,17 @@
   display: flex;
   align-items: center;
   gap: 6px;
+  /* 排不下就折行，而不是压窄成员。参数控件的内容（模型名、「自动清晰度」）是
+     用户要读的东西，压窄只会把它变成「自…」——那是把信息删掉换行数。
+     实测这一排在 560px 的输入条里需要 649px（图片/视频 96 + 生成方式 89 +
+     模型 210 + 比例 89 + 清晰度 101 + 发送 34 + 五个间距 30），差 44px；
+     折行之后发送按钮仍靠右，最后一行不会孤零零只剩一枚图标。 */
+  flex-wrap: wrap;
+  row-gap: 6px;
 }
+
+/* 参数控件不压缩：它们的文字宽度就是信息的宽度。 */
+.composerControls > * { flex-shrink: 0; }
 
 /* One line of context under the composer controls: why this path needs
    something (or does not), in the place the choice was made. */
@@ -1334,6 +1583,12 @@
 .configLinks {
   display: flex;
   align-items: center;
+  /* 两个胶囊（计数 + 就绪）+ 6px 间隙，在 320px 的配置节点里刚好放得下——
+   * 但西里尔语的「已连接 N 个输入节点」比中文长得多，俄文界面下会溢出。
+   * 允许换行：溢出会被 `overflow: visible` 的卡片直接推到卡片外，而一张
+   * 卡片上的字跑到卡片外面，看起来像渲染坏了。 */
+  flex-wrap: wrap;
+  gap: 6px;
   margin: 4px 0 10px;
   flex: none;
 }
@@ -1341,6 +1596,38 @@
 .configLinks .composerChip {
   font-size: 11px;
   padding: 3px 10px;
+}
+
+/*
+ * 就绪徽标。
+ *
+ * 与连线小条同排、同一档字号，但用**实心填充**分开：小条是一个计数（一个
+ * 事实），徽标是一句判断（要不要现在按下去）。在画布上，判断必须比计数更
+ * 显眼，否则用户会先读到「有 2 个输入」然后自己推断能不能跑。
+ *
+ * 用 `state-success-primary` 而不是品牌色：品牌色在这个主题里是中性反色，
+ * 一个「准备好了」的绿点必须是真的绿——它不是装饰，是语义。
+ */
+.configReady {
+  padding: 3px 8px;
+  border-radius: 999px;
+  font-size: 11px;
+  line-height: 1.4;
+  white-space: nowrap;
+  color: var(--dsw-alias-label-secondary);
+  background: color-mix(in srgb, var(--dsw-alias-label-primary) 8%, transparent);
+}
+
+.configReady[data-config-ready] {
+  color: var(--dsw-alias-label-primary-foreground);
+  background: var(--dsw-alias-state-success-primary);
+}
+
+/* 缺东西不是错误：用户还没写完，不该被红点催。用 warn 的浅底 + 正文色，
+ * 只有当它变成 error（真跑失败了）时节点自己会红。 */
+.configReady[data-config-blocker] {
+  color: var(--dsw-alias-state-warn-primary);
+  background: color-mix(in srgb, var(--dsw-alias-state-warn-primary) 12%, transparent);
 }
 
 .configHint {
@@ -1351,6 +1638,194 @@
   line-height: 1.7;
   color: var(--dsw-alias-label-tertiary);
   overflow: auto;
+}
+
+/*
+ * 配置节点上的「将要发出去的提示词」预览。
+ *
+ * 只读，但绝不能长得像禁用：它是这张卡片最实质的内容（这张图/这段视频到底
+ * 会被什么驱动），而禁用态灰字会让人以为它不可用。用正文色 + 比说明文字更紧
+ * 的行高，读起来是一段正文而不是一段注脚。
+ *
+ * 溢出裁切而不是滚动：卡片高度由用户拖定，一条滚动条在 320px 宽的卡片里会
+ * 占掉可用宽度的一大块，而且滚动的行为会让人以为它可以编辑。完整内容在
+ * 悬浮生成器里；这里回答「开头是不是我要的那句」就够了。
+ */
+.configPrompt {
+  flex: 1;
+  min-height: 0;
+  margin: 0;
+  font-size: 12px;
+  line-height: 1.6;
+  color: var(--dsw-alias-label-secondary);
+  overflow: hidden;
+  /* 三行之后渐隐，明确表示「还有，但不在这儿」——直接裁断会看起来像内容
+   * 丢了，而那正是这一块要安抚的疑虑。 */
+  mask-image: linear-gradient(to bottom, var(--dsw-alias-label-primary) 72%, transparent);
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+/* ------------------------------------------------ 套图（提示词组） */
+
+/* composer 那一侧的三态切换 + 套图编辑器 */
+.promptSetToggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 0;
+  border: 1px solid var(--dsw-alias-border-l1);
+  border-radius: 999px;
+  overflow: hidden;
+  flex: none;
+}
+
+.promptSetToggle button {
+  border: 0;
+  background: transparent;
+  color: var(--dsw-alias-label-tertiary);
+  font-size: 11px;
+  line-height: 1;
+  padding: 6px 10px;
+  cursor: pointer;
+  min-height: 28px;
+}
+
+.promptSetToggle button + button { border-left: 1px solid var(--dsw-alias-border-l1); }
+
+.promptSetToggle button[data-active] {
+  background: var(--dsw-alias-interactive-bg-hover);
+  color: var(--dsw-alias-label-primary);
+}
+
+.promptSetToggle button:focus-visible {
+  outline: 2px solid var(--dsw-alias-brand-primary);
+  outline-offset: 1px;
+}
+
+/* 编辑器独占输入条的一行：它是一个多行列表，塞进 flex 横排会被压成一列。 */
+.promptSetEditor {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  width: 100%;
+  padding: 8px 2px 2px;
+  min-width: 0;
+  border-top: 1px solid var(--dsw-alias-border-l1);
+}
+
+.promptSetHint {
+  margin: 0;
+  font-size: 11px;
+  line-height: 1.45;
+  color: var(--dsw-alias-label-tertiary);
+}
+
+.promptSetItem {
+  display: grid;
+  grid-template-columns: 18px 112px minmax(0, 1fr) 24px;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+}
+
+.promptSetIndex {
+  font-size: 11px;
+  line-height: 1;
+  color: var(--dsw-alias-label-tertiary);
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+
+.promptSetTitle,
+.promptSetPrompt {
+  min-width: 0;
+  height: 28px;
+  border-radius: 999px;
+  border: 1px solid var(--dsw-alias-border-l1);
+  background: transparent;
+  color: var(--dsw-alias-label-primary);
+  font-size: 11px;
+  padding: 0 10px;
+  font-family: inherit;
+}
+
+.promptSetPrompt {
+  border-radius: var(--dsw-radius-md);
+  resize: none;
+  padding: 5px 10px;
+  line-height: 1.4;
+}
+
+.promptSetTitle::placeholder,
+.promptSetPrompt::placeholder { color: var(--dsw-alias-label-tertiary); }
+
+.promptSetTitle:focus-visible,
+.promptSetPrompt:focus-visible {
+  outline: none;
+  border-color: var(--dsw-alias-brand-primary);
+}
+
+.promptSetRemove {
+  width: 24px;
+  height: 24px;
+  border: 0;
+  border-radius: 50%;
+  background: transparent;
+  color: var(--dsw-alias-label-tertiary);
+  cursor: pointer;
+  display: grid;
+  place-items: center;
+  padding: 0;
+}
+
+.promptSetRemove:hover { color: var(--dsw-alias-state-warn-primary, #f59e0b); }
+
+.promptSetRemove:focus-visible {
+  outline: 2px solid var(--dsw-alias-brand-primary);
+  outline-offset: 1px;
+}
+
+.promptSetFooter {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  padding-left: 26px;
+}
+
+.promptSetAdd {
+  border: 1px dashed var(--dsw-alias-border-l1);
+  background: transparent;
+  color: var(--dsw-alias-label-secondary);
+  font-size: 11px;
+  line-height: 1;
+  padding: 6px 10px;
+  border-radius: 999px;
+  cursor: pointer;
+}
+
+.promptSetAdd:hover:not(:disabled) { color: var(--dsw-alias-label-primary); }
+
+.promptSetAdd:disabled { opacity: 0.45; cursor: not-allowed; }
+
+.promptSetAdd:focus-visible {
+  outline: 2px solid var(--dsw-alias-brand-primary);
+  outline-offset: 1px;
+}
+
+/* 卡片上的只读徽标：这张卡跑一次会出 N 张。 */
+.promptSetBadge {
+  display: inline-block;
+  margin-top: 4px;
+  padding: 2px 8px;
+  border-radius: 999px;
+  border: 1px solid var(--dsw-alias-border-l1);
+  background: var(--dsw-alias-interactive-bg-hover);
+  color: var(--dsw-alias-label-primary);
+  font-size: 10px;
+  line-height: 1.4;
+  white-space: nowrap;
+  flex: none;
 }
 
 /* connection handles */
@@ -1480,6 +1955,49 @@
   margin: 2px 3px;
   background: var(--dsw-alias-border-l1);
 }
+
+/* ------------------------------------------------------- snap guides */
+
+/* 拖动时那几条「你正贴着谁的边」的线（`snapGuides`）。
+ *
+ * 两层结构：外层是 `.world` 里的定位容器（本身不占空间、不吃指针），每一条线
+ * 是里面一个绝对定位的 1px 元素。为什么不用 SVG：线只有两种方向，而 SVG 需要
+ * 一个 viewBox 尺寸——世界坐标没有上限，写死一个尺寸就必然有一天下线。
+ *
+ * 颜色刻意**不是**品牌色。这套主题的品牌色就是黑与白（浅色 #0f1115 / 深色
+ * #f9fafb），一条纯黑白细线在网格背景上会被读成网格线的一条，而它与网格最
+ * 需要区分的地方恰恰是「这是临时的、有意义的」。用标注色（红）而不是警示色
+ * （琥珀）：红色在两张主题里都是同一个红，琥珀在浅色下偏土、在这套画布的
+ * 米色底上尤其糊。
+ *
+ * `mix-blend-mode: normal` 是默认值，但这里显式写出来是给未来的读者：
+ * 不要给它加 difference / multiply——线会穿过卡片，混合模式会让它在图片上变成
+ * 另一种颜色，而它要表达的只是一条坐标。 */
+.snapGuideLayer {
+  position: absolute;
+  left: 0;
+  top: 0;
+  pointer-events: none;
+  /* 在节点之上、悬停工具条之下：线要能压在卡片上（否则拖到别人身上就看不见
+     了），但不该盖住用户正要点的按钮。 */
+  z-index: var(--z-hover);
+}
+
+.snapGuide {
+  position: absolute;
+  display: block;
+  /* 世界坐标里是 1px；视口缩小时它会跟着变细，与卡片边框同一条规矩——放大后
+     一条 1px 的屏幕线会变成 0.2 世界像素，那样它就与本该对齐的边错开了。 */
+  width: 1px;
+  height: 1px;
+  background: var(--canvas-annotation);
+  opacity: 0.9;
+  pointer-events: none;
+}
+
+.snapGuide[data-snap-guide='x'] { width: 1px; }
+
+.snapGuide[data-snap-guide='y'] { height: 1px; }
 
 /* -------------------------------------------------------- connections */
 
@@ -1632,9 +2150,14 @@
 
 .emptyHint {
   position: absolute;
-  left: 50%;
+  /* 横向拉满而不是 `left: 50%` + `translateX(-50%)`：绝对定位元素用百分比
+   * 定位时，收缩宽度只能用到「剩下的那一半」容器宽度——1180px 的画布给这批
+   * 卡片只剩约 590px，五张卡因此折成 4+1，最后一张孤零零挂在下面。内容居中
+   * 交给 `align-items`，卡片行就能用满整条画布。 */
+  left: 0;
+  right: 0;
   top: 44%;
-  transform: translate(-50%, -50%);
+  transform: translateY(-50%);
   display: flex;
   flex-direction: column;
   align-items: center;
@@ -1652,7 +2175,7 @@
 
 .emptyHint span { font-size: 12px; max-width: 320px; line-height: 1.6; }
 
-/* LibTV 空态快捷卡：一排五张，点一下=现有 add 动作。emptyHint 整体
+/* LibTV 空态快捷卡：一排六张（五种节点 + 载入示例），点一下=现有 add 动作。emptyHint 整体
    pointer-events:none（不挡画布手势），卡片行单独恢复可点。 */
 .quickRow {
   pointer-events: auto;
@@ -1812,14 +2335,75 @@
   cursor: crosshair;
 }
 
+/* 连线层铺满缩略图，压在方块下面。层叠顺序靠 DOM：「先画的连线、后画的方块」
+ * 本身就是它要的顺序，所以这一层不设 z-index —— 一设就得挑一个数字，而那会
+ * 让缩略图内部的图层关系和全站有序阶梯混在一起，两处以后会各自漂移。 */
+.minimapEdges {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+}
+
+/* 连线的强度按「它是流程，不是内容」定：比任何方块都淡，但仍然看得见走向。
+ * 1.2px 是 220px 宽的缩略图上一条线还能被认出来的下限；再细会和 1px 的
+ * 方块边框混成同一层。 */
+.minimapEdge {
+  stroke: var(--dsw-alias-label-primary);
+  stroke-opacity: 0.28;
+  stroke-width: 1.2;
+  stroke-linecap: round;
+}
+
 .minimapNode {
   position: absolute;
   border-radius: var(--dsw-radius-xs);
-  opacity: 0.8;
+  /* 方块上的 `data-state` 负责「有没有东西」，颜色只负责「是哪一种」。两者
+   * 分开，是因为一张草图和一个空配置节点在版图上都是「还没产出」，但它们
+   * 完全不是一回事。 */
+  opacity: 0.85;
 }
 
-.minimapImage { background: var(--dsw-alias-brand-primary); }
-.minimapText { background: color-mix(in srgb, var(--dsw-alias-label-primary) 40%, transparent); }
+/*
+ * 八种节点的深浅阶梯。
+ *
+ * 排序即信息量：生成的图最实（那是用户在找的东西），素材与文件次之，流程
+ * 骨架（配置）和文字最淡（它们是通往产出的路，不是产出）。草图与姿势人偶
+ * 单独一档：它们看起来像图，但其实还只是「我要拿去做图的输入」，用中等的
+ * 实心加一条虚线边把它们和真产物分开。
+ */
+.minimapKindImage { background: var(--dsw-alias-label-primary); }
+.minimapKindVideo { background: var(--dsw-alias-label-primary); }
+.minimapKindFile { background: var(--dsw-alias-label-primary); }
+.minimapKindStoryboard { background: var(--dsw-alias-label-primary); }
+.minimapKindSketch {
+  background: color-mix(in srgb, var(--dsw-alias-label-primary) 45%, transparent);
+  border: 1px dashed color-mix(in srgb, var(--dsw-alias-label-primary) 70%, transparent);
+}
+.minimapKindPose {
+  background: color-mix(in srgb, var(--dsw-alias-label-primary) 45%, transparent);
+  border: 1px dashed color-mix(in srgb, var(--dsw-alias-label-primary) 70%, transparent);
+}
+.minimapKindConfig { background: color-mix(in srgb, var(--dsw-alias-label-primary) 46%, transparent); }
+.minimapKindText { background: color-mix(in srgb, var(--dsw-alias-label-primary) 30%, transparent); }
+
+/* 空节点留轮廓、不填实内容：在缩略图上「还没产出」必须一眼看得出，否则一张
+ * 排满空卡片的版图会被读成「都做好了」。 */
+.minimapNode[data-state="empty"] {
+  background: transparent;
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--dsw-alias-label-primary) 38%, transparent);
+}
+
+/* 在跑：用内描边而不是动画。缩略图唯一常驻的动效应该是视口框，多一条不断
+ * 闪的东西会把注意力从「我在哪」拽走。 */
+.minimapNode[data-state="running"] {
+  box-shadow: inset 0 0 0 1.5px var(--dsw-alias-brand-primary);
+}
+
+.minimapNode[data-state="error"] {
+  background: var(--dsw-alias-state-error-primary);
+  box-shadow: none;
+}
+
 .minimapSelected { outline: 1.5px solid var(--dsw-alias-brand-primary); }
 
 .minimapViewport {
@@ -1890,6 +2474,43 @@
   white-space: nowrap;
   pointer-events: none;
   backdrop-filter: blur(3px);
+}
+
+/* 锁定标记：右上角一枚小锁。
+
+   用 `label-secondary` 而不是警告色——锁不是错误，是用户自己拉的一道闸；把它
+   画成橙的会让一整排锁着的卡片看起来都出了事。`pointer-events: none`：它是一枚
+   状态徽标，挡住下面卡片的拖动就是反效果（锁住的卡本来就该由「解锁」按钮打开，
+   而不是由这枚图标）。 */
+.lockedBadge {
+  position: absolute;
+  /* 挂在卡片**外沿**的右上角，和拼接序号（左上角 -10px）对称。
+   *
+   * WHY 不在内部右上角：那里是文本卡的 A- / A+ / B / 取色 那一排工具条，锁徽标
+   * 会被它整个盖住——真机截图里量到的命中目标是 `textTool`，而不是徽标自己。
+   * 锁的全部意义是「你以为能拖，其实拖不动」，一个被自己卡片的工具栏盖住的
+   * 锁，在体验上等于没有锁。
+   *
+   * 也不压四个角上的缩放手柄（`-7px`、12×12）：真机量到的最上层元素一度是
+   * `resizeHandle`，那时徽标正好落在东北角那只手的命中区里——用户去拖角，
+   * 拖到的是一枚不动的锁。
+   *
+   * 与 hoverToolbar（`top: -36px` 居中）也不会撞车：徽标贴右上、工具条居中，
+   * 窄卡上仍隔得开；真撞上时徽标在下（z-index 更低），而悬停工具条是用户主动
+   * 叫出来的，那一刻他看的是按钮。 */
+  top: -9px;
+  right: 26px;
+  z-index: var(--z-content);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 20px;
+  height: 20px;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--dsw-alias-bg-layer-1) 86%, transparent);
+  color: var(--dsw-alias-label-secondary);
+  border: 1px solid var(--dsw-alias-border-l1);
+  pointer-events: none;
 }
 
 /* ---------------------------------------------------------- error toast */
@@ -3552,12 +4173,79 @@
   box-shadow: 0 0 0 3px color-mix(in srgb, var(--dsw-alias-state-warn-primary, #f59e0b) 26%, transparent);
 }
 
-/* 被盖住的那一个贴在右下角：左上角是身份锚定徽标、右上角是胶带序号，
-   只有这个角在各种节点类型上都空着。 */
+.nodeRunFailed {
+  border-color: var(--dsw-alias-state-error-primary);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--dsw-alias-state-error-primary) 22%, transparent);
+}
+
+/* 被上游挡住的节点用虚线描边：它「这次没跑」，不是「跑坏了」。实线红会让
+   人以为要重试它，而真正该动的是上面那个失败的。 */
+.nodeRunBlocked {
+  border-style: dashed;
+  border-color: color-mix(in srgb, var(--dsw-alias-state-warn-primary, #f59e0b) 70%, transparent);
+}
+
+/*
+ * 历史面板的悬停预览：这一步会动到的是哪几张卡。
+ *
+ * 与 `.nodeSelected` 刻意长得不一样。选中是「你现在操作的就是这几张」，实线 +
+ * 实心阴影；预览是「你正在看的这一步曾经碰过这几张」，虚线 + 不加阴影——两者
+ * 若同款，用户会以为历史面板已经替他把选择改了（而它其实什么都没改）。
+ *
+ * 用虚线还有一个实际好处：与 `.nodeRunBlocked` 同为虚线但颜色不同（那边是警
+ * 告黄、这里是品牌色），一张同时「被挡住」和「在预览里」的卡不会丢掉任何一个
+ * 信息——后写的 box-shadow 只叠加不覆盖边框色，而 border-style 两边一致。
+ *
+ * `outline` 而不是 `box-shadow`：outline 不参与布局、不改变 getBoundingClientRect，
+ * 而预览每帧都在随指针移动，任何影响几何的写法都会让画布在悬停时抖一下。
+ */
+.nodeHistoryPreview {
+  outline: 2px dashed var(--dsw-alias-brand-primary);
+  outline-offset: 3px;
+}
+
+/**
+ * 运行痕迹徽标，右上角。
+ *
+ * 三个角已经各有主：左上身份锚定、左下胶带序号、右下重叠警告。右上角在
+ * 所有节点形态上都是空的，而且「右上 = 这张卡此刻的结论」在画布上和其它
+ * 工具是一致的阅读方向。
+ */
+.runMark {
+  position: absolute;
+  right: -8px;
+  top: -10px;
+  z-index: var(--z-hover);
+  padding: 1px 7px;
+  border-radius: 999px;
+  border: 1px solid var(--dsw-alias-bg-layer-1);
+  font-size: 11px;
+  font-weight: 600;
+  line-height: 16px;
+  white-space: nowrap;
+  pointer-events: none;
+}
+
+.runMark[data-run-mark="failed"] {
+  background: var(--dsw-alias-state-error-primary);
+  color: var(--dsw-alias-label-primary-foreground, #fff);
+}
+
+.runMark[data-run-mark="blocked"] {
+  background: color-mix(in srgb, var(--dsw-alias-state-warn-primary, #f59e0b) 18%, var(--dsw-alias-bg-layer-1));
+  color: var(--dsw-alias-state-warn-primary, #f59e0b);
+}
+
+/* 「这张被整张盖住了」。它画在 `.world` 覆盖层上（不是卡片内），坐标由
+   CanvasWorkspace 按被盖住那张卡的右下角给出——正是那块卡看不见的地方，也
+   正因为看不见，这条提示必须由外层来说。左上角是身份锚定徽标、右上角是胶带
+   序号与运行痕迹，只有右下角在各种节点类型上都空着。
+
+   `transform: translateY(-100%)` 把徽标整体挪到那个点之上：`left/top` 给的是
+   被盖住卡片的右下角，徽标自己占一圈高，不挪的话它会压在卡片外面而不是贴着。 */
 .overlapBadge {
   position: absolute;
-  right: -10px;
-  bottom: -10px;
+  transform: translate(8px, -100%);
   z-index: var(--z-hover);
   max-width: 220px;
   padding: 2px 8px;
@@ -3573,14 +4261,19 @@
   pointer-events: none;
 }
 
-/* Multi-select strip above the dock: says what a stitch would cover and in
-   which order, matching the badges. */
+/* Multi-select strip, on the first line of the chrome row: says what a stitch
+   would cover and in which order, matching the badges.
+
+   WHY it is not an absolute layer any more: it used to sit at bottom: 66px,
+   which is exactly where the align bar now lives. Two independently positioned
+   floating strips do not know each other's height, so whichever renders later
+   paints over the other -- and this is the same mistake the dock / zoom dock /
+   minimap made before they were folded into one wrapping flex row. Both strips
+   are now members of that row and cannot overlap by construction. */
 .composeBar {
-  position: absolute;
-  left: 50%;
-  bottom: 66px;
-  transform: translateX(-50%);
-  z-index: var(--z-dock-raised);
+  flex: 0 0 100%;
+  width: fit-content;
+  margin-inline: auto;
   display: flex;
   align-items: center;
   gap: 8px;
@@ -3632,6 +4325,160 @@
 .composeBarRun:disabled {
   opacity: 0.5;
   cursor: not-allowed;
+}
+
+/* --------------------------------------------------------------- hidden bar */
+
+/* 「N 张卡片已隐藏 / 全部显示」。
+ *
+ * WHY 一定要有这条：隐藏是**单向**的。卡片从画面上消失之后，选中、框选、⌘A
+ * 都碰不到它，用户在画布上再也找不到把它叫回来的入口。没有这条提示，隐藏就
+ * 等于「删除，但还占着导出」。
+ *
+ * WHY 和拼接条同一套外观：两者都是「当前状态的一句话 + 一个动作」，出现在
+ * 同一行里。换一套配方会让用户以为这是另一种层级的东西。
+ *
+ * WHY 不是 absolute 层：与 `.composeBar` / `.alignBar` 完全相同的教训——
+ * 底栏这一行是唯一知道彼此高度的布局，多一个绝对层就是多一次互相压住。 */
+.hiddenRow {
+  flex: 0 0 100%;
+  display: flex;
+  justify-content: center;
+  pointer-events: none;
+}
+
+.hiddenBar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 5px 12px;
+  border-radius: 999px;
+  border: 1px dashed var(--dsw-alias-border-l1);
+  background: color-mix(in srgb, var(--dsw-alias-bg-layer-1) 92%, transparent);
+  backdrop-filter: blur(10px);
+  box-shadow: var(--dsw-shadow-lv2);
+  font-size: 11px;
+  color: var(--dsw-alias-label-secondary);
+  /* 条子本身是读数，让它穿透；唯一的按钮自己 opt in。 */
+  pointer-events: none;
+}
+
+/* 虚线边框而不是实线：这条提示描述的是「画布此刻少了一些东西」，不是画布的
+   常态。实线边框会把它读成底栏的一部分。 */
+.hiddenBarIcon {
+  font-size: 12px;
+  color: var(--dsw-alias-label-tertiary);
+}
+
+.hiddenBarShow {
+  pointer-events: auto;
+  height: 20px;
+  padding: 0 10px;
+  border: 1px solid var(--dsw-alias-border-l1);
+  border-radius: 999px;
+  background: transparent;
+  color: var(--dsw-alias-label-primary);
+  font-family: inherit;
+  font-size: 11px;
+  font-weight: 500;
+  cursor: pointer;
+}
+
+.hiddenBarShow:hover {
+  background: var(--dsw-alias-interactive-bg-hover);
+}
+
+/* --------------------------------------------------------------- align bar */
+
+/* 多选时出现在底栏上方那一行的对齐条。
+ *
+ * WHY 在 `.canvasChrome` 里面、而不是又一个 `position: absolute`：
+ * 这里是踩过的坑。底栏、缩放排、缩略图原本各自绝对定位，在真实面板宽度下
+ * 互相压住——这就是整个布局守卫存在的原因。对齐条第一版又犯了同一个错
+ * （`bottom: 66px` 的绝对层），在 860px 及以下直接压在缩放排上 805–7625px²；
+ * 守卫当场抓住了它。
+ *
+ * 所以它现在是弹性行的第一个成员，`flex-basis: 100%` 让它独占一行：
+ *  - 排在底栏**上面**，因为它是一个会改坐标的动作，不该盖住底栏；
+ *  - 行高由内容决定，`.canvasChrome` 向上长，底栏那一行仍贴着底边不动；
+ *  - 它与任何东西都不可能在几何上重叠，因为它和它们在同一条流里。
+ * `margin-inline: auto` 让它像底栏一样居中（容器是 flex-start）。 */
+/* 对齐条所在的那一行：永远是自己的整行，内容居中。
+   行本身不吃点击（否则它会拦住画布上的框选起点），只有药丸吃。 */
+.alignRow {
+  flex: 0 0 100%;
+  display: flex;
+  justify-content: center;
+  pointer-events: none;
+}
+
+.alignBar {
+  display: flex;
+  align-items: center;
+  /* 窄面板下八枚按钮 + 读数会超过一行：允许换行，而不是溢出到画布外面。
+     `max-width` 与 `.canvasChrome` 的左右 padding 对齐，圆角药丸不会被切。 */
+  flex-wrap: wrap;
+  justify-content: center;
+  max-width: calc(100% - 8px);
+  gap: 2px;
+  padding: 4px 8px;
+  border-radius: 999px;
+  border: 1px solid var(--dsw-alias-border-l1);
+  background: color-mix(in srgb, var(--dsw-alias-bg-layer-1) 92%, transparent);
+  backdrop-filter: blur(10px);
+  box-shadow: var(--dsw-shadow-lv2);
+  pointer-events: auto;
+}
+
+.alignBarLabel {
+  padding: 0 8px 0 4px;
+  font-size: 11px;
+  color: var(--dsw-alias-label-secondary);
+  white-space: nowrap;
+}
+
+.alignBarSlot {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+}
+
+/* 六枚对齐与两枚分布之间的一条竖线：它们的差别是「选中两个就够」与
+   「至少要三个」，靠间距分不出来，靠一条线才分得出来。 */
+.alignBarDivider {
+  width: 1px;
+  height: 16px;
+  margin: 0 4px;
+  background: var(--dsw-alias-border-l1);
+}
+
+.alignBarButton {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 26px;
+  height: 26px;
+  padding: 0;
+  border: none;
+  border-radius: var(--dsw-radius-sm);
+  background: transparent;
+  color: var(--dsw-alias-label-secondary);
+  cursor: pointer;
+}
+
+.alignBarButton:hover {
+  background: var(--dsw-alias-interactive-bg-hover);
+  color: var(--dsw-alias-label-primary);
+}
+
+.alignBarButton:disabled {
+  opacity: 0.35;
+  cursor: not-allowed;
+}
+
+.alignBarButton:disabled:hover {
+  background: transparent;
+  color: var(--dsw-alias-label-secondary);
 }
 
 /* `local` shares the accent of `heavy` (both leave the plain chat call) but
@@ -3699,6 +4546,27 @@
   overflow-x: auto;
   scrollbar-width: none;
   padding: 1px 0;
+  /**
+   * A hidden scrollbar plus a hard cut is how "there is more here" turns into
+   * "this is broken". The card is 320px wide and eleven presets never fit, so
+   * the last pill was always sliced in half — the exact shape of a layout bug.
+   * The fade is the affordance: it only shows on the side that has content
+   * scrolled away, because `mask` is composed from the element's own scroll
+   * state via the `data-` flags below.
+   */
+  mask-image: linear-gradient(to right, transparent 0, black 8px, black calc(100% - 8px), transparent 100%);
+}
+
+.posePresets[data-scroll-start] {
+  mask-image: linear-gradient(to right, black 0, black calc(100% - 8px), transparent 100%);
+}
+
+.posePresets[data-scroll-end] {
+  mask-image: linear-gradient(to right, transparent 0, black 8px, black 100%);
+}
+
+.posePresets[data-scroll-start][data-scroll-end] {
+  mask-image: none;
 }
 
 .posePresets::-webkit-scrollbar { display: none; }
@@ -3891,10 +4759,26 @@
   align-items: center;
   gap: 8px;
   min-width: 0;
+  /* 允许换行，并且只在真的放不下时才换。
+
+     380px 的卡片里三个「标签 + 下拉」共占约 364px，其中「镜头衔接」那一
+     格只有 65px，而它的选项文字需要 94px——`接上一镜尾帧` 被截成
+     `接上一…`，与它下面那条「接上一镜会丢身份参考」的警告正好对不上。英文
+     （`Carry from previous last frame` 需 186px）与俄文（`Продолжить с
+     последнего кадра` 需 203px）更糟，那一格会缩到 27px，几乎只剩箭头。
+
+     实测过的三种改法（真浏览器，380 / 420 / 560px × 三语）：整条换行、第一
+     项独占一行、以及这一条「只在放不下时换」。中文在 380px 仍是一行 26px
+     （这一条不额外占高），英俄两语各变两行 58px——镜头列表本来就是
+     `flex: 1` 的滚动区，少 32px 不会把底部的按钮挤出去。 */
+  flex-wrap: wrap;
+  row-gap: 6px;
 }
 
 .storyboardField {
-  flex: 1;
+  /* `1 1 auto` 而不是 `1`：`flex: 1` 的 basis 是 0，三格永远等分，文字长短
+     与下拉需要多宽都参与不进来。改成按内容起算，短的那格让位给长的。 */
+  flex: 1 1 auto;
   min-width: 0;
   display: flex;
   align-items: center;
@@ -3908,10 +4792,49 @@
   white-space: nowrap;
 }
 
+/* 规范说明：一行灰字讲清「段落/台词/分段」三条估时规则。它解释的是下面
+   每一行为什么这样填，所以放在设置条与镜头列表之间，不放进设置条里——
+   塞进那一行会把三个下拉挤窄。
+
+   字号取 11px 而不是 10.5px：宿主原生 UI 的字号刻度只有整数值
+   （`docs/native-ui-contract.md`），半像素字号会被 `verify-native-ui` 判红，
+   在 1x 屏上也会渲染成模糊的字。行高收到 1.35 抵消多出来的半像素，
+   两行中文仍是 30px，镜头列表照旧滚动。 */
+.storyboardHint {
+  flex: none;
+  margin: -2px 0 0;
+  font-size: 11px;
+  line-height: 1.35;
+  color: var(--dsw-alias-label-tertiary);
+}
+
+.storyboardCastWarn {
+  flex: none;
+  margin: -2px 0 0;
+  font-size: 11px;
+  line-height: 1.35;
+  color: var(--dsw-alias-state-warn-primary, #f59e0b);
+}
+
+/* 一粒角标而不是整行变色：这一镜仍然能跑、仍然有用，只是少了钉住的脸。
+   整行染成警示色会让用户以为它坏了、以为不该点它。 */
+.storyboardCastChip {
+  flex: none;
+  padding: 0 5px;
+  border-radius: var(--dsw-radius-sm);
+  font-size: 10px;
+  line-height: 15px;
+  color: var(--dsw-alias-state-warn-primary, #f59e0b);
+  border: 1px solid currentColor;
+  white-space: nowrap;
+}
+
 /* 下拉：与 `.composerControls [data-dsh-select]` / `.generateForm [data-dsh-select]`
    同一套描边、圆角与字号；保留原生 select，键盘与读屏都直通。 */
 .storyboardSelect {
-  flex: 1;
+  /* 同上：basis 从 0 改成内容宽，同时保留 `min-width: 0` 让它在极端窄的卡片
+     里仍能被压缩，而不是把整条设置撑破。 */
+  flex: 0 1 auto;
   min-width: 0;
   height: 26px;
   border-radius: var(--dsw-radius-sm);
@@ -4127,6 +5050,15 @@
   height: 22px;
   border-radius: var(--dsw-radius-sm);
   font-size: 11px;
+}
+
+/* 台词超时的提醒：一行警示色小字，独占一行。它必须是「提醒」而不是「错误」——
+   4.5 字/秒只是经验值，用户完全可以坚持自己的判断，所以不用红色边框、不拦运行。 */
+.storyboardSpeechWarn {
+  display: block;
+  font-size: 11px;
+  line-height: 1.35;
+  color: var(--dsw-alias-state-warn-primary, #f59e0b);
 }
 
 /* 单镜的「生成这一镜」：低调的描边按钮，主按钮在底部，这一层不该抢主次 */
@@ -4567,7 +5499,10 @@
 .proposalDiscard {
   padding: 4px 12px;
   border-radius: var(--dsw-radius-sm);
-  border: 1px solid var(--dsw-alias-border-secondary);
+  /* `--dsw-alias-border-secondary` 不存在（见 docs/native-ui-contract.md 的禁用
+     名单）：浏览器整条 `border` 声明被丢弃，于是「接受/丢弃」两个按钮连边框都
+     没有，只靠文字浮在背景上。同一份文档给的替换是 `border-l2`。 */
+  border: 1px solid var(--dsw-alias-border-l2);
   background: transparent;
   color: var(--dsw-alias-label-primary);
   font-size: 12px;

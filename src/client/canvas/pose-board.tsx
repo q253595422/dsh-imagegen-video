@@ -68,6 +68,32 @@ export function PoseBoard(props: {
 }): React.JSX.Element {
   const { node, rig } = props
   const canvasRef = useRef<HTMLCanvasElement>(null)
+  /**
+   * The preset row scrolls horizontally (eleven presets never fit a 320px card)
+   * and hides its scrollbar, so without a cue the last pill just looked sliced
+   * in half. These two flags say which ends still have content off-screen; the
+   * stylesheet turns them into a one-sided fade. `end: false` means "nothing
+   * more to the right", which is also the state before the first measurement —
+   * a fade over content the user can already see the end of is worse than none.
+   */
+  const presetRowRef = useRef<HTMLDivElement>(null)
+  const [presetScroll, setPresetScroll] = useState({ start: false, end: false })
+  const updatePresetScroll = useCallback((): void => {
+    const row = presetRowRef.current
+    if (row === null) return
+    const max = row.scrollWidth - row.clientWidth
+    setPresetScroll({ start: row.scrollLeft > 1, end: max - row.scrollLeft > 1 })
+  }, [])
+  // Measured, not assumed: the card resizes with zoom and with the node's own
+  // width, so "does it overflow" changes without any React state changing.
+  useEffect(() => {
+    updatePresetScroll()
+    const row = presetRowRef.current
+    if (row === null || typeof ResizeObserver === 'undefined') return
+    const observer = new ResizeObserver(() => updatePresetScroll())
+    observer.observe(row)
+    return () => observer.disconnect()
+  }, [updatePresetScroll])
   // 拖动预览 = 环绕相机（只转视角，不改舞台数据）。初值取当前机位，
   // 于是卡片一开始看到的就是用户在机位里摆好的那一个角度。
   const [camera, setCamera] = useState<PoseCamera>(DEFAULT_CAMERA)
@@ -215,7 +241,20 @@ export function PoseBoard(props: {
       ><ToolbarIcon name="expand" size={13} />{tt('canvas.stage.title')}</button>
     </div>
 
-    <div className={css.posePresets} onPointerDown={event => event.stopPropagation()} role="group" aria-label={tt('canvas.pose.presets')}>
+    <div
+      className={css.posePresets}
+      onPointerDown={event => event.stopPropagation()}
+      role="group"
+      aria-label={tt('canvas.pose.presets')}
+      /* Which ends still have content scrolled away. Written from the real
+       * scroll offsets so the CSS mask can fade exactly the side that continues
+       * — a static fade on both ends would dim a row the user can already read
+       * to the end of. */
+      data-scroll-start={presetScroll.start ? '' : undefined}
+      data-scroll-end={presetScroll.end ? '' : undefined}
+      onScroll={updatePresetScroll}
+      ref={presetRowRef}
+    >
       {POSE_PRESETS.map(preset => <button
         key={preset.id}
         type="button"

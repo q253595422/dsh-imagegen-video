@@ -18,6 +18,7 @@ import {
   SKETCH_NODE_SIZE, STORYBOARD_NODE_SIZE, TEXT_NODE_SIZE,
 } from './constants.ts'
 import type { Point } from './geometry.ts'
+import { withoutFlags } from './node-flags.ts'
 
 type ProjectSummary = Awaited<ReturnType<ImageGenApi['canvasList']>>[number]
 interface ResizeState {
@@ -213,14 +214,20 @@ export function annotationAnchor(image: CanvasNode, rect: CanvasRect): Point {
 }
 
 /** Clone a set of nodes plus the prompt cards attached to any cloned image
- *  node, remapping every attachment link to the copies. */
+ *  node, remapping every attachment link to the copies.
+ *
+ * 每个副本都过一遍 `withoutFlags`：复制一份「锁住的卡」，用户要的是「再来一份
+ * 能动的」；复制一份「藏起来的卡」更要命——粘完屏幕上什么都没有，看起来像
+ * 粘贴失败。锁定与隐藏是对源卡的临时处置，不是卡片内容。 */
 export function cloneNodesWithCards(source: CanvasNode[], allNodes: CanvasNode[], dx: number, dy: number): { clones: CanvasNode[]; idMap: Map<string, string> } {
   const idMap = new Map<string, string>()
   const clones: CanvasNode[] = []
   const push = (node: CanvasNode, metadata: CanvasNode['metadata']): void => {
     const id = newId('node')
     idMap.set(node.id, id)
-    clones.push({ ...node, id, x: Math.round(node.x + dx), y: Math.round(node.y + dy), metadata: metadata ?? { ...nodeMetadata(node) } })
+    // 走同一个出口：复制、粘贴、原地复制、连卡片一起搬，四条路都在这里汇合，
+    // 漏掉任何一条都会让新卡一出生就带着旧卡的锁或隐身。
+    clones.push({ ...node, id, x: Math.round(node.x + dx), y: Math.round(node.y + dy), metadata: withoutFlags(metadata ?? { ...nodeMetadata(node) }) })
   }
   for (const node of source) push(node, undefined)
   for (const node of source) {

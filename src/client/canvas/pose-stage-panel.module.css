@@ -1,7 +1,7 @@
 /* ------------------------------------------------------------ 导演台面板 ---
-   全屏三栏：左栏排角色与机位、中间正方形视口、右栏调场景。
-   所有颜色都走宿主 token，不写死任何十六进制值——深色主题下才能自动跟随。
-   层次用 --z-scrim / --z-popover-raised 两档，与画布其它浮层同一张 z 表。 */
+   全屏三栏：左栏排角色/道具/机位、中间正方形视口 + 底部时间轴、右栏调关键帧
+   与场景。所有颜色都走宿主 token，不写死任何十六进制值——深色主题下才能自动
+   跟随。层次用 --z-scrim / --z-popover-raised 两档，与画布其它浮层同一张 z 表。 */
 
 .root {
   position: fixed;
@@ -95,6 +95,11 @@
 }
 
 .iconButton:hover {
+  background: var(--dsw-alias-bg-layer-3);
+  color: var(--dsw-alias-label-primary);
+}
+
+.iconButton[aria-pressed='true'] {
   background: var(--dsw-alias-bg-layer-3);
   color: var(--dsw-alias-label-primary);
 }
@@ -226,14 +231,27 @@
   cursor: pointer;
 }
 
-.sideButton:hover {
+.sideButton:hover:not(:disabled) {
   background: var(--dsw-alias-bg-layer-3);
   color: var(--dsw-alias-label-primary);
 }
 
+.sideButton:disabled { opacity: 0.45; cursor: default; }
+
+/* 两枚道具按钮并排：它们是同一种动作（加一个程序化几何体），
+   竖排会让左栏底部堆成一列读不出分组。 */
+.propButtons {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 4px;
+}
+
 /* ------------------------------------------------------------- 中间 */
 
+/* --timeline-h 是整块面板里唯一的时间轴高度定义：底部工具条的 bottom 与时间轴
+   的 height 都由它推出来，两处各写一个数时，改一处就会让工具条压住时间轴。 */
 .stage {
+  --timeline-h: 148px;
   flex: 1;
   min-width: 320px;
   display: flex;
@@ -243,20 +261,27 @@
   overflow: hidden;
 }
 
-.stageTop {
-  position: absolute;
-  top: 10px;
-  left: 50%;
-  transform: translateX(-50%);
-  z-index: var(--z-content-raised);
+/* 顶栏：模式切换居中、两个出口靠右。用 flex 而不是绝对定位居中——
+   三块内容高度不同时，绝对居中会让切换条与按钮错开几像素。 */
+.stageTopBar {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  height: 40px;
+  padding: 0 12px;
+  border-bottom: 1px solid var(--dsw-alias-border-l1);
 }
 
+.topSpacer { flex: 1; min-width: 0; }
+
 .segmented {
+  flex: none;
   display: inline-flex;
   gap: 2px;
   padding: 2px;
   border-radius: 999px;
-  background: color-mix(in srgb, var(--dsw-alias-bg-layer-1) 78%, transparent);
+  background: var(--dsw-alias-bg-layer-2);
   border: 1px solid var(--dsw-alias-border-l1);
 }
 
@@ -277,9 +302,76 @@
   color: var(--dsw-alias-label-primary-foreground, var(--dsw-alias-bg-layer-1));
 }
 
+.exportRow {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 6px;
+}
+
+/* 主出口：实心强调色，与「机位截图」的描边按钮区分主次。 */
+.exportButton {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  height: 26px;
+  padding: 0 10px;
+  border: none;
+  border-radius: var(--dsw-radius-sm);
+  background: var(--dsw-alias-brand-primary);
+  color: var(--dsw-alias-label-primary-foreground, var(--dsw-alias-bg-layer-1));
+  font-size: 11px;
+  font-weight: 600;
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+.exportButton:hover:not(:disabled) {
+  background: color-mix(in srgb, var(--dsw-alias-brand-primary) 86%, var(--dsw-alias-label-primary));
+}
+
+/* 禁用态的表述是「这个舞台还没有时间轴」，不是「坏了」——所以只降透明度，
+   不像错误那样变红。 */
+.exportButton:disabled { opacity: 0.45; cursor: default; }
+
+.exportProgress {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  font-size: 11px;
+  color: var(--dsw-alias-label-secondary);
+  font-variant-numeric: tabular-nums;
+}
+
+.exportBar {
+  flex: none;
+  width: 90px;
+  height: 5px;
+  border-radius: 999px;
+  background: var(--dsw-alias-bg-layer-3);
+  overflow: hidden;
+}
+
+.exportBarFill {
+  display: block;
+  height: 100%;
+  border-radius: inherit;
+  background: var(--dsw-alias-brand-primary);
+  transition: width 120ms linear;
+}
+
+.exportPercent {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
 .axisCorner {
   position: absolute;
-  top: 10px;
+  top: 50px;
   right: 12px;
   z-index: var(--z-content-raised);
   display: flex;
@@ -295,8 +387,13 @@
   width: 44px;
   height: 44px;
   border-radius: 50%;
-  background: color-mix(in srgb, var(--dsw-alias-bg-layer-1) 72%, transparent);
-  border: 1px solid var(--dsw-alias-border-l1);
+  /* 罗盘画的是三维视口里的方向，底色就用视口那一档深色。X/Y/Z 用的是
+     400 级静态色，本来就是给深色面配的：放在白色圆片上实测对比度只有
+     1.95:1（Y）和 2.54:1（Z），白底浅色主题下基本读不出来。
+     底色与描边走 token 而不是写字面 hex：这套主题在深浅两档下 `bg-layer-3`
+     与 `border-l1` 都跟着换，写死 #10131a 会在浅色主题里变成一块突兀的黑。 */
+  background: color-mix(in srgb, var(--dsw-alias-bg-layer-3) 84%, transparent);
+  border: 1px solid color-mix(in srgb, var(--dsw-alias-border-l1) 60%, transparent);
   /* 10px 是宿主字号档位的最小一档（9px 不在档位上，native-UI 契约会拦）。
      罗盘里的 X/Y/Z 是单字符，10px 在一个 44px 的圆里仍然读得清。 */
   font-size: 10px;
@@ -345,10 +442,12 @@
 
 .stageCanvas:active { cursor: grabbing; }
 
+/* 浮动工具条必须停在时间轴上沿之上：时间轴是固定高度的一条，工具条若按
+   bottom: 12px 定位就会被它整个盖住，用户只剩一个点不到的截图按钮。 */
 .stageBottom {
   position: absolute;
   left: 50%;
-  bottom: 12px;
+  bottom: calc(var(--timeline-h) + 10px);
   transform: translateX(-50%);
   z-index: var(--z-content-raised);
   display: flex;
@@ -435,6 +534,216 @@
 .promptSend:hover:not(:disabled) { color: var(--dsw-alias-label-primary); }
 .promptSend:disabled { opacity: 0.4; cursor: default; }
 
+/* --------------------------------------------------------- 时间轴 */
+
+/* 占住整条底边、固定高度：它一伸缩，上方正方形视口就跟着变高变矮，
+   播放时画面会自己跳动。 */
+.timelineBar {
+  flex: none;
+  height: var(--timeline-h);
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 8px 12px 10px;
+  border-top: 1px solid var(--dsw-alias-border-l1);
+  background: var(--dsw-alias-bg-layer-2);
+  min-width: 0;
+  box-sizing: border-box;
+}
+
+.timelineTop {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+}
+
+.playRow {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+}
+
+/* 播放键是这一排里唯一的「主」动作：实心圆、比两侧的逐帧键大一号。 */
+.playButton {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 26px;
+  height: 26px;
+  padding: 0;
+  border: none;
+  border-radius: 50%;
+  background: var(--dsw-alias-brand-primary);
+  color: var(--dsw-alias-label-primary-foreground, var(--dsw-alias-bg-layer-1));
+  cursor: pointer;
+}
+
+.playButton:hover { background: color-mix(in srgb, var(--dsw-alias-brand-primary) 86%, var(--dsw-alias-label-primary)); }
+
+.playButton[aria-pressed='true'] {
+  background: var(--dsw-alias-bg-layer-3);
+  color: var(--dsw-alias-label-primary);
+}
+
+.timelineClock {
+  flex: 1;
+  min-width: 0;
+  font-size: 11px;
+  color: var(--dsw-alias-label-secondary);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.durationField {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 11px;
+  color: var(--dsw-alias-label-tertiary);
+  white-space: nowrap;
+}
+
+/* 时长是整数秒：给宽一点会让人以为可以填 3.5，而不是拖滑杆。 */
+.durationField .number { width: 48px; }
+
+.fpsBadge {
+  flex: none;
+  padding: 1px 6px;
+  border-radius: var(--dsw-radius-sm);
+  background: var(--dsw-alias-bg-layer-3);
+  color: var(--dsw-alias-label-tertiary);
+  font-size: 10px;
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+}
+
+/* 滑杆与刻度叠在同一行：刻度按百分比定位，滑杆的拇指正好落在它的刻度上，
+   两者分开排会让「第 3 秒」与实际位置差半个滑杆拇指的宽度。 */
+.scrubRow {
+  position: relative;
+  flex: none;
+  padding-bottom: 12px;
+  min-width: 0;
+}
+
+.scrub {
+  width: 100%;
+  height: 14px;
+  margin: 0;
+  accent-color: var(--dsw-alias-brand-primary);
+  cursor: pointer;
+}
+
+.ticks {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  display: flex;
+  justify-content: space-between;
+  pointer-events: none;
+}
+
+.tick {
+  font-size: 10px;
+  color: var(--dsw-alias-label-tertiary);
+  font-variant-numeric: tabular-nums;
+}
+
+/* 逐轨关键帧。轨道区自己滚：十五秒里塞满五个角色两条机位时，
+   不让它长高才不会把整条时间轴顶出面板。
+
+   `padding-inline: 4px` 不是留白好看：`overflow-y: auto` 的容器只能配
+   `overflow-x: hidden`（CSS 会把 visible 提升成 auto），裁剪边界因此落在
+   **padding box 外沿**。结尾那颗菱形（100%）的中心压在轨道右端，右半边
+   本会探出去被裁成「◀」——加内边距之后那半个菱形落在 padding 区里，是
+   可见的。0% 那颗同理。 */
+.tracks {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding-inline: 4px;
+  overflow-y: auto;
+  overflow-x: hidden;
+}
+
+.trackRow {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  height: 18px;
+  min-width: 0;
+}
+
+.trackName {
+  flex: none;
+  width: 72px;
+  font-size: 10px;
+  color: var(--dsw-alias-label-secondary);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.lane {
+  position: relative;
+  flex: 1;
+  min-width: 0;
+  height: 14px;
+  border-radius: var(--dsw-radius-sm);
+  background: var(--dsw-alias-bg-layer-3);
+  cursor: pointer;
+}
+
+/* 关键帧画成菱形而不是圆点：与滑杆拇指（圆）区分，用户在轨道上看到的就是
+   关键帧，不会误以为那是一颗可以拖的滑杆头。
+
+   两端的 0% / 100% 必须自己回退半颗宽度：`left: 100%` 加上 `margin-left`
+   只把中心拉回，菱形的右半边仍然探到轨道外，而轨道外层是
+   `overflow-x: hidden`——结果是**结尾那颗直接看不见**。所以位置统一写成
+   `calc(<百分比> - 3.5px)` 再配 `margin-left: 0`，让每颗菱形的中心都落在
+   轨道之内。 */
+.keyDot {
+  position: absolute;
+  top: 50%;
+  width: 7px;
+  height: 7px;
+  transform: translateY(-50%) rotate(45deg);
+  /* 走 token 而不是写 1px：主题换一版圆角时这颗菱形不该停在旧值上，
+     而 native-UI 契约也不允许字面量半径。 */
+  border-radius: var(--dsw-radius-xs);
+  background: var(--dsw-alias-label-tertiary);
+}
+
+.keyDotCurrent { background: var(--dsw-alias-brand-primary); }
+
+/* 轨迹段：一段**区间**，画成横条而不是点。菱形（实心）仍然是最显眼的一层——
+   先看见「哪一刻被固定」，再看见「哪段时间在按路径走」。
+
+   颜色用 `state-warn-primary`（琥珀）而不是 `brand-primary`：这套主题的品牌色
+   在浅色下是 `#0f1115`、深色下是 `#f9fafb`——**就是黑与白**，混出来是一条
+   灰带，和轨道底色几乎分不开。琥珀在两种主题下都是 `#f59e0b`，既看得出是
+   一段区间，也不需要为两套主题各写一个值。 */
+.pathBand {
+  position: absolute;
+  top: 50%;
+  height: 6px;
+  transform: translateY(-50%);
+  border-radius: var(--dsw-radius-xs);
+  background: var(--dsw-alias-state-warn-primary);
+  opacity: 0.45;
+  pointer-events: none;
+}
+
 /* ------------------------------------------------------------- 右栏 */
 
 .inspector {
@@ -463,6 +772,14 @@
   font-size: 12px;
   font-weight: 600;
   color: var(--dsw-alias-label-primary);
+}
+
+/* 记录/删除关键帧成对出现：它们作用在同一个时刻上，分开排会让用户
+   以为「删除」是删整条轨道。 */
+.keyframeRow {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 4px;
 }
 
 .field {
@@ -526,7 +843,7 @@
   font-variant-numeric: tabular-nums;
 }
 
-/* 三格 X/Y/Z：每格是「轴字母 + 数字框」，与 LibTV 的排列一致。 */
+/* 三格 X/Y/Z：每格是「轴字母 + 数字框」，与竞品的排列一致。 */
 .triple {
   display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr));
@@ -617,9 +934,79 @@
   cursor: pointer;
 }
 
+/* 姿势预设与轨迹形状都是「点一下套用」，用同一个两列网格：
+   一列排长会让十一个姿势把右栏撑出一屏滚动。 */
+.presetGrid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 4px;
+}
+
+.presetChip,
+.pathChip {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+  min-width: 0;
+  height: 26px;
+  padding: 0 6px;
+  border: 1px solid var(--dsw-alias-border-l1);
+  border-radius: var(--dsw-radius-sm);
+  background: transparent;
+  color: var(--dsw-alias-label-secondary);
+  font-size: 11px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  cursor: pointer;
+}
+
+.presetChip:hover,
+.pathChip:hover {
+  background: var(--dsw-alias-bg-layer-3);
+  color: var(--dsw-alias-label-primary);
+}
+
+.pathChip { height: 24px; }
+
+/* 一条已提交的轨迹：形状名 + 删除 + 时间窗口 + 高度/朝向。 */
+.pathRow {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 8px;
+  border: 1px solid var(--dsw-alias-border-l1);
+  border-radius: var(--dsw-radius-md);
+  background: var(--dsw-alias-bg-layer-1);
+}
+
+.pathRowHead {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 6px;
+  min-width: 0;
+}
+
+.pathShape {
+  flex: 1;
+  min-width: 0;
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--dsw-alias-label-primary);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* 轨迹行的删除键常显：它旁边没有别的可点对象，不需要 hover 才显形。 */
+.pathRowHead .rowDelete { opacity: 1; }
+
 /* 窄屏（<1100px）：右栏先让出 40px，中间视口至少还有 320px。
    收窄而不是堆叠——一个竖着排的三栏面板会让视口变成一条缝。 */
 @media (max-width: 1100px) {
   .inspector { width: 260px; }
   .sidebar { width: 210px; }
+  .stage { --timeline-h: 136px; }
 }

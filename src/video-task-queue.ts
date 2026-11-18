@@ -166,6 +166,7 @@ export class VideoTaskQueue {
         hasFirstFrame: request.firstFrame !== undefined,
         hasLastFrame: request.lastFrame !== undefined,
         ...request.refName === undefined ? {} : { refName: request.refName },
+        ...request.canvas === undefined ? {} : { canvas: request.canvas },
       },
     }
     await this.hooks.writePending(entry)
@@ -304,6 +305,10 @@ export class VideoTaskQueue {
           upstream: entry.upstream,
           ...entry.channelId === undefined ? {} : { channelId: entry.channelId },
           ...entry.request.refName === undefined ? {} : { refName: entry.request.refName },
+          // Restored verbatim: a resumed render is still the same canvas node's
+          // render, and dropping the lineage here is what made a live restart
+          // leave an unclaimed placeholder behind.
+          ...entry.request.canvas === undefined ? {} : { canvas: entry.request.canvas },
           resume: { taskId: entry.remoteTaskId, family: entry.family, submittedAt: entry.submittedAt },
         },
         status: 'queued',

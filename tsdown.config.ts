@@ -156,7 +156,11 @@ const clientConfig: UserConfig = {
     // react-flow and its transitive runtime deps must be inlined: a browser
     // bundle cannot resolve bare requires at runtime. react/react-dom stay
     // external (CLIENT_EXTERNALS) so react-flow uses the host's single React.
-    alwaysBundle: ['lucide-react', '@xyflow/react', '@xyflow/system', 'zustand', 'classcat'],
+    // `three` 的子路径也要逐个列出来：这份清单按**说明符**匹配，写了 `three`
+    // 不会连带把 `three/examples/jsm/loaders/GLTFLoader.js` 也打进来。漏掉的那
+    // 一个会退化成 `require(...)`，而宿主的加载器没有这条 require —— 报错是
+    // 「unexpected require」，读起来像是插件在乱加载东西，实际是清单少了一行。
+    alwaysBundle: ['lucide-react', '@xyflow/react', '@xyflow/system', 'zustand', 'classcat', 'three', 'three/examples/jsm/loaders/GLTFLoader.js'],
   },
   define: {
     'process.env.NODE_ENV': JSON.stringify(process.env.NODE_ENV ?? 'production'),

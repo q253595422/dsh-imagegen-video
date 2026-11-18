@@ -71,7 +71,13 @@ export function CastDialog(props: CastDialogProps): React.JSX.Element {
   </div>
 }
 
-/** 提示词里的一句身份说明，供画布拼进最终 prompt。 */
+/**
+ * 提示词里的一句身份说明，供画布拼进最终 prompt。
+ *
+ * `castPromptLines` 给的是 0 基下标（数组位置），而这句话要读给人看，也必须
+ * 和「参考图 1 是第几张」对得上：模型的参考图没有第 0 张。所以序号在这里
+ * +1，而不是让每个调用方各记得加一次——对话框里的预览用的就是 1。
+ */
 export function castLine(member: CastMember, index: number): string {
-  return tt(castPromptKey(member.role), { index, name: member.name })
+  return tt(castPromptKey(member.role), { index: index + 1, name: member.name })
 }

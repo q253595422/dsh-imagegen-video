@@ -919,6 +919,7 @@ export class SkillRunner {
       mime: stitched.mime,
       ...stitched.duration === undefined ? {} : { duration: stitched.duration },
       prompt: this.composePrompt(clips),
+      canvasId: task.canvasId,
     })
     task.stage = t('canvas.skills.composeDone', { count: clips.length })
 

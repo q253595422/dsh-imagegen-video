@@ -18,6 +18,7 @@
  *  D7  the preview route returns the same plan the submit path will use
  *  D8  the plan reaches the task summary and the history entry
  *  D9  a render failure does not lose the plan that produced it
+ *  D10 the system prompt carries the shooting rules the storyboard enforces
  *
  * Run: node scripts/smoke-video-director.mjs   (from the package root, after a build)
  */
@@ -511,6 +512,34 @@ await check('D9 a failed render keeps the plan, so the failure is explainable', 
   } finally {
     await upstream.close()
   }
+})
+
+// --------------------------------------------------------------------- D10
+await check('D10 the system prompt carries the shooting rules the board enforces', async () => {
+  // The prompt is what a chat model is told; the board's duration advisory is
+  // what the user is told. If the two disagree, the model writes 12-second
+  // dialogue into a 5-second shot and the advisory blames the user for it.
+  // Imported from SOURCE: `directorSystemPrompt` is an internal helper, not
+  // part of the published entry point, and this check is about its text.
+  const { directorSystemPrompt } = await import(new URL('../src/video-director.ts', import.meta.url).href)
+  const zh = directorSystemPrompt(true)
+  const en = directorSystemPrompt(false)
+  // 8-15 s paragraphs with 2-4 sub-shots: the reason the length list grew.
+  assert.match(zh, /8–15 秒/, 'zh names the paragraph length')
+  assert.match(zh, /2–4 个子镜头/, 'zh names the sub-shot count')
+  assert.match(en, /8-15 seconds/, 'en names the paragraph length')
+  assert.match(en, /2-4 sub-shots/, 'en names the sub-shot count')
+  // 台词 4.5 字/秒 + 2 秒余量 — the same numbers storyboard.ts measures with.
+  assert.match(zh, /4\.5/, 'zh carries the speaking rate')
+  assert.match(zh, /2 秒表演余量/, 'zh carries the performance margin')
+  assert.match(en, /4\.5 Chinese characters/, 'en carries the speaking rate')
+  assert.match(en, /2 seconds of performance/, 'en carries the performance margin')
+  // The earlier rules must survive: a prompt that gained two rules and lost
+  // the JSON contract would be a regression the render path notices late.
+  assert.match(zh, /只输出一个 JSON 对象/, 'the JSON contract is still there (zh)')
+  assert.match(en, /Output exactly one JSON object/, 'the JSON contract is still there (en)')
+  assert.equal(zh.split('\n').filter(line => /^\d+\. /.test(line)).length, 9, 'zh has nine numbered rules')
+  assert.equal(en.split('\n').filter(line => /^\d+\. /.test(line)).length, 9, 'en has nine numbered rules')
 })
 
 console.log(results.join('\n'))

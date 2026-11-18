@@ -44,6 +44,7 @@ import { MODEL_API, AGENT_IMAGE_API, CANVAS_API, CANVAS_SKILL_API, CODE_RENDER_A
 import { buildCanvasBundle, CANVAS_BUNDLE_API, MAX_CANVAS_BUNDLE_BYTES, parseCanvasBundle } from './canvas-bundle.ts'
 import { probeCodeRender } from './code-render-runtime.ts'
 import { makeOutfitRoutes } from './outfit-reference-routes.ts'
+import { stageEncodeSession, stagePutFrame } from './stage-encode.ts'
 
 /** Cap on JSON request bodies (settings ops and generate payloads are small). */
 const MAX_JSON_BODY_BYTES = 24 * 1024 * 1024
@@ -2380,6 +2381,45 @@ export function makeRoutes(deps: ImageGenRoutesDeps): WebRoute[] {
           const asset = await canvas.putFile({ data, mime, name, origin: 'upload' })
           writeJson(res, 200, { ok: true, asset })
         } catch (error) { writeJson(res, 200, { ok: false, code: 'canvas-file-failed', message: messageOf(error) }) }
+      },
+    },
+    // --------------------------------------- director desk video export
+    // 导演台逐帧导出的两段式接口：客户端 POST 每一帧（base64 PNG），最后一帧
+    // 到达或客户端显式调 encode 时，宿主编成 mp4 并写进视频库。
+    //
+    // 为什么由宿主编码而不是浏览器：WebCodecs 的 H.264 受浏览器与画幅约束，
+    // 而这里本来就有 ffmpeg（`clip-compose`）。把编码放到宿主之后，「导出的
+    // 画幅」不再由用户浏览器的能力表决定。
+    {
+      kind: 'exact',
+      path: CANVAS_API.stageFrame,
+      handler: async (req, res) => {
+        if (!guard(req, res, 'POST')) return
+        const body = await readJsonBody(req, MAX_HISTORY_BODY_BYTES)
+        if (body === undefined || typeof body !== 'object') {
+          writeJson(res, 200, { ok: false, code: 'bad-request', message: '请求体必须是 JSON 对象' })
+          return
+        }
+        try {
+          const progress = await stagePutFrame(body as Record<string, unknown>)
+          writeJson(res, 200, { ok: true, ...progress })
+        } catch (error) { writeJson(res, 200, { ok: false, code: 'stage-frame-failed', message: messageOf(error) }) }
+      },
+    },
+    {
+      kind: 'exact',
+      path: CANVAS_API.stageEncode,
+      handler: async (req, res) => {
+        if (!guard(req, res, 'POST')) return
+        const body = await readJsonBody(req)
+        if (body === undefined || typeof body !== 'object') {
+          writeJson(res, 200, { ok: false, code: 'bad-request', message: '请求体必须是 JSON 对象' })
+          return
+        }
+        try {
+          const result = await stageEncodeSession(body as Record<string, unknown>)
+          writeJson(res, 200, { ok: true, ...result })
+        } catch (error) { writeJson(res, 200, { ok: false, code: 'stage-encode-failed', message: messageOf(error) }) }
       },
     },
     // ------------------------------------------------ canvas file preview

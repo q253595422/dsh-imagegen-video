@@ -18,7 +18,7 @@
 
 import { promises as fs } from 'node:fs'
 import path from 'node:path'
-import { VIDEO_API, type VideoDirectorPlan, type VideoHistoryEntry, type VideoHistoryEntryInput, type VideoMode } from './protocol.ts'
+import { VIDEO_API, type CanvasVideoTaskMeta, type VideoDirectorPlan, type VideoHistoryEntry, type VideoHistoryEntryInput, type VideoMode } from './protocol.ts'
 import { imageDataRoot } from './image-storage-path.ts'
 import { extractPoster } from './video-poster.ts'
 
@@ -80,6 +80,8 @@ interface StoredEntry {
   plan?: VideoDirectorPlan
   /** `code` when a chat model wrote the drawing code (absent = model). */
   renderer?: 'model' | 'code'
+  /** Canvas lineage: which canvas / node this clip was rendered for. */
+  canvas?: CanvasVideoTaskMeta
 }
 
 /** The index.json shape. */
@@ -163,6 +165,12 @@ function isStoredEntry(value: unknown): value is StoredEntry {
       const record = video as Record<string, unknown>
       return typeof record.file === 'string' && typeof record.mime === 'string'
     })
+    // 缺项放行、形状错拒收，与画布文档的守卫同一条取舍：这里收得太紧的代价
+    // 不是「拒收一次请求」，而是整条历史记录读回来就没了。只有「明明带了
+    // canvas 却没有 canvasId」才拒收——那种条目会让列表按画布过滤时错判。
+    && (entry.canvas === undefined
+      || (entry.canvas !== null && typeof entry.canvas === 'object'
+        && typeof (entry.canvas as Record<string, unknown>).canvasId === 'string'))
 }
 
 /** Remove one entry's clip files (best effort). */
@@ -206,6 +214,7 @@ function toWire(entry: StoredEntry): VideoHistoryEntry {
     ...entry.channel === undefined ? {} : { channel: entry.channel },
     ...entry.plan === undefined ? {} : { plan: entry.plan },
     ...entry.renderer === undefined ? {} : { renderer: entry.renderer },
+    ...entry.canvas === undefined ? {} : { canvas: entry.canvas },
   }
 }
 
@@ -274,6 +283,7 @@ export async function appendVideoHistory(input: VideoHistoryEntryInput & { files
       ...input.channel === undefined ? {} : { channel: input.channel },
       ...input.plan === undefined ? {} : { plan: input.plan },
       ...input.renderer === undefined ? {} : { renderer: input.renderer },
+      ...input.canvas === undefined ? {} : { canvas: input.canvas },
     }
     const merged = [entry, ...await readIndex()]
     const kept = merged.slice(0, VIDEO_HISTORY_MAX)
@@ -533,6 +543,13 @@ export interface PendingVideoTask {
     hasImages: number
     hasFirstFrame: boolean
     hasLastFrame: boolean
+    /**
+     * Canvas lineage, so a render that survives a restart is still claimable by
+     * the node that submitted it. Without this the restored task comes back
+     * with no `canvas`, the reopened canvas cannot match it to a placeholder,
+     * and a clip that is rendering fine gets reported as lost.
+     */
+    canvas?: CanvasVideoTaskMeta
   }
 }
 

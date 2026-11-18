@@ -17,6 +17,7 @@ import type { ImageAttachmentRef } from '@deepseek-ai/dsh-attachment'
 import type { ImageGenApi } from './api.ts'
 import { ImageGenApiError } from './api.ts'
 import { errorMessage, manualInstallCommand, tt } from './helpers.ts'
+import { BrandMark } from './BrandMark.tsx'
 import { renderMarkdown } from './markdown.tsx'
 import { openImageGenConfig } from './config-entry.tsx'
 import { TemplateLibrary } from './TemplateLibrary.tsx'
@@ -35,7 +36,7 @@ import { DiagnosticsButton, DiagnosticsPanel } from './DiagnosticsPanel.tsx'
 import { SignalsButton, SignalsPanel } from './SignalsPanel.tsx'
 import { GenerationLoading } from './GenerationLoading.tsx'
 import { useImageGenLanguageTick } from './use-language.ts'
-import type { EcommerceRefRole, GenerateMode, GenerateRequest, GeneratedImage, GenerationTask, GenerationTaskStatus, GenerationTaskSummary, HistoryEntry, HistoryImageRef, ProductSetDraft, ProductSetSlot, UpdateInfo, VideoHistoryEntry, VideoTaskSummary } from '../protocol.ts'
+import type { CanvasSummary, EcommerceRefRole, GenerateMode, GenerateRequest, GeneratedImage, GenerationTask, GenerationTaskStatus, GenerationTaskSummary, HistoryEntry, HistoryImageRef, ProductSetDraft, ProductSetSlot, UpdateInfo, VideoHistoryEntry, VideoTaskSummary } from '../protocol.ts'
 import { AGENT_IMAGE_API, SUBSCRIPTION_API, SUBSCRIPTION_PROVIDERS, type SubscriptionProvider } from '../protocol.ts'
 import type { ImageGenConfig, ImageGenScope, ImageModelGroup } from './settings-scope.ts'
 import { imageModelOptions, videoModelOptions } from './settings-scope.ts'
@@ -808,7 +809,7 @@ function resultSurfaceOf(view: BoardView, clip: VideoHistoryEntry | null): Resul
  */
 interface UnifiedHistoryRow {
   key: string
-  kind: 'image' | 'video'
+  kind: 'image' | 'video' | 'canvas'
   createdAt: number
   prompt: string
   /** Model names shown in the row's meta line. */
@@ -821,6 +822,15 @@ interface UnifiedHistoryRow {
   group?: HistoryGroup
   /** The backing clip entry (video rows only). */
   entry?: VideoHistoryEntry
+  /**
+   * The saved canvas (canvas rows only).
+   *
+   * WHY canvases are rows at all: a canvas is where all of this work happens,
+   * so it belongs in the same list as the output — but it is a DOCUMENT, not a
+   * generation. The row therefore only opens it; there is nothing to add to the
+   * gallery or to another canvas.
+   */
+  canvas?: CanvasSummary
 }
 
 /** Adapt one video-history entry into a sidebar row. */
@@ -864,6 +874,53 @@ function imageRowOf(group: HistoryGroup): UnifiedHistoryRow {
     ...entry.images.length > 0 ? { thumbUrl: entry.images[0]!.url } : {},
     meta: `${entry.outputFormat === 'gif' ? 'GIF · ' : ''}${kindLabel} · ${imageCount} ${tt('history.images')}`,
     group,
+  }
+}
+
+/** Adapt one saved canvas into a sidebar row. */
+function canvasRowOf(summary: CanvasSummary): UnifiedHistoryRow {
+  return {
+    key: `canvas:${summary.id}`,
+    kind: 'canvas',
+    // `updatedAt` rather than `createdAt`: the list answers "what was I working
+    // on", and a canvas the user just edited belongs at the top even if it is
+    // weeks old.
+    createdAt: summary.updatedAt,
+    prompt: summary.title,
+    // A canvas has no model of its own: the nodes inside it each carry one.
+    // Leaving this empty keeps the model filter from ever matching it.
+    models: [],
+    ...summary.thumb === undefined || summary.thumb === '' ? {} : { thumbUrl: summary.thumb },
+    meta: `${tt('history.canvasKind')} · ${tt('history.canvasNodes', { count: summary.nodeCount })}`,
+    canvas: summary,
+  }
+}
+
+/**
+ * Merge several newest-first lists into one newest-first list.
+ *
+ * WHY a merge and not a sort: each store already returns its own rows in order,
+ * and re-sorting the union would also reorder rows WITHIN a store. That matters
+ * for the image list — a comparison group and a product set do not necessarily
+ * follow `createdAt` among themselves, and the row a click opens depends on
+ * which entry is first in its group.
+ */
+function mergeNewestFirst<T extends { createdAt: number }>(lists: ReadonlyArray<readonly T[]>): T[] {
+  const cursors = lists.map(() => 0)
+  const merged: T[] = []
+  for (;;) {
+    let picked = -1
+    for (let index = 0; index < lists.length; index += 1) {
+      const candidate = lists[index]![cursors[index]!]
+      if (candidate === undefined) continue
+      if (picked < 0) { picked = index; continue }
+      // `>` keeps the earlier list ahead on a tie, so equal timestamps keep a
+      // stable order instead of flipping between renders.
+      if (candidate.createdAt > lists[picked]![cursors[picked]!]!.createdAt) picked = index
+    }
+    if (picked < 0) return merged
+    merged.push(lists[picked]![cursors[picked]!]!)
+    cursors[picked] = cursors[picked]! + 1
   }
 }
 
@@ -1159,12 +1216,23 @@ export function ImageGenPanel(props: {
   // Clips live in their own host store; the sidebar merges them with the image
   // history at render time (see UnifiedHistoryRow).
   const [videoHistory, setVideoHistory] = useState<VideoHistoryEntry[]>([])
+  /**
+   * Saved canvases, listed in the sidebar as rows of their own.
+   *
+   * WHY canvases appear here at all: a canvas is the document all of this work
+   * happens in, so "go back to what I made" has to include it. They are read
+   * from their own store — nothing is copied into the image/video history.
+   */
+  const [canvasSummaries, setCanvasSummaries] = useState<CanvasSummary[]>([])
+  /** A canvas row was clicked: open that document in the canvas workspace. */
+  const [openCanvasId, setOpenCanvasId] = useState<string | undefined>()
   const [historyQuery, setHistoryQuery] = useState('')
   const [historyModelFilter, setHistoryModelFilter] = useState('all')
   const [historyRatioFilter, setHistoryRatioFilter] = useState('all')
-  /** 'all' | 'image' | 'video' — clips and images share one list, so the only
-   *  way to see just one kind used to be scrolling past the other. */
-  const [historyKindFilter, setHistoryKindFilter] = useState<'all' | 'image' | 'video'>('all')
+  /** 'all' | 'image' | 'video' | 'canvas' — clips, images and canvases share one
+   *  list, so the only way to see just one kind used to be scrolling past the
+   *  others. */
+  const [historyKindFilter, setHistoryKindFilter] = useState<'all' | 'image' | 'video' | 'canvas'>('all')
   const [preview, setPreview] = useState<{ images: GeneratedImage[]; index: number; source?: GalleryImageSource } | null>(null)
   /** The gallery clip open in the full-screen player (images use `preview`). */
   const [galleryClip, setGalleryClip] = useState<HistoryEntry | null>(null)
@@ -1479,16 +1547,28 @@ export function ImageGenPanel(props: {
   }, [galleryView, tab, workspace])
 
   /**
-   * The sidebar's single, time-ordered list of every generation.
+   * The sidebar's single, time-ordered list of what the user can go back to.
    *
-   * Clips and images share one row shape here, so the filters, the empty state
-   * and the "clear" action all work across both without either branch knowing
-   * about the other's store.
+   * Three sources with three different shapes feed it: image generations, clips,
+   * and saved canvases. Two rules decide what ends up here:
+   *
+   *  - **A generation that was produced BY a canvas is not listed.** Its bytes
+   *    are still written to their store (the canvas node, "add to gallery" and
+   *    the import routes all read them by id), but it is a step inside a canvas,
+   *    not a result of its own. Listing both the worked-on canvas and every card
+   *    it produced buried the list in the same work twice.
+   *  - **The canvas itself is.** That is the document the user actually wants to
+   *    return to, so a canvas row opens it.
    */
   const unifiedHistory = useMemo<UnifiedHistoryRow[]>(() => {
     const query = historyQuery.trim().toLocaleLowerCase()
-    const imageRows = groupHistoryEntries(history).map(imageRowOf)
-    const videoRows = videoHistory.map(videoRowOf)
+    // Filter BEFORE grouping: a group keyed on one entry would otherwise split
+    // into a second group when its other entries were dropped.
+    const ownHistory = history.filter(entry => entry.canvas === undefined)
+    const ownVideos = videoHistory.filter(entry => entry.canvas === undefined)
+    const imageRows = groupHistoryEntries(ownHistory).map(imageRowOf)
+    const videoRows = ownVideos.map(videoRowOf)
+    const canvasRows = canvasSummaries.map(canvasRowOf)
     const matches = (row: UnifiedHistoryRow, extra: string): boolean => {
       if (historyKindFilter !== 'all' && row.kind !== historyKindFilter) return false
       if (query !== '' && !`${row.prompt} ${row.models.join(' ')}`.toLocaleLowerCase().includes(query)) return false
@@ -1498,51 +1578,34 @@ export function ImageGenPanel(props: {
     }
     // The ratio filter compares against each kind's own ratio vocabulary: an
     // image size ('1:1', 'auto') and a clip aspect ratio ('16:9') are the same
-    // concept but stored differently.
-    const rows = [
-      ...imageRows.filter(row => matches(row, normalizeSize(row.group!.entries[0]!.size))),
-      ...videoRows.filter(row => matches(row, row.entry!.aspectRatio)),
-    ]
-    // Merge the two lists rather than re-sorting the combined set.
-    //
-    // Both stores are already newest-first: each prepends its new entry. A
-    // merge therefore yields true chronological order while preserving the
-    // RELATIVE order inside each list — whereas sorting everything by
-    // createdAt would also reorder image rows against each other, which can
-    // change which item a click opens (comparison groups and product sets do
-    // not necessarily follow createdAt).
-    //
-    // Merge the FILTERED halves, not `imageRows` / `videoRows`: `rows` above is
-    // the only place the search box and the two filters are applied, so merging
-    // the raw arrays made all three controls silently no-ops.
-    const image = rows.filter(row => row.kind === 'image')
-    const video = rows.filter(row => row.kind === 'video')
-    const merged: UnifiedHistoryRow[] = []
-    let left = 0
-    let right = 0
-    while (left < image.length && right < video.length) {
-      merged.push(video[right]!.createdAt > image[left]!.createdAt
-        ? video[right++]!
-        : image[left++]!)
-    }
-    while (left < image.length) merged.push(image[left++]!)
-    while (right < video.length) merged.push(video[right++]!)
-    return merged
-  }, [history, videoHistory, historyModelFilter, historyKindFilter, historyQuery, historyRatioFilter])
+    // concept but stored differently. A canvas has neither — `''` never matches
+    // a selected ratio, which is the honest answer: a canvas is not one aspect.
+    return mergeNewestFirst<UnifiedHistoryRow>([
+      imageRows.filter(row => matches(row, normalizeSize(row.group!.entries[0]!.size))),
+      videoRows.filter(row => matches(row, row.entry!.aspectRatio)),
+      canvasRows.filter(row => matches(row, '')),
+    ])
+  }, [history, videoHistory, canvasSummaries, historyModelFilter, historyKindFilter, historyQuery, historyRatioFilter])
 
-  /** Every model name appearing in either store, for the model filter. */
+  /**
+   * Every model name appearing in either store, for the model filter.
+   *
+   * Built from the entries the list actually shows: a model that only ever
+   * produced canvas output would otherwise appear as a filter option that can
+   * only ever empty the list.
+   */
   const historyModelOptions = useMemo(() => [
     ...new Set([
-      ...history.flatMap(entry => modelsOfHistoryEntry(entry)),
-      ...videoHistory.map(entry => entry.model),
+      ...history.filter(entry => entry.canvas === undefined).flatMap(entry => modelsOfHistoryEntry(entry)),
+      ...videoHistory.filter(entry => entry.canvas === undefined).map(entry => entry.model),
     ]),
   ], [history, videoHistory])
 
   /** Every ratio appearing in either store, for the ratio filter. */
   const historyRatioOptions = useMemo(() => [
     ...new Set([
-      ...history.map(entry => normalizeSize(entry.size)),
-      ...videoHistory.map(entry => entry.aspectRatio),
+      ...history.filter(entry => entry.canvas === undefined).map(entry => normalizeSize(entry.size)),
+      ...videoHistory.filter(entry => entry.canvas === undefined).map(entry => entry.aspectRatio),
     ]),
   ], [history, videoHistory])
 
@@ -1568,6 +1631,12 @@ export function ImageGenPanel(props: {
     api.videoHistoryList()
       .then(entries => { setVideoHistory(entries) })
       .catch(caught => { setHistoryLoadError(errorMessage(caught)) })
+    // Saved canvases are a third source for the same list. A failed read is
+    // reported on the same error line rather than shown as "no canvases": an
+    // empty answer here would look like the user's canvases were gone.
+    api.canvasList()
+      .then(projects => { setCanvasSummaries(projects) })
+      .catch(caught => { setHistoryLoadError(errorMessage(caught)) })
   }, [api])
 
   useEffect(() => {
@@ -1575,6 +1644,24 @@ export function ImageGenPanel(props: {
     initialDataRequestedRef.current = true
     loadInitialData()
   }, [active, loadInitialData])
+
+  /**
+   * 画布保存之后，历史里那一行要跟着变。
+   *
+   * WHY 不能只靠首次加载：那份列表一个会话只读一次，而画布**就是在这个面板
+   * 里**被改的——新建一张、往里面生成一张图、改个标题，切回来时列表还停在
+   * 打开面板那一刻。用户看到的是「我刚存的画布没进历史」，实际只是没重新读。
+   *
+   * 只在切到画布工作区时读，不在每次渲染读：这是个会遍历画布索引的请求，
+   * 而画布上的每次拖动都会重渲染。读失败不报错——画布本身没问题，只是列表
+   * 里那一行慢一拍，下一次切换会再读。
+   */
+  useEffect(() => {
+    if (!active || workspace !== 'canvas') return
+    api.canvasList()
+      .then(projects => { setCanvasSummaries(projects) })
+      .catch(() => { /* 下一次切换再读；列表只是慢一拍，不是坏了 */ })
+  }, [active, api, workspace])
 
   /**
    * The replica workspace renders its own result board and the shared poll
@@ -3298,10 +3385,11 @@ export function ImageGenPanel(props: {
 
       <div className={css.historyFilters}>
         <input className={css.historySearch} value={historyQuery} onChange={event => { setHistoryQuery(event.target.value) }} placeholder={tt('history.search')} aria-label={tt('history.search')} />
-        <Select value={historyKindFilter} onChange={value => { setHistoryKindFilter(value as 'all' | 'image' | 'video') }} aria-label={tt('history.kind')}>
+        <Select value={historyKindFilter} onChange={value => { setHistoryKindFilter(value as 'all' | 'image' | 'video' | 'canvas') }} aria-label={tt('history.kind')}>
           <option value="all">{tt('history.allKinds')}</option>
           <option value="image">{tt('history.imagesOnly')}</option>
           <option value="video">{tt('history.videosOnly')}</option>
+          <option value="canvas">{tt('history.canvasesOnly')}</option>
         </Select>
         <Select value={historyModelFilter} onChange={value => { setHistoryModelFilter(value) }} aria-label={tt('history.model')}>
           <option value="all">{tt('history.allModels')}</option>
@@ -3324,9 +3412,15 @@ export function ImageGenPanel(props: {
         <div className={css.historyList}>
           {unifiedHistory.map(row => {
             const isVideoRow = row.kind === 'video'
-            const isActive = isVideoRow
-              ? viewingVideoId === row.entry!.id
-              : row.group!.entries.some(item => item.id === viewingHistoryId)
+            const isCanvasRow = row.kind === 'canvas'
+            // A canvas row is active when it is the document the workspace has
+            // open. `undefined` never equals an id, so this stays false while
+            // the canvas workspace is closed.
+            const isActive = isCanvasRow
+              ? openCanvasId === row.canvas!.id
+              : isVideoRow
+                ? viewingVideoId === row.entry!.id
+                : row.group!.entries.some(item => item.id === viewingHistoryId)
             return (
               <div
                 key={row.key}
@@ -3334,13 +3428,23 @@ export function ImageGenPanel(props: {
                 data-active={isActive ? '' : undefined}
                 data-kind={row.kind}
                 data-video-row={isVideoRow ? '' : undefined}
-                data-comparison={!isVideoRow && row.group!.models.length > 1 ? '' : undefined}
+                data-canvas-row={isCanvasRow ? '' : undefined}
+                data-comparison={row.group !== undefined && row.group.models.length > 1 ? '' : undefined}
               >
                 <button
                   type="button"
                   className={css.historyMain}
                   data-dsh-imagegen-history-main=""
                   onClick={() => {
+                    if (isCanvasRow) {
+                      // Opening a canvas is not "viewing a result": it switches
+                      // the panel to the canvas workspace and asks it for THIS
+                      // document, so one click lands on the canvas, not on
+                      // whichever one happened to be open last.
+                      setOpenCanvasId(row.canvas!.id)
+                      setWorkspace('canvas')
+                      return
+                    }
                     if (isVideoRow) {
                       // A clip opens on the RESULT BOARD (see openVideoFromHistory),
                       // the same area an image row fills: the click means "show me
@@ -3359,19 +3463,34 @@ export function ImageGenPanel(props: {
                       putting it on an <img> would recolour the picture. */}
                   {row.thumbUrl !== undefined
                     ? <img className={css.historyThumb} src={row.thumbUrl} alt="" loading="lazy" decoding="async" />
-                    : isVideoRow
-                      ? <span className={css.historyThumbPlaceholder} data-video-thumb="" title={tt('history.video')} aria-label={tt('history.video')}>
-                          <svg viewBox="0 0 16 16" width="16" height="16" fill="none" stroke="currentColor" strokeWidth="1.4" strokeLinejoin="round" aria-hidden="true">
-                            <rect x="1.8" y="3.6" width="9.4" height="8.8" rx="1.4" />
-                            <path d="M11.2 8.2l3.2-2.1v3.8l-3.2-1.7z" fill="currentColor" stroke="none" />
+                    : isCanvasRow
+                      // A canvas with no image nodes yet still deserves a glyph
+                      // that says what it is; the bare square read as a broken
+                      // thumbnail.
+                      ? <span className={css.historyThumbPlaceholder} data-canvas-thumb="" title={tt('history.canvasKind')} aria-label={tt('history.canvasKind')}>
+                          <svg viewBox="0 0 16 16" width="16" height="16" fill="none" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                            <rect x="1.9" y="3.2" width="5" height="4" rx="1" />
+                            <rect x="9.1" y="3.2" width="5" height="4" rx="1" />
+                            <rect x="1.9" y="9" width="5" height="4" rx="1" />
+                            <path d="M9.1 11h5" />
                           </svg>
                         </span>
-                      : <span className={css.historyThumbPlaceholder} />}
+                      : isVideoRow
+                        ? <span className={css.historyThumbPlaceholder} data-video-thumb="" title={tt('history.video')} aria-label={tt('history.video')}>
+                            <svg viewBox="0 0 16 16" width="16" height="16" fill="none" stroke="currentColor" strokeWidth="1.4" strokeLinejoin="round" aria-hidden="true">
+                              <rect x="1.8" y="3.6" width="9.4" height="8.8" rx="1.4" />
+                              <path d="M11.2 8.2l3.2-2.1v3.8l-3.2-1.7z" fill="currentColor" stroke="none" />
+                            </svg>
+                          </span>
+                        : <span className={css.historyThumbPlaceholder} />}
                   <span className={css.historyInfo}>
                     <span className={css.historyPrompt}>{row.prompt}</span>
                     <span className={css.historyMeta}>
                       {row.meta}
-                      {' · '}{row.models.join(' · ')}
+                      {/* A canvas row has no model, and joining an empty list
+                          would leave a stray " · " between the kind and the
+                          time. */}
+                      {row.models.length === 0 ? null : <>{' · '}{row.models.join(' · ')}</>}
                       {' · '}{formatTime(row.createdAt)}
                     </span>
                   </span>
@@ -3426,7 +3545,7 @@ export function ImageGenPanel(props: {
                       <svg viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M8 2.5v8" /><path d="M4.8 7.4L8 10.6l3.2-3.2" /><path d="M2.8 13.2h10.4" /></svg>
                     </a>
                   ) : null}
-                  {!isVideoRow && row.group!.entries[0]!.images.length > 0 ? (
+                  {row.kind === 'image' && row.group!.entries[0]!.images.length > 0 ? (
                     <button
                       type="button"
                       className={css.historyIconAction}
@@ -3439,7 +3558,7 @@ export function ImageGenPanel(props: {
                       <svg viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M4 2.5h8A1.5 1.5 0 0 1 13.5 4v5a1.5 1.5 0 0 1-1.5 1.5H8.5L5.5 13v-2.5H4A1.5 1.5 0 0 1 2.5 9V4A1.5 1.5 0 0 1 4 2.5z" /></svg>
                     </button>
                   ) : null}
-                  {!isVideoRow && row.group!.entries[0]!.images.length > 0 ? (
+                  {row.kind === 'image' && row.group!.entries[0]!.images.length > 0 ? (
                     <button
                       type="button"
                       className={css.historyIconAction}
@@ -3452,7 +3571,7 @@ export function ImageGenPanel(props: {
                       <svg viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><rect x="2.5" y="3" width="11" height="10" rx="1.5" /><circle cx="5.9" cy="6.1" r="1" /><path d="M13.5 10.2l-3.1-3.1L4.6 13" /></svg>
                     </button>
                   ) : null}
-                  {!isVideoRow && row.group!.entries[0]!.images.length > 0 ? (
+                  {row.kind === 'image' && row.group!.entries[0]!.images.length > 0 ? (
                     <button
                       type="button"
                       className={css.historyIconAction}
@@ -3464,6 +3583,10 @@ export function ImageGenPanel(props: {
                       <svg viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><rect x="2.5" y="2.5" width="11" height="11" rx="1.5" /><path d="M5 8h6M8 5v6" /></svg>
                     </button>
                   ) : null}
+                  {/* 画布行不给删除：`row.group!` 对画布是 undefined，这里按下
+                      去就是一次崩溃；而且删画布有它自己的入口（顶栏项目下拉），
+                      那条路会连资产一起收拾，比在历史里删一条记录干净。 */}
+                  {isCanvasRow ? null : (
                   <button
                     type="button"
                     className={css.historyIconAction}
@@ -3477,6 +3600,7 @@ export function ImageGenPanel(props: {
                   >
                     <svg viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M2.5 4.5h11" /><path d="M6 4.5V3.2a.7.7 0 0 1 .7-.7h2.6a.7.7 0 0 1 .7.7v1.3" /><path d="M4.3 4.5l.6 8.1a1 1 0 0 0 1 .9h4.2a1 1 0 0 0 1-.9l.6-8.1" /><path d="M6.7 7v4M9.3 7v4" /></svg>
                   </button>
+                  )}
                 </span>
               </div>
             )
@@ -3496,7 +3620,10 @@ export function ImageGenPanel(props: {
     <div className={css.panel}>
       <header className={css.panelHeader}>
         <span className={css.panelHeading}>
-          <h2 className={css.panelTitle}>{tt('panel.title')}</h2>
+          <h2 className={css.panelTitle} title={tt('panel.title')}>
+            {/* 没有底板了，字形本身就是全高：18px 与原来的 16px 文字观感相当 */}
+            <BrandMark height={18} />
+          </h2>
           <a
             className={css.githubLink}
             href="https://github.com/q253595422/dsh-imagegen-video"
@@ -4258,8 +4385,11 @@ export function ImageGenPanel(props: {
               tasks={tasks}
               videoGroups={videoOptions.groups}
               videoTasks={videoTasks}
+              videoHistory={videoHistory}
               importRequest={canvasImportRequest}
               onImportRequestHandled={() => { setCanvasImportRequest(undefined) }}
+              openCanvasId={openCanvasId}
+              onOpenCanvasHandled={() => { setOpenCanvasId(undefined) }}
               onClipStored={() => {
                 // A stitch run lands its clip through the skill-run path, not a
                 // video task, so the task poller above never sees it. Refetch

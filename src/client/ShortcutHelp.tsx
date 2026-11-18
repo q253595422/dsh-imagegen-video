@@ -70,10 +70,51 @@ export const CANVAS_SHORTCUTS: readonly ShortcutGroup[] = [
     entries: [
       { keys: ['Ctrl/⌘', 'Z'], label: 'canvas.shortcuts.undo', action: 'canvas.undo' },
       { keys: ['Ctrl/⌘', 'Shift', 'Z'], label: 'canvas.shortcuts.redo', action: 'canvas.redo' },
-      { keys: ['Ctrl/⌘', 'C'], label: 'canvas.shortcuts.copy' },
-      { keys: ['Ctrl/⌘', 'V'], label: 'canvas.shortcuts.paste' },
-      { keys: ['Ctrl/⌘', 'D'], label: 'canvas.shortcuts.duplicate' },
+      { keys: ['Ctrl/⌘', 'C'], label: 'canvas.shortcuts.copy', action: 'canvas.shortcuts.copy' },
+      { keys: ['Ctrl/⌘', 'V'], label: 'canvas.shortcuts.paste', action: 'canvas.paste' },
+      { keys: ['Ctrl/⌘', 'D'], label: 'canvas.shortcuts.duplicate', action: 'canvas.duplicate' },
+      // ⌘K 与 LibTV 同一个键：它是「找东西」的通用约定，换一个键就得重新学。
+      { keys: ['Ctrl/⌘', 'K'], label: 'canvas.shortcuts.catalog', action: 'canvas.catalog.button' },
+      // ⌘F 从浏览器手里抢过来：在铺满画布的应用里，页内查找永远找不到用户
+      // 想找的**卡片**，而那个框还会盖住画布。
+      { keys: ['Ctrl/⌘', 'F'], label: 'canvas.shortcuts.search', action: 'canvas.search.open' },
+      // 整理画布：⌥⇧F 与 LibTV 同一个键，用户在两个工具之间不用重新学。
+      { keys: ['Alt/⌥', 'Shift', 'F'], label: 'canvas.shortcuts.arrange', action: 'canvas.arrange' },
       { keys: ['Delete'], label: 'canvas.shortcuts.delete', action: 'canvas.delete' },
+      // 对齐走 ⌥⌘+方向键：方向键本身就是「往哪边靠」，不必记字母。中轴与
+      // 等距没有方向可指，才用 H / V / E 三枚字母，且都是 align 单字的谐音面。
+      // 这八条同时出现在多选对齐条的 tooltip 里（`shortcutKeysFor` 按 action
+      // 反查），所以键位在这一份表里改，两处会一起变。
+      { keys: ['Alt/⌥', 'Ctrl/⌘', '←'], label: 'canvas.align.left', action: 'canvas.align.left' },
+      { keys: ['Alt/⌥', 'Ctrl/⌘', '→'], label: 'canvas.align.right', action: 'canvas.align.right' },
+      { keys: ['Alt/⌥', 'Ctrl/⌘', '↑'], label: 'canvas.align.top', action: 'canvas.align.top' },
+      { keys: ['Alt/⌥', 'Ctrl/⌘', '↓'], label: 'canvas.align.bottom', action: 'canvas.align.bottom' },
+      { keys: ['Alt/⌥', 'Ctrl/⌘', 'H'], label: 'canvas.align.centerH', action: 'canvas.align.centerH' },
+      { keys: ['Alt/⌥', 'Ctrl/⌘', 'V'], label: 'canvas.align.centerV', action: 'canvas.align.centerV' },
+      { keys: ['Alt/⌥', 'Ctrl/⌘', 'E'], label: 'canvas.align.distributeH', action: 'canvas.align.distributeH' },
+      // 垂直等距**没有**键位，这里就不写：写在表里而按不出来，比不写更坏——
+      // 用户会把「按了没反应」记成软件坏了，而不会想到是文档写错了。
+      // 层级键位照 Figma，但并进 ⌥ 家族（对齐、整理都在 ⌥ 上）：
+      //   - 处理时必须读 event.code，不能读 event.key。⌥ 本身就把 key 变成了
+      //     组合字符（macOS 上 ⌥] 是弯引号，不是 ]）；不加 ⌥ 只按 ⇧] 时 key
+      //     又变成 }。只有 code 在四种修饰符组合下都稳定是 BracketRight /
+      //     BracketLeft。
+      //   - 方向是 ] 向上、[ 向下：与 Figma 一致，也顺着两枚键的左右位置——
+      //     右括号抬高、左括号压低，和方向键一样有明确的方向感。
+      { keys: ['Alt/⌥', ']'], label: 'canvas.layer.forward', action: 'canvas.layer.forward' },
+      { keys: ['Alt/⌥', '['], label: 'canvas.layer.backward', action: 'canvas.layer.backward' },
+      // 加 ⇧ 就是「一步跨到底」：] 置顶、[ 置底。与 Figma 的 ⌘⇧] / ⌘⇧[ 一致。
+      { keys: ['Alt/⌥', 'Shift', ']'], label: 'canvas.layer.front', action: 'canvas.layer.front' },
+      { keys: ['Alt/⌥', 'Shift', '['], label: 'canvas.layer.back', action: 'canvas.layer.back' },
+      // 锁定/隐藏用 ⌥⇧L、⌥⇧H，不用 ⌥⌘L、⌥⌘H：⌥⌘H 已经被本表的「水平居中」
+      // （ALIGN_SHORTCUTS 的 centerH）占用，同时它在 macOS 上还是系统级的
+      // 「隐藏其他应用」，按下就切走整个窗口，画布根本收不到。换成 ⇧ 后两枚
+      // 键都落在本应用内，也和上面层级键位的「⌥ + ⇧ = 更强的一步」一致。
+      // 处理时必须读 event.code 而不是 event.key：⌥⇧ 组合下 key 是组合字符
+      // （⌥⇧L 在 macOS 上是 ¬，中文输入法下更不可靠），只有 code 稳定是 KeyL
+      // / KeyH。
+      { keys: ['Alt/⌥', 'Shift', 'L'], label: 'canvas.lock.lock', action: 'canvas.lock.lock' },
+      { keys: ['Alt/⌥', 'Shift', 'H'], label: 'canvas.lock.hide', action: 'canvas.lock.hide' },
     ],
   },
   {

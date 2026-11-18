@@ -65,14 +65,39 @@ export function dshNodeModules(env = process.env) {
   return cached[0]?.dir ?? null
 }
 
-/** Every theme stylesheet, in the order the theme package injects them. */
+/**
+ * Every theme stylesheet, in the order the theme package injects them.
+ *
+ * The bundle serialises its CSS as one `var <name>_css_default = …` constant per
+ * stylesheet. Two spellings are in the wild:
+ *
+ *  - an ES5 build writes one double-quoted string PER LINE;
+ *  - a newer build writes a TEMPLATE literal and puts the whole bundle on a
+ *    handful of very long lines.
+ *
+ * A reader anchored with `^…$` therefore stops matching the moment the minifier
+ * stops pretty-printing, and it threw `no inlined CSS constants` — which reads
+ * as "the shot cannot run", not as "the reader is out of date", so the whole
+ * visual check silently disappeared on exactly the machines that upgraded. The
+ * pattern is unanchored and both quoting forms are accepted; the constants are
+ * unambiguous in the bundle (`var X_css_default=`), so nothing else matches.
+ */
 export function themeCss(nodeModules) {
   const file = join(nodeModules, '@deepseek-ai', THEME_PACKAGE, 'lib', 'client.js')
   const source = readFileSync(file, 'utf8')
-  const pattern = /^\s*var\s+(\w*_css_default)\s*=\s*("(?:[^"\\]|\\.)*");?\s*$/gm
+  const pattern = /\bvar\s+(\w*_css_default)\s*=\s*("(?:[^"\\]|\\.)*"|`(?:[^`\\$]|\\.|\$(?!\{))*`)/g
   const blocks = []
   let match
-  while ((match = pattern.exec(source)) !== null) blocks.push(JSON.parse(match[2]))
+  while ((match = pattern.exec(source)) !== null) {
+    const literal = match[2]
+    // A template literal has no escapes in practice, but it also has no
+    // `JSON.parse` path (backticks are not JSON). Unescape the two sequences a
+    // CSS string can carry; anything else is a build change worth failing on
+    // rather than passing through silently mangled.
+    blocks.push(literal.startsWith('`')
+      ? literal.slice(1, -1).replace(/\\`/g, '`').replace(/\\\\/g, '\\')
+      : JSON.parse(literal))
+  }
   if (blocks.length === 0) throw new Error('theme package: no inlined CSS constants')
   return blocks.join('\n')
 }

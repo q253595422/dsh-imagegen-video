@@ -195,14 +195,19 @@ function headlessFlags (chrome) {
  * @param {string} options.name - profile-directory prefix, so a stray leftover
  *   is identifiable in `$TMPDIR`.
  * @param {readonly string[]} [options.args] - extra Chromium flags.
+ * @param {boolean} [options.gpu] - keep the GPU. Defaults to off.
+ *   `--disable-gpu` 让 `getContext('webgl2')` 返回 null（`GL_VENDOR = Disabled`），
+ *   那是一个**对的**默认：绝大多数只量排版、量对比度的验收不需要 GPU，
+ *   而打开 GPU 在不同机器上引入更多变量。但拍**三维画面**时它就变成了
+ *   「把一块正确的渲染判成环境不支持」，所以那些调用方要能把它关掉。
  * @returns {Promise<{port: number, browser: import('node:child_process').ChildProcess, profileDir: string, close: () => void}>}
  * @throws when the browser exits, publishes no port, or never answers.
  */
-export async function launchChrome ({ chrome, name, args = [] }) {
+export async function launchChrome ({ chrome, name, args = [], gpu = false }) {
   const profileDir = mkdtempSync(join(tmpdir(), `${name}-profile-`))
   const browser = spawn(chrome, [
     ...headlessFlags(chrome),
-    '--disable-gpu',
+    ...(gpu ? ['--use-angle=metal', '--enable-gpu', '--ignore-gpu-blocklist'] : ['--disable-gpu']),
     '--no-sandbox',
     '--remote-debugging-port=0',
     `--user-data-dir=${profileDir}`,
