@@ -5,6 +5,14 @@ Attribution for third-party code is in [NOTICE](./NOTICE).
 
 ## Releases
 
+### 未发布 — 导演台在桌面 App 里顶部两颗按钮点不动
+
+只在 macOS 桌面 App（Electron）里出现，浏览器与 web 宿主都复现不出来，所以拖了这么久：宿主的窗口拖动条 `[data-window-drag]` 被 Electron 当成标题栏（`-webkit-app-region: drag`），**它不是一个 CSS 层，点在那里的事件由浏览器进程吃掉、页面根本收不到**。导演台面板是 `position: fixed; inset: 0`、`.shell` 又几乎铺满窗口，于是它最上面那一排——左栏的折叠与关闭——正好落在宿主窗口左上角那块拖动区里。
+
+- **修复**：给 `.shell` 补 `-webkit-app-region: no-drag`。动态面板不该被窗口手势穿透。规则挂在 `.shell` 而不是 `.root`，因为 `.root` 是 `pointer-events: none`，它根本不参与命中测试，拖动区照样赢。
+- **为什么以前测不出来**：`app-region` 在普通浏览器里是空操作，预览页、headless、web 宿主全都测不到。这次的证据是真 Electron 窗口（`titleBarStyle: 'hidden'`，与桌面版同款）里的一次真实 OS 点击：同一枚按钮、同一个坐标——不加规则时 DOM 收不到任何事件，加了之后立刻触发；同一窗口里放在拖动区外的对照按钮两种情况都正常，所以不是点击本身没到。
+- **回归守卫**：`verify-ui-contracts.mjs` 新增一条源码断言（`-webkit-app-region: no-drag` 必须在 `.shell` 上），并做过反向注入验证——把这条规则删掉，断言立刻报出这个失败。这条只能从源码守，因为任何浏览器都看不见这个差别。
+
 ### 1.33.1 — 局域网部署不再 403；多模型对比从历史打开不再空白
 
 两条都来自用户上报（#50 / #49）。数据层没有改动：两处的磁盘与路由本来都是对的，坏在门口那道守卫和面板那一句 `Promise.all`。

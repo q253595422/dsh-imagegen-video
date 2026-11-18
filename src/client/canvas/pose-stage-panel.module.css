@@ -38,6 +38,13 @@
   box-shadow: var(--dsw-shadow-lv3);
   overflow: hidden;
   pointer-events: auto;
+  /* 桌面版（Electron）里宿主的 macOS 拖动条 `[data-window-drag]` 就是窗口标题栏：
+     它覆盖窗口左上角 264×60，而这块面板也停在那里，于是面板最上面一排控件
+     （左栏的折叠/关闭）落在拖动区里——Electron 把那里的事件当标题栏手势吃掉，
+     根本不会送到网页。真机表现就是「点了没反应」，而浏览器里 app-region 无效，
+     所以预览页和 web 宿主都复现不出来（真 Electron 窗口里一次真实点击可验）。
+     这一条把整块面板声明成非拖动区，动态面板不该被窗口手势穿透。 */
+  -webkit-app-region: no-drag;
 }
 
 /* ------------------------------------------------------------- 左栏 */

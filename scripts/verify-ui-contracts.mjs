@@ -33,6 +33,7 @@ import { tmpdir } from 'node:os'
 import { spawnSync } from 'node:child_process'
 import ts from 'typescript'
 import { findChrome, launchChrome, openPage, skipWithoutChrome } from './lib/headless-chrome.mjs'
+import { ruleBodyOf } from './lib/css-rule.mjs'
 import { WCAG_CONTRAST_SOURCE } from './lib/wcag-contrast.mjs'
 
 const CHROME = findChrome()
@@ -1601,6 +1602,34 @@ if (!(seatRung > takeoverRung)) {
   process.exit(1)
 }
 console.log(`shell window seat sits above the takeover: --z-shell-seat ${seatRung} > --z-takeover ${takeoverRung}`)
+
+// ------------------------------------------- 3c. panels vs the window drag band
+// On macOS the shell marks its title band with `[data-window-drag]`, which
+// Electron turns into `-webkit-app-region: drag`. That band is the window's
+// title bar, not a CSS layer: the browser process swallows mouse input there
+// and the page never sees the click. The 导演台 panel is `position: fixed;
+// inset: 0` and its shell nearly fills the window, so its top row lands inside
+// that band — and both of its own controls (collapse / close) stopped working
+// in the desktop app. Neither a browser nor a headless page can reproduce it
+// (`app-region` does nothing outside Electron), so the invariant has to be
+// asserted from the source, with a real Electron window as the evidence behind
+// it (a real click on that row does nothing without the rule, and fires with it).
+//
+// The rule belongs on `.shell`, not on `.root`: the root is `pointer-events:
+// none`, so it is not hit-tested at all and the drag band above would still win.
+const shellRule = ruleBodyOf(read('canvas/pose-stage-panel.module.css'), '.shell')
+if (shellRule === undefined) {
+  console.error('\nFAIL: the 导演台 panel has no .shell rule to check for -webkit-app-region.')
+  process.exit(1)
+}
+if (!/-webkit-app-region:\s*no-drag/.test(shellRule)) {
+  console.error('\nFAIL: the 导演台 panel does not opt out of the host window drag band.')
+  console.error('In the desktop app its top row sits under `[data-window-drag]`, where Electron')
+  console.error('treats clicks as title-bar drags -- the collapse and close buttons stop working.')
+  console.error('Add `-webkit-app-region: no-drag` to `.shell` in pose-stage-panel.module.css.')
+  process.exit(1)
+}
+console.log('导演台 panel opts out of the host window drag band (-webkit-app-region: no-drag)')
 
 // ------------------------------------------------------- 4. focusable hiding
 // `opacity: 0` and `pointer-events: none` both leave an element in the tab
