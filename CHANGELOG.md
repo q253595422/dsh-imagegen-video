@@ -5,22 +5,6 @@ Attribution for third-party code is in [NOTICE](./NOTICE).
 
 ## Releases
 
-### 未发布 — 导演台在桌面 App 里顶部两颗按钮点不动
-
-只在 macOS 桌面 App（Electron）里出现，浏览器与 web 宿主都复现不出来，所以拖了这么久：宿主的窗口拖动条 `[data-window-drag]` 被 Electron 当成标题栏（`-webkit-app-region: drag`），**它不是一个 CSS 层，点在那里的事件由浏览器进程吃掉、页面根本收不到**。导演台面板是 `position: fixed; inset: 0`、`.shell` 又几乎铺满窗口，于是它最上面那一排——左栏的折叠与关闭——正好落在宿主窗口左上角那块拖动区里。
-
-- **修复**：给 `.shell` 补 `-webkit-app-region: no-drag`。动态面板不该被窗口手势穿透。规则挂在 `.shell` 而不是 `.root`，因为 `.root` 是 `pointer-events: none`，它根本不参与命中测试，拖动区照样赢。
-- **为什么以前测不出来**：`app-region` 在普通浏览器里是空操作，预览页、headless、web 宿主全都测不到。这次的证据是真 Electron 窗口（`titleBarStyle: 'hidden'`，与桌面版同款）里的一次真实 OS 点击：同一枚按钮、同一个坐标——不加规则时 DOM 收不到任何事件，加了之后立刻触发；同一窗口里放在拖动区外的对照按钮两种情况都正常，所以不是点击本身没到。
-- **回归守卫**：`verify-ui-contracts.mjs` 新增一条源码断言（`-webkit-app-region: no-drag` 必须在 `.shell` 上），并做过反向注入验证——把这条规则删掉，断言立刻报出这个失败。这条只能从源码守，因为任何浏览器都看不见这个差别。
-
-### 1.33.1 — 局域网部署不再 403；多模型对比从历史打开不再空白
-
-两条都来自用户上报（#50 / #49）。数据层没有改动：两处的磁盘与路由本来都是对的，坏在门口那道守卫和面板那一句 `Promise.all`。
-
-- **#50 局域网访问时全部接口 403**：`isLoopbackRequest` 只认「连接来自回环地址」，而浏览器直连本机网卡（`192.168.x.y`）时 `remoteAddress` 永远是那个网卡地址——于是宿主把 `webServer.host` 绑到具体网卡后，插件每一条 `/api/dsh-imagegen` 都回 `403 forbidden: loopback-only`。现在认两种权威之一：连接来自回环，**或**请求的 `Host` 精确等于监听绑定地址。绑定地址本身就是用户的显式选择，所以它授予权威；`0.0.0.0` / `[::]` 是通配、不是某个地址，一律不授予。真正防 DNS rebinding 的 `sec-fetch-site` 与 Origin 同源检查对两种权威都照旧生效——Host 校验只是让 Origin 比较有了意义，不是替代它。**没有新增 `allowLan` 开关**：多一个开关就多一个「开了就全放行」的误配面。绑定地址按运行时值宽松读取而不是按类型收窄——本地 devDependency 的 `Config.host` 还只写了两个字面量，照类型写会让新宿主支持的网卡地址在类型层就被抹掉。
-- **#49 多模型对比重启后点开只剩提示词**：`loadHistoryGroup` 用的是 `Promise.all`——对比组每个模型一个成员条目，**任何一个成员任何一张图取不到**（文件被清理、404、一次瞬时失败），整批 rejected，`setImages` 与 `setBoardView` 都不执行，结果板停在「提示词 + N 张」的空白。单条生成只有一个成员，所以照常出图；四条模型的对比把「什么都不显示」的概率放大了四倍，正好是报告里的形状。现在每个成员各自 settle，一个坏成员只损失它自己。失败数**如实返回**而不是吞掉：静默少画两张会被读成「这次对比只出了两张」。
-- **两条都是可复跑的用例，不是「改完看着没问题」**：`smoke-lan-bind-auth.mjs` 把真实路由表起在本机网卡上走真实 HTTP，10 条——含「外域 Host」「外域 Host 且自带自洽 Origin」「cross-site」「Origin 不匹配」四种仍然 403，以及**不传 `bindHost` 时局域网客户端保持旧 403** 这条反向控制（没有它，「一律放行」也能让正例全绿）。`smoke-history-group-images.mjs` 6 条，最后一条是反向对照：同样的输入交给旧的 `Promise.all` 折叠必须整组失败——否则断言太弱，测不出这个 bug。两个都进了 `pnpm test`，另有 `test:lan-auth` / `test:history-group` 单独入口。`smoke-lan-bind-auth.mjs` 自己探测本机非回环 IPv4，探测不到就明确 SKIP（不是「绿」）——测试只在作者那台机器上过，等于没测。
-
 ### 1.33.0 — 导演台换成真 3D + 时间轴；画布补上层级、锁定隐藏、套图、找节点、体检与目录
 
 本版把 `v1.32.0` 的「静态构图导演台」升成「一段能播的镜头」。完整说明见 [docs/releases/v1.33.0.md](./docs/releases/v1.33.0.md)。
@@ -68,6 +52,22 @@ Attribution for third-party code is in [NOTICE](./NOTICE).
 - **分镜镜头时长按模型收窄，台词装不下时说一句**：`SHOT_SECONDS` 补上 12 / 15，并按所选模型**显式声明**的 `catalog.durations` 收窄——模型只收 6/10/15 就只列这三个，而不是拿一个 4 秒去换一次 400。这里刻意用 `catalog.durations` 而非 `durationsOf(catalog)`：后者在模型未声明时返回面板通用默认 `[5,10]`，会把 Seedance 实际支持的 4–15 一起抹掉。老文档里存着当前模型不收的秒数时把该值插到选项最前，不静默改写文档。`shotSpeechFit` 按 4.5 字/秒 + 2 秒表演余量估时，超了在这一镜下面单独显示一行警示——是**提醒**不是**错误**：不染红边框、不禁用运行按钮。
 - **分镜执行接上身份参考；「接上一镜尾帧会丢参考」写在板上**：`submitShot` 原先只做了 `carry` 的尾帧 → 首帧，`castRefsFor` / `castPromptOf` 只在两个 composer 里被调用，所以钉住「阿禾」后在分镜里连跑十条，十条都没有她的图。现在 `cut` 与 `carry` 首镜带最多 4 张身份参考（`MAX_SHOT_REFERENCES`），第一张进 `frames.image`、其余进 `frames.images`，读不出的那张跳过而不是整镜失败；顺带修掉 `castLine` 的 0 基序号（提示词里原本写「参考图 0 是角色…」）。`carry` 第 2 镜起带不上参考**不是漏接线而是契约互斥**（`first_frame` / `last_frame` 与 `reference_image` 在 Seedance / MiniMax 里不能混用）——接缝优先是对的，但用户只会在成片里看见她悄悄变了，所以板上多一行说明会丢哪些镜头、丢几个，对应行挂一枚「不带身份参考」角标：一粒角标而不是整行染色，这一镜仍然能跑。反向注入实测：把 `castSlots` 写死成 0 时所有源码 grep 仍绿，只有 SB5 的运行时断言变红（请求体里没有那张图）。
 - **「镜头衔接」下拉在 380px 卡片里被截断**：那一格只有 65px，而 `接上一镜尾帧` 需要 94px；英文 186px、俄文 203px（那一格缩到 27px，几乎只剩箭头）。根因是三格 `flex: 1` 的 basis 为 0、永远等分。改成按内容起算 + 允许换行：中文仍是一行 26px，英俄各两行 58px，镜头列表本来就是 `flex: 1` 的滚动区，少 32px 挤不掉底部按钮。三种改法在真浏览器上量过 380 / 420 / 560px × 三语；`verify-canvas-layout.mjs` 新增三语量宽断言，反向注入（退回三格等分）实测变红。
+
+#### 桌面 App 里导演台顶部两颗按钮点不动
+
+只在 macOS 桌面 App（Electron）里出现，浏览器与 web 宿主都复现不出来，所以拖了这么久：宿主的窗口拖动条 `[data-window-drag]` 被 Electron 当成标题栏（`-webkit-app-region: drag`），**它不是一个 CSS 层，点在那里的事件由浏览器进程吃掉、页面根本收不到**。导演台面板是 `position: fixed; inset: 0`、`.shell` 又几乎铺满窗口，于是它最上面那一排——左栏的折叠与关闭——正好落在宿主窗口左上角那块拖动区里。
+
+- **修复**：给 `.shell` 补 `-webkit-app-region: no-drag`。动态面板不该被窗口手势穿透。规则挂在 `.shell` 而不是 `.root`，因为 `.root` 是 `pointer-events: none`，它根本不参与命中测试，拖动区照样赢。
+- **为什么以前测不出来**：`app-region` 在普通浏览器里是空操作，预览页、headless、web 宿主全都测不到。这次的证据是真 Electron 窗口（`titleBarStyle: 'hidden'`，与桌面版同款）里的一次真实 OS 点击：同一枚按钮、同一个坐标——不加规则时 DOM 收不到任何事件，加了之后立刻触发；同一窗口里放在拖动区外的对照按钮两种情况都正常，所以不是点击本身没到。
+- **回归守卫**：`verify-ui-contracts.mjs` 新增一条源码断言（`-webkit-app-region: no-drag` 必须在 `.shell` 上），并做过反向注入验证——把这条规则删掉，断言立刻报出这个失败。这条只能从源码守，因为任何浏览器都看不见这个差别。
+
+#### 同批两条用户上报（#50 / #49）
+
+两条都来自用户上报（#50 / #49）。数据层没有改动：两处的磁盘与路由本来都是对的，坏在门口那道守卫和面板那一句 `Promise.all`。
+
+- **#50 局域网访问时全部接口 403**：`isLoopbackRequest` 只认「连接来自回环地址」，而浏览器直连本机网卡（`192.168.x.y`）时 `remoteAddress` 永远是那个网卡地址——于是宿主把 `webServer.host` 绑到具体网卡后，插件每一条 `/api/dsh-imagegen` 都回 `403 forbidden: loopback-only`。现在认两种权威之一：连接来自回环，**或**请求的 `Host` 精确等于监听绑定地址。绑定地址本身就是用户的显式选择，所以它授予权威；`0.0.0.0` / `[::]` 是通配、不是某个地址，一律不授予。真正防 DNS rebinding 的 `sec-fetch-site` 与 Origin 同源检查对两种权威都照旧生效——Host 校验只是让 Origin 比较有了意义，不是替代它。**没有新增 `allowLan` 开关**：多一个开关就多一个「开了就全放行」的误配面。绑定地址按运行时值宽松读取而不是按类型收窄——本地 devDependency 的 `Config.host` 还只写了两个字面量，照类型写会让新宿主支持的网卡地址在类型层就被抹掉。
+- **#49 多模型对比重启后点开只剩提示词**：`loadHistoryGroup` 用的是 `Promise.all`——对比组每个模型一个成员条目，**任何一个成员任何一张图取不到**（文件被清理、404、一次瞬时失败），整批 rejected，`setImages` 与 `setBoardView` 都不执行，结果板停在「提示词 + N 张」的空白。单条生成只有一个成员，所以照常出图；四条模型的对比把「什么都不显示」的概率放大了四倍，正好是报告里的形状。现在每个成员各自 settle，一个坏成员只损失它自己。失败数**如实返回**而不是吞掉：静默少画两张会被读成「这次对比只出了两张」。
+- **两条都是可复跑的用例，不是「改完看着没问题」**：`smoke-lan-bind-auth.mjs` 把真实路由表起在本机网卡上走真实 HTTP，10 条——含「外域 Host」「外域 Host 且自带自洽 Origin」「cross-site」「Origin 不匹配」四种仍然 403，以及**不传 `bindHost` 时局域网客户端保持旧 403** 这条反向控制（没有它，「一律放行」也能让正例全绿）。`smoke-history-group-images.mjs` 6 条，最后一条是反向对照：同样的输入交给旧的 `Promise.all` 折叠必须整组失败——否则断言太弱，测不出这个 bug。两个都进了 `pnpm test`，另有 `test:lan-auth` / `test:history-group` 单独入口。`smoke-lan-bind-auth.mjs` 自己探测本机非回环 IPv4，探测不到就明确 SKIP（不是「绿」）——测试只在作者那台机器上过，等于没测。
 
 ### 1.32.0 — 姿势人偶升级成导演台：一个场景、多个角色、多台机位；画布底栏改成三档层级
 
