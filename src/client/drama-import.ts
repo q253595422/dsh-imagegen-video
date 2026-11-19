@@ -100,15 +100,27 @@ export interface DramaPlacement extends LayoutNodes {
   skippedImages: Array<{ relativePath: string, message: string }>
 }
 
-/** 图片的自然尺寸，用来填 `putImage` 要求的宽高。 */
+/** `canvasUpload` 要求的宽高；量不出来时用它，而不是丢掉这张图。 */
+const FALLBACK_IMAGE_SIZE = { width: IMAGE_NODE_SIZE.width, height: IMAGE_NODE_SIZE.height }
+
+/**
+ * 图片的自然尺寸，用来填 `canvasUpload` 要求的宽高。
+ *
+ * 量不出来（解码失败、或不在浏览器里）时给一个合法值，而不是抛出去：宽高
+ * 只影响节点显示多大，而这张图是**参考图**——丢掉它等于钉住的参考少一张，
+ * 生成时脸就飘了，用户还会以为参考已经生效。宁可先按默认尺寸摆上去，让
+ * 用户在画布上看到它、再自己拉一下。
+ */
 async function imageSizeOf(dataUrl: string): Promise<{ width: number, height: number }> {
-  return await new Promise((resolve, reject) => {
+  // 不在浏览器里（Node 侧用例）：直接给默认值，不碰 `Image`。
+  if (typeof Image === 'undefined') return FALLBACK_IMAGE_SIZE
+  return await new Promise(resolve => {
     const image = new Image()
     image.onload = () => {
-      if (image.naturalWidth < 1 || image.naturalHeight < 1) { reject(new Error('图片没有有效尺寸')); return }
+      if (image.naturalWidth < 1 || image.naturalHeight < 1) { resolve(FALLBACK_IMAGE_SIZE); return }
       resolve({ width: image.naturalWidth, height: image.naturalHeight })
     }
-    image.onerror = () => reject(new Error('图片无法解码'))
+    image.onerror = () => resolve(FALLBACK_IMAGE_SIZE)
     image.src = dataUrl
   })
 }
@@ -134,8 +146,15 @@ export async function placeDrama(input: {
   imported: DramaImport
   at: { x: number, y: number }
   newId: (kind: 'node' | 'edge') => string
+  /**
+   * 量一张图的宽高。默认走浏览器解码；Node 侧用例可以换掉它。
+   *
+   * 可注入是因为这一段是「只有浏览器能给」的那一步：把它抽出去，铺板逻辑
+   * 就能在纯 Node 里被完整驱动，而不必为一个数字拉起 jsdom。
+   */
+  measure?: (dataUrl: string) => Promise<{ width: number, height: number }>
 }): Promise<DramaPlacement> {
-  const { api, root, imported, at, newId } = input
+  const { api, root, imported, at, newId, measure = imageSizeOf } = input
   const base = layoutNodes({ plan: imported.plan, at, newId })
   const notes: string[] = [...base.warnings]
   const castNodes: CanvasNode[] = []
@@ -158,7 +177,7 @@ export async function placeDrama(input: {
     if (asset === undefined) {
       try {
         const bytes = await api.dramaImage(root, relativePath)
-        const size = await imageSizeOf(bytes.dataUrl)
+        const size = await measure(bytes.dataUrl)
         // 尺寸按资产原比例缩到节点宽度，图才不会在节点里变形。
         const scale = Math.min(1, IMAGE_NODE_SIZE.width / size.width)
         asset = await api.canvasUpload(

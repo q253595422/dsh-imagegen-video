@@ -748,6 +748,37 @@ const CASES = [
     to: 'const SEGMENT_PATTERN = /(\\d{1,3}):([0-5]\\d)\\s*[-–—~]\\s*(\\d{1,3}):([0-5]\\d)/g\nconst segmentPattern = (): RegExp => SEGMENT_PATTERN',
     expect: /L3 反复调用同一条提示词不会漏掉后面的分段/,
   },
+  // ------------------------------------------------------------- drama-import
+  {
+    // 参考图不钉 cast，而是当普通图片节点摆上去：画布上看得见，生成时
+    // 一张参考图都不带——用户的角色脸会逐镜飘。这是整条铺板最贵的一种错，
+    // 因为它没有任何报错。
+    name: 'a reference image lands as an ordinary node instead of a pinned cast',
+    runner: 'drama-import',
+    file: 'src/client/drama-import.ts',
+    from: "            cast: { role: 'character', name },",
+    to: '',
+    expect: /becomes a pinned cast node named after the document/,
+  },
+  {
+    // 用文件名当 cast 名（首帧）而不是文档里的《名称》：cast 的 name 会
+    // 原样进提示词，提示词里就多了一个不存在的身份称呼。
+    name: 'a pinned reference is named after its file, not the document',
+    runner: 'drama-import',
+    file: 'src/client/drama-import.ts',
+    from: "        const name = reference.name !== '' ? reference.name : castNameFor(relativePath)",
+    to: '        const name = castNameFor(relativePath)',
+    expect: /becomes a pinned cast node named after the document/,
+  },
+  {
+    // 解密失败时直接抛：整次铺板停在那里，而宽高只影响节点多大。
+    name: 'a reference is dropped when its size cannot be measured at all',
+    runner: 'drama-import',
+    file: 'src/client/drama-import.ts',
+    from: "  if (typeof Image === 'undefined') return FALLBACK_IMAGE_SIZE",
+    to: "  if (typeof Image === 'undefined') throw new Error('no Image')",
+    expect: /still lands when the image size cannot be measured/,
+  },
   // --------------------------------------------------------------- workflow
   {
     // Treating a self-loop as "no dependency" makes the run start a node that
@@ -3303,6 +3334,9 @@ const RUNNERS = {
   // 它的失败模式是「静默读歪」（没报错，只铺出一块看着正常、实则错位的板），
   // 与上面三组盯的状态 / 规范 / 体检都不同，所以再单列一组。
   'storyboard-markdown': { script: 'scripts/smoke-storyboard-markdown.mjs', build: false },
+  // 「读→解析→落节点」的接线层：它与上面几条纯函数套件不同——它要盯的是
+  // 桩 API 与节点之间那一段（参考图是否真的被钉住、一张图坏了会不会整批停）。
+  'drama-import': { script: 'scripts/smoke-drama-import.mjs', build: false },
   // The workflow planner and run loop are imported straight from source, so
   // this group needs no build: it is pure functions plus a promise loop.
   workflow: { script: 'scripts/smoke-workflow.mjs', build: false },
