@@ -1392,50 +1392,44 @@ await check('SB8 the board surfaces what it found and counts the rows', async ()
   // 复必须写在 try 的 finally 里：一条失败不能连带把下一条也弄红，否则真正坏
   // 掉的那处会被一片红淹掉。本用例不碰回读文档以外的任何状态。
   try {
-  assert.ok(await waitUntil(() => boardEl() !== null, 8000), 'SB8: the board renders')
-  const lint = await waitUntil(() => boardEl().querySelector('[data-storyboard-lint]'), 4000)
-  assert.ok(lint !== null, 'SB8: a board with problems shows the check summary')
-  // 只有第 1 镜有问题，摘要说的就是这个数。
-  assert.match(
-    boardEl().querySelector('[data-storyboard-lint-count]').textContent ?? '',
-    /1/,
-    'SB8: the summary counts the rows that have findings, not the findings',
-  )
+    assert.ok(await waitUntil(() => boardEl() !== null, 8000), 'SB8: the board renders')
+    const lint = await waitUntil(() => boardEl().querySelector('[data-storyboard-lint]'), 4000)
+    assert.ok(lint !== null, 'SB8: a board with problems shows the check summary')
+    // 只有第 1 镜有问题，摘要说的就是这个数。
+    assert.match(
+      boardEl().querySelector('[data-storyboard-lint-count]').textContent ?? '',
+      /1/,
+      'SB8: the summary counts the rows that have findings, not the findings',
+    )
 
-  // 折叠是默认：摘要条在，清单不在。一进板就铺开一屏问题会盖住镜头本身。
-  assert.equal(boardEl().querySelector('[data-storyboard-lint-list]'), null,
-    'SB8: the list starts collapsed')
+    // 折叠是默认：摘要条在，清单不在。一进板就铺开一屏问题会盖住镜头本身。
+    assert.equal(boardEl().querySelector('[data-storyboard-lint-list]'), null,
+      'SB8: the list starts collapsed')
 
-  const head = boardEl().querySelector('[data-storyboard-lint] button')
-  head.dispatchEvent(new (view.ownerDocument.defaultView.MouseEvent)('click', { bubbles: true, cancelable: true }))
-  assert.ok(await waitUntil(() => boardEl().querySelector('[data-storyboard-lint-list]') !== null, 4000),
-    'SB8: pressing the summary opens the list')
+    const head = boardEl().querySelector('[data-storyboard-lint] button')
+    head.dispatchEvent(new (view.ownerDocument.defaultView.MouseEvent)('click', { bubbles: true, cancelable: true }))
+    assert.ok(await waitUntil(() => boardEl().querySelector('[data-storyboard-lint-list]') !== null, 4000),
+      'SB8: pressing the summary opens the list')
 
-  const items = [...boardEl().querySelectorAll('[data-storyboard-lint-list] li')]
-  assert.equal(items.length, 2, 'SB8: both findings on that shot are listed')
-  const text = items.map(item => item.textContent ?? '').join('\n')
-  assert.match(text, /9/, 'SB8: the over-long segment total reaches the list')
-  assert.match(text, /固定机位/, 'SB8: the camera conflict reaches the list')
+    const items = [...boardEl().querySelectorAll('[data-storyboard-lint-list] li')]
+    assert.equal(items.length, 2, 'SB8: both findings on that shot are listed')
+    const text = items.map(item => item.textContent ?? '').join('\n')
+    assert.match(text, /9/, 'SB8: the over-long segment total reaches the list')
+    assert.match(text, /固定机位/, 'SB8: the camera conflict reaches the list')
 
-  // 行上的角标：第 1 镜两粒，第 2 镜没有。角标带计数，因为一镜可能同时有
-  // 几条结论，只画一个点用户不知道要改几处。
-  const chips = [...boardEl().querySelectorAll('[data-lint-chip]')]
-  assert.equal(chips.length, 1, 'SB8: only the shot with findings carries a chip')
-  assert.equal(chips[0].getAttribute('data-lint-count'), '2', 'SB8: the chip states how many findings')
-  assert.equal(
-    chips[0].closest('[data-shot-id]')?.getAttribute('data-shot-id'),
-    'shot-1',
-    'SB8: the chip is on the offending row, not the first row',
-  )
-
+    // 行上的角标：第 1 镜两粒，第 2 镜没有。角标带计数，因为一镜可能同时有
+    // 几条结论，只画一个点用户不知道要改几处。
+    const chips = [...boardEl().querySelectorAll('[data-lint-chip]')]
+    assert.equal(chips.length, 1, 'SB8: only the shot with findings carries a chip')
+    assert.equal(chips[0].getAttribute('data-lint-count'), '2', 'SB8: the chip states how many findings')
+    assert.equal(
+      chips[0].closest('[data-shot-id]')?.getAttribute('data-shot-id'),
+      'shot-1',
+      'SB8: the chip is on the offending row, not the first row',
+    )
   } finally {
-  // 交还画布，给后面的用例。
-  if (process.env.STORYBOARD_SHOT) {
-    const { writeFileSync } = await import('node:fs')
-    writeFileSync(process.env.STORYBOARD_SHOT, boardEl().outerHTML)
-    console.log('    dumped board HTML to ' + process.env.STORYBOARD_SHOT)
-  }
-  setCanvasReadDocument(canvasDocument)
+    // 交还画布，给后面的用例。
+    setCanvasReadDocument(canvasDocument)
     await reopenCanvas()
   }
 })
