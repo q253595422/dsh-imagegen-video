@@ -46,12 +46,20 @@ import { probeCodeRender } from './code-render-runtime.ts'
 import { makeOutfitRoutes } from './outfit-reference-routes.ts'
 import { stageEncodeSession, stagePutFrame } from './stage-encode.ts'
 import { readDramaProject, readProjectImage } from './drama-project.ts'
+import { writeDramaDocument, writeDramaOutput } from './drama-write.ts'
 
 /** Cap on JSON request bodies (settings ops and generate payloads are small). */
 const MAX_JSON_BODY_BYTES = 24 * 1024 * 1024
 
 /** Cap on history append bodies (base64 result images can be much larger). */
 const MAX_HISTORY_BODY_BYTES = 64 * 1024 * 1024
+
+/**
+ * 回写一条产出视频的上限：单条视频 50MB，base64 之后约 67MB，再加一层 JSON
+ * 包装。与 `MAX_HISTORY_BODY_BYTES` 分开是因为那是历史图的上限（64MB 对
+ * 67MB 的视频不够），两个上限背后的东西不同，别共用一个数字。
+ */
+const MAX_DRAMA_MEDIA_BODY_BYTES = 72 * 1024 * 1024
 
 /**
  * Cap on one canvas bundle request body.
@@ -3190,6 +3198,78 @@ export function makeRoutes(deps: ImageGenRoutesDeps): WebRoute[] {
           })
         } catch (error) {
           writeJson(res, 200, { ok: false, code: 'drama-image-failed', message: messageOf(error) })
+        }
+      },
+    },
+    // ---------------------------------------------- drama project: write media
+    // 把画布做出来的一件东西写回 `剧集/<EP>/制作成果/`。
+    //
+    // 一个请求一个文件：单条视频 50MB，base64 之后约 67MB，与文档回写共用
+    // 一条路由会把文本请求也放开到同一个内存上限。
+    //
+    // 默认不覆盖。产出是用户的作品，静默替换会把「再跑一次」变成「把上一次
+    // 的成品顶掉」；要覆盖时宿主先把它备份成 `.bak-<时间戳>`。
+    {
+      kind: 'exact',
+      path: CANVAS_API.dramaWriteFile,
+      handler: async (req, res) => {
+        if (!guard(req, res, 'POST')) return
+        const body = await readJsonBody(req, MAX_DRAMA_MEDIA_BODY_BYTES)
+        const root = typeof body?.root === 'string' ? body.root.trim() : ''
+        const projectPath = typeof body?.projectPath === 'string' ? body.projectPath.trim() : ''
+        const relativePath = typeof body?.path === 'string' ? body.path.trim() : ''
+        const dataUrl = typeof body?.dataUrl === 'string' ? body.dataUrl : ''
+        if (root === '' || !path.isAbsolute(root) || projectPath === '' || relativePath === '' || dataUrl === '') {
+          writeJson(res, 200, { ok: false, code: 'bad-request', message: '需要工作区路径、剧集目录、目标路径与内容。' })
+          return
+        }
+        try {
+          const outcome = await writeDramaOutput({
+            root,
+            projectPath,
+            relativePath,
+            dataUrl,
+            overwrite: body?.overwrite === true,
+          })
+          // 失败也回 200：这一族的每个失败都带一句能直接显示的话，而 HTTP
+          // 500 会让浏览器侧那条统一的错误处理把它变成「HTTP 500」。
+          writeJson(res, 200, outcome.ok
+            ? { ok: true, file: outcome }
+            : { ok: false, code: `drama-write-${outcome.reason}`, message: outcome.message, reason: outcome.reason })
+        } catch (error) {
+          writeJson(res, 200, { ok: false, code: 'drama-write-failed', message: messageOf(error) })
+        }
+      },
+    },
+    // ---------------------------------------------- drama project: write document
+    // 把改好的《分镜.md》写回去。
+    //
+    // 只认这一个文件名（`writeDramaDocument` 里定死），因为回写负责的是
+    // 「镜头的参考图与产出」，别的创作文档不属于这条链路。
+    //
+    // `expected` 是调用方读到的原文：文件在回写过程中被别人改过时拒绝写，
+    // 否则会用一份基于旧内容的改写把刚写的东西覆盖掉。
+    {
+      kind: 'exact',
+      path: CANVAS_API.dramaWriteDocument,
+      handler: async (req, res) => {
+        if (!guard(req, res, 'POST')) return
+        const body = await readJsonBody(req)
+        const root = typeof body?.root === 'string' ? body.root.trim() : ''
+        const projectPath = typeof body?.projectPath === 'string' ? body.projectPath.trim() : ''
+        const text = typeof body?.text === 'string' ? body.text : ''
+        const expected = typeof body?.expected === 'string' ? body.expected : undefined
+        if (root === '' || !path.isAbsolute(root) || projectPath === '' || text === '') {
+          writeJson(res, 200, { ok: false, code: 'bad-request', message: '需要工作区路径、剧集目录与文档内容。' })
+          return
+        }
+        try {
+          const outcome = await writeDramaDocument({ root, projectPath, text, ...expected === undefined ? {} : { expected } })
+          writeJson(res, 200, outcome.ok
+            ? { ok: true, document: outcome }
+            : { ok: false, code: `drama-write-${outcome.reason}`, message: outcome.message, reason: outcome.reason })
+        } catch (error) {
+          writeJson(res, 200, { ok: false, code: 'drama-write-failed', message: messageOf(error) })
         }
       },
     },

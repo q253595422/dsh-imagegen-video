@@ -65,6 +65,16 @@ export function StoryboardBody(props: {
   onRunShot: (index: number) => void
   onPreview: (nodeId: string) => void
   onStitch: (ids: string[]) => void
+  /**
+   * 把这一集做出来的东西写回项目目录。
+   *
+   * 只有从文档铺出来的板才有去向（`storyboard.source`）；手画的板这里是
+   * `undefined`，按钮也就不会出现——猜一个目录等于把用户的成片写进别人的
+   * 项目里。
+   */
+  onWriteback?: () => void
+  /** 回写进行中；与 `busy` 分开是因为它不该禁掉「运行」按钮。 */
+  writebackBusy?: boolean
 }): React.JSX.Element {
   const board = storyboardOf(props.node)
   const progress = storyboardProgress(board, props.nodes)
@@ -328,6 +338,16 @@ export function StoryboardBody(props: {
         onClick={() => props.onChange(withAppendedShot(board))}
       >{tt('canvas.storyboard.addShot')}</button>
       <span className={css.storyboardSpacer} />
+      {/* 回写只在从文档铺出来的板上出现。手画的板没有去向，摆一个按不了的
+          按钮只会让用户猜「为什么它灰着」。 */}
+      {props.onWriteback === undefined ? null : <button
+        type="button"
+        className={css.storyboardStitch}
+        data-storyboard-writeback=""
+        disabled={props.writebackBusy === true}
+        title={tt('canvas.drama.writebackHint')}
+        onClick={props.onWriteback}
+      >{tt(props.writebackBusy === true ? 'canvas.drama.writebackRunning' : 'canvas.drama.writeback')}</button>}
       <button
         type="button"
         className={css.storyboardStitch}

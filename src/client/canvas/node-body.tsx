@@ -189,6 +189,13 @@ export interface NodeBodyActions {
   runStoryboard: (node: CanvasNode) => void
   submitShot: (node: CanvasNode, index: number) => void
   startStoryboardStitch: (ids: string[]) => void
+  /**
+   * 打开「写回文档」卡片。
+   *
+   * 只对有 `storyboard.source` 的板有意义；`StoryboardBody` 用这件事判断
+   * 要不要画出那个按钮。
+   */
+  openStoryboardWriteback: (node: CanvasNode) => void
   clearBrokenVideo: (nodeId: string) => void
   patchSketchStrokes: (nodeId: string, strokes: CanvasSketchStroke[]) => void
   patchSketchAsset: (nodeId: string, asset: CanvasAssetRef | undefined) => void
@@ -537,6 +544,9 @@ return <>
         onRunShot={index => { void A.submitShot(node, index) }}
         onPreview={nodeId => A.setVideoPreviewNodeId(nodeId)}
         onStitch={ids => A.startStoryboardStitch(ids)}
+        // 只有从文档铺出来的板才有去向；手画的板 `source` 是 undefined，
+        // 这里就不传回调，按钮也就不出现。
+        onWriteback={S.storyboardOf(node).source === undefined ? undefined : () => { void A.openStoryboardWriteback(node) }}
       />
     : isVideo
     ? <div className={css.fileBody} data-video-body="">

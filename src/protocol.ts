@@ -567,6 +567,18 @@ export const CANVAS_API = {
    * 一条上传通道，不是两条。
    */
   dramaImage: '/api/dsh-imagegen/canvas/drama/image',
+  /**
+   * 把画布做出来的一个产出文件写回 `剧集/<EP>/制作成果/`。
+   *
+   * 与 `dramaProject` / `dramaImage` 对称——那两条只读，这一条只写，分工
+   * 与读侧一致：浏览器算「要写什么」，宿主只管落盘与安全边界。
+   *
+   * 一次一个文件：单条视频上限 50MB，base64 之后约 67MB，与文档回写那条
+   * 共用路由会把文本请求也放开到同一个内存上限。
+   */
+  dramaWriteFile: '/api/dsh-imagegen/canvas/drama/write-file',
+  /** 把改好的《分镜.md》写回去（先备份，内容没变就不写）。 */
+  dramaWriteDocument: '/api/dsh-imagegen/canvas/drama/write-document',
 } as const
 
 /** 导演台逐帧导出的线上形状。 */

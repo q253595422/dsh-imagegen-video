@@ -645,6 +645,61 @@ export class ImageGenApi {
   }
 
   /**
+   * 把一个产出文件写回 `剧集/<EP>/制作成果/`。
+   *
+   * 失败也走 `readEnvelope`：宿主那一侧把每种失败都写成 `{ ok: false, code,
+   * message }`，所以这里抛出来的错误已经带着能直接显示的话与一个可分辨的
+   * code（`drama-write-exists` 是「已经有了」，不是「写坏了」）。
+   */
+  async dramaWriteFile(input: {
+    root: string
+    projectPath: string
+    path: string
+    dataUrl: string
+    overwrite?: boolean
+  }): Promise<{ relativePath: string, bytes: number, overwrote: boolean, backup?: string }> {
+    const response = await fetch(CANVAS_API.dramaWriteFile, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        root: input.root,
+        projectPath: input.projectPath,
+        path: input.path,
+        dataUrl: input.dataUrl,
+        ...input.overwrite === true ? { overwrite: true } : {},
+      }),
+    })
+    const envelope = await readEnvelope<{ ok: true, file: { relativePath: string, bytes: number, overwrote: boolean, backup?: string } }>(response)
+    return envelope.file
+  }
+
+  /**
+   * 把改好的《分镜.md》写回去。
+   *
+   * `expected` 传调用方读到的原文；文件在回写过程中被改过时宿主会拒绝写，
+   * 而不是用旧内容算出来的改写把新内容盖掉。
+   */
+  async dramaWriteDocument(input: {
+    root: string
+    projectPath: string
+    text: string
+    expected?: string
+  }): Promise<{ relativePath: string, bytes: number, backup: string, changed: boolean }> {
+    const response = await fetch(CANVAS_API.dramaWriteDocument, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        root: input.root,
+        projectPath: input.projectPath,
+        text: input.text,
+        ...input.expected === undefined ? {} : { expected: input.expected },
+      }),
+    })
+    const envelope = await readEnvelope<{ ok: true, document: { relativePath: string, bytes: number, backup: string, changed: boolean } }>(response)
+    return envelope.document
+  }
+
+  /**
    * Ask the host to package one canvas into a self-contained bundle: the
    * document plus the bytes of every asset it references. Clips are referenced
    * rather than copied (they can be tens of megabytes each), so a bundle whose
