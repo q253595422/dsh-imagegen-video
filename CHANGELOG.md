@@ -5,7 +5,9 @@ Attribution for third-party code is in [NOTICE](./NOTICE).
 
 ## Releases
 
-### 未发布 — 视频历史里那条删不掉的「3D 导演台导出」
+### 1.33.1 — 视频历史里那条删不掉的「3D 导演台导出」
+
+本版只修一件事：历史侧栏里那三条点垃圾桶没反应的「3D 导演台导出」。完整说明见 [docs/releases/v1.33.1.md](./docs/releases/v1.33.1.md)。
 
 用户报的是「删不掉？」：历史侧栏里三条一模一样的「1:1 · 64x64 · 0.2s · ffmpeg」，蓝方块缩略图，点垃圾桶没有反应。
 
