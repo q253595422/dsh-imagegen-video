@@ -23,7 +23,7 @@ import {
   parseStoryboardMarkdown,
   type ParsedMotionPrompt,
 } from './storyboard-markdown.ts'
-import { layoutNodes, planCanvasLayout, type CanvasLayoutPlan, type LayoutNodes } from './storyboard-layout.ts'
+import { layoutNodes, planCanvasLayout, type CanvasLayoutPlan, type LayoutNodes, type ReferenceEntry } from './storyboard-layout.ts'
 import { IMAGE_NODE_SIZE, STORYBOARD_NODE_SIZE } from './canvas/constants.ts'
 
 /** 从宿主读回来、解析好、还没落成节点的一次铺板。 */
@@ -144,13 +144,16 @@ export async function placeDrama(input: {
   const importedByPath = new Map<string, CanvasAssetRef>()
   const castNames = new Set<string>()
   for (const placed of imported.plan.shots) for (const name of placed.castNames) castNames.add(name)
-  const wanted: string[] = []
+  // 同一张图可能在一集里被好几镜引用；只导一次，名字取文档第一次写的那个。
+  const wanted = new Map<string, ReferenceEntry>()
   for (const placed of imported.plan.shots) {
-    for (const path of placed.referencePaths) if (!wanted.includes(path)) wanted.push(path)
+    for (const reference of placed.referencePaths) {
+      if (!wanted.has(reference.path)) wanted.set(reference.path, reference)
+    }
   }
   // 参考图横排在设定板下方一行；不重叠，也不挡分镜板。
   const startY = at.y + STORYBOARD_NODE_SIZE.height + IMAGE_NODE_SIZE.height + 48
-  for (const relativePath of wanted) {
+  for (const [relativePath, reference] of wanted) {
     let asset: CanvasAssetRef | undefined = importedByPath.get(relativePath)
     if (asset === undefined) {
       try {
@@ -165,10 +168,13 @@ export async function placeDrama(input: {
           { origin: 'upload', originId: relativePath },
         )
         importedByPath.set(relativePath, asset)
+        // 称呼优先用文档《名称》，其次才是文件名：文件名是用户起的
+        // （`首帧.png`），而 cast 的 name 会原样出现在提示词里。
+        const name = reference.name !== '' ? reference.name : castNameFor(relativePath)
         castNodes.push({
           id: newId('node'),
           type: 'image',
-          title: castNameFor(relativePath, [...castNames]),
+          title: name,
           x: Math.round(at.x + castNodes.length * (IMAGE_NODE_SIZE.width + 24)),
           y: Math.round(startY),
           width: Math.round(size.width * scale),
@@ -177,7 +183,7 @@ export async function placeDrama(input: {
             asset,
             status: 'success',
             // 钉住：这是 `submitShot` 取参考图的唯一来源。
-            cast: { role: 'character', name: castNameFor(relativePath, [...castNames]) },
+            cast: { role: 'character', name },
           },
         })
       } catch (error) {
@@ -198,11 +204,9 @@ export async function placeDrama(input: {
   }
 }
 
-/** 一张参考图该钉成什么名字：文档里的身份名优先，没有就用文件名。 */
-function castNameFor(relativePath: string, names: readonly string[]): string {
-  const file = relativePath.slice(relativePath.lastIndexOf('/') + 1).replace(/\.[^.]+$/, '')
-  const matched = names.find(name => file.includes(name))
-  return matched ?? file
+/** 一张参考图该钉成什么名字：优先文档里的《名称》，没有才用文件名。 */
+function castNameFor(relativePath: string): string {
+  return relativePath.slice(relativePath.lastIndexOf('/') + 1).replace(/\.[^.]+$/, '')
 }
 
 /** 一句可读的错误文案。 */

@@ -47,7 +47,7 @@ export interface PlacedShot {
   /** 要钉成 cast 的身份名。 */
   castNames: string[]
   /** `REF-…` 里能在磁盘上找到的图，铺板时要导入成图片节点。 */
-  referencePaths: string[]
+  referencePaths: ReferenceEntry[]
   /** 文档里该有但没读到的东西，逐条给人看。 */
   notes: string[]
 }
@@ -111,8 +111,18 @@ function shotSecondsFor(shot: ParsedShot): { seconds: number, note?: string } {
  * 的槽位指向的是「另一张图」，也不在这里解析——那是跨文档引用，铺板时无从
  * 得知那张图生成了没有。只认有真实路径的 `REF-…`，其余交给提示。
  */
-function importableReferences(shot: ParsedShot): { paths: string[], notes: string[] } {
-  const paths: string[] = []
+/** 一张要从项目导入的参考图，连同文档给它的名字。 */
+export interface ReferenceEntry {
+  /** 项目相对路径，与文档里写的一致。 */
+  path: string
+  /** 文档里的《名称》；空串表示没写。钉成 cast 后它就是提示词里的称呼。 */
+  name: string
+  /** 图槽位（`REF-A1`），用于说明哪一镜缺图。 */
+  slot: string
+}
+
+function importableReferences(shot: ParsedShot): { paths: ReferenceEntry[], notes: string[] } {
+  const paths: ReferenceEntry[] = []
   const notes: string[] = []
   for (const reference of shot.references) {
     if (reference.slot.startsWith('PLAN-')) {
@@ -123,7 +133,7 @@ function importableReferences(shot: ParsedShot): { paths: string[], notes: strin
       notes.push(`${reference.slot} 没有路径，只记了名称${reference.name === '' ? '' : `「${reference.name}」`}。`)
       continue
     }
-    paths.push(reference.path)
+    paths.push({ path: reference.path, name: reference.name, slot: reference.slot })
   }
   return { paths, notes }
 }
