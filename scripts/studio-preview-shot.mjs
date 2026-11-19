@@ -54,14 +54,19 @@ function dshNodeModules() {
 function inlineCss(nodeModules, packageName, needle) {
   const file = join(nodeModules, '@deepseek-ai', packageName, 'lib', 'client.js')
   const source = readFileSync(file, 'utf8')
-  // The literal may contain escaped quotes (`content:"\2014"`), so the body
-  // has to allow `\"` — a plain `[^"]*` stops at the first one.
-  const pattern = /^\s*(?:const|var)\s+(\w+)\s*=\s*("(?:[^"\\]|\\.)*");?\s*$/gm
   const found = []
-  let match
-  while ((match = pattern.exec(source)) !== null) {
-    if (!match[2].includes(needle)) continue
-    found.push(JSON.parse(match[2]))
+  // DSH has shipped both string literals and template literals here. Read both:
+  // the preview must survive a host whose bundler changed quote style, and a
+  // missed block used to surface as an unstyled page rather than a clear error.
+  for (const pattern of [
+    /^\s*(?:const|var)\s+(\w+)\s*=\s*("(?:[^"\\]|\\.)*");?\s*$/gm,
+    /(?:const|var|let)\s+\w+\s*=\s*`((?:[^`\\]|\\.)*)`/g,
+  ]) {
+    let match
+    while ((match = pattern.exec(source)) !== null) {
+      const text = match[2] === undefined ? match[1] : JSON.parse(match[2])
+      if (text.includes(needle)) found.push(text)
+    }
   }
   if (found.length === 0) throw new Error(`${packageName}: no inlined CSS containing "${needle}"`)
   return found.join('\n')
@@ -71,10 +76,17 @@ function inlineCss(nodeModules, packageName, needle) {
 function themeCss(nodeModules) {
   const file = join(nodeModules, '@deepseek-ai', THEME_PACKAGE, 'lib', 'client.js')
   const source = readFileSync(file, 'utf8')
-  const pattern = /^\s*var\s+(\w*_css_default)\s*=\s*("(?:[^"\\]|\\.)*");?\s*$/gm
   const blocks = []
-  let match
-  while ((match = pattern.exec(source)) !== null) blocks.push(JSON.parse(match[2]))
+  for (const pattern of [
+    /^\s*var\s+(\w*_css_default)\s*=\s*("(?:[^"\\]|\\.)*");?\s*$/gm,
+    /(?:const|var|let)\s+\w+\s*=\s*`((?:[^`\\]|\\.)*)`/g,
+  ]) {
+    let match
+    while ((match = pattern.exec(source)) !== null) {
+      const text = match[2] === undefined ? match[1] : JSON.parse(match[2])
+      if (text.includes('--dsw-') || text.includes('@font-face')) blocks.push(text)
+    }
+  }
   if (blocks.length === 0) throw new Error('theme package: no inlined CSS constants')
   return blocks.join('\n')
 }
@@ -93,8 +105,10 @@ const CHROME = findChrome()
 if (CHROME === null) skipWithoutChrome('the visual-acceptance screenshots were NOT taken.')
 
 const THEME = themeCss(NODE_MODULES)
-const SIDEBAR = inlineCss(NODE_MODULES, SIDEBAR_PACKAGE, '_3WPZCG_')
-const LAYOUT = inlineCss(NODE_MODULES, LAYOUT_PACKAGE, '_6Qf49G_')
+// Match the semantic class names, not a build hash: DSH rehashes these every
+// release, and a pinned prefix turned a normal host upgrade into "no CSS".
+const SIDEBAR = inlineCss(NODE_MODULES, SIDEBAR_PACKAGE, 'logoRow')
+const LAYOUT = inlineCss(NODE_MODULES, LAYOUT_PACKAGE, 'centerCol')
 
 /** Class names the shell ships, resolved from the extracted stylesheets. */
 function shellClass(stylesheet, name) {

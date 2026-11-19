@@ -13,6 +13,8 @@ export function ReferenceImages(props: {
   onRemove: (id: string) => void
   onClear: () => void
   notice?: string | null
+  /** Effective ceiling for the selected model/channel (defaults to the safe 5). */
+  limit?: number
 }) {
   const input = useRef<HTMLInputElement>(null)
   const dialog = useRef<HTMLElement>(null)
@@ -43,6 +45,7 @@ export function ReferenceImages(props: {
     return () => window.removeEventListener('keydown', keyboard, true)
   }, [previewId, props.images])
   const previewOpen = preview !== undefined
+  const limit = Math.max(1, Math.round(props.limit ?? EDIT_REFERENCE_LIMIT))
   useEffect(() => {
     if (!previewOpen) return
     return () => { if (previousFocus.current?.isConnected) previousFocus.current.focus() }
@@ -63,10 +66,10 @@ export function ReferenceImages(props: {
           <button type="button" className={css.thumbnail} aria-label={tt('edit.previewReference', { index: index + 1, name: image.name })} title={image.name} onClick={() => { previousFocus.current = document.activeElement as HTMLElement; setPreviewId(image.id) }}><img src={image.dataUrl} alt={image.name} /><span className={css.number}>{index + 1}</span></button>
           <button type="button" className={css.remove} aria-label={tt('edit.removeReference', { index: index + 1, name: image.name })} onClick={() => props.onRemove(image.id)}><X size={12} aria-hidden="true" /></button>
         </div>)}
-        {props.images.length < EDIT_REFERENCE_LIMIT ? <button type="button" className={css.add} aria-label={tt('edit.addMore')} onClick={() => input.current?.click()}><Plus size={19} aria-hidden="true" /><span>{tt('edit.add')}</span></button> : null}
+        {props.images.length < limit ? <button type="button" className={css.add} aria-label={tt('edit.addMore')} onClick={() => input.current?.click()}><Plus size={19} aria-hidden="true" /><span>{tt('edit.add')}</span></button> : null}
       </div>}
       <p className={css.hint} role={props.reading ? 'status' : undefined}>{props.reading ? tt('edit.reading') : tt('edit.multiHint')}</p>
-      <p className={css.limits}>{tt('edit.limits', { count: EDIT_REFERENCE_LIMIT })}</p>
+      <p className={css.limits}>{tt('edit.limits', { count: limit })}</p>
       {props.notice ? <p className={css.notice} role="status">{props.notice}</p> : null}
       <input ref={input} className={css.file} type="file" multiple accept="image/png,image/jpeg,image/webp,image/gif" aria-label={tt('edit.uploadMultiple')} onChange={event => { props.onAdd(Array.from(event.target.files ?? [])); event.target.value = '' }} />
     </section>

@@ -26,6 +26,14 @@ export interface UpstreamConfig {
   apiUrlFull?: boolean
   /** Request protocol; auto infers chat-completions from an exact chat URL. */
   protocol?: ChannelProtocolPreference
+  /**
+   * Preset id the channel was created from, when known. A preset can carry a
+   * documented wire quirk that is not inferable from the model id alone (the
+   * CloseAI gateway accepts ratio strings in `size`, official OpenAI does not).
+   */
+  preset?: string
+  /** Use the selected adapter's reference ceiling; false pins 5 images. */
+  autoReferenceLimit?: boolean
   /** Channel display name, recorded in diagnostics so a failure maps to a settings row. */
   channelName?: string
   /** Seedream 水印开关：缺省为开启，仅在 false 且上游支持时发送 watermark=false (#56)。 */
@@ -128,6 +136,23 @@ function isQwenImage(model: string): boolean {
 function isModelScopeInference(baseUrl: string): boolean {
   try {
     return new URL(baseUrl).hostname.toLowerCase() === 'api-inference.modelscope.cn'
+  } catch {
+    return false
+  }
+}
+
+/**
+ * The CloseAI-backed image gateway documented as `api.closeai.hk`.
+ *
+ * Its `size` field accepts an aspect ratio (`16:9`, `4:3`, `21:9`) in
+ * addition to WIDTHxHEIGHT. Official OpenAI endpoints only take their three
+ * pixel sizes, so the exact-ratio form is scoped to this gateway (or a
+ * channel created from its preset) instead of changing every gpt-image call.
+ */
+function isCloseAiImageGateway(upstream: UpstreamConfig): boolean {
+  if (upstream.preset === 'yeahzi-closeai') return true
+  try {
+    return new URL(upstream.apiUrl).hostname.toLowerCase() === 'api.closeai.hk'
   } catch {
     return false
   }
@@ -623,10 +648,15 @@ function effectiveParams(request: GenerateRequest, upstream: UpstreamConfig): {
   }
   // OpenAI-compatible endpoints: nearest pixel size, clarity tiers mapped to
   // the quality levels (1k→low / 2k→medium / 4k→high), detail passthrough.
+  const closeai = isCloseAiImageGateway(upstream)
   return {
     model,
-    ...request.size !== '' && request.size !== 'auto' && OPENAI_SIZE_BY_RATIO[request.size] !== undefined
-      ? { size: OPENAI_SIZE_BY_RATIO[request.size] }
+    ...request.size !== '' && request.size !== 'auto'
+      ? closeai
+        ? { size: request.size }
+        : OPENAI_SIZE_BY_RATIO[request.size] !== undefined
+          ? { size: OPENAI_SIZE_BY_RATIO[request.size] }
+          : {}
       : {},
     ...request.quality === '1k' ? { quality: 'low' } : {},
     ...request.quality === '2k' ? { quality: 'medium' } : {},
@@ -1077,9 +1107,16 @@ async function requestOneImage(
       return { bytes, mime: parsed.mime, filename: `reference.${extensionOf(parsed.mime)}` }
     }
     const primary = decodeReference(request.image)
+    // The host ceiling follows the same switch the panel uses: 20 on the
+    // CloseAI gateway unless the channel pins the safe 5, and 5 elsewhere.
+    const referenceLimit = upstream.autoReferenceLimit === false
+      ? 5
+      : isCloseAiImageGateway(upstream)
+        ? 20
+        : 5
     const extras = (request.images ?? [])
       .filter(img => typeof img === 'string' && img !== '')
-      .slice(0, 4)
+      .slice(0, Math.max(0, referenceLimit - 1))
       .map(decodeReference)
     // Grok Imagine /images/edits takes a JSON image_url object (a base64 data
     // URI is accepted) instead of OpenAI's multipart form-data upload.

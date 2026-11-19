@@ -5,6 +5,8 @@ import { resolveChannelProtocol, type ChannelConfig } from '../protocol.ts'
 import { tt } from './helpers.ts'
 
 export const EDIT_REFERENCE_LIMIT = 5
+/** The CloseAI gateway documents up to 20 equal-weight references. */
+export const CLOSEAI_REFERENCE_LIMIT = 20
 export const EDIT_REFERENCE_MAX_BYTES = 10 * 1024 * 1024
 // The host accepts 24 MiB JSON; 16 MiB of image bytes leaves room for base64
 // expansion, prompts and request metadata without changing the host limits.
@@ -12,21 +14,39 @@ export const EDIT_REFERENCE_TOTAL_BYTES = 16 * 1024 * 1024
 const IMAGE_TYPES = new Set(['image/png', 'image/jpeg', 'image/webp', 'image/gif'])
 export interface EditReference { id: string; name: string; dataUrl: string; bytes: number }
 
+/** The channel fields the reference limit reads; all optional for partial views. */
+export type ReferenceLimitChannel = Partial<Pick<ChannelConfig, 'apiUrl' | 'apiUrlFull' | 'protocol' | 'auth' | 'models' | 'preset' | 'autoReferenceLimit'>>
+
+/** Whether a channel is the CloseAI/yeahzi gateway (preset survives a URL edit). */
+function isCloseAiChannel(channel?: ReferenceLimitChannel): boolean {
+  if (channel?.preset === 'yeahzi-closeai') return true
+  try {
+    return new URL(channel?.apiUrl ?? '').hostname.toLowerCase() === 'api.closeai.hk'
+  } catch {
+    return false
+  }
+}
+
 /** Current adapter capabilities, not a claim about every vendor's API. */
-export function editReferenceLimit(model: string, channel?: Pick<ChannelConfig, 'apiUrl' | 'apiUrlFull' | 'protocol' | 'auth' | 'models'>): number {
+export function editReferenceLimit(model: string, channel?: ReferenceLimitChannel): number {
   if (channel?.auth === 'subscription') return EDIT_REFERENCE_LIMIT
   const protocol = resolveChannelProtocol(channel?.apiUrl ?? '', channel?.protocol)
   // Google's native adapter carries up to five inlineData references — the
   // same primary + four extras ceiling as the host contract. Without this the
   // gemini ids fall into the nanobanana family branch and collapse to one.
   if (protocol === 'chat-completions' || protocol === 'google-native') return EDIT_REFERENCE_LIMIT
-  const upstream = channel?.models.find(item => item.alias === model)?.id || model
+  const upstream = channel?.models?.find(item => item.alias === model)?.id || model
   const { family } = describeModel(upstream)
   if (family === 'grok' || family === 'nanobanana' || family === 'dall-e') return 1
   if (!channel?.apiUrlFull) {
     let modelScope = false
     try { modelScope = new URL(channel?.apiUrl ?? '').hostname.toLowerCase() === 'api-inference.modelscope.cn' } catch { /* ordinary base URL */ }
     if ((family === 'qwen' && !modelScope) || family === 'minimax') return 1
+  }
+  if (isCloseAiChannel(channel)) {
+    // The gateway's hard ceiling is 20; the switch pins our safe default (5)
+    // when the user prefers shorter uploads and less upstream work.
+    return channel?.autoReferenceLimit === false ? EDIT_REFERENCE_LIMIT : CLOSEAI_REFERENCE_LIMIT
   }
   return EDIT_REFERENCE_LIMIT
 }
@@ -52,7 +72,7 @@ function readFile(file: File): Promise<string> {
 
 /** Serial batches preserve selection order even when FileReader finishes out
  * of order. Clear/unmount invalidates in-flight work so old files cannot return. */
-export function useEditReferences(onError: (message: string | null) => void) {
+export function useEditReferences(onError: (message: string | null) => void, options: { limit?: number } = {}) {
   const [images, setImages] = useState<EditReference[]>([])
   const [reading, setReading] = useState(false)
   const current = useRef<EditReference[]>([])
@@ -60,6 +80,9 @@ export function useEditReferences(onError: (message: string | null) => void) {
   const epoch = useRef(0)
   const pending = useRef(0)
   const nextId = useRef(0)
+  const limit = Math.max(1, Math.round(options.limit ?? EDIT_REFERENCE_LIMIT))
+  const limitRef = useRef(limit)
+  limitRef.current = limit
   const report = useRef(onError)
   report.current = onError
   useEffect(() => () => { epoch.current += 1 }, [])
@@ -91,8 +114,8 @@ export function useEditReferences(onError: (message: string | null) => void) {
         }
         return true
       })
-      const slots = EDIT_REFERENCE_LIMIT - current.current.length
-      if (valid.length > slots) warnings.add(tt('edit.limitReached', { count: EDIT_REFERENCE_LIMIT }))
+      const slots = Math.max(0, limitRef.current - current.current.length)
+      if (valid.length > slots) warnings.add(tt('edit.limitReached', { count: limitRef.current }))
       let bytes = current.current.reduce((sum, image) => sum + image.bytes, 0)
       const candidates = valid.slice(0, slots).filter(file => {
         if (bytes + file.size > EDIT_REFERENCE_TOTAL_BYTES) { warnings.add(tt('edit.totalTooLarge')); return false }

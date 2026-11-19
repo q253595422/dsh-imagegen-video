@@ -82,14 +82,14 @@ const videoTaskResultSchema = {
 const AGENT_VIDEO_TIMEOUT_MS = 40 * 60_000
 
 export function ensureAgentVideoConfigured(config: AgentVideoToolConfig): void {
-  if (!config.enabled) throw new VideoGenError('AI image generation is disabled. Open Settings → Image settings and enable it.', 'plugin-disabled')
-  if (!config.allowAgentVideoGeneration) throw new VideoGenError('Agent video generation is disabled in Settings → Image settings.', 'agent-video-disabled')
+  if (!config.enabled) throw new VideoGenError('AI image generation is disabled. Open Settings → Image / Video and enable it.', 'plugin-disabled')
+  if (!config.allowAgentVideoGeneration) throw new VideoGenError('Agent video generation is disabled in Settings → Image / Video.', 'agent-video-disabled')
   const usable = config.channels.some(channel =>
     channel.apiUrl.trim() !== ''
     && channel.apiKey.trim() !== ''
     && (channel.videoModels ?? []).length > 0)
   if (!usable) {
-    throw new VideoGenError('No video models are configured. Open Settings → Image settings, pick a channel and add video models to it.', 'video-model-not-configured')
+    throw new VideoGenError('No video models are configured. Open Settings → Image / Video, pick a service and add video models to it.', 'video-model-not-configured')
   }
 }
 
@@ -97,7 +97,7 @@ export function ensureAgentVideoConfigured(config: AgentVideoToolConfig): void {
 export function resolveAgentVideoModel(config: AgentVideoToolConfig, requested: unknown): { channel: RuntimeChannel; alias: string; upstream: string } {
   const entries = config.channels.flatMap(channel => (channel.videoModels ?? []).map(model => ({ channel, alias: model.alias, upstream: model.id })))
   if (entries.length === 0) {
-    throw new VideoGenError('No video models are configured. Open Settings → Image settings and add video models to a channel.', 'video-model-not-configured')
+    throw new VideoGenError('No video models are configured. Open Settings → Image / Video and add video models to a service.', 'video-model-not-configured')
   }
   const wanted = typeof requested === 'string' && requested.trim() !== ''
     ? requested.trim()

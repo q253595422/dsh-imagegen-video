@@ -125,8 +125,20 @@ const rig = await import(new URL('../src/client/canvas/pose-rig.ts', import.meta
  * 脚完全消失，只剩两根杆子戳进地里。所以要按每个关节自己的半径外扩一格再
  * 取最小值：形体的最低表面贴地才是对的。
  */
-const lowest = world => Math.min(...Object.entries(world)
-  .map(([joint, p]) => p[1] - (rig.JOINT_RADIUS[joint] ?? 0)))
+const lowest = world => {
+  let low = Infinity
+  for (const [joint, p] of Object.entries(world)) {
+    // 脚掌不是球：它的最低点由脚底剖面决定，见下面的 footSolePoints。
+    if (joint === 'footL' || joint === 'footR') continue
+    low = Math.min(low, p[1] - (rig.JOINT_RADIUS[joint] ?? 0))
+  }
+  for (const side of ['L', 'R']) {
+    for (const point of rig.footSolePoints(world[`foot${side}`], world[`knee${side}`])) {
+      low = Math.min(low, point[1])
+    }
+  }
+  return low
+}
 
 await check('P1 every preset stands on the ground', async () => {
   for (const preset of rig.POSE_PRESETS) {
@@ -134,6 +146,25 @@ await check('P1 every preset stands on the ground', async () => {
     const floor = lowest(world)
     // 2 cm 是地面常量本身；给 1 cm 的浮点余量。往上飘或沉进地面都是错的。
     assert.ok(Math.abs(floor - 0.02) < 0.011, `${preset.id}: lowest joint at y=${floor.toFixed(3)}, expected 0.02`)
+  }
+})
+
+await check('P1b every foot sole touches the floor instead of the floor cutting through it', async () => {
+  for (const preset of rig.POSE_PRESETS) {
+    const world = rig.solveRig(preset.rig)
+    const soles = ['L', 'R'].flatMap(side => rig.footSolePoints(
+      world[`foot${side}`],
+      world[`knee${side}`],
+    ))
+    const lowestSole = Math.min(...soles.map(point => point[1]))
+    const lowestSurface = lowest(world)
+    assert.ok(Math.abs(lowestSole - rig.POSE_GROUND_Y) < 0.002,
+      `${preset.id}: lowest sole at y=${lowestSole.toFixed(3)}, expected ${rig.POSE_GROUND_Y}`)
+    assert.ok(lowestSurface >= rig.POSE_GROUND_Y - 0.002,
+      `${preset.id}: a surface point sank below the floor (${lowestSurface.toFixed(3)})`)
+    // 至少有一只脚在地面上；跑步可以有腾空脚，但不能整个人悬空。
+    assert.ok(lowestSurface < rig.POSE_GROUND_Y + 0.01,
+      `${preset.id}: the figure floats above the floor`)
   }
 })
 

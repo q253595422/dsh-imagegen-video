@@ -1,0 +1,184 @@
+/**
+ * 「从短剧文档铺板」目录卡。
+ *
+ * 表面直接沿用 DSH 原生 Modal.module.css 的尺寸、字号和层级 token。没有用
+ * `<Modal>` 是因为它固定 portal 到 body，而画布全屏走的是 Fullscreen API，
+ * body 里的浮层会落到全屏元素后面。键盘与焦点仍由原生 `useModalLayer` 管。
+ */
+
+.root {
+  position: fixed;
+  inset: 0;
+  z-index: var(--z-modal-backdrop);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: max(24px, var(--dsh-frame-overlay-top, 24px)) 24px;
+}
+
+.mask {
+  position: absolute;
+  inset: 0;
+  backdrop-filter: var(--dsw-mask-blur);
+}
+
+.mask::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background: var(--dsw-alias-bg-mask-1);
+  animation: enter var(--ds-transition-duration) var(--ds-ease-in-out);
+}
+
+.dialog {
+  box-sizing: border-box;
+  position: relative;
+  z-index: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+  width: min(480px, 100%);
+  padding: 0 0 24px;
+  overflow: hidden;
+  border: 0;
+  border-radius: var(--dsw-radius-panel);
+  background: var(--dsw-alias-bg-layer-2);
+  box-shadow: var(--dsw-elevation-prominent);
+  animation: enter var(--ds-transition-duration) var(--ds-ease-in-out);
+}
+
+.dialog:focus {
+  outline: none;
+}
+
+@keyframes enter {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .mask::after,
+  .dialog {
+    animation: none;
+  }
+}
+
+.content {
+  display: flex;
+  flex-direction: column;
+  width: 100%;
+}
+
+.header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 22px 14px 12px 24px;
+}
+
+.title {
+  margin: 0;
+  color: var(--dsw-alias-label-primary);
+  font-size: 16px;
+  font-weight: 500;
+  line-height: 24px;
+}
+
+.close {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  border: none;
+  border-radius: var(--dsw-radius-sm);
+  background: transparent;
+  color: var(--dsw-alias-label-secondary);
+  cursor: pointer;
+}
+
+.close:hover {
+  background: var(--dsw-alias-interactive-bg-hover);
+}
+
+.close:focus-visible {
+  outline: 2px solid var(--dsw-alias-brand-primary);
+  outline-offset: 2px;
+}
+
+.description {
+  margin: 0;
+  padding: 0 24px;
+  color: var(--dsw-alias-label-primary);
+  font-size: 14px;
+  font-weight: 400;
+  line-height: 22px;
+}
+
+.body {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  margin-top: 20px;
+  padding: 0 24px;
+}
+
+.footer {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 8px;
+  padding: 0 24px;
+}
+
+.form {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+
+.label {
+  margin-bottom: 6px;
+  color: var(--dsw-alias-label-secondary);
+  font-size: 12px;
+  font-weight: 500;
+  line-height: 18px;
+}
+
+.field {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+
+.input {
+  flex: 1;
+  min-width: 0;
+  height: 36px;
+}
+
+.browse {
+  flex: none;
+  height: 36px;
+}
+
+.error {
+  margin: 8px 0 0;
+  color: var(--dsw-alias-state-error-primary);
+  font-size: 12px;
+  line-height: 18px;
+}
+
+@media (max-width: 480px) {
+  .field {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .browse {
+    width: 100%;
+  }
+}

@@ -5,6 +5,16 @@ Attribution for third-party code is in [NOTICE](./NOTICE).
 
 ## Releases
 
+### Unreleased — 导演台换成标准蒙皮白膜
+
+导演台的角色默认从程序化木偶换成 **CC0 MakeHuman / CharacterCreator 标准蒙皮底模**（53 骨，含脸、手指与鞋；材质统一为灰白膜，服装用同一色系的 clay）。旧的程序化木偶保留为「轻量木偶」回退和无 WebGL 时的 2D 路径。
+
+- **资产**：`assets/stage/` 下的 `base-body.glb` 与 t-shirt / jeans / shoes，均由 MakeHuman CC0 系统资产导出；只取 GLB，不包含 CharacterCreator 的 GPL 源码。署名与来源见 `THIRD_PARTY_NOTICES.md`。
+- **重定向**：用 `pose-rig` 的 17 关节方向驱动 53 骨主骨，身体与每件服装各自重定向；不为手指和面部假装做捕捉。站、坐、走与现有时间轴 / 机位 / 导出复用。
+- **加载**：GLB 走宿主只读路由 `stage-assets`；首次渲染先出木偶、加载完成后切换标准体。导出会等待当前场景的标准体完成，5 秒超时则回退木偶，避免卡死。
+- **材质**：标准体与服装共用 clay 材质，服装沿法线做 12mm 外扩，避免 CC0 紧身衣与皮肤重合后被深度测试吃掉。
+- **验证**：`pnpm typecheck`、`pnpm run test:stage`、`pnpm test`、`pnpm stage:preview`；`verify-stage-3d` 12 条（含木色切换与近景）。
+
 ### 1.34.0 — 分镜板的「体检」：写之前就知道哪一镜会翻车
 
 对照 `oh-story-dsh` 的分阶段契约（VID-01…VID-28）后融进本插件的那一半。他们的做法是把写作规范摊成五份 markdown，用 2600 行 Python 跨文档校验；我们只有一块分镜板，所以只留**能在提交前从分镜本身算出来**的结论，并直接长在板上。

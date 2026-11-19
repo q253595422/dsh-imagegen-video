@@ -10,11 +10,17 @@
  * 精简外壳）就手输绝对路径。两条都通，功能不在精简外壳上失效。
  */
 
-import { useMemo, useRef, useState } from 'react'
+import { useId, useMemo, useRef, useState } from 'react'
+import {
+  Button,
+  IconCloseOutlineRegular,
+  IconFolderOpenOutlineRegular,
+  Input,
+  useModalLayer,
+} from '@deepseek-ai/dsh-client-ui-primitives'
 import { tt } from '../helpers.ts'
 import { normalizeDirectoryChoice } from '../host-directory.ts'
-import css from './capability-catalog.module.css'
-import { useModalFocus } from './capability-catalog.tsx'
+import css from './drama-picker.module.css'
 
 export interface DramaPickerProps {
   /** 宿主目录选择器；undefined 表示这个外壳没装载它。 */
@@ -29,15 +35,21 @@ export interface DramaPickerProps {
 
 export function DramaDirectoryPicker (props: DramaPickerProps): React.JSX.Element {
   const dialogRef = useRef<HTMLDivElement>(null)
+  const inputId = useId()
   const [directory, setDirectory] = useState(props.initialDirectory ?? '')
   const [picking, setPicking] = useState(false)
   const [pickError, setPickError] = useState<string | null>(null)
-  useModalFocus(dialogRef, props.onClose, '[data-drama-picker-input]')
 
   const trimmed = useMemo(() => normalizeDirectoryChoice(directory), [directory])
   // 只判断「看起来像绝对路径吗」这一件本地能确定的事；目录存不存在、
   // 里面有没有《分镜.md》，交给宿主读的时候回答——在这里猜等于第二份判断。
   const plausible = trimmed.startsWith('/') || /^[A-Za-z]:[/\\]/.test(trimmed)
+  const problem = pickError ?? (trimmed !== '' && !plausible ? tt('canvas.drama.pickNotAbsolute') : null)
+
+  const close = (): void => {
+    if (!props.busy) props.onClose()
+  }
+  useModalLayer(dialogRef, true, close)
 
   const pick = async (): Promise<void> => {
     if (props.pickDirectory === undefined || picking) return
@@ -58,7 +70,12 @@ export function DramaDirectoryPicker (props: DramaPickerProps): React.JSX.Elemen
     props.onConfirm(trimmed)
   }
 
-  return <div className={css.backdrop} data-canvas-no-zoom="" onPointerDown={event => event.stopPropagation()}>
+  return <div
+    className={css.root}
+    data-canvas-no-zoom=""
+    onPointerDown={event => event.stopPropagation()}
+  >
+    <div className={css.mask} aria-hidden="true" onClick={close} />
     <div
       ref={dialogRef}
       tabIndex={-1}
@@ -67,37 +84,64 @@ export function DramaDirectoryPicker (props: DramaPickerProps): React.JSX.Elemen
       aria-modal="true"
       aria-label={tt('canvas.drama.pickTitle')}
       data-drama-picker=""
-      style={{ minWidth: 520 }}
     >
-      <header className={css.header}>
-        <h2>{tt('canvas.drama.pickTitle')}</h2>
-        <p>{tt('canvas.drama.pickHint')}</p>
-      </header>
-      <div style={{ display: 'flex', gap: 8, alignItems: 'center', padding: '4px 0 12px' }}>
-        <input
-          value={directory}
-          onChange={event => setDirectory(event.target.value)}
-          onKeyDown={event => { if (event.key === 'Enter') { event.preventDefault(); submit() } }}
-          placeholder={tt('canvas.drama.pickPlaceholder')}
-          aria-label={tt('canvas.drama.pickPlaceholder')}
-          style={{ flex: 1, minWidth: 0 }}
-          data-drama-picker-input=""
-        />
-        {props.pickDirectory !== undefined
-          ? <button type="button" onClick={() => { void pick() }} disabled={picking || props.busy} data-drama-picker-browse="">
-            {picking ? tt('canvas.drama.picking') : tt('canvas.drama.browse')}
+      <div className={css.content}>
+        <div className={css.header}>
+          <h2 className={css.title}>{tt('canvas.drama.pickTitle')}</h2>
+          <button
+            type="button"
+            className={css.close}
+            aria-label={tt('canvas.drama.close')}
+            onClick={close}
+          >
+            <IconCloseOutlineRegular size={14} />
           </button>
-          : null}
+        </div>
+        <p className={css.description}>{tt('canvas.drama.pickHint')}</p>
+        <div className={css.body}>
+          <div className={css.form}>
+            <label className={css.label} htmlFor={inputId}>{tt('canvas.drama.pickFieldLabel')}</label>
+            <div className={css.field}>
+              <Input
+                id={inputId}
+                className={css.input}
+                icon={<IconFolderOpenOutlineRegular size={16} />}
+                value={directory}
+                onChange={event => { setDirectory(event.target.value); setPickError(null) }}
+                onKeyDown={event => { if (event.key === 'Enter') { event.preventDefault(); submit() } }}
+                placeholder={tt('canvas.drama.pickPlaceholder')}
+                disabled={props.busy}
+                data-modal-autofocus=""
+                data-drama-picker-input=""
+              />
+              {props.pickDirectory !== undefined
+                ? <Button
+                    variant="outline"
+                    className={css.browse}
+                    onClick={() => { void pick() }}
+                    disabled={picking || props.busy}
+                    data-drama-picker-browse=""
+                  >
+                    {picking ? tt('canvas.drama.picking') : tt('canvas.drama.browse')}
+                  </Button>
+                : null}
+            </div>
+            {/* 不是绝对路径时把原因说出来，而不是让「铺板」按钮灰着不解释。 */}
+            {problem !== null ? <p className={css.error} role="alert">{problem}</p> : null}
+          </div>
+        </div>
       </div>
-      {pickError !== null ? <p role="alert">{pickError}</p> : null}
-      {/* 不是绝对路径时把原因说出来，而不是让「铺板」按钮灰着不解释。 */}
-      {trimmed !== '' && !plausible ? <p role="alert">{tt('canvas.drama.pickNotAbsolute')}</p> : null}
-      <footer style={{ display: 'flex', justifyContent: 'flex-end', gap: 8, paddingTop: 12 }}>
-        <button type="button" onClick={props.onClose} disabled={props.busy}>{tt('canvas.drama.cancel')}</button>
-        <button type="button" onClick={submit} disabled={props.busy || !plausible} data-drama-picker-confirm="">
+      <div className={css.footer}>
+        <Button variant="outline" onClick={close} disabled={props.busy}>{tt('canvas.drama.cancel')}</Button>
+        <Button
+          variant="primary"
+          onClick={submit}
+          disabled={props.busy || !plausible}
+          data-drama-picker-confirm=""
+        >
           {props.busy ? tt('canvas.drama.reading') : tt('canvas.drama.confirm')}
-        </button>
-      </footer>
+        </Button>
+      </div>
     </div>
   </div>
 }

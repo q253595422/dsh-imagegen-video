@@ -94,12 +94,14 @@ export interface NodeBodyState {
   /**
    * The video model the composer resolved as "the one a run would use".
    *
-   * A storyboard names no model of its own (there is no picker on the board), so
-   * `submitShot` falls back to this same resolution. Passing it down is what
-   * lets the board offer only the lengths and tiers that model accepts; without
-   * it the board is guessing at a model it cannot see.
+   * A storyboard that names no model of its own submits with this same
+   * resolution. Passing it down is what lets the board show the effective
+   * model and offer only the lengths and tiers it accepts; without it the
+   * board is guessing at a model it cannot see.
    */
   effectiveVideoModel: string
+  /** The composer's video channel; paired with `effectiveVideoModel`. */
+  effectiveVideoChannelId: string
   fileUploadRef: { current: HTMLInputElement | null }
   imageFileRef: { current: HTMLInputElement | null }
   connectRef: { current: unknown }
@@ -537,6 +539,9 @@ return <>
     ? <S.StoryboardBody
         node={node}
         nodes={S.canvasDocument?.nodes ?? []}
+        videoGroups={S.videoGroups ?? []}
+        defaultChannelId={S.defaultChannelId}
+        defaultVideoChannelId={S.effectiveVideoChannelId}
         defaultVideoModel={S.effectiveVideoModel}
         busy={busyLabel !== undefined}
         onChange={next => A.patchNode(node.id, { storyboard: next })}

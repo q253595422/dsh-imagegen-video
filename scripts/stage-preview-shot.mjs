@@ -67,6 +67,12 @@ const PAGE = `<!DOCTYPE html>
 const assets = new Map([
   ['/stage.js', { type: 'text/javascript; charset=utf-8', size: statSync(BUNDLE).size }],
 ])
+const STAGE_ASSETS = new Set([
+  'base-body.glb',
+  'clothing-tshirt.glb',
+  'clothing-jeans.glb',
+  'clothing-shoes.glb',
+])
 
 const server = createServer((request, response) => {
   const url = request.url ?? '/'
@@ -74,6 +80,15 @@ const server = createServer((request, response) => {
     response.writeHead(200, { 'content-type': 'text/html; charset=utf-8' })
     response.end(PAGE)
     return
+  }
+  if (url.startsWith('/api/dsh-imagegen/stage-assets/')) {
+    const name = decodeURIComponent(url.slice('/api/dsh-imagegen/stage-assets/'.length).split('?')[0])
+    const file = join(ROOT, 'assets/stage', name)
+    if (STAGE_ASSETS.has(name) && existsSync(file)) {
+      response.writeHead(200, { 'content-type': 'model/gltf-binary' })
+      createReadStream(file).pipe(response)
+      return
+    }
   }
   const asset = assets.get(url.split('?')[0])
   if (asset !== undefined) {
@@ -122,6 +137,10 @@ try {
     'document.querySelectorAll("[class*=timelineBar]").length > 0 && document.querySelectorAll("[class*=trackRow]").length > 0',
     'the timeline bar and its tracks',
   )
+  // The standard body and its three clothing GLBs load asynchronously after the
+  // panel mounts; the timeline is ready before they are. Give the first frame
+  // that actually includes them time to arrive.
+  await new Promise(resolve => setTimeout(resolve, 3000))
   // 舞台必须是**三维**画出来的一块 canvas，而不是 2D 回退。
   // 这条不能省：3D 在拿不到 WebGL 时会自己退回 2D，不报错、不报警——
   // 一张「看起来还行」的截图完全可能是 2D 画的，那样的验收等于没做。
@@ -191,6 +210,19 @@ try {
   })()`)
 
   console.log(JSON.stringify(audit, null, 2))
+
+  const poseIndex = process.argv.indexOf('--pose')
+  const pose = poseIndex > 0 ? process.argv[poseIndex + 1] : undefined
+  if (pose === 'sit') {
+    const clicked = await page.evaluate(`(() => {
+      const button = [...document.querySelectorAll('button')].find(item => (item.textContent ?? '').trim() === '坐姿')
+      button?.click()
+      return button !== undefined
+    })()`)
+    if (clicked !== true) throw new Error('could not find the 坐姿 preset button')
+    await new Promise(resolve => setTimeout(resolve, 1200))
+    await shoot('stage-sit')
+  }
 
   // 「机位截图」这条路必须真点一次。这条断言守的是**交付物本身**：交出来的
   // 是一张 1280×1280 的真图（38 个色块、约 190KB），不是空白、不是占位。

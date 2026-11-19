@@ -39,7 +39,7 @@ export interface StageExportOptions {
    * 前生效」这些与渲染无关、却能直接弄坏一次导出的规则一条也测不到。
    * 注入一个返回固定 data URL 的实现，这些规则就能离线验。
    */
-  render?: (stage: CanvasPoseStage, size: { width: number; height: number }) => string
+  render?: (stage: CanvasPoseStage, size: { width: number; height: number }) => string | Promise<string>
 }
 
 export interface StageExportResult {
@@ -112,12 +112,12 @@ export async function exportStageVideo(
     // 让同一份渲染代码既能画面板、也能逐帧导出。
     const frame = sampleStage(options.stage, times[index]!)
     const dataUrl = paint === undefined
-      ? renderStageToDataUrl(frame, {
+      ? await renderStageToDataUrl(frame, {
         width: options.width,
         height: options.height,
         pano: options.pano ?? null,
       })
-      : paint(frame, { width: options.width, height: options.height })
+      : await paint(frame, { width: options.width, height: options.height })
     last = await api.stageFrame({
       sessionId,
       ...options.canvasId === undefined ? {} : { canvasId: options.canvasId },

@@ -18,6 +18,7 @@ node_modules/
 # `pnpm run studio:preview` + `scripts/studio-preview-shot.mjs` 的产物：6MB 预览包
 # 与明暗两态截图。属一次性验收材料，不进仓库。
 /.studio-preview/
+/.settings-preview/
 # `pnpm run stage:preview`（导演台 3D 的独立验收页）的产物，同 `.studio-preview/`：
 # 一次性验收材料，不进仓库。
 /.studio-stage/

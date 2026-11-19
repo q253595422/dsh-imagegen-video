@@ -65,6 +65,16 @@ export const IMAGE_PRESETS: PresetProvider[] = [
     ],
   },
   {
+    id: 'qihang-aigc',
+    name: '启航AIGC（Wan 3.0）',
+    apiUrl: 'https://qh.token6688.com/v1',
+    hint: '启航AIGC 聚合网关：Wan 3.0 视频（提交 POST /v1/videos/generations，轮询 GET /v1/tasks/{id}）；密钥填「API 密钥」页创建的 sk-…。',
+    models: [],
+    videoModels: [
+      { alias: 'wan-3-0', id: 'wan-3-0' },
+    ],
+  },
+  {
     id: 'openai-official',
     name: 'OpenAI 官方',
     apiUrl: 'https://api.openai.com/v1',
@@ -72,6 +82,18 @@ export const IMAGE_PRESETS: PresetProvider[] = [
     models: [
       { alias: 'gpt-image-2.5', id: 'gpt-image-2.5' },
       { alias: 'gpt-image-2', id: 'gpt-image-2' },
+    ],
+  },
+  {
+    id: 'yeahzi-closeai',
+    name: 'yeahzi 官逆图像（CloseAI）',
+    apiUrl: 'https://api.closeai.hk/v1',
+    hint: 'OpenAI 图片接口：gpt-image-2 / 2.5 / 2.6 与 chatgpt-image-latest；文生图走 /images/generations，参考图走 /images/edits；结果链接约 1 小时后失效，插件会立即转存。',
+    models: [
+      { alias: 'gpt-image-2.6', id: 'gpt-image-2.6' },
+      { alias: 'gpt-image-2.5', id: 'gpt-image-2.5' },
+      { alias: 'gpt-image-2', id: 'gpt-image-2' },
+      { alias: 'chatgpt-image-latest', id: 'chatgpt-image-latest' },
     ],
   },
   {

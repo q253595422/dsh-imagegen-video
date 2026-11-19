@@ -17,6 +17,8 @@ import { MAX_SHOTS, nextShotIndex, shotNodeOf, shotSecondsOptions, shotSpeechFit
 import { findingsByShot, shotsWithFindings, storyboardFindings, worstLevel } from '../storyboard-lint.ts'
 import { castMembers } from '../cast.ts'
 import { describeVideoModel, VIDEO_RESOLUTIONS } from '../../video-model-catalog.ts'
+import { ModelPicker, resolveModelChoice } from '../ModelPicker.tsx'
+import type { ImageModelGroup } from '../settings-scope.ts'
 import type { ShotState } from '../storyboard.ts'
 import css from '../canvas-workspace.module.css'
 
@@ -47,16 +49,22 @@ function shotStateLabel(state: ShotState): ImageGenKey {
 export function StoryboardBody(props: {
   node: CanvasNode
   nodes: readonly CanvasNode[]
+  /** Video channels and their model aliases; the same list the composer uses. */
+  videoGroups?: ImageModelGroup[]
+  /** Fallback channel when neither the board nor the composer names one. */
+  defaultChannelId?: string
+  /** The composer's current video choice, shown when the board names none. */
+  defaultVideoChannelId?: string
   /**
    * The video model a shot will actually be submitted with, when the board
    * names none of its own.
    *
-   * The board has no model picker: `submitShot` resolves `state.model` against
-   * the channel default, so that default IS the model every shot runs on. It
-   * has to be passed in, because this body cannot read settings. Without it
-   * `catalog` stayed undefined on every real board and the duration picker
-   * offered all seven lengths regardless of what the model accepts — the
-   * narrowing code existed but was unreachable.
+   * `submitShot` resolves an unset board model against the composer's current
+   * video choice, so that choice IS the model every shot runs on. It has to be
+   * passed in, because this body cannot read settings. Without it `catalog`
+   * stayed undefined on every real board and the duration picker offered all
+   * seven lengths regardless of what the model accepts — the narrowing code
+   * existed but was unreachable.
    */
   defaultVideoModel?: string
   busy: boolean
@@ -118,6 +126,23 @@ export function StoryboardBody(props: {
   const pinned = castMembers(props.nodes).length
   const castless = new Set(shotsWithoutCast(board, pinned))
   /**
+   * 板自己的模型优先；没选过就显示真正会被提交的那个默认模型。
+   *
+   * 分镜板原先没有选择器，用户只能改设置里的默认值，或者根本不知道这一镜
+   * 走的是哪条渠道。选择器写回 `board.model` / `board.channelId`，`submitShot`
+   * 本来就读这两个字段；默认值则与提交路径共用同一份解析，避免「板上显示
+   * A、实际提交 B」。
+   */
+  const videoGroups = props.videoGroups ?? []
+  const boardNamesModel = (board.model ?? '').trim() !== ''
+  const modelChoice = resolveModelChoice(
+    videoGroups,
+    boardNamesModel
+      ? { channelId: board.channelId, model: board.model }
+      : { channelId: props.defaultVideoChannelId, model: props.defaultVideoModel },
+    props.defaultChannelId,
+  )
+  /**
    * 体检结论，随每次渲染重算。
    *
    * 不 memo：输入是这份 board 与 nodes，两者都是新的引用就已经变了；而重算
@@ -140,6 +165,21 @@ export function StoryboardBody(props: {
   const secondsOptions = shotSecondsOptions(catalog?.durations)
   return <div className={css.storyboardBody} data-storyboard-body="" onPointerDown={event => event.stopPropagation()}>
     <div className={css.storyboardSettings}>
+      <div className={`${css.storyboardField} ${css.storyboardModelField}`} data-storyboard-model="">
+        <span>{tt('canvas.storyboard.model')}</span>
+        <ModelPicker
+          groups={videoGroups}
+          value={modelChoice}
+          variant="toolbar"
+          channelLabel={tt('model.channel')}
+          modelLabel={tt('video.model')}
+          channelPlaceholder={tt('model.channelPlaceholder')}
+          emptyLabel={tt('canvas.videoNoModel')}
+          ariaLabel={tt('canvas.storyboard.modelAria')}
+          disabled={props.busy}
+          onChange={choice => props.onChange({ ...board, model: choice.model, channelId: choice.channelId })}
+        />
+      </div>
       <label className={css.storyboardField}>
         <span>{tt('canvas.storyboard.continuity')}</span>
         <select

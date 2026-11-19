@@ -4356,7 +4356,17 @@ export function CanvasWorkspace(props: CanvasWorkspaceProps): React.JSX.Element 
     const problem = shotProblem(shot)
     if (problem !== undefined) { setError(tt(problem)); return false }
     const groups = videoGroups ?? []
-    const choice = resolveModelChoice(groups, { channelId: state.channelId, model: state.model }, defaultChannelId)
+    // 板自己选了模型就用板的；没选则用生成器当前的视频选择。分镜板上的
+    // 模型选择器与「这一镜会用哪个模型」的时长/分辨率收窄都读这一份解析，
+    // 提交必须走同一个入口——否则板上显示 A、请求里发 B，用户只能从失败
+    // 的 400 里发现。
+    const choice = resolveModelChoice(
+      groups,
+      (state.model ?? '').trim() !== ''
+        ? { channelId: state.channelId, model: state.model }
+        : { channelId: composerVideoChannelId, model: composerVideoModel },
+      defaultChannelId,
+    )
     if (choice.model === '') { setError(tt('canvas.videoNoModel')); onOpenSettings?.(); return false }
     if (!(choice.channelId === '' || channelIsConnected(choice.channelId))) { setError(tt('canvas.needApi')); onOpenSettings?.(); return false }
 
@@ -4495,7 +4505,7 @@ export function CanvasWorkspace(props: CanvasWorkspaceProps): React.JSX.Element 
       setError(errorMessage(caught))
       return false
     }
-  }, [api, castPromptOf, castRefsFor, channelIsConnected, clearBrokenVideo, defaultChannelId, frameFromClip, mutate, onOpenSettings, shotPlacement, videoGroups])
+  }, [api, castPromptOf, castRefsFor, channelIsConnected, clearBrokenVideo, composerVideoChannelId, composerVideoModel, defaultChannelId, frameFromClip, mutate, onOpenSettings, shotPlacement, videoGroups])
 
   /**
    * Run the board's next shot, or — in `cut` continuity — every shot that has
@@ -5687,6 +5697,9 @@ export function CanvasWorkspace(props: CanvasWorkspaceProps): React.JSX.Element 
       if (documentRef.current === null) return
       const mod = event.ctrlKey || event.metaKey
       if (event.key === 'Escape') {
+        // 原生 Modal 已经用 preventDefault 认领了 Esc；这里不能继续把
+        // 画布选区也清掉，否则弹窗关掉时背景会跟着闪一下状态。
+        if (event.defaultPrevented) return
         setContextMenu(null); setCreateMenu(null); setNodeAddMenu(null); setZoomMenuOpen(false)
         setColorPickerNodeId(null)
         // 找节点在最上面：与目录同一层，谁开着谁先收。
@@ -6833,6 +6846,7 @@ export function CanvasWorkspace(props: CanvasWorkspaceProps): React.JSX.Element 
     colorPickerNodeId, brokenVideoIds, polishBusy,
     api, modelGroups, videoGroups, defaultChannelId,
     effectiveVideoModel: composerVideoModel,
+    effectiveVideoChannelId: composerVideoChannelId,
     fileUploadRef, imageFileRef, connectRef,
     IconButton, ToolbarIcon, ModelPicker, SketchBoard, PoseBoard, StoryboardBody, CanvasFileBody,
     labelWithKeys,
@@ -6847,7 +6861,7 @@ export function CanvasWorkspace(props: CanvasWorkspaceProps): React.JSX.Element 
     // `composerVideoModel` 是分镜板收窄时长/分辨率所依据的「这一镜会用哪个模型」。
     // 漏掉它，切换模型后分镜板仍按旧模型给出选项——用户选了一个新模型，面板却
     // 还在列它不接受的值。
-    api, modelGroups, videoGroups, defaultChannelId, composerVideoModel, channelIsConnected, composerPrompt, composerPromptSet, runMarks])
+    api, modelGroups, videoGroups, defaultChannelId, composerVideoModel, composerVideoChannelId, channelIsConnected, composerPrompt, composerPromptSet, runMarks])
 
   const nodeBodyActions: NodeBodyActions = useMemo(() => ({
     patchNode, deleteNode, duplicateNode, downloadNode, downloadFileNode, downloadVideoNode,

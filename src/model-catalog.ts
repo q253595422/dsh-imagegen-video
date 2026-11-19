@@ -185,7 +185,10 @@ export function describeModel(model: string): ModelCatalogEntry {
     }
   }
   // Tier 2: family by naming convention.
-  if (/^gpt-image/i.test(id)) return { family: 'gpt-image', ...ENTRIES['gpt-image'], lifecycle: 'active' }
+  // `chatgpt-image-latest` is the gateway's moving alias for its current
+  // default image model. It is not pinned in the baseline (the alias moves),
+  // but it speaks the same /images/generations + /images/edits contract.
+  if (/^(?:gpt-image|chatgpt-image)/i.test(id)) return { family: 'gpt-image', ...ENTRIES['gpt-image'], lifecycle: 'active' }
   if (/^dall-e/i.test(id)) return { family: 'dall-e', ...ENTRIES['dall-e'], lifecycle: 'active' }
   if (/^grok-imagine(?:-|$)/.test(id)) return { family: 'grok', ...ENTRIES.grok, lifecycle: 'active' }
   if (/^nanobanana/i.test(id) || NANOBANANA_GEMINI_IDS.has(id)) return { family: 'nanobanana', ...ENTRIES.nanobanana, lifecycle: 'active' }
@@ -211,7 +214,7 @@ export function describeModel(model: string): ModelCatalogEntry {
  */
 export function supportsGifOutput(model: string): boolean {
   const id = model.trim().toLowerCase()
-  if (!/^gpt-image-2\.6(?:$|[-_.])/.test(id)) return false
+  if (!/^gpt-image-2\.6(?:$|[-_.])/.test(id) && id !== 'chatgpt-image-latest') return false
   return !/(?:^|[-_.])vip(?:$|[-_.])/.test(id)
 }
 

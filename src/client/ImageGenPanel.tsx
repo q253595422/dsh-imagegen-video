@@ -10,7 +10,7 @@
 
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties, type PointerEvent as ReactPointerEvent, type RefObject } from 'react'
 import { createPortal } from 'react-dom'
-import { Button, Pill } from '@deepseek-ai/dsh-client-ui-primitives'
+import { Button, IconListPenOutlineRegular, Pill, SegmentedControl } from '@deepseek-ai/dsh-client-ui-primitives'
 import type { SessionId } from '@deepseek-ai/dsh-api-remotes/client'
 import type { ISessions } from '@deepseek-ai/dsh-api-session-controller/client'
 import type { ImageAttachmentRef } from '@deepseek-ai/dsh-attachment'
@@ -23,7 +23,7 @@ import { openImageGenConfig } from './config-entry.tsx'
 import { TemplateLibrary } from './TemplateLibrary.tsx'
 import { ReferenceImages } from './ReferenceImages.tsx'
 import { editReferenceLimit, useEditReferences, EDIT_REFERENCE_LIMIT } from './reference-images.ts'
-import { GooeyNav } from './GooeyNav.tsx'
+import { ModuleTabs } from './ModuleTabs.tsx'
 import { InspirationGallery } from './InspirationGallery.tsx'
 import { CanvasWorkspace } from './CanvasWorkspace.tsx'
 import { PptWorkspace } from './PptWorkspace.tsx'
@@ -52,7 +52,6 @@ import { useConversationImageAttachment } from './use-conversation-image-attachm
 import { ConversationSessionPicker } from './ConversationSessionPicker.tsx'
 import { ListingCopyCard } from './ListingCopyCard.tsx'
 import { ErrorDetail } from './ErrorDetail.tsx'
-import { onTablistKeyDown, tabIndexFor } from './tablist.ts'
 import css from './panel.module.css'
 
 /** Size options, presented as aspect ratios (auto = let the model decide).
@@ -1231,7 +1230,8 @@ export function ImageGenPanel(props: {
   /** Session-only edit references: the first one is the primary `image`, the
    *  rest travel as `images` (see GenerateRequest). Declared after `setError`
    *  because the hook reports validation warnings through it. */
-  const refs = useEditReferences(setError)
+  const editReferenceCapacity = editReferenceLimit(model, (config?.channels ?? []).find(channel => channel.id === modelChannelId))
+  const refs = useEditReferences(setError, { limit: editReferenceCapacity })
   // Submission is brief; actual generation stays visible until the host
   // queue reports that every queued/running task has finished.
   const [submitting, setSubmitting] = useState(false)
@@ -1435,7 +1435,6 @@ export function ImageGenPanel(props: {
   /** Current adapter's reference capacity. A one-image model with several
    *  thumbnails loaded would otherwise fail only at submit time, so the panel
    *  warns as soon as the mismatch exists. */
-  const editReferenceCapacity = editReferenceLimit(model, (config?.channels ?? []).find(channel => channel.id === modelChannelId))
   const editLimitNotice = tab === 'edit' && refs.images.length > editReferenceCapacity
     ? tt('edit.modelLimit', { count: editReferenceCapacity })
     : null
@@ -2057,7 +2056,7 @@ export function ImageGenPanel(props: {
 
   const openSettingsGuide = (kind: 'generation' | 'enhancement' | 'disabled'): void => {
     setConfigGuide(kind)
-    openImageGenConfig()
+    openImageGenConfig(kind === 'enhancement' ? 'prompt' : kind === 'disabled' ? 'general' : 'channels')
   }
 
   const enhanceCurrentPrompt = async (): Promise<void> => {
@@ -3765,7 +3764,7 @@ export function ImageGenPanel(props: {
             row with `order`/`flex-basis`; on desktop the wrapper is display:contents
             and does not generate a box. */}
         <div className={css.panelNav}>
-        <GooeyNav
+        <ModuleTabs
           ariaLabel={tt('workspace.label')}
           activeIndex={workspace === 'normal' ? (tab === 'gallery' ? 1 : 0) : workspace === 'canvas' ? 2 : workspace === 'ecommerce' ? 3 : workspace === 'ppt' ? 4 : workspace === 'replica' ? 5 : workspace === 'outfit' ? 6 : workspace === 'promo' ? 7 : 8}
           onSelect={index => {
@@ -3793,17 +3792,17 @@ export function ImageGenPanel(props: {
         />
         </div>
         <span className={css.panelHeaderActions}>
-          <button
-            type="button"
+          <Button
+            variant={chatOpen ? 'outline' : 'ghost'}
+            size="sm"
             className={css.chatToggle}
             data-open={chatOpen ? 'true' : 'false'}
             aria-pressed={chatOpen}
             title={chatOpen ? tt('chat.collapse') : tt('chat.expand')}
             onClick={() => { setChatOpen(open => !open) }}
           >
-            <svg viewBox="0 0 16 16" width="13" height="13" fill="none" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M2.5 3.5h11v7.5H6.8L3.8 13.6v-2.6H2.5z"/></svg>
             {tt('chat.toggle')}
-          </button>
+          </Button>
           {/* A state readout, not a control. It was a <button> that did nothing
               when pressed (cursor: default, no handler, no popup), which is the
               worst kind of affordance: it looks clickable and answers nothing. */}
@@ -3916,22 +3915,19 @@ export function ImageGenPanel(props: {
             {/* generation sub-modes live inside the normal workspace */}
             {workspace === 'normal' && tab !== 'gallery' ? (
               <section className={css.card}>
-                <div className={css.modeRow} role="tablist" aria-label={tt('panel.title')}>
-                  {MODE_TABS.map((item, index) => (
-                    <Pill
-                      key={item}
-                      active={tab === item}
-                      role="tab"
-                      aria-selected={tab === item}
-                      tabIndex={tabIndexFor(tab === item)}
-                      onKeyDown={event => { onTablistKeyDown(event, { count: MODE_TABS.length, index, select: next => { setTab(MODE_TABS[next]!) } }) }}
-                      onClick={() => { setTab(item) }}
-                      disabled={outputFormat === 'gif' && item !== 'text'}
-                      title={outputFormat === 'gif' && item !== 'text' ? tt('params.gifLocksMode') : undefined}
-                      className={css.modePill}
-                    >{tt(item === 'text' ? 'mode.text' : item === 'edit' ? 'mode.edit' : 'mode.video')}</Pill>
-                  ))}
-                </div>
+                <SegmentedControl
+                  id="dsh-imagegen-mode"
+                  value={tab as (typeof MODE_TABS)[number]}
+                  label={tt('panel.title')}
+                  className={css.modeTabs}
+                  options={MODE_TABS.map(item => ({
+                    value: item,
+                    label: tt(item === 'text' ? 'mode.text' : item === 'edit' ? 'mode.edit' : 'mode.video'),
+                    disabled: outputFormat === 'gif' && item !== 'text',
+                    title: outputFormat === 'gif' && item !== 'text' ? tt('params.gifLocksMode') : undefined,
+                  }))}
+                  onChange={next => { setTab(next) }}
+                />
               </section>
             ) : null}
 
@@ -4193,6 +4189,7 @@ export function ImageGenPanel(props: {
                   onRemove={refs.remove}
                   onClear={refs.clear}
                   notice={editLimitNotice}
+                  limit={editReferenceCapacity}
                 />
               </section>
             ) : null}
@@ -4208,24 +4205,26 @@ export function ImageGenPanel(props: {
                 ref={node => { if (node !== null) autoGrowPrompt(node) }}
               />
               <div className={css.promptFooter}>
-                <button
-                  type="button"
+                <Button
+                  variant="outline"
+                  size="sm"
                   className={css.templatesButton}
                   title={tt('templates.title')}
+                  icon={<IconListPenOutlineRegular size={14} />}
                   onClick={() => { setLibraryOpen(true) }}
                 >
-                  <svg viewBox="0 0 16 16" width="12" height="12" fill="none" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M2.5 3.5h11M2.5 8h11M2.5 12.5h7"/></svg>
                   {tt('templates.open')}
-                </button>
-                <button
-                  type="button"
+                </Button>
+                <Button
+                  variant="ghost"
+                  size="sm"
                   className={css.enhanceButton}
                   disabled={prompt.trim() === '' || enhancing}
                   title={tt('prompt.enhanceHint')}
                   onClick={() => { void enhanceCurrentPrompt() }}
                 >
                   {enhancing ? tt('prompt.enhancing') : tt('prompt.enhance')}
-                </button>
+                </Button>
                 <span
                   className={css.promptCount}
                   data-over={promptOverLimit ? '' : undefined}

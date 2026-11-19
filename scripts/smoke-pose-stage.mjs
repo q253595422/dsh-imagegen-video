@@ -140,6 +140,105 @@ await check('A2 addActor keeps ids unique after several additions', async () => 
   assert.equal(new Set(ids).size, 5, `ids collided: ${ids.join(', ')}`)
 })
 
+// ------------------------------------------------------- 坐姿支撑 / 材质
+
+const sitPreset = rig.POSE_PRESETS.find(preset => preset.id === 'sit')
+const standPreset = rig.POSE_PRESETS.find(preset => preset.id === 'stand')
+
+await check('R1 the sit preset adds a seat box whose top meets the pelvis', async () => {
+  assert.ok(sitPreset !== undefined, 'missing sit preset')
+  const before = stage.emptyStage()
+  const seated = stage.withPosePreset(before, 'actor-1', sitPreset)
+  assert.equal(seated.actors[0].rig, sitPreset.rig, 'the actor did not receive the sit rig')
+  const seat = (seated.props ?? []).find(prop => prop.id === 'seat-actor-1')
+  assert.ok(seat !== undefined, 'the sit preset did not add a seat')
+  assert.equal(seat.kind, 'cube')
+  const top = seat.y + (seat.scaleY ?? 1) / 2
+  const wanted = rig.solveRig(sitPreset.rig).hips[1] - 0.06
+  assert.ok(Math.abs(top - wanted) < 0.002,
+    `seat top ${top.toFixed(3)} does not meet the pelvis at ${wanted.toFixed(3)}`)
+})
+
+await check('R2 applying the sit preset twice does not duplicate the seat', async () => {
+  assert.ok(sitPreset !== undefined)
+  const once = stage.withPosePreset(stage.emptyStage(), 'actor-1', sitPreset)
+  const twice = stage.withPosePreset(once, 'actor-1', sitPreset)
+  assert.equal((twice.props ?? []).filter(prop => prop.id === 'seat-actor-1').length, 1)
+})
+
+await check('R3 leaving the sit preset removes the auto-added seat', async () => {
+  assert.ok(sitPreset !== undefined && standPreset !== undefined)
+  const seated = stage.withPosePreset(stage.emptyStage(), 'actor-1', sitPreset)
+  const standing = stage.withPosePreset(seated, 'actor-1', standPreset)
+  assert.equal((standing.props ?? []).some(prop => prop.id === 'seat-actor-1'), false)
+})
+
+await check('R4 the seat scales with the actor', async () => {
+  assert.ok(sitPreset !== undefined)
+  const base = stage.emptyStage()
+  const scaled = {
+    ...base,
+    actors: base.actors.map(actor => ({ ...actor, scale: 1.5 })),
+  }
+  const seated = stage.withPosePreset(scaled, 'actor-1', sitPreset)
+  const seat = (seated.props ?? []).find(prop => prop.id === 'seat-actor-1')
+  assert.ok(seat !== undefined)
+  const wanted = (rig.solveRig(sitPreset.rig).hips[1] - 0.06) * 1.5
+  const top = seat.y + (seat.scaleY ?? 1) / 2
+  assert.ok(Math.abs(top - wanted) < 0.002, `scaled seat top ${top.toFixed(3)} != ${wanted.toFixed(3)}`)
+  assert.ok(Math.abs((seat.scaleX ?? 1) - 0.55 * 1.5) < 1e-6)
+})
+
+await check('R4b the seat follows the actor position and rotation', async () => {
+  assert.ok(sitPreset !== undefined)
+  const actor = {
+    ...stage.emptyStage().actors[0],
+    rig: sitPreset.rig,
+    x: 1.2,
+    z: -0.4,
+    rotation: 30,
+    scale: 1.2,
+  }
+  const seat = stage.seatPropFor(actor)
+  assert.equal(seat.x, 1.2)
+  assert.equal(seat.z, -0.4)
+  assert.equal(seat.rotateY, 30)
+  const wanted = (rig.solveRig(sitPreset.rig).hips[1] - 0.06) * 1.2
+  assert.ok(Math.abs((seat.y + (seat.scaleY ?? 1) / 2) - wanted) < 0.002)
+})
+
+await check('R5 figure material defaults to clay and round-trips wood', async () => {
+  // 老文档没有这个字段时读回 undefined，渲染按 clay 处理；不能为了默认值
+  // 在存盘时单方面写一条 figure。
+  assert.equal(stage.stageOf({}).scene.figure, 'clay')
+  const legacyScene = { ...stage.emptyStage().scene }
+  delete legacyScene.figure
+  const legacy = { ...stage.emptyStage(), scene: legacyScene }
+  assert.equal(stage.stageOf({ stage: legacy }).scene.figure, undefined)
+  assert.equal(stage.emptyStage().scene.figure, 'clay')
+  const wood = {
+    ...stage.emptyStage(),
+    scene: { ...stage.emptyStage().scene, figure: 'wood' },
+  }
+  assert.equal(stage.stageOf({ stage: wood }).scene.figure, 'wood')
+  assert.equal(stage.stagePatch(wood).stage.scene.figure, 'wood')
+})
+
+await check('R6 figure body defaults to standard and keeps an explicit mannequin opt-out', async () => {
+  assert.equal(stage.emptyStage().scene.body, 'standard')
+  assert.equal(stage.bodyOf(stage.emptyStage().scene), 'standard')
+  const procedural = {
+    ...stage.emptyStage(),
+    scene: { ...stage.emptyStage().scene, body: 'procedural' },
+  }
+  assert.equal(stage.bodyOf(procedural.scene), 'procedural')
+  assert.equal(stage.stageOf({ stage: procedural }).scene.body, 'procedural')
+  const legacyScene = { ...stage.emptyStage().scene }
+  delete legacyScene.body
+  assert.equal(stage.stageOf({ stage: { ...stage.emptyStage(), scene: legacyScene } }).scene.body, undefined)
+  assert.equal(stage.bodyOf(legacyScene), 'standard')
+})
+
 await check('A3 addCamera appends a distinct camera', async () => {
   const before = stage.emptyStage()
   const after = stage.addCamera(before)

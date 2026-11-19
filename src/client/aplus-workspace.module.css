@@ -31,8 +31,8 @@
   min-width: 0;
   min-height: 0;
   height: 100%;
-  gap: 14px;
-  padding: 14px 16px 18px;
+  gap: 16px;
+  padding: 20px 24px 24px;
   overflow: hidden;
   /* Keyed off the width THIS surface actually got, not the viewport: the panel
      lives in the shell's centre column. A `@media` query would collapse the
@@ -52,26 +52,29 @@
 }
 
 .intro h2 {
-  margin: 0 0 4px;
-  font-size: 15px;
-  line-height: 1.4;
+  margin: 0 0 6px;
+  font-size: 18px;
+  font-weight: 600;
+  line-height: 26px;
 }
 
 .intro p {
   margin: 0;
   max-width: 62em;
   color: var(--dsw-alias-label-secondary);
-  font-size: 12px;
-  line-height: 1.7;
+  font-size: 13px;
+  line-height: 20px;
 }
 
 .hint {
   flex: none;
-  padding: 3px 8px;
-  border-radius: var(--dsw-radius-xs);
+  padding: 2px 8px;
+  border: 0.5px solid var(--dsw-alias-border-l2);
+  border-radius: var(--dsw-radius-sm);
   background: var(--dsw-alias-bg-layer-2);
   color: var(--dsw-alias-label-tertiary);
-  font-size: 11px;
+  font-size: 12px;
+  line-height: 18px;
 }
 
 .body {
@@ -79,7 +82,7 @@
   flex: 1;
   flex-direction: column;
   min-height: 0;
-  gap: 12px;
+  gap: 16px;
 }
 
 /* ------------------------------------------------------------------ controls */
@@ -88,11 +91,11 @@
   display: flex;
   flex: none;
   flex-direction: column;
-  gap: 10px;
-  padding: 12px;
-  border: 1px solid var(--dsw-alias-border-l2);
-  border-radius: var(--dsw-radius-lg);
-  background: var(--dsw-alias-bg-layer-2);
+  gap: 12px;
+  padding: 16px;
+  border: 0.5px solid var(--dsw-alias-settings-card-stroke);
+  border-radius: var(--dsw-radius-xl);
+  background: var(--dsw-alias-settings-card-fill);
 }
 
 .modelRow {
@@ -115,22 +118,26 @@
 
 .fieldLabel {
   color: var(--dsw-alias-label-secondary);
-  font-size: 12px;
+  font-size: 13px;
+  line-height: 20px;
 }
 
 .fieldNote {
   color: var(--dsw-alias-label-tertiary);
-  font-size: 11px;
+  font-size: 12px;
+  line-height: 18px;
 }
 
 .drop {
-  padding: 7px 12px;
+  min-height: 40px;
+  padding: 8px 12px;
   border: 1px dashed var(--dsw-alias-border-l2);
-  border-radius: var(--dsw-radius-sm);
+  border-radius: var(--dsw-radius-md);
   background: var(--dsw-alias-bg-layer-1);
   color: var(--dsw-alias-label-secondary);
   font-family: var(--dsw-font-family);
-  font-size: 12px;
+  font-size: 14px;
+  line-height: 22px;
   cursor: pointer;
 }
 
@@ -177,26 +184,35 @@
 }
 
 .select {
-  padding: 5px 8px;
-  border: 1px solid var(--dsw-alias-border-l2);
-  border-radius: var(--dsw-radius-sm);
+  height: 36px;
+  padding: 0 10px;
+  border: 0.5px solid var(--dsw-alias-border-l4);
+  border-radius: var(--dsw-radius-md);
   background: var(--dsw-alias-bg-layer-1);
   color: var(--dsw-alias-label-primary);
   font-family: var(--dsw-font-family);
-  font-size: 12px;
+  font-size: 14px;
+  line-height: 22px;
 }
 
 .primary {
-  padding: 7px 14px;
+  height: 36px;
+  padding: 0 14px;
   border: 0;
-  border-radius: var(--dsw-radius-sm);
-  background: var(--dsw-alias-brand-primary);
+  border-radius: var(--dsw-radius-md);
+  background: var(--dsw-alias-button-primary-fill);
   /* Brand is the NEUTRAL inverse here, so the ink on top is the inverted
      foreground token rather than a literal white. */
   color: var(--dsw-alias-label-primary-foreground);
   font-family: var(--dsw-font-family);
-  font-size: 13px;
+  font-size: 14px;
+  font-weight: 500;
+  line-height: 22px;
   cursor: pointer;
+}
+
+.primary:hover:not(:disabled) {
+  background: var(--dsw-alias-button-primary-hover);
 }
 
 .primary:disabled {
@@ -205,14 +221,20 @@
 }
 
 .secondary {
-  padding: 7px 14px;
-  border: 1px solid var(--dsw-alias-border-l2);
-  border-radius: var(--dsw-radius-sm);
-  background: var(--dsw-alias-bg-layer-1);
+  height: 36px;
+  padding: 0 14px;
+  border: 0.5px solid var(--dsw-alias-border-l3);
+  border-radius: var(--dsw-radius-md);
+  background: transparent;
   color: var(--dsw-alias-label-primary);
   font-family: var(--dsw-font-family);
-  font-size: 13px;
+  font-size: 14px;
+  line-height: 22px;
   cursor: pointer;
+}
+
+.secondary:hover:not(:disabled) {
+  background: var(--dsw-alias-interactive-bg-hover);
 }
 
 .secondary:disabled {
@@ -224,11 +246,15 @@
   padding: 4px 6px;
   border: 0;
   background: none;
-  color: var(--dsw-alias-label-tertiary);
+  color: var(--dsw-alias-label-secondary);
   font-family: var(--dsw-font-family);
-  font-size: 11px;
-  text-decoration: underline;
+  font-size: 12px;
+  text-decoration: none;
   cursor: pointer;
+}
+
+.link:hover {
+  color: var(--dsw-alias-label-primary);
 }
 
 .guard {
@@ -258,7 +284,7 @@
   flex: 1;
   flex-direction: column;
   min-height: 0;
-  gap: 6px;
+  gap: 8px;
   overflow-y: auto;
 }
 
@@ -266,10 +292,10 @@
   display: flex;
   flex-wrap: wrap;
   align-items: center;
-  gap: 8px;
-  padding: 7px 10px;
-  border: 1px solid var(--dsw-alias-border-l2);
-  border-radius: var(--dsw-radius-sm);
+  gap: 10px;
+  padding: 10px 12px;
+  border: 0.5px solid var(--dsw-alias-border-l2);
+  border-radius: var(--dsw-radius-md);
   background: var(--dsw-alias-bg-layer-1);
 }
 
@@ -284,36 +310,47 @@
 .name {
   flex: none;
   font-size: 13px;
+  font-weight: 500;
+  line-height: 20px;
 }
 
 .ratio {
   flex: none;
   color: var(--dsw-alias-label-tertiary);
-  font-size: 11px;
+  font-size: 12px;
+  line-height: 18px;
 }
 
 .caption {
   flex: 1 1 160px;
   min-width: 0;
-  padding: 5px 8px;
-  border: 1px solid var(--dsw-alias-border-l2);
-  border-radius: var(--dsw-radius-xs);
+  height: 32px;
+  padding: 0 10px;
+  border: 0.5px solid var(--dsw-alias-border-l4);
+  border-radius: var(--dsw-radius-md);
   background: var(--dsw-alias-bg-layer-1);
   color: var(--dsw-alias-label-primary);
   font-family: var(--dsw-font-family);
-  font-size: 12px;
+  font-size: 14px;
+  line-height: 22px;
 }
 
 .small {
   flex: none;
-  padding: 5px 10px;
-  border: 1px solid var(--dsw-alias-border-l2);
-  border-radius: var(--dsw-radius-xs);
-  background: var(--dsw-alias-bg-layer-1);
+  height: 28px;
+  padding: 0 10px;
+  border: 0.5px solid var(--dsw-alias-border-l2);
+  border-radius: var(--dsw-radius-sm);
+  background: transparent;
   color: var(--dsw-alias-label-primary);
   font-family: var(--dsw-font-family);
   font-size: 12px;
+  line-height: 18px;
   cursor: pointer;
+}
+
+.small:hover:not(:disabled) {
+  background: var(--dsw-alias-interactive-bg-hover);
 }
 
 .small:disabled {
@@ -325,7 +362,8 @@
   flex: none;
   min-width: 3.5em;
   color: var(--dsw-alias-label-tertiary);
-  font-size: 11px;
+  font-size: 12px;
+  line-height: 18px;
 }
 
 .state[data-state='done'] {
@@ -355,8 +393,8 @@
 .rowError {
   flex-basis: 100%;
   color: var(--dsw-alias-state-error-primary);
-  font-size: 11px;
-  line-height: 1.5;
+  font-size: 12px;
+  line-height: 18px;
   word-break: break-word;
 }
 
@@ -367,33 +405,35 @@
 .copyRow {
   display: flex;
   flex-basis: 100%;
-  gap: 6px;
-  margin-top: 2px;
+  gap: 8px;
+  margin-top: 4px;
 }
 
 .copyTitle {
   flex: 0 0 30%;
   min-width: 0;
-  padding: 4px 8px;
-  border: 1px solid var(--dsw-alias-border-l2);
-  border-radius: var(--dsw-radius-xs);
+  height: 32px;
+  padding: 0 10px;
+  border: 0.5px solid var(--dsw-alias-border-l4);
+  border-radius: var(--dsw-radius-md);
   background: var(--dsw-alias-bg-layer-1);
   color: var(--dsw-alias-label-primary);
   font-family: var(--dsw-font-family);
-  font-size: 12px;
+  font-size: 13px;
+  line-height: 20px;
 }
 
 .copyBody {
   flex: 1 1 auto;
   min-width: 0;
-  padding: 4px 8px;
-  border: 1px solid var(--dsw-alias-border-l2);
-  border-radius: var(--dsw-radius-xs);
+  padding: 6px 10px;
+  border: 0.5px solid var(--dsw-alias-border-l4);
+  border-radius: var(--dsw-radius-md);
   background: var(--dsw-alias-bg-layer-1);
   color: var(--dsw-alias-label-primary);
   font-family: var(--dsw-font-family);
-  font-size: 12px;
-  line-height: 1.5;
+  font-size: 13px;
+  line-height: 20px;
   resize: vertical;
 }
 
@@ -401,7 +441,8 @@
   flex: none;
   margin: 0;
   color: var(--dsw-alias-label-tertiary);
-  font-size: 11px;
+  font-size: 12px;
+  line-height: 18px;
 }
 
 /* On a narrow panel the aspect readout is the first thing to go: the caption

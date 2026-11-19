@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState, type ReactNode } from 'react'
-import { createPortal } from 'react-dom'
+import { Button, IconCloseOutlineRegular, useModalLayer } from '@deepseek-ai/dsh-client-ui-primitives'
 import type { CanvasAssetRef, CanvasSkillCatalog, CanvasSkillTask } from '../protocol.ts'
 import type { ImageGenApi } from './api.ts'
 import { errorMessage, tt } from './helpers.ts'
@@ -14,29 +14,23 @@ const running = (task: CanvasSkillTask): boolean => task.status === 'queued' || 
 
 function PptDialog({ title, close, children }: { title: string; close: () => void; children: ReactNode }) {
   const root = useRef<HTMLDivElement>(null)
-  useEffect(() => {
-    const previous = document.activeElement as HTMLElement | null
-    root.current?.querySelector<HTMLButtonElement>('button')?.focus()
-    const onKey = (event: KeyboardEvent): void => {
-      event.stopPropagation()
-      if (event.key === 'Escape') { event.preventDefault(); close() }
-      if (event.key === 'Tab') {
-        const focusable = Array.from(root.current?.querySelectorAll<HTMLElement>('button:not(:disabled), input:not(:disabled), select:not(:disabled), a[href]') ?? [])
-        const first = focusable[0], last = focusable.at(-1)
-        if (event.shiftKey && document.activeElement === first) { event.preventDefault(); last?.focus() }
-        else if (!event.shiftKey && document.activeElement === last) { event.preventDefault(); first?.focus() }
-      }
-    }
-    root.current?.addEventListener('keydown', onKey)
-    const element = root.current
-    return () => { element?.removeEventListener('keydown', onKey); previous?.focus() }
-  }, [])
-  return createPortal(<div className={css.overlay} onClick={event => { if (event.target === event.currentTarget) close() }}>
+  useModalLayer(root, true, close)
+  return <div className={css.overlay} onClick={event => { if (event.target === event.currentTarget) close() }}>
     <div ref={root} className={css.dialog} role="dialog" aria-modal="true" aria-label={title}>
-      <header><h3>{title}</h3><button type="button" aria-label={tt('ppt.close')} onClick={close}>×</button></header>
+      <header>
+        <h3>{title}</h3>
+        <Button
+          variant="ghost"
+          size="sm"
+          className={css.dialogClose}
+          aria-label={tt('ppt.close')}
+          icon={<IconCloseOutlineRegular size={16} />}
+          onClick={close}
+        />
+      </header>
       <div className={css.dialogBody}>{children}</div>
     </div>
-  </div>, document.body)
+  </div>
 }
 
 export function PptWorkspace({ api, active, importRequest, onImported }: { api: ImageGenApi; active: boolean; importRequest?: PptImport; onImported: () => void }) {

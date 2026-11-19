@@ -9,7 +9,8 @@ import type { IncomingMessage, ServerResponse } from 'node:http'
 import { createReadStream } from 'node:fs'
 import type { ReadStream } from 'node:fs'
 import { spawn } from 'node:child_process'
-import { mkdir as fsMkdir } from 'node:fs/promises'
+import { mkdir as fsMkdir, stat as fsStat } from 'node:fs/promises'
+import { fileURLToPath } from 'node:url'
 import { randomUUID } from 'node:crypto'
 import path from 'node:path'
 import type { WebRoute } from '@deepseek-ai/dsh-host-webserver'
@@ -40,7 +41,7 @@ import { clearDiagnostics, listDiagnostics } from './diagnostics-store.ts'
 import { allSignals, clearSignals, listSignals, promptBucketOf, recordSignal } from './signal-store.ts'
 import { buildReport, DEFAULT_WINDOW_DAYS } from './signal-report.ts'
 import { extractProductLink } from './link-extract.ts'
-import { MODEL_API, AGENT_IMAGE_API, CANVAS_API, CANVAS_SKILL_API, CODE_RENDER_API, CONVERSATION_IMAGE_API, DATA_FOLDER_API, DEFAULT_TEMPLATE_SOURCE_ID, DIAGNOSTICS_API, GALLERY_API, GENERATE_API, HISTORY_API, IMAGEGEN_SETTINGS_NAMESPACE, IMAGE_MODEL_API, LISTING_COPY_API, PRESETS_API, PROMPT_ENHANCE_API, SETTINGS_API, SIGNALS_API, STORAGE_API, SUBSCRIPTION_API, SUBSCRIPTION_PROVIDERS, TASK_API, TEMPLATE_FAVORITES_API, TEMPLATES_API, UPDATE_API, USAGE_API, VIDEO_API, isChannelProtocolPreference, isTemplateSourceId, type CanvasAssetRef, type CanvasDocument, type VideoDirectorPlan, type CanvasSkillCatalog, type CanvasSkillConfigApplyRequest, type CanvasSkillConfigApplyResult, type CanvasSkillConfigSaveRequest, type CanvasSkillConfigSaveResult, type CanvasSkillInstallRequest, type CanvasSkillInstallResult, type CanvasSkillLibrary, type CanvasSkillRemoveResult, type CanvasSkillRunRequest, type CanvasSkillTask, type ListingCopyRequest, type PptRunRequest, type PptRuntimeStatus, type GeneratedImage, type GenerateRequest, type HistoryEntry, type HistoryEntryInput, type ModelMapping, type PresetProviderView, type TemplateFavorite, type TemplateListResult, type TemplateRefreshResult, type TemplateSample, type CanvasVideoTaskMeta, type VideoGenerateRequest, type VideoHistoryEntry } from './protocol.ts'
+import { MODEL_API, AGENT_IMAGE_API, CANVAS_API, CANVAS_SKILL_API, CODE_RENDER_API, CONVERSATION_IMAGE_API, DATA_FOLDER_API, DEFAULT_TEMPLATE_SOURCE_ID, DIAGNOSTICS_API, GALLERY_API, GENERATE_API, HISTORY_API, IMAGEGEN_SETTINGS_NAMESPACE, IMAGE_MODEL_API, LISTING_COPY_API, PRESETS_API, PROMPT_ENHANCE_API, SETTINGS_API, SIGNALS_API, STAGE_ASSETS_API, STORAGE_API, SUBSCRIPTION_API, SUBSCRIPTION_PROVIDERS, TASK_API, TEMPLATE_FAVORITES_API, TEMPLATES_API, UPDATE_API, USAGE_API, VIDEO_API, isChannelProtocolPreference, isTemplateSourceId, type CanvasAssetRef, type CanvasDocument, type VideoDirectorPlan, type CanvasSkillCatalog, type CanvasSkillConfigApplyRequest, type CanvasSkillConfigApplyResult, type CanvasSkillConfigSaveRequest, type CanvasSkillConfigSaveResult, type CanvasSkillInstallRequest, type CanvasSkillInstallResult, type CanvasSkillLibrary, type CanvasSkillRemoveResult, type CanvasSkillRunRequest, type CanvasSkillTask, type ListingCopyRequest, type PptRunRequest, type PptRuntimeStatus, type GeneratedImage, type GenerateRequest, type HistoryEntry, type HistoryEntryInput, type ModelMapping, type PresetProviderView, type TemplateFavorite, type TemplateListResult, type TemplateRefreshResult, type TemplateSample, type CanvasVideoTaskMeta, type VideoGenerateRequest, type VideoHistoryEntry } from './protocol.ts'
 import { buildCanvasBundle, CANVAS_BUNDLE_API, MAX_CANVAS_BUNDLE_BYTES, parseCanvasBundle } from './canvas-bundle.ts'
 import { probeCodeRender } from './code-render-runtime.ts'
 import { makeOutfitRoutes } from './outfit-reference-routes.ts'
@@ -60,6 +61,15 @@ const MAX_HISTORY_BODY_BYTES = 64 * 1024 * 1024
  * 67MB 的视频不够），两个上限背后的东西不同，别共用一个数字。
  */
 const MAX_DRAMA_MEDIA_BODY_BYTES = 72 * 1024 * 1024
+
+/** The only GLBs the stage asset route will serve. */
+const STAGE_ASSET_FILES = new Set([
+  'base-body.glb',
+  'clothing-tshirt.glb',
+  'clothing-jeans.glb',
+  'clothing-shoes.glb',
+])
+const STAGE_ASSET_DIR = fileURLToPath(new URL('../assets/stage/', import.meta.url))
 
 /**
  * Cap on one canvas bundle request body.
@@ -913,6 +923,32 @@ export function makeRoutes(deps: ImageGenRoutesDeps): WebRoute[] {
     { kind: 'exact', path: MODEL_API.save, handler: async (req, res) => { if (!guard(req, res, 'POST')) return; try { const body = await readJsonBody(req, MAX_JSON_BODY_BYTES); const model = await saveModel({ name: String(body?.name ?? ''), data: String(body?.data ?? ''), mime: String(body?.mime ?? 'image/png') }); writeJson(res, 200, { ok: true, model }) } catch (error) { writeJson(res, 400, { ok: false, code: 'model-save-failed', message: messageOf(error) }) } } },
     { kind: 'prefix', path: MODEL_API.image, handler: async (req, res) => { if (!guard(req, res, 'GET')) return; const file = imageFileFrom(req.url, MODEL_API.image); const found = file === undefined ? undefined : await readModel(file); if (!found) { writeJson(res, 404, { error: 'not found' }); return } res.writeHead(200, { 'content-type': found.mime }); res.end(found.data) } },
   ]
+  const stageAssetRoutes: WebRoute[] = [{
+    kind: 'prefix',
+    path: STAGE_ASSETS_API,
+    handler: (req, res) => {
+      if (!guard(req, res, 'GET')) return
+      const pathname = new URL(req.url ?? '/', 'http://localhost').pathname
+      const name = decodeURIComponent(pathname.slice(STAGE_ASSETS_API.length + 1))
+      if (!STAGE_ASSET_FILES.has(name)) {
+        writeJson(res, 404, { ok: false, code: 'not-found' })
+        return
+      }
+      const file = path.join(STAGE_ASSET_DIR, name)
+      void fsStat(file).then(info => {
+        res.writeHead(200, {
+          'content-type': 'model/gltf-binary',
+          'content-length': info.size,
+          'cache-control': 'public, max-age=31536000, immutable',
+        })
+        const stream = createReadStream(file)
+        stream.on('error', () => res.destroy())
+        stream.pipe(res)
+      }).catch(() => {
+        writeJson(res, 404, { ok: false, code: 'not-found' })
+      })
+    },
+  }]
   const history = deps.history ?? {
     list: listHistory,
     append: appendHistory,
@@ -1182,6 +1218,8 @@ export function makeRoutes(deps: ImageGenRoutesDeps): WebRoute[] {
         }
       },
     },
+    // --------------------------------------------------- stage GLB assets
+    ...stageAssetRoutes,
     // ---------------------------------------------------------- presets
     {
       kind: 'exact',
@@ -3201,11 +3239,11 @@ export function makeRoutes(deps: ImageGenRoutesDeps): WebRoute[] {
         }
       },
     },
-    // ---------------------------------------------- drama project: write media
-    // 把画布做出来的一件东西写回 `剧集/<EP>/制作成果/`。
+    // ------------------------------------------------- drama project: write file
+    // 把画布做出来的一个文件写回 `剧集/<EP>/制作成果/`。
     //
-    // 一个请求一个文件：单条视频 50MB，base64 之后约 67MB，与文档回写共用
-    // 一条路由会把文本请求也放开到同一个内存上限。
+    // 一个请求一个文件：视频经 base64 会膨胀到 67MB，与文档回写共用一条路由
+    // 等于把文本请求的内存上限也抬到同一个数。
     //
     // 默认不覆盖。产出是用户的作品，静默替换会把「再跑一次」变成「把上一次
     // 的成品顶掉」；要覆盖时宿主先把它备份成 `.bak-<时间戳>`。

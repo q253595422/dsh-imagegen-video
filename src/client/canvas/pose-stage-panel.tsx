@@ -37,7 +37,7 @@ import type { ImageGenKey } from '../locales.ts'
 import { ToolbarIcon } from './dock-controls.tsx'
 import {
   addActor, addCamera, addProp, actorTransform, cameraFromSpec, currentCamera,
-  currentRenderCamera, frameCameraSpec, patchProp, removeProp, withPosePreset,
+  currentRenderCamera, frameCameraSpec, patchProp, removeProp, seatPropFor, withPosePreset,
 } from './pose-stage.ts'
 import { POSE_PRESETS, makeProjector, solveRig, type PoseCamera, type PoseJoint } from './pose-rig.ts'
 import { drawScene, renderSceneToCanvas } from './pose-scene-render.ts'
@@ -795,10 +795,15 @@ export function PoseStagePanel(props: PoseStagePanelProps): React.JSX.Element {
     props.onStageChange({ ...stage, scene: { ...stage.scene, ...patch } })
   }
   const patchActor = (id: string, patch: Partial<CanvasPoseActor>): void => {
-    props.onStageChange({
-      ...stage,
-      actors: stage.actors.map(actor => (actor.id === id ? { ...actor, ...patch } : actor)),
-    })
+    const actors = stage.actors.map(actor => (actor.id === id ? { ...actor, ...patch } : actor))
+    const next: CanvasPoseStage = { ...stage, actors }
+    const seatId = `seat-${id}`
+    const actor = actors.find(item => item.id === id)
+    const movesSeat = ['x', 'z', 'rotation', 'scale', 'rig'].some(key => key in patch)
+    if (actor !== undefined && movesSeat && (stage.props ?? []).some(prop => prop.id === seatId)) {
+      next.props = (stage.props ?? []).map(prop => (prop.id === seatId ? seatPropFor(actor) : prop))
+    }
+    props.onStageChange(next)
   }
   const patchCamera = (id: string, patch: Partial<CanvasPoseCamera>): void => {
     props.onStageChange({
@@ -818,7 +823,15 @@ export function PoseStagePanel(props: PoseStagePanelProps): React.JSX.Element {
 
   const removeActor = (id: string): void => {
     if (stage.actors.length <= 1) return
-    const next = { ...stage, actors: stage.actors.filter(actor => actor.id !== id) }
+    const nextProps = (stage.props ?? []).filter(prop => prop.id !== `seat-${id}`)
+    // 先摘掉旧的 props 再决定要不要写回：只展开 `...stage` 时，props 为空
+    // 也不会消失（原数组又回来了），删掉角色后会留下一块坐箱。
+    const next: CanvasPoseStage = {
+      ...stage,
+      actors: stage.actors.filter(actor => actor.id !== id),
+    }
+    if (nextProps.length > 0) next.props = nextProps
+    else delete next.props
     // 轨道不删就会留下指向不存在角色的孤儿轨道：导出时它们被求值但画不出来，
     // 时间轴上却还占一行。
     props.onStageChange(timeline === undefined ? next : { ...next, timeline: removeTrack(timeline, 'actor', id) })
@@ -864,7 +877,7 @@ export function PoseStagePanel(props: PoseStagePanelProps): React.JSX.Element {
         // 没有 WebGL 时才退回 2D——那条路本来就在，视口也在用它。
         let rendered = false
         try {
-          const url = renderStageToDataUrl(sampled, {
+          const url = await renderStageToDataUrl(sampled, {
             width: CAPTURE_SIZE, height: CAPTURE_SIZE, pano: panoImage,
           })
           const image = new Image()
@@ -1654,6 +1667,32 @@ export function PoseStagePanel(props: PoseStagePanelProps): React.JSX.Element {
 
         <section className={css.section}>
           <h3 className={css.sectionTitle}>{tt('canvas.stage.settings')}</h3>
+
+          <div className={css.field}>
+            <span className={css.fieldLabel}>{tt('canvas.stage.figure')}</span>
+            <div className={css.segmented} role="group" aria-label={tt('canvas.stage.figure')}>
+              {(['clay', 'wood'] as const).map(figure => <button
+                key={figure}
+                type="button"
+                className={css.segment}
+                aria-pressed={(stage.scene.figure ?? 'clay') === figure}
+                onClick={() => patchScene({ figure })}
+              >{tt(figure === 'clay' ? 'canvas.stage.figureClay' : 'canvas.stage.figureWood')}</button>)}
+            </div>
+          </div>
+
+          <div className={css.field}>
+            <span className={css.fieldLabel}>{tt('canvas.stage.body')}</span>
+            <div className={css.segmented} role="group" aria-label={tt('canvas.stage.body')}>
+              {(['standard', 'procedural'] as const).map(body => <button
+                key={body}
+                type="button"
+                className={css.segment}
+                aria-pressed={(stage.scene.body ?? 'standard') === body}
+                onClick={() => patchScene({ body })}
+              >{tt(body === 'standard' ? 'canvas.stage.bodyStandard' : 'canvas.stage.bodyProcedural')}</button>)}
+            </div>
+          </div>
 
           <label className={css.field}>
             <span className={css.fieldLabel}>{tt('canvas.stage.scale')}</span>

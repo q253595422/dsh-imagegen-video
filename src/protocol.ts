@@ -118,6 +118,9 @@ export const IMAGE_MODEL_API = {
 /** Host-served built-in provider catalog (channels the user can instantiate). */
 export const PRESETS_API = '/api/dsh-imagegen/presets' as const
 
+/** Host-served static GLBs for the director's standard body. */
+export const STAGE_ASSETS_API = '/api/dsh-imagegen/stage-assets' as const
+
 /** Loopback-only image reader for Agent tool-result previews. */
 export const AGENT_IMAGE_API = '/api/dsh-imagegen/agent-image' as const
 
@@ -885,6 +888,9 @@ export type VideoModelFamily =
   // every reference must be uploaded to a public HTTPS URL first -- the family
   // exists because that upload leg has no analogue in the generic shape.
   | 'minimax'
+  // 启航AIGC's gateway: flat video parameters under `/v1/videos/generations`,
+  // then `GET /v1/tasks/{id}` with `is_final` / `output_url`.
+  | 'qihang'
   | 'unknown'
 
 /**
@@ -1943,6 +1949,19 @@ export interface CanvasPoseScene {
   sky: string
   /** 地面颜色；缺省由天空色推出来。 */
   ground?: string
+  /**
+   * 人偶材质。缺省 `clay`（灰白膜）。
+   *
+   * 木色是早期「木制人偶」的辨认特征，但 blocking 阶段更需要的是一块
+   * 中性、不参与画面冷暖的体块；木色留成可选，不改老文档的数据形状。
+   */
+  figure?: CanvasFigureMaterial
+  /**
+   * 角色底模。缺省 `standard`（标准蒙皮人形）；`procedural` 是轻量木偶回退。
+   *
+   * 标准体需要 three.js/WebGL；2D 回退永远画程序化木偶。
+   */
+  body?: CanvasFigureBody
   /** 整组平移（米）。 */
   translate: [number, number, number]
   /** 整组绕 y 旋转（度）。 */
@@ -1955,6 +1974,12 @@ export interface CanvasPoseScene {
   /** 角色头顶的名字标签。 */
   labels: boolean
 }
+
+/** 人偶材质：灰白膜（默认）或木色。 */
+export type CanvasFigureMaterial = 'clay' | 'wood'
+
+/** 角色底模：标准蒙皮人形或程序化木偶。 */
+export type CanvasFigureBody = 'standard' | 'procedural'
 
 /**
  * 导演台：多角色 + 多机位 + 场景。
@@ -2696,6 +2721,14 @@ export interface ChannelConfig {
    * document the field (#56).
    */
   watermark?: boolean
+  /**
+   * Automatically use the selected model's reference-image ceiling.
+   *
+   * Absent means true: legacy channels keep the adapter's automatic behavior.
+   * `false` pins the safe plugin default (5 images). This is per channel
+   * because two channels can serve the same model id with different gateways.
+   */
+  autoReferenceLimit?: boolean
   /** Request protocol; 'auto' infers chat-completions from an exact chat URL. */
   protocol?: ChannelProtocolPreference
   /** Authentication source; absent means the legacy API-key path. */

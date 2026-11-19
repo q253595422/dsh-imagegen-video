@@ -958,6 +958,51 @@ await check('B1b exact URL channels use the configured endpoint verbatim (#26)',
   assert.equal(result.images[0].b64, pngBytes.toString('base64'))
 })
 
+await check('B1b2 the CloseAI preset sends exact ratio sizes without changing other gpt-image channels', async () => {
+  // The documented gateway accepts `size` as a ratio (`4:3`, `21:9`) as well
+  // as WIDTHxHEIGHT. Official OpenAI endpoints do not, so the exact-ratio form
+  // is scoped to this preset (or its host) and the old pixel table must remain
+  // the default everywhere else.
+  const seen = { json: [], edit: '' }
+  const server = createServer(async (req, res) => {
+    const chunks = []
+    for await (const chunk of req) chunks.push(chunk)
+    const raw = Buffer.concat(chunks)
+    if (req.url === '/v1/images/generations') seen.json.push(JSON.parse(raw.toString('utf8')))
+    if (req.url === '/v1/images/edits') seen.edit = raw.toString('latin1')
+    res.writeHead(200, { 'content-type': 'application/json' })
+    res.end(JSON.stringify({ data: [{ b64_json: pngBytes.toString('base64') }] }))
+  })
+  await new Promise(resolve => server.listen(0, '127.0.0.1', resolve))
+  const port = server.address().port
+  const baseUrl = `http://127.0.0.1:${port}/v1`
+  try {
+    const same = await host.generateImage(
+      { apiUrl: baseUrl, apiKey: 'sk-test', preset: 'yeahzi-closeai' },
+      { mode: 'text', model: 'gpt-image-2.6', prompt: 'closeai ratio', size: '4:3', quality: '2k', n: 1, detail: '' },
+    )
+    assert.equal(same.images[0].b64, pngBytes.toString('base64'))
+    assert.equal(seen.json[0].size, '4:3', 'the gateway receives the exact ratio')
+    assert.equal(seen.json[0].quality, 'medium', '2K still maps to the documented quality tier')
+
+    const dataUrl = `data:image/png;base64,${pngBytes.toString('base64')}`
+    await host.generateImage(
+      { apiUrl: baseUrl, apiKey: 'sk-test', preset: 'yeahzi-closeai' },
+      { mode: 'edit', model: 'gpt-image-2.6', prompt: 'edit ratio', size: '3:4', quality: '4k', n: 1, detail: '', image: dataUrl },
+    )
+    assert.match(seen.edit, /name="size"[\s\S]*?\r\n\r\n3:4\r\n/, 'edits carry the same ratio')
+    assert.match(seen.edit, /name="quality"[\s\S]*?\r\n\r\nhigh\r\n/, 'edits carry the mapped quality')
+
+    await host.generateImage(
+      { apiUrl: baseUrl, apiKey: 'sk-test' },
+      { mode: 'text', model: 'gpt-image-2.6', prompt: 'ordinary gpt-image', size: '4:3', quality: '2k', n: 1, detail: '' },
+    )
+    assert.equal(seen.json[1].size, '1536x1024', 'a channel without the preset keeps the old pixel table')
+  } finally {
+    await new Promise(resolve => server.close(resolve))
+  }
+})
+
 await check('B1c chat completions text content extracts markdown, HTML, plain and JSON image URLs', async () => {
   const prompts = ['chat image markdown', 'chat image html', 'chat image plain', 'chat image json']
   for (const prompt of prompts) {
@@ -1047,6 +1092,47 @@ await check('B3b edit mode forwards every reference image', async () => {
     assert.deepEqual(seen.fields.filter(name => name.startsWith('image')), ['image[]', 'image[]', 'image[]'])
   } finally {
     server.close()
+  }
+})
+
+await check('B3c the CloseAI reference switch follows 20 by default and pins 5 when off', async () => {
+  const seen = []
+  const server = createServer(async (req, res) => {
+    const chunks = []
+    for await (const chunk of req) chunks.push(chunk)
+    const body = Buffer.concat(chunks).toString('latin1')
+    seen.push([...body.matchAll(/name="image\[\]"/g)].length)
+    res.writeHead(200, { 'content-type': 'application/json' })
+    res.end(JSON.stringify({ data: [{ b64_json: pngBytes.toString('base64') }] }))
+  })
+  await new Promise(resolve => server.listen(0, '127.0.0.1', resolve))
+  const port = server.address().port
+  const dataUrl = `data:image/png;base64,${pngBytes.toString('base64')}`
+  const twenty = {
+    mode: 'edit',
+    model: 'gpt-image-2.6',
+    prompt: 'many references',
+    size: '1:1',
+    quality: 'auto',
+    n: 1,
+    detail: '',
+    image: dataUrl,
+    images: Array.from({ length: 19 }, () => dataUrl),
+  }
+  try {
+    await host.generateImage(
+      { apiUrl: `http://127.0.0.1:${port}/v1`, apiKey: 'sk-test', preset: 'yeahzi-closeai' },
+      twenty,
+    )
+    assert.equal(seen[0], 20, 'automatic mode uses the gateway ceiling')
+
+    await host.generateImage(
+      { apiUrl: `http://127.0.0.1:${port}/v1`, apiKey: 'sk-test', preset: 'yeahzi-closeai', autoReferenceLimit: false },
+      { ...twenty, images: Array.from({ length: 24 }, () => dataUrl) },
+    )
+    assert.equal(seen[1], 5, 'the channel switch pins the safe default')
+  } finally {
+    await new Promise(resolve => server.close(resolve))
   }
 })
 
@@ -2802,6 +2888,13 @@ await check('C5 image model discovery and configured-model allow-list work', asy
   assert.equal(presets.body.ok, true)
   assert.deepEqual(presets.body.presets.find(preset => preset.id === 'openai-official').models, [{ alias: 'gpt-image-2.5', id: 'gpt-image-2.5' }, { alias: 'gpt-image-2', id: 'gpt-image-2' }])
   assert.deepEqual(presets.body.presets.find(preset => preset.id === 'zhipu-official').models, [{ alias: 'glm-image', id: 'glm-image' }])
+  const closeAiPreset = presets.body.presets.find(preset => preset.id === 'yeahzi-closeai')
+  assert.equal(closeAiPreset.apiUrl, 'https://api.closeai.hk/v1')
+  assert.deepEqual(
+    closeAiPreset.models.map(model => model.id),
+    ['gpt-image-2.6', 'gpt-image-2.5', 'gpt-image-2', 'chatgpt-image-latest'],
+    'the CloseAI preset ships the documented image models',
+  )
   // The Ark preset is the one that carries BOTH catalogs: a single channel has
   // to serve Seedream images and Seedance videos, and the ids have to be the
   // real ones (the family is derived from those ids, not from the alias).
@@ -3349,7 +3442,7 @@ await check('C9 Agent tools wait for results, keep images in the UI view, edit, 
     enabled = false
     await assert.rejects(
       tools.get('generate_image').execute({ prompt: 'a cat' }, {}),
-      /disabled in Settings → Image settings/,
+      /Agent image generation is disabled/,
     )
   } finally {
     dispose()
@@ -7300,6 +7393,22 @@ await check('E1 client apply mounts the sidebar entry and studio (jsdom)', async
           ...(onClick !== undefined ? { onClick } : {}),
           ...rest,
         }, children),
+      SegmentedControl: ({ id, value, options, onChange, label, disabled = false, className }) =>
+        react.createElement('div', { role: 'tablist', 'aria-label': label, className },
+          options.map(option => react.createElement('button', {
+            key: option.value,
+            id: `${id}-${option.value}`,
+            type: 'button',
+            role: 'tab',
+            'aria-selected': option.value === value,
+            tabIndex: option.value === value ? 0 : -1,
+            disabled: disabled || option.disabled === true,
+            title: option.title,
+            onClick: () => { if (option.value !== value) onChange(option.value) },
+          }, option.label))),
+      useModalLayer: () => {},
+      IconListPenOutlineRegular: () => null,
+      IconCloseOutlineRegular: () => null,
     },
     // The real runtime module touches `window` at import time and cannot load
     // in a bare Node realm; this minimal store mirrors the snapshot-store
@@ -7388,7 +7497,7 @@ await check('E1 client apply mounts the sidebar entry and studio (jsdom)', async
   settingsTrigger.setAttribute('aria-haspopup', 'dialog')
   settingsTrigger.setAttribute('aria-label', '设置')
   const settingsNavButton = jsdomDocument.createElement('button')
-  settingsNavButton.textContent = '生图配置'
+  settingsNavButton.textContent = '生图 / 生视频'
   let settingsSectionClicks = 0
   settingsNavButton.addEventListener('click', () => { settingsSectionClicks += 1 })
   settingsTrigger.addEventListener('click', () => {
@@ -7573,8 +7682,9 @@ await check('E1 client apply mounts the sidebar entry and studio (jsdom)', async
     // Gallery keeps the sidebar history visible, and selecting one history
     // group returns the center workspace to text-to-image.
     const tablistButtons = [...view.querySelectorAll('[role="tablist"] button')]
-    // Eight top-nav entries (normal / gallery / canvas / ecommerce / ppt /
-    // replica / outfit / aplus) plus the normal workspace's three generation modes.
+    // Nine top-nav entries (normal / gallery / canvas / ecommerce / ppt /
+    // replica / outfit / promo / aplus) plus the normal workspace's three
+    // generation modes.
     assert.equal(tablistButtons.length, 12, 'top nav has nine entries and the normal workspace shows three generation modes')
     const pptSwitch = tablistButtons.find(button => button.textContent?.includes('图片转 PPT'))
     assert.ok(pptSwitch !== undefined, 'ppt top-nav entry is present')
@@ -7588,7 +7698,7 @@ await check('E1 client apply mounts the sidebar entry and studio (jsdom)', async
     await new Promise(resolve => setTimeout(resolve, 50))
     const ecommerceWorkspace = view.querySelector('[data-ecommerce-workspace]')
     assert.ok(ecommerceWorkspace !== null, 'ecommerce workspace is rendered')
-    assert.equal(jsdomWindow.getComputedStyle(ecommerceWorkspace).fontSize, '12px', 'ecommerce UI inherits the compact panel type scale')
+    assert.equal(jsdomWindow.getComputedStyle(ecommerceWorkspace).fontSize, '13px', 'ecommerce UI uses the native module body scale')
     assert.equal(view.querySelectorAll('[role="tablist"] button').length, 9, 'generation sub-modes hide in the ecommerce workspace')
     assert.equal([...view.querySelectorAll('textarea')].some(textarea => (textarea.getAttribute('placeholder') ?? '').includes('描述你想要的画面')), false, 'normal prompt card is hidden in ecommerce workspace')
     const ecommerceName = view.querySelector('input[placeholder="商品名称（必填）"]')
@@ -7992,7 +8102,7 @@ await check('E1 client apply mounts the sidebar entry and studio (jsdom)', async
     assert.equal(sectionRegistration?.id, 'dsh-imagegen')
     assert.equal(sectionRegistration?.order, 16)
     assert.equal(typeof sectionRegistration?.label, 'function')
-    assert.equal(sectionRegistration?.label(), '生图配置')
+    assert.equal(sectionRegistration?.label(), '生图 / 生视频')
     assert.equal(typeof sectionRegistration?.inject, 'function')
     // The page below reports isLoopback: false, the authority a LAN/public
     // reverse-proxied page carries while its requests still reach the host

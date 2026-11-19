@@ -4,9 +4,9 @@
  * WHY this file exists: the reference product this feature imitates advertises
  * "最多 20 张参考图", and the first draft of this workspace was going to say the
  * same thing. That would have been a lie with a specific size. The host keeps
- * the primary image in `image` and at most FOUR extras in `images` (engine.ts
- * `slice(0, 4)`), so five is the ceiling — and several model families take only
- * the primary image, so for them the ceiling is one.
+ * the primary image in `image` and the rest in `images`, with the ceiling
+ * decided per adapter (5 by default, 20 on the CloseAI gateway) — and several
+ * model families take only the primary image, so for them the ceiling is one.
  *
  * `editReferenceLimit()` already encodes exactly those per-adapter facts for the
  * edit form, so this module delegates to it instead of growing a second, drift-
@@ -20,8 +20,8 @@
  * accept them silently, which is what `dropped` is for.
  */
 import { describeModel } from '../model-catalog.ts'
-import { resolveChannelProtocol, type ChannelConfig } from '../protocol.ts'
-import { editReferenceLimit } from './reference-images.ts'
+import { resolveChannelProtocol } from '../protocol.ts'
+import { editReferenceLimit, type ReferenceLimitChannel } from './reference-images.ts'
 
 /** How many files the picker accepts. Larger than any model's capacity on purpose. */
 export const REPLICA_PICK_LIMIT = 20
@@ -58,7 +58,7 @@ export interface ReferenceCapacity {
  */
 export function referenceCapacity(
   model: string,
-  channel: Pick<ChannelConfig, 'apiUrl' | 'apiUrlFull' | 'protocol' | 'auth' | 'models'> | undefined,
+  channel: ReferenceLimitChannel | undefined,
   picked: number,
 ): ReferenceCapacity {
   const limit = editReferenceLimit(model, channel)
@@ -67,7 +67,7 @@ export function referenceCapacity(
   if (channel?.auth === 'subscription') reason = 'subscription'
   else if (resolveChannelProtocol(channel?.apiUrl ?? '', channel?.protocol) === 'chat-completions') reason = 'chat'
   else {
-    const upstream = channel?.models.find(item => item.alias === model)?.id || model
+    const upstream = channel?.models?.find(item => item.alias === model)?.id || model
     const { family } = describeModel(upstream)
     // `limit === 1` here can only have come from the family branch, because the
     // two branches above already returned and were checked first.

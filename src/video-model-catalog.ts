@@ -167,6 +167,21 @@ const ENTRIES: Record<Exclude<VideoModelFamily, 'unknown'>, Omit<VideoCatalogEnt
     supportsSeed: false,
     requiresReference: false,
   },
+  // 启航AIGC's aggregate gateway (Wan 3.0): the flat video endpoint takes
+  // model / prompt / mode / duration / resolution / aspect_ratio / images at
+  // the TOP level and answers a task id; polling is `GET /v1/tasks/{id}` and
+  // the finished clip is `output_url`. Durations are 4-30 integer seconds.
+  qihang: {
+    label: 'qihang',
+    labelZh: '启航 AIGC',
+    known: true,
+    modes: ['text', 'image', 'keyframe', 'reference'],
+    resolutions: ['480P', '720P', '1080P'],
+    aspectRatios: ['16:9', '9:16', '1:1', '4:3', '3:4'],
+    durations: [5, 10, 15, 20, 30],
+    supportsSeed: false,
+    requiresReference: false,
+  },
 }
 
 /**
@@ -301,6 +316,12 @@ export function describeVideoModel(model: string): VideoCatalogEntry {
       label: 'MiniMax-H3',
       labelZh: 'MiniMax H3',
     }
+  }
+  // 启航AIGC's Wan 3.0 (`wan-3-0` on `/v1/skills/models`). The gateway speaks
+  // its own flat async shape, so this must not fall through to the generic
+  // OpenAI-style `/videos` body.
+  if (/^wan[-_.]?3(?:[-_.]|$)/i.test(id)) {
+    return { family: 'qihang', ...ENTRIES.qihang }
   }
   // A well-known generic-video naming convention: anything that is clearly a
   // video model but not one of the families above still gets the generic

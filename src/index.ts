@@ -478,6 +478,8 @@ const configSchema = z.object({
     apiUrlFull: z.boolean().default(false),
     /** Seedream watermark opt-out (#56): absent/true keeps the badge on. */
     watermark: z.boolean().default(true),
+    /** Use the selected adapter's reference ceiling; false pins 5. */
+    autoReferenceLimit: z.boolean().default(true),
     protocol: z.union([z.const('auto'), z.const('images'), z.const('chat-completions'), z.const('google-native'), z.const('qwen-draw')]).default('auto'),
     auth: z.union([z.const('api-key'), z.const('subscription')]).default('api-key'),
     subscription: z.string().default(''),
@@ -578,7 +580,10 @@ function guidanceFor(channels: RuntimeChannel[], defaultChannelId: string, defau
   const videoFallback = defaultVideoModel === ''
     ? '视频模型未设默认，未指定时应先与用户确认。'
     : `视频未指定模型时默认使用「${defaultVideoModel}」。`
-  return `${IMAGEGEN_GUIDANCE} 当前渠道与模型：${table}。用户指定模型名时取该模型所属渠道（多渠道同名用默认渠道）；${fallback}${videoFallback}`
+  const qihangNote = channels.some(channel => (channel.videoModels ?? []).some(model => /^wan[-_.]?3(?:[-_.]|$)/i.test((model.id || model.alias).trim())))
+    ? ' 启航AIGC 的 Wan 3.0（`wan-3-0`）走扁平异步协议：提交 POST /v1/videos/generations（参数在顶层，参考图放 images），轮询 GET /v1/tasks/{id}，以 is_final 判终点、结果取 output_url；支持文生视频、首帧、首尾帧与多参考图，时长 4–30 秒。'
+    : ''
+  return `${IMAGEGEN_GUIDANCE} 当前渠道与模型：${table}。用户指定模型名时取该模型所属渠道（多渠道同名用默认渠道）；${fallback}${videoFallback}${qihangNote}`
 }
 
 /** Normalize raw channel entries into the wire shape (schema-adjacent guard). */
@@ -619,6 +624,7 @@ function normalizeChannels(value: unknown): ChannelConfig[] {
       apiUrl: typeof raw.apiUrl === 'string' ? raw.apiUrl.trim() : '',
       apiUrlFull: raw.apiUrlFull === true,
       watermark: raw.watermark !== false,
+      autoReferenceLimit: raw.autoReferenceLimit !== false,
       ...isChannelProtocolPreference(raw.protocol) ? { protocol: raw.protocol } : {},
       ...raw.auth === 'subscription' ? { auth: 'subscription' as const } : {},
       ...isSubscriptionProvider(raw.subscription) ? { subscription: raw.subscription } : {},
