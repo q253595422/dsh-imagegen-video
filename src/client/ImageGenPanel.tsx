@@ -479,7 +479,10 @@ function useCurrentWorkspace(sessions: ISessions | undefined): string | undefine
   const read = (): string | undefined => {
     const snapshot = sessions?.list.getSnapshot()
     if (snapshot === undefined || snapshot.current === undefined) return undefined
-    const cwd = snapshot.byId[snapshot.current]?.cwd
+    // `byId` 在某些宿主外壳的快照里是空的（例如只投影了 `current` 的测试
+    // harness）。缺字段只说明「现在不知道工作区在哪」，不能让它抛异常把整个
+    // 面板带崩——那是把「读不到路径」升级成了「画布打不开」。
+    const cwd = snapshot.byId?.[snapshot.current]?.cwd
     return typeof cwd === 'string' && cwd !== '' ? cwd : undefined
   }
   const [workspace, setWorkspace] = useState<string | undefined>(read)
