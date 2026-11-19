@@ -4829,6 +4829,91 @@
   white-space: nowrap;
 }
 
+/* ---------------------------------------------------------------- 分镜体检 */
+
+/* 摘要条：一行、可折叠。不做成红色横幅——这些结论都不阻止运行，把整块板
+   染成警报色会让用户以为片子跑不了了。 */
+.storyboardLint {
+  flex: none;
+  margin: -2px 0 0;
+  font-size: 11px;
+  line-height: 1.35;
+}
+
+.storyboardLintHead {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+  width: 100%;
+  padding: 0;
+  border: 0;
+  background: none;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+  color: var(--dsw-alias-label-secondary);
+}
+
+.storyboardLintHead[data-level='block'] {
+  color: var(--dsw-alias-state-error-primary, #ef4444);
+}
+
+.storyboardLintHead[data-level='warn'] {
+  color: var(--dsw-alias-state-warn-primary, #f59e0b);
+}
+
+.storyboardLintToggle {
+  color: var(--dsw-alias-label-tertiary);
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+
+/* 展开后的清单：贴着摘要条往下长，不挤占镜头列表的滚动区。 */
+.storyboardLintList {
+  max-height: 132px;
+  margin: 4px 0 0;
+  padding: 0;
+  list-style: none;
+  overflow-y: auto;
+}
+
+.storyboardLintItem {
+  display: flex;
+  gap: 6px;
+  padding: 2px 0;
+  color: var(--dsw-alias-label-secondary);
+}
+
+.storyboardLintItem[data-level='block'] {
+  color: var(--dsw-alias-state-error-primary, #ef4444);
+}
+
+/* 镜号：把结论钉回具体那一行，所以它得比正文更窄、更靠前。 */
+.storyboardLintShot {
+  flex: none;
+  min-width: 14px;
+  font-variant-numeric: tabular-nums;
+  color: var(--dsw-alias-label-tertiary);
+}
+
+/* 行内角标：与参考图角标同一套形状，但带数量——一镜可能同时有几条结论。 */
+.storyboardLintChip {
+  flex: none;
+  min-width: 15px;
+  padding: 0 4px;
+  border-radius: var(--dsw-radius-sm);
+  font-size: 10px;
+  line-height: 15px;
+  text-align: center;
+  font-variant-numeric: tabular-nums;
+  color: var(--dsw-alias-state-warn-primary, #f59e0b);
+  border: 1px solid currentColor;
+}
+
+.storyboardLintChip[data-lint-chip='block'] {
+  color: var(--dsw-alias-state-error-primary, #ef4444);
+}
+
 /* 下拉：与 `.composerControls [data-dsh-select]` / `.generateForm [data-dsh-select]`
    同一套描边、圆角与字号；保留原生 select，键盘与读屏都直通。 */
 .storyboardSelect {

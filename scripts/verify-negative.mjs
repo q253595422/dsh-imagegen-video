@@ -408,6 +408,17 @@ const CASES = [
     to: "      if (trace.output !== undefined && false) {",
     expect: /D4: returning to the run\u2019s own canvas applies the held output/,
   },
+  {
+    // 规则全对、界面不画，等于什么都没做：用户看到的还是一块「一切正常」
+    // 的板。SB8 就是钉这一条的——把摘要整块从渲染里摘掉，规则模块照旧
+    // 23/23 通过，只有这条渲染断言会红。
+    name: '体检算出来了但板子上不显示',
+    runner: 'canvas-video',
+    file: 'src/client/canvas/storyboard-board.tsx',
+    from: '{level === undefined ? null : <div className={css.storyboardLint} data-storyboard-lint={level}>',
+    to: '{true ? null : <div className={css.storyboardLint} data-storyboard-lint={level}>',
+    expect: /SB8: a board with problems shows the check summary/,
+  },
   // --------------------------------------------- the jsdom teardown ordering
   {
     // The bug this round was about, restored verbatim: `ReferenceError: window
@@ -648,6 +659,63 @@ const CASES = [
     from: '  const castSlots = Math.max(0, Math.min(MAX_SHOT_REFERENCES, Math.floor(input.castCount)))',
     to: '  const castSlots = Math.max(0, Math.floor(input.castCount))',
     expect: /never more than four/,
+  },
+  // ------------------------------------------------------------- storyboard-lint
+  {
+    // 这条是体检存在的理由。删掉同段冲突判定，一个「同一秒里既固定机位又
+    // 缓慢推近」的镜头就再也无人提醒：它能正常提交、正常出片，只是镜头在
+    // 动与不动之间摇摆。用户付完钱才看出来。L16 必须按名字变红。
+    name: '分镜体检不再识别同一段里的静动冲突',
+    runner: 'storyboard-lint',
+    file: 'src/client/storyboard-lint.ts',
+    from: '  return hasAny(text, STATIC_CAMERA) && hasAny(text, MOVING_CAMERA)',
+    to: '  return false',
+    expect: /L16 同一段里静动冲突要报/,
+  },
+  {
+    // 把单字「推」「摇」当成运镜信号是最容易犯的过度报警：推门、摇头、拉开
+    // 抽屉几乎每镜都有。一条总在喊狼来了的体检，用户三天就学会无视——L6
+    // 就是钉这个反例。
+    name: '分镜体检把单字的推与摇也当成运镜',
+    runner: 'storyboard-lint',
+    file: 'src/client/storyboard-lint.ts',
+    from: "  '推近', '推进', '推镜', '拉远', '拉出', '拉开镜头', '摇镜', '摇过', '横移', '平移',",
+    to: "  '推近', '推进', '推镜', '拉远', '拉出', '拉开镜头', '摇镜', '摇过', '横移', '平移', '推', '摇',",
+    expect: /L6 单字/,
+  },
+  {
+    // 分段总时长是他们的 VID-04，也是我们唯一一条能提前算出「尾巴会被截掉」
+    // 的规则。把它算错（不合并重叠区间）会让「0–4 与 3–6」算成 7 秒而不是 6
+    // 秒，于是刚好的板被误报成超时。L4 钉住合并口径。
+    name: '重叠分段被当成两段相加',
+    runner: 'storyboard-lint',
+    file: 'src/client/storyboard-lint.ts',
+    from: '    if (segment.start <= currentEnd + 1e-9) {',
+    to: '    if (false) {',
+    expect: /L4 重叠按合并覆盖区间算/,
+  },
+  {
+    // 「提到阿禾但这一镜不带她的图」是类体检里唯一一条 block，也是 carry 板
+    // 上真实的损失：前几镜有她的脸，后面全没有。把点名判定阉掉，这条就永远
+    // 不出现，用户只能等成片出来发现脸飘了。L8 必须说清楚。
+    name: '丢参考图的那几镜不再检查提示词有没有点名',
+    runner: 'storyboard-lint',
+    file: 'src/client/storyboard-lint.ts',
+    from: '      const mentioned = members.filter(member => mentionsName(prompt, member.name))',
+    to: '      const mentioned = []',
+    expect: /L8 carry 板上提到钉住身份/,
+  },
+  {
+    // 共享的带 g 正则是这类解析代码的经典缺陷：`test()` 一次成功就把
+    // lastIndex 留在末尾，紧接着的 `matchAll()` 从那开始扫，整镜的分段一条
+    // 都读不出来——体检静默少报，而且只在特定的调用顺序下现形。把工厂换回
+    // 共享常量，L3 必须按名字变红。
+    name: '标秒正则改回共享常量，跨调用状态污染扫描位置',
+    runner: 'storyboard-lint',
+    file: 'src/client/storyboard-lint.ts',
+    from: 'const segmentPattern = (): RegExp => /(\\d{1,3}):([0-5]\\d)\\s*[-–—~]\\s*(\\d{1,3}):([0-5]\\d)/g',
+    to: 'const SEGMENT_PATTERN = /(\\d{1,3}):([0-5]\\d)\\s*[-–—~]\\s*(\\d{1,3}):([0-5]\\d)/g\nconst segmentPattern = (): RegExp => SEGMENT_PATTERN',
+    expect: /L3 反复调用同一条提示词不会漏掉后面的分段/,
   },
   // --------------------------------------------------------------- workflow
   {
@@ -3196,6 +3264,10 @@ const RUNNERS = {
   // 与上面那组的「状态」问题无关，所以单列一组：一个组名只挂一个 script，
   // 两个无关的失败模式混在一起，红的那一行永远分不清是谁坏了。
   'storyboard-spec': { script: 'scripts/smoke-storyboard-spec.mjs', build: false },
+  // 分镜体检（跨镜引用、标秒总时长、静动冲突）是又一套纯函数：它不读状态、
+  // 不改文档，只从已有的 board 算出问题，所以直接从源码 import。单独一组
+  // 是因为它要盯的失败模式（满屏假警报 vs 静默漏报）与上面两套都不同。
+  'storyboard-lint': { script: 'scripts/smoke-storyboard-lint.mjs', build: false },
   // The workflow planner and run loop are imported straight from source, so
   // this group needs no build: it is pure functions plus a promise loop.
   workflow: { script: 'scripts/smoke-workflow.mjs', build: false },

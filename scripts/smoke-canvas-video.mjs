@@ -1355,6 +1355,91 @@ await check('SB5 a storyboard shot submits the pinned cast as reference images',
   assert.match(request.prompt, /窗外在下雨/, 'SB5: the shot prompt is still there, cast text is appended not substituted')
 })
 
+/**
+ * SB8：分镜体检在界面上真的出现了，而且说的是它该说的话。
+ *
+ * 为什么必须是渲染断言：`storyboardFindings` 可以把规则写得再对，只要板子
+ * 不把它画出来，用户看到的还是「一切正常」。上一轮 SB6 就是这种情况——规则
+ * 存在、调用也在，但传进去的永远是 `undefined`。
+ */
+await check('SB8 the board surfaces what it found and counts the rows', async () => {
+  const { view, waitUntil, canvasDocument, setCanvasReadDocument, reopenCanvas } = shared
+
+  // 一镜里两件事都错：分段合计 9 秒超过 6 秒的镜长，且同一段里既固定机位
+  // 又推近。钉住的身份故意不提到，免得再叠一条 cast 结论干扰计数。
+  const brokenShot = {
+    id: 'node-board-lint', type: 'storyboard', title: '分镜', x: 40, y: 40, width: 380, height: 420,
+    metadata: {
+      status: 'idle',
+      storyboard: {
+        shots: [
+          { id: 'shot-1', prompt: '[0:00–0:09] 固定机位，缓慢推近她。', seconds: 6 },
+          { id: 'shot-2', prompt: '窗外的雨声。', seconds: 6 },
+        ],
+        aspectRatio: '16:9', resolution: '720P', continuity: 'cut',
+      },
+    },
+  }
+  setCanvasReadDocument({
+    ...canvasDocument,
+    revision: canvasDocument.revision + 1,
+    nodes: [brokenShot],
+    connections: [],
+  })
+  await reopenCanvas()
+  const boardEl = () => view.querySelector('[data-node-id="node-board-lint"]')
+  // 这块板替换掉了整份 fixture，而后面十几条用例都跑在原 fixture 上。所以恢
+  // 复必须写在 try 的 finally 里：一条失败不能连带把下一条也弄红，否则真正坏
+  // 掉的那处会被一片红淹掉。本用例不碰回读文档以外的任何状态。
+  try {
+  assert.ok(await waitUntil(() => boardEl() !== null, 8000), 'SB8: the board renders')
+  const lint = await waitUntil(() => boardEl().querySelector('[data-storyboard-lint]'), 4000)
+  assert.ok(lint !== null, 'SB8: a board with problems shows the check summary')
+  // 只有第 1 镜有问题，摘要说的就是这个数。
+  assert.match(
+    boardEl().querySelector('[data-storyboard-lint-count]').textContent ?? '',
+    /1/,
+    'SB8: the summary counts the rows that have findings, not the findings',
+  )
+
+  // 折叠是默认：摘要条在，清单不在。一进板就铺开一屏问题会盖住镜头本身。
+  assert.equal(boardEl().querySelector('[data-storyboard-lint-list]'), null,
+    'SB8: the list starts collapsed')
+
+  const head = boardEl().querySelector('[data-storyboard-lint] button')
+  head.dispatchEvent(new (view.ownerDocument.defaultView.MouseEvent)('click', { bubbles: true, cancelable: true }))
+  assert.ok(await waitUntil(() => boardEl().querySelector('[data-storyboard-lint-list]') !== null, 4000),
+    'SB8: pressing the summary opens the list')
+
+  const items = [...boardEl().querySelectorAll('[data-storyboard-lint-list] li')]
+  assert.equal(items.length, 2, 'SB8: both findings on that shot are listed')
+  const text = items.map(item => item.textContent ?? '').join('\n')
+  assert.match(text, /9/, 'SB8: the over-long segment total reaches the list')
+  assert.match(text, /固定机位/, 'SB8: the camera conflict reaches the list')
+
+  // 行上的角标：第 1 镜两粒，第 2 镜没有。角标带计数，因为一镜可能同时有
+  // 几条结论，只画一个点用户不知道要改几处。
+  const chips = [...boardEl().querySelectorAll('[data-lint-chip]')]
+  assert.equal(chips.length, 1, 'SB8: only the shot with findings carries a chip')
+  assert.equal(chips[0].getAttribute('data-lint-count'), '2', 'SB8: the chip states how many findings')
+  assert.equal(
+    chips[0].closest('[data-shot-id]')?.getAttribute('data-shot-id'),
+    'shot-1',
+    'SB8: the chip is on the offending row, not the first row',
+  )
+
+  } finally {
+  // 交还画布，给后面的用例。
+  if (process.env.STORYBOARD_SHOT) {
+    const { writeFileSync } = await import('node:fs')
+    writeFileSync(process.env.STORYBOARD_SHOT, boardEl().outerHTML)
+    console.log('    dumped board HTML to ' + process.env.STORYBOARD_SHOT)
+  }
+  setCanvasReadDocument(canvasDocument)
+    await reopenCanvas()
+  }
+})
+
 await check('B1-B3 the stitch strip is a real button that opens the confirm card', async () => {
   const {
     jsdomWindow, jsdomDocument, view, waitUntil, waitForSelector, pointerDown,

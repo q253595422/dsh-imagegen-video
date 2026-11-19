@@ -14,6 +14,7 @@ import type { CanvasNode, CanvasStoryboard, VideoResolution } from '../../protoc
 import { tt } from '../helpers.ts'
 import type { ImageGenKey } from '../locales.ts'
 import { MAX_SHOTS, nextShotIndex, shotNodeOf, shotSecondsOptions, shotSpeechFit, shotState, shotsWithoutCast, storyboardClipIds, storyboardOf, storyboardProgress, withAppendedShot, withMovedShot, withRemovedShot, withShot } from '../storyboard.ts'
+import { findingsByShot, shotsWithFindings, storyboardFindings, worstLevel } from '../storyboard-lint.ts'
 import { castMembers } from '../cast.ts'
 import { describeVideoModel, VIDEO_RESOLUTIONS } from '../../video-model-catalog.ts'
 import type { ShotState } from '../storyboard.ts'
@@ -106,6 +107,17 @@ export function StoryboardBody(props: {
    */
   const pinned = castMembers(props.nodes).length
   const castless = new Set(shotsWithoutCast(board, pinned))
+  /**
+   * 体检结论，随每次渲染重算。
+   *
+   * 不 memo：输入是这份 board 与 nodes，两者都是新的引用就已经变了；而重算
+   * 本身是「每镜一次名字子串 + 一次正则扫」，40 镜上限下远比一次 React 渲染
+   * 便宜。memo 在这里只会带来「忘了把它加进依赖」这一类 bug。
+   */
+  const findings = storyboardFindings(board, props.nodes)
+  const problemShots = shotsWithFindings(findings)
+  const level = worstLevel(findings)
+  const [lintOpen, setLintOpen] = useState(false)
   // A shot's length is the model's own vocabulary, narrowed to the editorial
   // set: snapgen accepts 6 / 10 / 15, muse only 10. Offering a 4 on a model that
   // answers with a 400 costs a failed submit per attempt, so the picker only
@@ -156,6 +168,31 @@ export function StoryboardBody(props: {
 
     <p className={css.storyboardHint} data-storyboard-spec-hint="">{tt('canvas.storyboard.specHelp')}</p>
 
+    {/* 体检摘要。只在真有问题时出现：一条永远挂着的「检查通过」会变成墙纸，
+        用户三天就学会无视整行——那比不显示更糟。 */}
+    {level === undefined ? null : <div className={css.storyboardLint} data-storyboard-lint={level}>
+      <button
+        type="button"
+        className={css.storyboardLintHead}
+        data-level={level}
+        aria-expanded={lintOpen}
+        onClick={() => setLintOpen(open => !open)}
+      >
+        <span data-storyboard-lint-count="">{tt('canvas.storyboard.lintSummary', { count: problemShots })}</span>
+        <span className={css.storyboardLintToggle}>{tt(lintOpen ? 'canvas.storyboard.lintClose' : 'canvas.storyboard.lintOpen')}</span>
+      </button>
+      {lintOpen ? <ul className={css.storyboardLintList} data-storyboard-lint-list="">
+        {findings.map((finding, index) => <li
+          key={`${finding.shotIndex}:${finding.rule}:${index}`}
+          className={css.storyboardLintItem}
+          data-level={finding.level}
+        >
+          <span className={css.storyboardLintShot}>{finding.shotIndex + 1}</span>
+          <span>{tt(finding.key, finding.params)}</span>
+        </li>)}
+      </ul> : null}
+    </div>}
+
     {/* 只有在真的会丢身份参考时才出现。一直显示会让「每镜独立」的板也挂着一句
         无关的警告，用户就会学会忽略这一行——那比不显示更糟。 */}
     {castless.size === 0 ? null : <p
@@ -181,6 +218,8 @@ export function StoryboardBody(props: {
               : [shot.seconds, ...secondsOptions]
             const speech = shotSpeechFit(shot)
             const dropsCast = castless.has(index)
+            const shotFindings = findingsByShot(findings, index)
+            const shotLevel = worstLevel(shotFindings)
             return <li
               key={shot.id}
               className={css.storyboardShot}
@@ -201,6 +240,14 @@ export function StoryboardBody(props: {
                   data-cast-chip=""
                   title={tt('canvas.storyboard.castDroppedHint')}
                 >{tt('canvas.storyboard.castDroppedChip')}</span> : null}
+                {/* 这一镜自己的体检结论。与上面的参考图角标不同：那个说「板
+                    会丢参考图」，这个说「这一镜真的会因此出问题」。 */}
+                {shotLevel === undefined ? null : <span
+                  className={css.storyboardLintChip}
+                  data-lint-chip={shotLevel}
+                  data-lint-count={shotFindings.length}
+                  title={shotFindings.map(finding => tt(finding.key, finding.params)).join('\n')}
+                >{shotFindings.length}</span>}
                 <span className={css.storyboardShotActions}>
                   <button
                     type="button"
