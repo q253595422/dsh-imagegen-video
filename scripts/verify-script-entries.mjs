@@ -47,6 +47,8 @@ const MANUAL = {
     'the canvas-first-run variant of the shot above: writes one PNG for a person to look at, and no assertion it could fail',
   'stage-preview-shot.mjs':
     'the stage-panel variant of the two shots above: writes PNGs for a person to look at, and no assertion it could fail',
+  'settings-preview-shot.mjs':
+    'the settings-card variant of the shots above: needs a built preview plus an installed DSH theme, then writes screenshots and a layout report for a person to inspect rather than a stable gate verdict',
   // These four were previously counted as gated only because their command
   // existed in `package.json`. None of them runs in any workflow, and none
   // should: three have side effects (network, rewriting files) and the fourth

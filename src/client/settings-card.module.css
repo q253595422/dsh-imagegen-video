@@ -1004,7 +1004,7 @@
 .catalogTabs button .modeMark {
   width: 20px;
   height: 20px;
-  border-radius: 6px;
+  border-radius: var(--dsw-radius-sm);
 }
 
 .catalogEmpty {
@@ -1400,6 +1400,62 @@
   cursor: pointer;
 }
 
+.presetCard {
+  display: flex;
+  flex-direction: column;
+  width: 100%;
+  border: 1px solid var(--dsw-alias-border-l2);
+  border-radius: var(--dsw-radius-sm);
+  background: var(--dsw-alias-bg-layer-3);
+  transition: border-color 0.16s;
+}
+
+.presetCard:hover:not([data-disabled='true']) {
+  border-color: var(--dsw-alias-brand-primary);
+}
+
+.presetCard[data-disabled='true'] {
+  opacity: 0.5;
+}
+
+.presetPick {
+  appearance: none;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 3px;
+  width: 100%;
+  padding: 10px 12px 4px;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.presetPick:disabled {
+  cursor: default;
+}
+
+.presetFoot {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 0 12px 9px;
+}
+
+.presetLink {
+  color: var(--dsw-alias-brand-primary);
+  font-size: 11px;
+  line-height: 1.5;
+  text-decoration: none;
+}
+
+.presetLink:hover {
+  text-decoration: underline;
+}
+
 .presetRow:hover:not(:disabled) {
   border-color: var(--dsw-alias-brand-primary);
 }
@@ -1500,7 +1556,7 @@
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  border-radius: 8px;
+  border-radius: var(--dsw-radius-sm);
   background: var(--dsw-alias-bg-module-platform);
   color: var(--dsw-alias-label-secondary);
 }
@@ -2136,6 +2192,11 @@
 }
 
 .pickerList .presetRow {
+  flex: none;
+  min-height: 54px;
+}
+
+.pickerList .presetCard {
   flex: none;
   min-height: 54px;
 }

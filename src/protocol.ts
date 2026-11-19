@@ -8,7 +8,7 @@
 export const IMAGEGEN_SETTINGS_NAMESPACE = 'dsh-imagegen'
 
 /** Published package version shared by the host updater and the client UI. */
-export const PLUGIN_VERSION = '1.34.0'
+export const PLUGIN_VERSION = '1.35.0'
 
 /** Same-origin route family (loopback-only, mirroring the dsh-ssh fence). */
 export const SETTINGS_API = {
@@ -2751,6 +2751,8 @@ export interface PresetProviderView {
   id: string
   name: string
   apiUrl: string
+  /** Public provider page opened from the picker. */
+  link?: string
   hint: string
   models: ModelMapping[]
   /** Video model catalog prefilled alongside the image one. */

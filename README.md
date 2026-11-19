@@ -212,9 +212,9 @@ dsh plugin --profile web add ./q253595422-dsh-imagegen-video-X.Y.Z.tgz
 
 输入提示词即可生成，也可上传参考图进行编辑。图生图支持**多张参考图**（默认 5 张；渠道开启「自动参考图上限」时按模型取上限，CloseAI 为 20 张；单张 10 MiB、合计 16 MiB）：可多选、拖拽或粘贴，逐张移除，缩略图里用方向键翻看。请求形状按协议族各自整形——第一张始终在 `image`，其余在 `images`，所以只接受单张的渠道看到的仍是一张图；面板会在提交前就按模型能力拦下超额张数，而不是让服务端默默截断。此外支持多张结果、比例与清晰度设置、任务队列、历史恢复和全屏预览。
 
-#### 预置：yeahzi 官逆图像（CloseAI）
+#### 预置：CloseAI
 
-「添加渠道 → 预置」里选 **yeahzi 官逆图像（CloseAI）**，地址 `https://api.closeai.hk/v1`，填该站「令牌」页创建的 `sk-…` 即可。预置目录带 `gpt-image-2.6`、`gpt-image-2.5`、`gpt-image-2` 与 `chatgpt-image-latest`。
+「添加渠道 → 预置」里选 **CloseAI**，地址 `https://api.closeai.hk/v1`，填该站「令牌」页创建的 `sk-…` 即可。预置目录带 `gpt-image-2.6`、`gpt-image-2.5`、`gpt-image-2` 与 `chatgpt-image-latest`。
 
 - **生成与编辑是两条严格分开的入口**：文生图走 `POST /images/generations`，带参考图必须走 `POST /images/edits`（multipart）。插件会按当前模式自动选择，不会把参考图塞进生成接口。
 - **尺寸可以直接发比例**：该网关的 `size` 接受 `16:9`、`4:3`、`3:4`、`21:9` 这类写法。插件在这个渠道上直接发比例，避免固定像素表把 4:3 / 21:9 带偏；普通 OpenAI 官方渠道仍走原来的像素档位。
@@ -263,6 +263,7 @@ dsh plugin --profile web add ./q253595422-dsh-imagegen-video-X.Y.Z.tgz
 | 火山 Seedance（方舟） | `doubao-seedance-2-0-260128`、`doubao-seedance-2-0-fast-260128`、`doubao-seedance-1-0-pro-250528` | 方舟原生任务协议：提交 `POST /contents/generations/tasks`，轮询 `GET /contents/generations/tasks/{id}`，成片在 `content.video_url`。提示词与参考图放在 `content` 数组里（参考图带 `role`：`first_frame` / `last_frame` / `reference_image`），比例字段是 `ratio`，分辨率小写。时长：2.x 为 4–15 秒、1.0 为 2–12 秒。分辨率：2.0 支持 480p/720p/1080p/4k，`fast` / `mini` 只到 720p；1.0 为 480p/720p/1080p。1.0 不支持 `reference_image` 角色，`1.0 pro fast` 也不支持尾帧，面板会把这两种模式从该型号上收起来。 |
 | 算力萌 comemoe | `wan2.2-t2v`、`zhimeng-h3-local` | `wan2.2-t2v` 仅文生视频；`zhimeng-h3-local` 支持图生视频。比例只接受 16:9 / 9:16 / 1:1；5 秒片子实测约 9 分钟。 |
 | 启航AIGC Wan 3.0 | `wan-3-0` | 提交 `POST /v1/videos/generations`（参数扁平放顶层），轮询 `GET /v1/tasks/{id}`；以 `is_final` 判终点、结果取 `output_url`（`data[].url` 同值）。`mode` 映射为 `text-to-video` / `first-frame` / `first-last` / `reference`，参考图直接以 data URI 放 `images`；时长 4–30 秒，分辨率 480p / 720p / 1080p，比例 16:9 / 9:16 / 1:1 / 4:3 / 3:4。预置渠道 **启航AIGC（Wan 3.0）**，API 地址填 `https://qh.token6688.com/v1`，密钥用该站「API 密钥」页创建的 `sk-…`。 |
+| Nbility MiniMax-H3 | `MiniMax-H3` | 提交 `POST /v1/videos`，轮询 `GET /v1/videos/{id}`，结果取 `url`；固定 `768P`、1–15 秒。参考图必须是公网 HTTPS 地址，宿主会先把本地帧上传到 `POST /v1/media/uploads`（1 小时有效），再以 `content` 数组里的 `first_frame` / `last_frame` / `reference_image` 角色提交；参考图最多 9 张。预置渠道 **Nbility · MiniMax-H3**，API 地址 `https://api.nbility.ai/v1`。 |
 | xAI Grok | `grok-imagine-video-1.5`、`grok-imagine-video-1.5-lite` | 提交 `POST /videos/generations`（注意不是 `/videos`），轮询 `GET /videos/{id}`，取 `video.url` 与 `video.duration`。 |
 | snapgen.ai | `grok-1.5-lite`、`grok-video`、`grok-lower`、`muse-ai-video`、`vela-ai-video` | 非 OpenAI 兼容：`multipart` 提交 + 反爬守卫头 `x-guard-id`，返回历史 `uuid` 而不是任务 id，`GET /history/{uuid}` 用**数字状态** 1 生成中 / 2 完成 / 3 失败，成片在 `generated_video[0].video_url`（预签名，未鉴权即可下载）。每次提交要一枚一次性 Cloudflare Turnstile token，由本机 CDP Chrome 现场换取。详见下文。 |
 | 通用视频 | 其他视频模型 id | 按 OpenAI 兼容视频端点尽力适配；未识别的协议族会明确报错，不会静默发出错误请求。 |

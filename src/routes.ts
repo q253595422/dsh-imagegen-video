@@ -1230,6 +1230,7 @@ export function makeRoutes(deps: ImageGenRoutesDeps): WebRoute[] {
           id: preset.id,
           name: preset.name,
           apiUrl: preset.apiUrl,
+          ...preset.link === undefined ? {} : { link: preset.link },
           hint: preset.hint,
           models: preset.models,
           ...preset.videoModels === undefined ? {} : { videoModels: preset.videoModels },

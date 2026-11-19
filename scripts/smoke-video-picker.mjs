@@ -401,6 +401,20 @@ await check('C1 the dock menu offers 添加视频 and the picker opens with thre
     '@deepseek-ai/dsh-client-ui-primitives': {
       Button: ({ variant, size, className, children, ...rest }) => react.createElement('button', { type: 'button', className, ...rest }, children),
       Pill: ({ active, className, children, onClick, ...rest }) => react.createElement(onClick ? 'button' : 'span', { type: 'button', className, ...(onClick !== undefined ? { onClick } : {}), ...rest }, children),
+      SegmentedControl: ({ id, value, options, onChange, label, disabled = false, className }) =>
+        react.createElement('div', { role: 'tablist', 'aria-label': label, className },
+          options.map(option => react.createElement('button', {
+            key: option.value,
+            id: `${id}-${option.value}`,
+            type: 'button',
+            role: 'tab',
+            'aria-selected': option.value === value,
+            tabIndex: option.value === value ? 0 : -1,
+            disabled: disabled || option.disabled === true,
+            title: option.title,
+            onClick: () => { if (option.value !== value) onChange(option.value) },
+          }, option.label))),
+      IconListPenOutlineRegular: () => null,
     },
     '@deepseek-ai/dsh-client-store': {
       createSnapshotStore: (initial) => {
