@@ -26,26 +26,13 @@ import {
 } from '../src/client/drama-writeback.ts'
 import { writeDramaDocument, writeDramaOutput } from '../src/drama-write.ts'
 import { writebackDrama } from '../src/client/drama-writeback-run.ts'
+import { createCheckHarness } from './lib/check-harness.mjs'
 
+// 判定规则只有一份：`scripts/lib/check-harness.mjs`。自写的那份曾把「超时」
+// 当成失败判定，机器一忙就把正确的结果报成坏的；而且它同时是十几个套件里的
+// 同一份副本。这里只保留调用，不再保留实现。
 const results = []
-function check (name, fn) {
-  try {
-    fn()
-    results.push(`PASS  ${name}`)
-  } catch (error) {
-    results.push(`FAIL  ${name}: ${error.message}`)
-    process.exitCode = 1
-  }
-}
-async function checkAsync (name, fn) {
-  try {
-    await fn()
-    results.push(`PASS  ${name}`)
-  } catch (error) {
-    results.push(`FAIL  ${name}: ${error.message}`)
-    process.exitCode = 1
-  }
-}
+const check = createCheckHarness({ results })
 
 /** 一个 1×1 的 png，随便哪张都行——这里只关心字节流有没有原样落盘。 */
 const PNG = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg=='
@@ -106,12 +93,12 @@ const SOURCE = { root: '/tmp/whatever', projectPath: '剧集/EP001', episode: 'E
 
 // ---------------------------------------------------------------- 纯函数
 
-check('槽位从镜号派生，且只留 A-Z0-9-', () => {
+await check('槽位从镜号派生，且只留 A-Z0-9-', () => {
   assert.equal(slotOfShot('SHOT-EP001-007'), 'EP001-007')
   assert.equal(slotOfShot('SHOT-X'), 'X')
 })
 
-check('产出路径照上游契约：视频进 video/，图进 images/', () => {
+await check('产出路径照上游契约：视频进 video/，图进 images/', () => {
   assert.equal(outputDirectoryOf('剧集/EP001', 'video'), '剧集/EP001/制作成果/video')
   assert.equal(outputDirectoryOf('剧集/EP001', 'image'), '剧集/EP001/制作成果/images')
   // 根目录就是那一集时不能拼出 `/制作成果`（那是绝对路径）。
@@ -120,7 +107,7 @@ check('产出路径照上游契约：视频进 video/，图进 images/', () => {
   assert.equal(outputFileOf({ shotId: 'SHOT-EP001-001', kind: 'image' }), 'SHOT-EP001-001.png')
 })
 
-check('参考图行照上游写法，路径前是中点不是斜杠', () => {
+await check('参考图行照上游写法，路径前是中点不是斜杠', () => {
   const line = referenceLineOf([{
     slot: 'EP001-001', order: 1,
     path: '剧集/EP001/制作成果/images/SHOT-EP001-001.png',
@@ -133,11 +120,11 @@ check('参考图行照上游写法，路径前是中点不是斜杠', () => {
   assert.equal(line, 'REF-EP001-001（顺序：1）· 剧集/EP001/制作成果/images/SHOT-EP001-001.png《SHOT-EP001-001》（用途：起始帧；控制：构图）')
 })
 
-check('一条参考图都没有时写「无（文生视频）。」', () => {
+await check('一条参考图都没有时写「无（文生视频）。」', () => {
   assert.equal(referenceLineOf([]), '无（文生视频）。')
 })
 
-check('改写只动镜头段内的字段行，不碰引用块里的同样字样', () => {
+await check('改写只动镜头段内的字段行，不碰引用块里的同样字样', () => {
   const patched = patchStoryboardReferences(STORYBOARD, new Map([['SHOT-EP001-001', 'REF-A（顺序：1）· x.png《x》（用途：起始帧）']]))
   assert.equal(patched.changes.length, 1)
   assert.equal(patched.changes[0].shotId, 'SHOT-EP001-001')
@@ -147,7 +134,7 @@ check('改写只动镜头段内的字段行，不碰引用块里的同样字样'
   assert.ok(patched.text.includes('## SHOT-EP001-002') && patched.text.split('无（文生视频）。').length === 2)
 })
 
-check('别的二级标题段里的同名字段不会被当成镜头字段', () => {
+await check('别的二级标题段里的同名字段不会被当成镜头字段', () => {
   // 上面那条抓不到「没有按 `##` 切段」：那些引用块都在字段行之后。这里把
   // 一个同名字段放进**另一个二级标题**之下——不切段时它会顶替当前镜头的
   // 字段，把「整集汇总」里的东西改掉，而用户的分镜字段其实没动。
@@ -165,7 +152,7 @@ check('别的二级标题段里的同名字段不会被当成镜头字段', () =
   assert.deepEqual(patched.missing, ['SHOT-EP001-001'])
 })
 
-check('字段行写在引用块之后也不会被抢走（按段落切）', () => {
+await check('字段行写在引用块之后也不会被抢走（按段落切）', () => {
   // 第一镜的字段行在引用块之前；第二镜的字段行前面是引用块。
   const text = `## SHOT-EP001-001 · a
 
@@ -186,7 +173,7 @@ check('字段行写在引用块之后也不会被抢走（按段落切）', () =
   assert.ok(patched.text.includes('REF-B（顺序：1）· b.png《b》（用途：起始帧）'))
 })
 
-check('文档里没有这一行时报 missing，而不是替用户补一行', () => {
+await check('文档里没有这一行时报 missing，而不是替用户补一行', () => {
   const text = '## SHOT-EP001-001 · a\n\n- 时长：3s\n'
   const patched = patchStoryboardReferences(text, new Map([['SHOT-EP001-001', 'REF-A（顺序：1）· a.png《a》（用途：起始帧）']]))
   assert.equal(patched.changes.length, 0)
@@ -194,20 +181,45 @@ check('文档里没有这一行时报 missing，而不是替用户补一行', ()
   assert.equal(patched.text, text, '没有改动就不该改文本')
 })
 
-check('CRLF 文档保持 CRLF，不产生整文件 diff', () => {
+await check('标题用共享的 shotHeadingOf：没有 `· 名称` 的裸标题也认', () => {
+  // 回写与铺板读的是同一份文档格式。两边各自写正则时，一处认得的标题另一处
+  // 不认得，症状是「板子上有这一镜，回写却报 missing」。
+  const text = `## SHOT-EP001-001
+
+- 输入参考图：无（文生视频）。
+`
+  const patched = patchStoryboardReferences(text, new Map([['SHOT-EP001-001', 'REF-A（顺序：1）· a.png《a》（用途：起始帧）']]))
+  assert.equal(patched.changes.length, 1)
+  assert.deepEqual(patched.missing, [])
+})
+
+await check('标题连中点都没有时不算这一镜，报 missing 而不是改到别的行', () => {
+  // `## SHOT-EP001-001 攥紧的茶杯`（空格分隔、没中点）不是一个合法标题：
+  // 铺板那边也读不到它，所以回写也不该动它——两处认同一批标题。
+  const text = `## SHOT-EP001-001 攥紧的茶杯
+
+- 输入参考图：无（文生视频）。
+`
+  const patched = patchStoryboardReferences(text, new Map([['SHOT-EP001-001', 'REF-A（顺序：1）· a.png《a》（用途：起始帧）']]))
+  assert.equal(patched.changes.length, 0)
+  assert.deepEqual(patched.missing, ['SHOT-EP001-001'])
+  assert.equal(patched.text, text)
+})
+
+await check('CRLF 文档保持 CRLF，不产生整文件 diff', () => {
   const text = '## SHOT-EP001-001 · a\r\n\r\n- 输入参考图：无（文生视频）。\r\n'
   const patched = patchStoryboardReferences(text, new Map([['SHOT-EP001-001', 'REF-A（顺序：1）· a.png《a》（用途：起始帧）']]))
   assert.ok(patched.text.includes('\r\n'), 'CRLF 被丢掉了')
   assert.ok(!/[^\r]\n/.test(patched.text), '混进了裸 LF')
 })
 
-check('内容没变时不报告改动', () => {
+await check('内容没变时不报告改动', () => {
   const line = '无（文生视频）。'
   const patched = patchStoryboardReferences(STORYBOARD, new Map([['SHOT-EP001-001', line]]))
   assert.equal(patched.changes.length, 0)
 })
 
-check('计划：片子按镜号命名，未跑完的进 skipped', () => {
+await check('计划：片子按镜号命名，未跑完的进 skipped', () => {
   const plan = planDramaWriteback({
     source: SOURCE, boardId: 'board-1', board: board(), nodes: nodes(), useAsNextFrame: false,
   })
@@ -219,7 +231,7 @@ check('计划：片子按镜号命名，未跑完的进 skipped', () => {
   assert.equal(plan.skipped.length, 0)
 })
 
-check('计划：没跑出片子的镜头进 skipped，不占文件名', () => {
+await check('计划：没跑出片子的镜头进 skipped，不占文件名', () => {
   const plan = planDramaWriteback({
     source: SOURCE, boardId: 'board-1',
     board: board({ shots: [{ id: 'SHOT-EP001-001', prompt: 'a', seconds: 3 }] }),
@@ -229,7 +241,7 @@ check('计划：没跑出片子的镜头进 skipped，不占文件名', () => {
   assert.deepEqual(plan.skipped, [{ shotId: 'SHOT-EP001-001' }])
 })
 
-check('计划：勾了起始帧才有抽帧，且写成 png 而不是 mp4', () => {
+await check('计划：勾了起始帧才有抽帧，且写成 png 而不是 mp4', () => {
   const plan = planDramaWriteback({
     source: SOURCE, boardId: 'board-1', board: board(), nodes: nodes(), useAsNextFrame: true,
   })
@@ -242,7 +254,7 @@ check('计划：勾了起始帧才有抽帧，且写成 png 而不是 mp4', () =
   assert.ok(!line.includes('.mp4'), '起始帧不能指向 mp4')
 })
 
-check('计划：cut 板就算勾了也不改动别人那几行的参考图', () => {
+await check('计划：cut 板就算勾了也不改动别人那几行的参考图', () => {
   const plan = planDramaWriteback({
     source: SOURCE, boardId: 'board-1', board: board({ continuity: 'cut' }), nodes: nodes(), useAsNextFrame: true,
   })
@@ -250,7 +262,7 @@ check('计划：cut 板就算勾了也不改动别人那几行的参考图', () 
   assert.equal(plan.referenceLines.size, 0, 'cut 板每镜独立，硬塞起始帧会改变创作意图')
 })
 
-check('计划：设定板只收跑出图的，空位不写', () => {
+await check('计划：设定板只收跑出图的，空位不写', () => {
   const plan = planDramaWriteback({
     source: SOURCE, boardId: 'board-1', board: board({ shots: [] }),
     nodes: [
@@ -277,7 +289,7 @@ function cleanup () {
   for (const root of roots) rmSync(root, { recursive: true, force: true })
 }
 
-await checkAsync('写产出：落在制作成果下，字节原样', async () => {
+await check('写产出：落在制作成果下，字节原样', async () => {
   const root = makeRoot()
   const outcome = await writeDramaOutput({
     root, projectPath: '剧集/EP001',
@@ -289,7 +301,7 @@ await checkAsync('写产出：落在制作成果下，字节原样', async () =>
   assert.equal(written.toString(), 'not really an mp4, but bytes')
 })
 
-await checkAsync('写产出：拒绝写到制作成果之外', async () => {
+await check('写产出：拒绝写到制作成果之外', async () => {
   const root = makeRoot()
   const outcome = await writeDramaOutput({
     root, projectPath: '剧集/EP001',
@@ -300,7 +312,7 @@ await checkAsync('写产出：拒绝写到制作成果之外', async () => {
   assert.equal(outcome.reason, 'outside-project')
 })
 
-await checkAsync('写产出：拒绝别的剧集目录（不能借一集的空子写另一集）', async () => {
+await check('写产出：拒绝别的剧集目录（不能借一集的空子写另一集）', async () => {
   const root = makeRoot()
   mkdirSync(join(root, '剧集', 'EP002'), { recursive: true })
   const outcome = await writeDramaOutput({
@@ -312,7 +324,7 @@ await checkAsync('写产出：拒绝别的剧集目录（不能借一集的空�
   assert.equal(outcome.reason, 'outside-project')
 })
 
-await checkAsync('写产出：拒绝 .. 逃逸', async () => {
+await check('写产出：拒绝 .. 逃逸', async () => {
   const root = makeRoot()
   const outcome = await writeDramaOutput({
     root, projectPath: '剧集/EP001',
@@ -322,7 +334,7 @@ await checkAsync('写产出：拒绝 .. 逃逸', async () => {
   assert.equal(outcome.ok, false)
 })
 
-await checkAsync('写产出：扩展名与内容不一致时拒绝', async () => {
+await check('写产出：扩展名与内容不一致时拒绝', async () => {
   const root = makeRoot()
   const outcome = await writeDramaOutput({
     root, projectPath: '剧集/EP001',
@@ -333,7 +345,7 @@ await checkAsync('写产出：扩展名与内容不一致时拒绝', async () =>
   assert.equal(outcome.reason, 'bad-media')
 })
 
-await checkAsync('写产出：已存在时不覆盖，报 exists 而不是写坏', async () => {
+await check('写产出：已存在时不覆盖，报 exists 而不是写坏', async () => {
   const root = makeRoot()
   const target = '剧集/EP001/制作成果/images/SHOT-EP001-001.png'
   const first = await writeDramaOutput({ root, projectPath: '剧集/EP001', relativePath: target, dataUrl: PNG })
@@ -343,7 +355,7 @@ await checkAsync('写产出：已存在时不覆盖，报 exists 而不是写坏
   assert.equal(second.reason, 'exists')
 })
 
-await checkAsync('写产出：明确要覆盖时先备份，旧字节还在', async () => {
+await check('写产出：明确要覆盖时先备份，旧字节还在', async () => {
   const root = makeRoot()
   const target = '剧集/EP001/制作成果/images/SHOT-EP001-001.png'
   await writeDramaOutput({ root, projectPath: '剧集/EP001', relativePath: target, dataUrl: PNG })
@@ -355,7 +367,7 @@ await checkAsync('写产出：明确要覆盖时先备份，旧字节还在', as
   assert.equal(backups.length, 1)
 })
 
-await checkAsync('写文档：内容没变时不写、不备份', async () => {
+await check('写文档：内容没变时不写、不备份', async () => {
   const root = makeRoot()
   const outcome = await writeDramaDocument({ root, projectPath: '剧集/EP001', text: STORYBOARD })
   assert.equal(outcome.ok, true)
@@ -365,7 +377,7 @@ await checkAsync('写文档：内容没变时不写、不备份', async () => {
   assert.equal(backups.length, 0, '什么都没改，不该堆出备份')
 })
 
-await checkAsync('写文档：改了内容就写，原文件进备份', async () => {
+await check('写文档：改了内容就写，原文件进备份', async () => {
   const root = makeRoot()
   const patched = patchStoryboardReferences(STORYBOARD, new Map([['SHOT-EP001-001', 'REF-A（顺序：1）· x.png《x》（用途：起始帧）']]))
   const outcome = await writeDramaDocument({ root, projectPath: '剧集/EP001', text: patched.text, expected: STORYBOARD })
@@ -383,7 +395,7 @@ await checkAsync('写文档：改了内容就写，原文件进备份', async ()
   assert.ok(!outcome.backup.includes('..'), '备份路径不该往回退')
 })
 
-await checkAsync('写文档：读完之后被别人改过就拒绝写（不覆盖刚写的内容）', async () => {
+await check('写文档：读完之后被别人改过就拒绝写（不覆盖刚写的内容）', async () => {
   const root = makeRoot()
   // 模拟 Agent 在回写过程中改了文档。
   writeFileSync(join(root, '剧集/EP001', '分镜.md'), `${STORYBOARD}\n## SHOT-EP001-003 · 新加的\n`, 'utf8')
@@ -394,14 +406,14 @@ await checkAsync('写文档：读完之后被别人改过就拒绝写（不覆�
   assert.ok(readFileSync(join(root, '剧集/EP001', '分镜.md'), 'utf8').includes('SHOT-EP001-003'))
 })
 
-await checkAsync('写文档：只认《分镜.md》，写不了别的创作文档', async () => {
+await check('写文档：只认《分镜.md》，写不了别的创作文档', async () => {
   const root = makeRoot()
   // `projectPath` 里塞一个文件名，试图写到 剧本.md。
   const outcome = await writeDramaDocument({ root, projectPath: '剧集/EP001/../../..', text: 'evil' })
   assert.equal(outcome.ok, false)
 })
 
-await checkAsync('写产出：符号链接指到根目录之外时拒绝', async () => {
+await check('写产出：符号链接指到根目录之外时拒绝', async () => {
   const root = makeRoot()
   const outside = mkdtempSync(join(tmpdir(), 'drama-outside-'))
   roots.push(outside)
@@ -473,7 +485,7 @@ function stubClipFetch () {
 /** 只把 fetch 换成桩，其余照常；失败时也要还原。 */
 async function withClipFetch (name, fn) {
   const restore = stubClipFetch()
-  try { await checkAsync(name, fn) } finally { restore() }
+  try { await check(name, fn) } finally { restore() }
 }
 
 await withClipFetch('编排：逐条写，一条坏不带走其余', async () => {

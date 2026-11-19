@@ -16,6 +16,7 @@
 import type { CanvasAssetRef, CanvasNode } from '../protocol.ts'
 import type { ImageGenApi } from './api.ts'
 import { assetToDataUrl } from './canvas/node-model.ts'
+import { grabFrame } from './frame-grab.ts'
 import { patchStoryboardReferences, type DramaWritePlan } from './drama-writeback.ts'
 
 /** 一条产出的回写结果。 */
@@ -68,13 +69,9 @@ export async function clipToDataUrl(url: string): Promise<string> {
 /**
  * 从一条片子里抽一帧，返回 png 的 data URL。
  *
- * 与 `CanvasWorkspace` 里 `frameFromClip` 同一条路数（那是「接着上一镜拍」
- * 用的），这里单独一份而不是把它导出来共用，是因为两处的失败文案与超时
- * 归属不同：那边的错误属于「生成这一镜」，这里的错误属于「回写这一集」，
- * 混在一起用户看到的是「生成失败」而其实只是回写抽帧失败。
- *
- * seek 到结尾要不早不晚：正好停在 `duration` 常落在解码器还没吐出的那一帧
- * 上，所以退一点点。
+ * 算法在 `frame-grab.ts` 里，与画布的「接着上一镜拍」共用一份；这里只提供
+ * 回写这一侧的文案：那边的失败属于「生成这一镜」，这边的失败属于「回写这
+ * 一集」，混成一句会让用户看到「生成失败」而其实只是回写抽帧失败。
  */
 export async function frameOfClip(input: {
   url: string
@@ -82,42 +79,13 @@ export async function frameOfClip(input: {
   /** 超时毫秒；默认 15 秒，与画布那条一致。 */
   timeoutMs?: number
 }): Promise<string> {
-  const document = globalThis.document
-  if (document === undefined) throw new Error('抽帧只能在浏览器里做。')
-  const video = document.createElement('video')
-  video.src = input.url
-  video.muted = true
-  video.preload = 'auto'
-  await new Promise<void>((resolve, reject) => {
-    let settled = false
-    const finish = (error?: Error): void => {
-      if (settled) return
-      settled = true
-      if (error === undefined) resolve()
-      else reject(error)
-    }
-    video.addEventListener('loadeddata', () => finish(), { once: true })
-    video.addEventListener('error', () => finish(new Error('片段读不出来，无法抽帧。')), { once: true })
-    globalThis.setTimeout(() => finish(new Error('抽帧超时：片段在 15 秒内没有读出来。')), input.timeoutMs ?? 15_000)
+  return await grabFrame({
+    url: input.url,
+    at: input.at,
+    failure: '片段读不出来，无法抽帧。',
+    timeoutFailure: '抽帧超时：片段在 15 秒内没有读出来。',
+    timeoutMs: input.timeoutMs,
   })
-  const duration = Number.isFinite(video.duration) && video.duration > 0 ? video.duration : 0
-  const target = input.at === 'last' && duration > 0 ? Math.max(0, duration - 0.06) : 0
-  if (target > 0) {
-    await new Promise<void>(resolve => {
-      video.addEventListener('seeked', () => resolve(), { once: true })
-      video.currentTime = target
-    })
-  }
-  const width = video.videoWidth
-  const height = video.videoHeight
-  if (width === 0 || height === 0) throw new Error('片段没有可解码的画面，无法抽帧。')
-  const canvas = document.createElement('canvas')
-  canvas.width = width
-  canvas.height = height
-  const context = canvas.getContext('2d')
-  if (context === null) throw new Error('画布不可用，无法抽帧。')
-  context.drawImage(video, 0, 0, width, height)
-  return canvas.toDataURL('image/png')
 }
 
 /** 一个节点的字节从哪来。 */

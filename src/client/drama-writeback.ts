@@ -31,6 +31,9 @@
 
 import type { CanvasNode, CanvasShot, CanvasStoryboardSource } from '../protocol.ts'
 import { imageIdOfTitle } from './drama-reuse.ts'
+// 标题与字段行的读法只有一份：`storyboard-markdown.ts` 是文档格式与分镜模型
+// 唯一的相遇点。两处各写一份正则，读写两侧会在某次格式微调后静默分家。
+import { fieldOf, shotHeadingOf } from './storyboard-markdown.ts'
 
 /** 一个待写文件：项目相对路径 + 它的内容从哪来。 */
 export interface DramaWriteFile {
@@ -209,19 +212,23 @@ export function patchStoryboardReferences(
   let current: string | undefined
   for (let index = 0; index < rows.length; index += 1) {
     const row = rows[index]!
-    const heading = /^##[ \t]+(SHOT-[A-Z0-9-]+)/.exec(row)
-    if (heading !== null) { current = heading[1]!; continue }
+    const heading = shotHeadingOf(row)
+    if (heading !== undefined) { current = heading.shotId; continue }
     // 任何别的二级标题都结束当前镜头：`## 场景站位`、`## 整集汇总` 之类。
     if (/^##[ \t]/.test(row)) { current = undefined; continue }
     if (current === undefined) continue
     const wanted = updates.get(current)
     if (wanted === undefined) continue
-    const field = /^(-[ \t]+输入参考图：[ \t]*)(.*)$/.exec(row)
-    if (field === null) continue
+    const field = fieldOf(row)
+    if (field === undefined || field.name !== '输入参考图') continue
     seen.add(current)
-    if (field[2]!.trim() === wanted.trim()) continue
-    rows[index] = `${field[1]}${wanted}`
-    changes.push({ shotId: current, before: field[2]!, after: wanted })
+    if (field.value === wanted.trim()) continue
+    // 只替换值，行首那一段（缩进、空白）原样留着——否则重复回写会让同一行
+    // 的空白在两种写法之间来回跳，git 里看起来像改过。
+    const colon = row.indexOf('：')
+    const lead = row.slice(colon + 1).match(/^[ \t]*/)?.[0] ?? ''
+    rows[index] = row.slice(0, colon + 1) + lead + wanted
+    changes.push({ shotId: current, before: field.value, after: wanted })
   }
   const missing = [...updates.keys()].filter(shotId => !seen.has(shotId))
   return {

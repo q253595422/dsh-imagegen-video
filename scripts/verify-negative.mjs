@@ -858,8 +858,8 @@ const CASES = [
     name: 'a missing reference field is filled in instead of reported',
     runner: 'drama-writeback',
     file: 'src/client/drama-writeback.ts',
-    from: "    const field = /^(-[ \\t]+输入参考图：[ \\t]*)(.*)$/.exec(row)\n    if (field === null) continue",
-    to: "    const field = /^(-[ \\t]+输入参考图：[ \\t]*)(.*)$/.exec(row)\n    if (field === null) { seen.add(current); continue }",
+    from: "    const field = fieldOf(row)\n    if (field === undefined || field.name !== '输入参考图') continue",
+    to: "    const field = fieldOf(row)\n    if (field === undefined || field.name !== '输入参考图') { seen.add(current); continue }",
     expect: /没有这一行时报 missing/,
   },
   {

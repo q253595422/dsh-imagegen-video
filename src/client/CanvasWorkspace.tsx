@@ -31,6 +31,7 @@ import { existingDramaBoardOf } from './drama-reuse.ts'
 import { mergeDramaPlacement } from './drama-merge.ts'
 import { planDramaWriteback, type DramaWritePlan } from './drama-writeback.ts'
 import { writebackDrama } from './drama-writeback-run.ts'
+import { grabFrame } from './frame-grab.ts'
 import { ImageGenApiError, type ImageGenApi } from './api.ts'
 import { errorMessage, tt } from './helpers.ts'
 import { mergeCanvasDocuments, type MergeConflict, type MergeSummary } from './canvas/canvas-merge.ts'
@@ -4249,34 +4250,15 @@ export function CanvasWorkspace(props: CanvasWorkspaceProps): React.JSX.Element 
    * @param at - 'first' for the opening frame, 'last' for the closing one.
    */
   const frameFromClip = useCallback(async (url: string, at: 'first' | 'last'): Promise<string> => {
-    const video = globalThis.document.createElement('video')
-    video.src = url
-    video.muted = true
-    video.preload = 'auto'
-    await new Promise<void>((resolve, reject) => {
-      const fail = (): void => { reject(new Error(tt('canvas.videoGrabFailed'))) }
-      video.addEventListener('loadeddata', () => { resolve() }, { once: true })
-      video.addEventListener('error', fail, { once: true })
-      window.setTimeout(fail, 15_000)
+    // 算法在 `frame-grab.ts`，与文档回写抽帧共用；文案留在这里，因为失败
+    // 在用户眼里属于「这一镜没拍出来」。
+    return await grabFrame({
+      url,
+      at,
+      failure: tt('canvas.videoGrabFailed'),
+      // 原来超时与失败报的是同一句，这里保持不变。
+      timeoutFailure: tt('canvas.videoGrabFailed'),
     })
-    const duration = Number.isFinite(video.duration) && video.duration > 0 ? video.duration : 0
-    const target = at === 'last' && duration > 0 ? Math.max(0, duration - 0.06) : 0
-    if (target > 0) {
-      await new Promise<void>((resolve) => {
-        video.addEventListener('seeked', () => { resolve() }, { once: true })
-        video.currentTime = target
-      })
-    }
-    const width = video.videoWidth
-    const height = video.videoHeight
-    if (width === 0 || height === 0) throw new Error(tt('canvas.videoGrabFailed'))
-    const bitmap = globalThis.document.createElement('canvas')
-    bitmap.width = width
-    bitmap.height = height
-    const context = bitmap.getContext('2d')
-    if (context === null) throw new Error(tt('canvas.videoGrabFailed'))
-    context.drawImage(video, 0, 0, width, height)
-    return bitmap.toDataURL('image/png')
   }, [])
 
   /**
