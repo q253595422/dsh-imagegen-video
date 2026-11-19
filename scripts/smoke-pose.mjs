@@ -124,9 +124,21 @@ const rig = await import(new URL('../src/client/canvas/pose-rig.ts', import.meta
  * 只取关节 y 会把地面对齐到「脚踝球心」，半个脚就埋在地面以下——导出图上
  * 脚完全消失，只剩两根杆子戳进地里。所以要按每个关节自己的半径外扩一格再
  * 取最小值：形体的最低表面贴地才是对的。
+ *
+ * 脚掌例外，和 `groundRig()` 用同一套度量：脚不是踝上那颗球，而是从踝向前
+ * 伸出的一段脚掌剖面。按关节半径量脚，`step`/`run` 这种脚尖下压的姿势会
+ * 被读成「悬在地面上方」——实现是按脚底剖面落地的，量法也必须一致，否则
+ * 守的是另一件事。
  */
-const lowest = world => Math.min(...Object.entries(world)
-  .map(([joint, p]) => p[1] - (rig.JOINT_RADIUS[joint] ?? 0)))
+const lowest = world => {
+  const surfaces = Object.entries(world)
+    .filter(([joint]) => joint !== 'footL' && joint !== 'footR')
+    .map(([joint, p]) => p[1] - (rig.JOINT_RADIUS[joint] ?? 0))
+  for (const side of ['L', 'R']) {
+    for (const point of rig.footSolePoints(world[`foot${side}`], world[`knee${side}`])) surfaces.push(point[1])
+  }
+  return Math.min(...surfaces)
+}
 
 await check('P1 every preset stands on the ground', async () => {
   for (const preset of rig.POSE_PRESETS) {
