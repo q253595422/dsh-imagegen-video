@@ -45,6 +45,7 @@ import { buildCanvasBundle, CANVAS_BUNDLE_API, MAX_CANVAS_BUNDLE_BYTES, parseCan
 import { probeCodeRender } from './code-render-runtime.ts'
 import { makeOutfitRoutes } from './outfit-reference-routes.ts'
 import { stageEncodeSession, stagePutFrame } from './stage-encode.ts'
+import { readDramaProject, readProjectImage } from './drama-project.ts'
 
 /** Cap on JSON request bodies (settings ops and generate payloads are small). */
 const MAX_JSON_BODY_BYTES = 24 * 1024 * 1024
@@ -3121,6 +3122,76 @@ export function makeRoutes(deps: ImageGenRoutesDeps): WebRoute[] {
       kind: 'prefix',
       path: VIDEO_API.file,
       handler: (req, res) => serveClip(req, res, VIDEO_API.file, video.readFile),
+    },
+    // ------------------------------------------------- drama project: read
+    // 读用户工作区里的一集短剧（三份 Markdown + 图片清单），只读。
+    //
+    // 工作区根目录由浏览器传入（它从宿主自己的会话列表里取 `cwd`）。这里
+    // 不猜、不默认：一个没给根目录的请求就是不给读，否则这个路由就变成
+    // 「按任意绝对路径读宿主上的文件」。
+    {
+      kind: 'exact',
+      path: CANVAS_API.dramaProject,
+      handler: async (req, res) => {
+        if (!guard(req, res, 'POST')) return
+        const body = await readJsonBody(req)
+        const root = typeof body?.root === 'string' ? body.root.trim() : ''
+        if (root === '' || !path.isAbsolute(root)) {
+          writeJson(res, 200, { ok: false, code: 'bad-request', message: '需要一个绝对的工作区路径。' })
+          return
+        }
+        const requested = typeof body?.projectPath === 'string' ? body.projectPath : undefined
+        try {
+          const project = await readDramaProject(root, requested)
+          if (project === undefined) {
+            writeJson(res, 200, {
+              ok: false,
+              code: 'not-found',
+              message: '这个目录下没找到《分镜.md》。选一个含「剧集/EP001」的项目目录，或者直接选那一集。',
+            })
+            return
+          }
+          writeJson(res, 200, { ok: true, project })
+        } catch (error) {
+          writeJson(res, 200, { ok: false, code: 'drama-read-failed', message: messageOf(error) })
+        }
+      },
+    },
+    // ------------------------------------------------- drama project: image
+    // 把项目里的一张参考图读成 data URL，交给浏览器。
+    //
+    // WHY 不在这里直接入库（像 `assetImport` 那样）：`putImage` 要宽高，而
+    // 宽高只有把图解码之后才知道。宿主为了两个数字再启一次解码没必要，
+    // 而浏览器本来就要把这张图显示在节点上。所以这里只交字节，浏览器量完
+    // 尺寸后走已有的 `canvasUpload` 入库——一条上传通道，不是两条。
+    {
+      kind: 'exact',
+      path: CANVAS_API.dramaImage,
+      handler: async (req, res) => {
+        if (!guard(req, res, 'POST')) return
+        const body = await readJsonBody(req)
+        const root = typeof body?.root === 'string' ? body.root.trim() : ''
+        const relativePath = typeof body?.path === 'string' ? body.path.trim() : ''
+        if (root === '' || !path.isAbsolute(root) || relativePath === '') {
+          writeJson(res, 200, { ok: false, code: 'bad-request', message: '需要工作区路径与图片的相对路径。' })
+          return
+        }
+        try {
+          const found = await readProjectImage(root, relativePath)
+          if (!found.ok) {
+            writeJson(res, 200, { ok: false, code: found.reason === 'missing' ? 'not-found' : 'drama-image-failed', message: found.message })
+            return
+          }
+          writeJson(res, 200, {
+            ok: true,
+            dataUrl: `data:${found.mime};base64,${found.data.toString('base64')}`,
+            name: path.basename(relativePath),
+            bytes: found.data.byteLength,
+          })
+        } catch (error) {
+          writeJson(res, 200, { ok: false, code: 'drama-image-failed', message: messageOf(error) })
+        }
+      },
     },
     // ------------------------------------------------- storage: probe upload
     {

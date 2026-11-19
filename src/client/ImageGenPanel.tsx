@@ -465,6 +465,36 @@ function useCurrentSessionId(sessions: ISessions | undefined): SessionId | undef
   return sessionId
 }
 
+/**
+ * 当前会话的工作区目录，即宿主里那个 `cwd`。
+ *
+ * WHY 从会话列表取而不是存进画布文档：宿主已经在每一行会话上带了 `cwd`
+ * （`SessionSummary.cwd`），再存一份到画布上就会出现「两边不一致」的第二种
+ * 事实——用户换了工作区、画布还指着旧的。读的时候取当前值，永远只有一处。
+ *
+ * 取不到时返回 undefined，调用方必须把「不知道工作区在哪」当一件要说出来的
+ * 事，而不是默默用某个默认目录。
+ */
+function useCurrentWorkspace(sessions: ISessions | undefined): string | undefined {
+  const read = (): string | undefined => {
+    const snapshot = sessions?.list.getSnapshot()
+    if (snapshot === undefined || snapshot.current === undefined) return undefined
+    const cwd = snapshot.byId[snapshot.current]?.cwd
+    return typeof cwd === 'string' && cwd !== '' ? cwd : undefined
+  }
+  const [workspace, setWorkspace] = useState<string | undefined>(read)
+  useEffect(() => {
+    if (sessions === undefined) {
+      setWorkspace(undefined)
+      return
+    }
+    const sync = (): void => { setWorkspace(read()) }
+    sync()
+    return sessions.list.subscribe(sync)
+  }, [sessions])
+  return workspace
+}
+
 /** Find the host mounted in the shell's left navigation region. */
 function useSidebarHistoryHost(): HTMLDivElement | null {
   const [host, setHost] = useState<HTMLDivElement | null>(() => (
@@ -1327,6 +1357,8 @@ export function ImageGenPanel(props: {
   const [configWidth, setConfigWidth] = useState(readConfigWidth)
   const configAsideRef = useRef<HTMLElement>(null)
   const currentSessionId = useCurrentSessionId(sessions)
+  /** 当前会话的工作区目录；画布的「从文档铺板」拿它去读 `剧集/EPxxx`。 */
+  const currentWorkspace = useCurrentWorkspace(sessions)
   /**
    * Image → conversation, with an explicit fallback when the host cannot say
    * which conversation is current. `addingToConversation` below is kept for the
@@ -4388,6 +4420,7 @@ export function ImageGenPanel(props: {
             <CanvasWorkspace
               api={api}
               active={active && workspace === 'canvas'}
+              workspaceRoot={currentWorkspace}
               modelGroups={modelGroups}
               defaultChannelId={defaultChannelId}
               connected={connected}

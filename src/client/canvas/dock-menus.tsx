@@ -156,7 +156,7 @@ export function NodeAddMenu({ anchor, sourceNodeType, onEnter, onLeave, onAdd }:
 
 /** 底栏 `+` 菜单能建的东西，除了图片——图片有自己的按钮和菜单（上传 / 素材库
  *  / 历史 / 生成 / 视频），并进这里会让两个入口做同一件事而各说各话。 */
-export type DockAddKind = 'text' | 'sketch' | 'pose' | 'storyboard' | 'file' | 'config'
+export type DockAddKind = 'text' | 'sketch' | 'pose' | 'storyboard' | 'file' | 'config' | 'drama'
 
 export interface DockAddMenuProps {
   anchor: MenuAnchor
@@ -190,6 +190,7 @@ export function DockAddMenu({ anchor, onEnter, onLeave, onAdd }: DockAddMenuProp
     <button type="button" role="menuitem" onClick={() => onAdd('sketch')}><ToolbarIcon name="sketch" size={16} />{tt('canvas.addSketchNode')}</button>
     <button type="button" role="menuitem" onClick={() => onAdd('pose')}><ToolbarIcon name="expand" size={16} />{tt('canvas.addPoseNode')}</button>
     <button type="button" role="menuitem" onClick={() => onAdd('storyboard')}><ToolbarIcon name="layers" size={16} />{tt('canvas.storyboardNode')}</button>
+    <button type="button" role="menuitem" onClick={() => onAdd('drama')}><ToolbarIcon name="layers" size={16} />{tt('canvas.drama.menu')}</button>
     <button type="button" role="menuitem" onClick={() => onAdd('file')}><ToolbarIcon name="file" size={16} />{tt('canvas.skills.addFileNode')}</button>
     <button type="button" role="menuitem" onClick={() => onAdd('config')}><ToolbarIcon name="sparkle" size={16} />{tt('canvas.addConfigNode')}</button>
   </div>

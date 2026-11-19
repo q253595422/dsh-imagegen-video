@@ -9,6 +9,7 @@ import { MODEL_API, CANVAS_API, CANVAS_SKILL_API, CODE_RENDER_API, CONVERSATION_
 // client's two thin wrappers need the constants. Importing it directly keeps
 // `protocol.ts` from becoming a barrel that every new feature widens.
 import { CANVAS_BUNDLE_API, type CanvasBundle, type CanvasBundleUnresolved } from '../canvas-bundle.ts'
+import type { DramaProjectRead } from '../protocol.ts'
 import { activeImageGenLanguage } from './helpers.ts'
 
 /** Error carrying the route's JSON error message. */
@@ -611,6 +612,36 @@ export class ImageGenApi {
       body: JSON.stringify(asset),
     })
     return (await readEnvelope<{ ok: true; preview: CanvasFilePreview }>(response)).preview
+  }
+
+  /**
+   * 读用户工作区里的一集 oh-story 短剧。
+   *
+   * `root` 由调用方从宿主自己的会话列表里取（`SessionSummary.cwd`），不在这里
+   * 猜：一个猜错的工作区会让铺板读错项目，而用户看到的只是一块内容不对的板子。
+   */
+  async dramaProject(root: string, projectPath?: string): Promise<DramaProjectRead> {
+    const response = await fetch(CANVAS_API.dramaProject, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ root, ...projectPath === undefined || projectPath === '' ? {} : { projectPath } }),
+    })
+    return (await readEnvelope<{ ok: true; project: DramaProjectRead }>(response)).project
+  }
+
+  /**
+   * 把项目里的一张参考图读成 data URL。
+   *
+   * 只读字节，不入库：宽高要把图解码之后才知道，而那一步在浏览器里（它
+   * 本来就要把这张图显示在节点上）。量完尺寸再走 `canvasUpload` 入库。
+   */
+  async dramaImage(root: string, path: string): Promise<{ dataUrl: string, name: string, bytes: number }> {
+    const response = await fetch(CANVAS_API.dramaImage, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ root, path }),
+    })
+    return await readEnvelope<{ ok: true, dataUrl: string, name: string, bytes: number }>(response)
   }
 
   /**

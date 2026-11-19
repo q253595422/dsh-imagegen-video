@@ -660,6 +660,37 @@ const CASES = [
     to: '  const castSlots = Math.max(0, Math.floor(input.castCount))',
     expect: /never more than four/,
   },
+  // ------------------------------------------------------ storyboard-markdown
+  {
+    // 把「空秒数落回合法值」删掉，铺出来的镜就会是 0 秒；而 `isShot` 要求
+    // 秒数 > 0——不是这一镜不跑，是整份画布存不下来。用例里叫 fallback。
+    name: 'a shot with no readable duration is laid out with zero seconds',
+    runner: 'storyboard-markdown',
+    file: 'src/client/storyboard-layout.ts',
+    from: '  const fallback = nearestShotSeconds(5)',
+    to: '  const fallback = 0',
+    expect: /falls back to a legal value/, 
+  },
+  {
+    // 把文档的 3s 吸附到选择器里的 4s：界面上一眼看不出差别，但整集的
+    // 剪辑节奏被改掉了。用例盯的是「照抄」而不是「合法」。
+    name: 'the layout snaps document seconds to a picker value',
+    runner: 'storyboard-markdown',
+    file: 'src/client/storyboard-layout.ts',
+    from: '  if (Number.isFinite(shot.seconds) && shot.seconds > 0) {',
+    to: '  if (false) {',
+    expect: /stays 3s/,
+  },
+  {
+    // 让视频提示词让位给首帧静帧：铺出来的板能跑、能出片，只是每一镜
+    // 都几乎不动，而用户完全看不出哪里配错了。
+    name: 'the first-frame still wins over the video prompt',
+    runner: 'storyboard-markdown',
+    file: 'src/client/storyboard-markdown.ts',
+    from: "  if (motion !== undefined && motion.prompt.trim() !== '') return { prompt: motion.prompt.trim(), from: 'motion' }",
+    to: '',
+    expect: /video prompt wins over the first-frame still/,
+  },
   // ------------------------------------------------------------- storyboard-lint
   {
     // 这条是体检存在的理由。删掉同段冲突判定，一个「同一秒里既固定机位又
@@ -3268,6 +3299,10 @@ const RUNNERS = {
   // 不改文档，只从已有的 board 算出问题，所以直接从源码 import。单独一组
   // 是因为它要盯的失败模式（满屏假警报 vs 静默漏报）与上面两套都不同。
   'storyboard-lint': { script: 'scripts/smoke-storyboard-lint.mjs', build: false },
+  // 「别人的短剧文档→ 画布一块板」是第四条纯函数链：解析 Markdown 与铺节点。
+  // 它的失败模式是「静默读歪」（没报错，只铺出一块看着正常、实则错位的板），
+  // 与上面三组盯的状态 / 规范 / 体检都不同，所以再单列一组。
+  'storyboard-markdown': { script: 'scripts/smoke-storyboard-markdown.mjs', build: false },
   // The workflow planner and run loop are imported straight from source, so
   // this group needs no build: it is pure functions plus a promise loop.
   workflow: { script: 'scripts/smoke-workflow.mjs', build: false },

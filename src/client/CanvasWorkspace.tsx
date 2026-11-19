@@ -25,6 +25,8 @@ import { CastDialog, castLine } from './CastDialog.tsx'
 import { castMembers, castPromptLines, castReferenceIds, ROLE_LABELS } from './cast.ts'
 import { orderByPosition, orderIdsByPosition } from '../clip-order.ts'
 import { defaultStoryboard, MAX_SHOTS, nextShotId, shotNodeOf, shotProblem, shotState, shotVideoPlan, storyboardClipIds, storyboardOf, storyboardProgress, nextShotIndex, withAppendedShot, withMovedShot, withRemovedShot, withShot, withStaleDownstream, type ShotState } from './storyboard.ts'
+import { layoutSummary } from './storyboard-layout.ts'
+import { placeDrama, readDrama } from './drama-import.ts'
 import { ImageGenApiError, type ImageGenApi } from './api.ts'
 import { errorMessage, tt } from './helpers.ts'
 import { mergeCanvasDocuments, type MergeConflict, type MergeSummary } from './canvas/canvas-merge.ts'
@@ -261,6 +263,14 @@ function composeClipIds(nodes: readonly CanvasNode[], selected: ReadonlySet<stri
 
 interface CanvasWorkspaceProps {
   api: ImageGenApi
+  /**
+   * 当前会话的工作区目录。
+   *
+   * 从宿主会话列表的 `cwd` 来，不由画布文档存：它只是「去哪里找文档」的
+   * 输入，不是画布的一部分。取不到时「从短剧文档铺板」会说明这一点，
+   * 而不是默认到某个目录去读。
+   */
+  workspaceRoot?: string
   modelGroups: ImageModelGroup[]
   defaultChannelId?: string
   connected: boolean
@@ -747,7 +757,7 @@ async function loadStagePano(url: string | null): Promise<HTMLImageElement | nul
 const DROP_IMAGE_MAX_COUNT = 20
 
 export function CanvasWorkspace(props: CanvasWorkspaceProps): React.JSX.Element {
-  const { api, modelGroups, defaultChannelId, connected, connectedChannelIds, promptReady = connected, history, gallery, tasks, videoGroups, videoTasks, videoHistory, importRequest, onImportRequestHandled, openCanvasId, onOpenCanvasHandled, onClipStored, onOpenSettings, active } = props
+  const { api, workspaceRoot, modelGroups, defaultChannelId, connected, connectedChannelIds, promptReady = connected, history, gallery, tasks, videoGroups, videoTasks, videoHistory, importRequest, onImportRequestHandled, openCanvasId, onOpenCanvasHandled, onClipStored, onOpenSettings, active } = props
   const [projects, setProjects] = useState<ProjectSummary[]>([])
   const [document, setDocument] = useState<CanvasDocument | null>(null)
   const [selectedIds, setSelectedIds] = useState<Set<string>>(() => new Set())
@@ -2098,25 +2108,6 @@ export function CanvasWorkspace(props: CanvasWorkspaceProps): React.JSX.Element 
   }, [canvasCenter])
 
   /**
-   * 底栏实底 `+` 的菜单分发。
-   *
-   * 放在这里而不是菜单组件里：菜单只发「用户点了哪一类」，建节点要读
-   * `canvasCenter()` 与各个 create 函数——都属画布自己的状态。这五个类型
-   * 原本是底栏上各自的图标，合并后走同一条路径，行为与合并前逐条点击一致。
-   *
-   * `file` 是唯一不建节点的：文件节点要先有字节，所以它打开文件选择器，
-   * 由 onChange 建出带内容的节点（和合并前那个图标完全一样）。
-   */
-  const addDockNode = useCallback((kind: DockAddKind): void => {
-    if (kind === 'file') { setFileTargetNodeId(null); fileUploadRef.current?.click(); return }
-    placeNewNode(kind === 'text' ? createTextNode()
-      : kind === 'sketch' ? createSketchNode()
-        : kind === 'pose' ? createPoseNode()
-          : kind === 'storyboard' ? createStoryboardNode()
-            : createConfigNode())
-  }, [placeNewNode, createTextNode, createSketchNode, createPoseNode, createStoryboardNode, createConfigNode])
-
-  /**
    * 空画布上的「载入示例」：放一条真的能跑通的 提示词 → 配置卡。
    *
    * WHY 一次 `mutate` 写两个节点加一根线：分三次写会在撤销栈里留下三条记录，
@@ -2583,6 +2574,86 @@ export function CanvasWorkspace(props: CanvasWorkspaceProps): React.JSX.Element 
     const members = castMembers(canvasDocument.nodes)
     return castPromptLines(members.filter(member => ids.includes(member.nodeId)), castLine).join('\n')
   }, [])
+
+  // --------------------------------------------------------- drama layout
+
+  /**
+   * 从工作区里的一集短剧文档铺一块板。
+   *
+   * 这是 A 案的全部：读 `分镜.md` / `图片提示词.md` / `视频提示词.md`，把每
+   * 个 `## SHOT-…` 变成板上的一镜，`IMG-…` 变成待填的设定板节点，`REF-…`
+   * 指到的实图导进来钉成身份参考。**不回写任何文档**，输出只在画布上。
+   *
+   * 三步失败点各自说清楚：
+   *  - 没有工作区：面板没告诉我们当前会话在哪个目录，读不了任何文件；
+   *  - 没有文档：那个目录下没有 `剧集/<EP>/分镜.md`；
+   *  - 文档不达标：解析器把缺的、看不懂的逐条写进 warnings，照样铺能铺的。
+   */
+  const [dramaBusy, setDramaBusy] = useState(false)
+  const layoutFromDrama = useCallback(async (projectPath?: string): Promise<void> => {
+    if (workspaceRoot === undefined || workspaceRoot === '') {
+      setError(tt('canvas.drama.noWorkspace'))
+      return
+    }
+    if (dramaBusy) return
+    setDramaBusy(true)
+    setError(null)
+    try {
+      const imported = await readDrama(api, { root: workspaceRoot, ...projectPath === undefined ? {} : { projectPath } })
+      if (imported.plan.shots.length === 0) {
+        setError(imported.notes.join(' ') || tt('canvas.drama.noShots'))
+        return
+      }
+      const at = canvasCenter()
+      const placed = await placeDrama({
+        api,
+        root: workspaceRoot,
+        imported,
+        at: { x: Math.round(at.x - STORYBOARD_NODE_SIZE.width / 2), y: Math.round(at.y) },
+        newId,
+      })
+      // 一次用户动作 = 一条撤销记录。整批节点与连线在同一帧写入，Ctrl+Z 一次
+      // 退回铺板前，而不是「按一次退一个节点」。
+      mutate(previous => {
+        const nodes = [...previous.nodes, placed.boardNode, ...placed.imageNodes, ...placed.castNodes]
+        const known = new Set(nodes.map(node => node.id))
+        const connections = [...previous.connections, ...placed.connections.filter(edge => known.has(edge.fromNodeId) && known.has(edge.toNodeId))]
+        return { ...previous, nodes, connections }
+      })
+      const summary = layoutSummary(imported.plan)
+      const extra = placed.warnings.length > 0 ? ` ${placed.warnings.slice(0, 3).join(' ')}` : ''
+      setNotice(tt('canvas.drama.placed', { count: imported.plan.shots.length }) + (summary.length > 0 ? ` ${summary.join(' ')}` : '') + extra)
+    } catch (caught) {
+      setError(errorMessage(caught))
+    } finally {
+      setDramaBusy(false)
+    }
+  }, [api, workspaceRoot, dramaBusy, canvasCenter, newId, mutate])
+
+  /**
+   * 底栏实底 `+` 的菜单分发。
+   *
+   * 放在这里而不是菜单组件里：菜单只发「用户点了哪一类」，建节点要读
+   * `canvasCenter()` 与各个 create 函数——都属画布自己的状态。这些类型
+   * 原本是底栏上各自的图标，合并后走同一条路径，行为与合并前逐条点击一致。
+   *
+   * `file` 是唯一不建节点的：文件节点要先有字节，所以它打开文件选择器，
+   * 由 onChange 建出带内容的节点（和合并前那个图标完全一样）。
+   *
+   * 排在 `layoutFromDrama` 之后：`drama` 那一支要调它，而 `useCallback` 的
+   * 捕获是声明顺序，提前引用会拿到未初始化的变量。
+   */
+  const addDockNode = useCallback((kind: DockAddKind): void => {
+    if (kind === 'file') { setFileTargetNodeId(null); fileUploadRef.current?.click(); return }
+    // 铺板不是「建一个节点」：它要读工作区文档、导图、写一整批节点，
+    // 所以从这张表里分出去，而不是塞进下面的三元链。
+    if (kind === 'drama') { void layoutFromDrama(); return }
+    placeNewNode(kind === 'text' ? createTextNode()
+      : kind === 'sketch' ? createSketchNode()
+        : kind === 'pose' ? createPoseNode()
+          : kind === 'storyboard' ? createStoryboardNode()
+            : createConfigNode())
+  }, [placeNewNode, createTextNode, createSketchNode, createPoseNode, createStoryboardNode, createConfigNode, layoutFromDrama])
 
   // --------------------------------------------------------- skills / files
 

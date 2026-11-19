@@ -552,6 +552,21 @@ export const CANVAS_API = {
    */
   stageFrame: '/api/dsh-imagegen/canvas/stage/frame',
   stageEncode: '/api/dsh-imagegen/canvas/stage/encode',
+  /**
+   * 读用户工作区里的一集 oh-story 短剧：三份 Markdown 与它们引用到的图片。
+   *
+   * 只读、只读固定文件名、只在调用方声明的工作区根目录之内。解析不在这里
+   * 做——宿主只交字节，格式归浏览器侧（`client/storyboard-markdown.ts`）。
+   */
+  dramaProject: '/api/dsh-imagegen/canvas/drama/project',
+  /**
+   * 把项目里的一张参考图读成 data URL 交给浏览器。
+   *
+   * 只交字节、不入库：宽高要把图解码之后才知道，而那一步在浏览器里（它本来
+   * 就要把这张图显示在节点上）。量完尺寸后走已有的 `canvasUpload` 入库——
+   * 一条上传通道，不是两条。
+   */
+  dramaImage: '/api/dsh-imagegen/canvas/drama/image',
 } as const
 
 /** 导演台逐帧导出的线上形状。 */
@@ -586,6 +601,38 @@ export interface StageEncodeResult {
   /** 实际时长（秒）。 */
   duration: number
   bytes: number
+}
+
+/**
+ * 宿主读回来的一集短剧。
+ *
+ * 文档以**原文**交给浏览器：格式解析（条目头、全角冒号、中点、中文分号）
+ * 全在 `client/storyboard-markdown.ts` 里，宿主不解释任何一行内容。这个分工
+ * 让以后格式再变时只需改一处，而且宿主不必跟着 oh-story 的 SKILL 演进。
+ */
+export interface DramaProjectDocument {
+  /** `storyboard` / `imagePrompts` / `motionPrompts`，固定三个。 */
+  key: 'storyboard' | 'imagePrompts' | 'motionPrompts'
+  /** 文件名原文，如 `分镜.md`。 */
+  fileName: string
+  /** 项目相对路径，给界面显示。 */
+  relativePath: string
+  /** 文件内容；不存在时为 undefined。 */
+  text?: string
+  bytes: number
+}
+
+/** 一次读取的完整结果。 */
+export interface DramaProjectRead {
+  /** 实际使用的剧集目录（相对工作区），如 `剧集/EP001`。 */
+  projectPath: string
+  /** 剧集名，如 `EP001`。 */
+  episode: string
+  documents: DramaProjectDocument[]
+  /** 这一集里找到的图片（项目相对路径）；文档里的 `REF-…` 靠它判定有图没图。 */
+  images: Array<{ relativePath: string, bytes: number }>
+  /** 值得说的事：缺文件、超上限、跳过的链接。 */
+  notes: string[]
 }
 
 /** Same-origin route family for canvas skills (catalog + run control). */
