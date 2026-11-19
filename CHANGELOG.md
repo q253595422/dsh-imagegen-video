@@ -5,7 +5,21 @@ Attribution for third-party code is in [NOTICE](./NOTICE).
 
 ## Releases
 
-### Unreleased — 导演台换成标准蒙皮白膜
+### 1.35.0 — 生成出来的东西能走完最后一公里
+
+三件事都是「已经生成好了，却卡在最后一步」。
+
+- **结果图下载中途断流不再等于白花钱**（`src/engine.ts` 的 `downloadResultImage`）：网关给 CDN 链接而不是 base64 时，按 Range 续传、只补缺的那一段，6 次尝试 / 单次 45 秒 / 总预算 180 秒；收到 `416` 且已有字节覆盖 total 就认定完成。下载完按容器签名校验（PNG 的 `IEND`、JPEG 的 `FFD9`、WebP 的 RIFF 长度、GIF 的 `0x3b`），「HTTP 200 但 body 提前关闭」会被认出是不完整并继续续传，而不是当成成品写进历史。
+- **CloseAI 渠道改要 `response_format: b64_json`**：它那个临时结果域 `tuye.closeai.hk` 在一些网络里连不上，而生成本身是成功的。其他 OpenAI 兼容渠道保持原输出形状。
+- **预设卡片带官网入口**：每张卡片底部一行「官网 ↗」，与订阅类预设的「点击登录」并列；结构从单个 `<button>` 改成 `div > button + foot`，避免 `<a>` 嵌在按钮里。
+- **新增 Nbility · MiniMax-H3 预设**（`https://api.nbility.ai/v1`）：协议前几版已实现，缺的是入口。MiniMax-H3 的时长档位从默认两档改成 **5 / 10 / 15 秒**——上游接受 1–15 整数秒，原来那两档藏掉了长片那端。
+- **CloseAI 预设改名**：显示名从「yeahzi 官逆图像（CloseAI）」改为 `CloseAI` 并提到首位；渠道判定认 id `yeahzi-closeai` 与 hostname，与显示名无关。
+- **画布成品写回剧集目录**：分镜板多一个「写回文档」，三层分工（纯函数算要写什么 / 宿主只管落盘 / 运行器接两层）；路径必须在 `<剧集>/制作成果/` 之下，默认不覆盖、覆盖前留 `.bak`、临时文件加 rename 原子写。起始帧登记成 png 而不是 mp4——`REF-` 只收图片。
+- **修掉「写回文档」按钮从未出现**：`storyboardOf()` 是白名单重建，`source` 字段没被带出来，按钮的渲染条件永远不成立。
+- **三处自写副本换成仓库里已有的那份**：抽帧收进 `frame-grab.ts`，标题与字段行改用 `storyboard-markdown` 的 `shotHeadingOf` / `fieldOf`，用例运行器改用 `lib/check-harness`。
+- **设置页拆成生图 / 生视频两个模块**，各带三步引导、模块标签与预览脚本；分镜板可直接选视频模型与渠道，并按模型收窄时长与分辨率。
+- **新增启航AIGC Wan 3.0 视频协议**：提交 `POST /v1/videos/generations`，轮询 `GET /v1/tasks/{id}`。
+- **导演台换成标准蒙皮白膜**：见下。
 
 导演台的角色默认从程序化木偶换成 **CC0 MakeHuman / CharacterCreator 标准蒙皮底模**（53 骨，含脸、手指与鞋；材质统一为灰白膜，服装用同一色系的 clay）。旧的程序化木偶保留为「轻量木偶」回退和无 WebGL 时的 2D 路径。
 
