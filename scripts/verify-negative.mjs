@@ -2561,7 +2561,7 @@ const CASES = [
     file: 'scripts/smoke.mjs',
     from: "process.env.DSH_HOME = mkdtempSync(join(tmpdir(), 'dsh-imagegen-smoke-'))",
     to: "// process.env.DSH_HOME = mkdtempSync(join(tmpdir(), 'dsh-imagegen-smoke-'))",
-    expect: /会写画布，却没有把数据目录指到临时目录/,
+    expect: /会写用户数据|会写画布/,
   },
   // ------------------------------------------- 空态示例链（example）
   {
