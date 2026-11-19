@@ -2751,6 +2751,8 @@ export interface PresetProviderView {
   id: string
   name: string
   apiUrl: string
+  /** Public provider page opened from the picker. */
+  link?: string
   hint: string
   models: ModelMapping[]
   /** Video model catalog prefilled alongside the image one. */

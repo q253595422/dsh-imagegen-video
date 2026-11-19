@@ -1039,6 +1039,7 @@ await check('V1l MiniMax-H3 speaks the Nbility content contract, 768P only', asy
     ['16:9', '9:16', '1:1', '4:3', '3:4', '21:9'],
     'six ratios documented as accepted',
   )
+  assert.deepEqual(host.videoDurationsFor('MiniMax-H3'), [5, 10, 15], 'the panel exposes the useful 1-15s steps')
   // A different model on the same gateway is NOT affected by the branch.
   assert.equal(host.describeVideoModel('doubao-seedance-2-0').family, 'seedance', 'the Seedance id keeps its own family')
   assert.deepEqual(host.describeVideoModel('kling-v2-master').resolutions, ['480P', '720P', '1080P'], 'a generic model keeps every tier')

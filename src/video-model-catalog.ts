@@ -164,6 +164,9 @@ const ENTRIES: Record<Exclude<VideoModelFamily, 'unknown'>, Omit<VideoCatalogEnt
     modes: ['text', 'image', 'keyframe', 'reference'],
     resolutions: ['768P'],
     aspectRatios: ['16:9', '9:16', '1:1', '4:3', '3:4', '21:9'],
+    // The upstream accepts 1-15 integer seconds; expose the useful 5/10/15
+    // steps instead of the two-pill default that hid the long end.
+    durations: [5, 10, 15],
     supportsSeed: false,
     requiresReference: false,
   },

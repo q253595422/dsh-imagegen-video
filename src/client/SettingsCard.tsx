@@ -1597,18 +1597,32 @@ function PresetPicker(props: {
           ))}
         </div> : null}
         <div className={css.pickerList}>
-          {visiblePresets.map(preset => (
-            <button key={preset.id} type="button" className={css.presetRow} disabled={props.disabled} onClick={() => { props.onPick(preset, preferredMode(preset)) }}>
-              <span className={css.presetName}>{preset.name}</span>
-              <span className={css.presetBadges}>
-                {preset.models.length > 0 ? <span data-mode="image">{t('settings.channelImageCount', { n: preset.models.length })}</span> : null}
-                {(preset.videoModels ?? []).length > 0 ? <span data-mode="video">{t('settings.channelVideoCount', { n: (preset.videoModels ?? []).length })}</span> : null}
-                {preset.models.length === 0 && (preset.videoModels ?? []).length === 0 ? <span>{t('settings.videoMode')}</span> : null}
-              </span>
-              <span className={css.presetHint}>{preset.hint}</span>
-              {preset.subscription === undefined ? null : <span className={css.presetAction}>{t('channels.presetClickToLogin')}</span>}
-            </button>
-          ))}
+          {visiblePresets.map(preset => {
+            const mode = preferredMode(preset)
+            return (
+              <div key={preset.id} className={css.presetCard} data-disabled={props.disabled ? 'true' : undefined}>
+                <button type="button" className={css.presetPick} disabled={props.disabled} onClick={() => { props.onPick(preset, mode) }}>
+                  <span className={css.presetName}>{preset.name}</span>
+                  <span className={css.presetBadges}>
+                    {preset.models.length > 0 ? <span data-mode="image">{t('settings.channelImageCount', { n: preset.models.length })}</span> : null}
+                    {(preset.videoModels ?? []).length > 0 ? <span data-mode="video">{t('settings.channelVideoCount', { n: (preset.videoModels ?? []).length })}</span> : null}
+                    {preset.models.length === 0 && (preset.videoModels ?? []).length === 0 ? <span>{t('settings.videoMode')}</span> : null}
+                  </span>
+                  <span className={css.presetHint}>{preset.hint}</span>
+                </button>
+                {preset.link === undefined && preset.subscription === undefined ? null : (
+                  <div className={css.presetFoot}>
+                    {preset.link === undefined ? <span /> : (
+                      <a className={css.presetLink} href={preset.link} target="_blank" rel="noreferrer noopener">
+                        {t('channels.presetSite')} ↗
+                      </a>
+                    )}
+                    {preset.subscription === undefined ? null : <span className={css.presetAction}>{t('channels.presetClickToLogin')}</span>}
+                  </div>
+                )}
+              </div>
+            )
+          })}
           {visiblePresets.length === 0 && tabPresets.length > 0 ? <p className={css.pickerEmpty}>{t('channels.presetEmpty')}</p> : null}
           {tab === 'api-key' ? <button type="button" className={css.presetRow} data-custom disabled={props.disabled} onClick={() => { props.onCustom(capability) }}>
             <span className={css.presetName}>+ {t('channels.addCustom')}</span>

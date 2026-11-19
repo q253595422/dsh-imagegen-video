@@ -984,6 +984,8 @@ await check('B1b2 the CloseAI preset sends exact ratio sizes without changing ot
     assert.equal(same.images[0].b64, pngBytes.toString('base64'))
     assert.equal(seen.json[0].size, '4:3', 'the gateway receives the exact ratio')
     assert.equal(seen.json[0].quality, 'medium', '2K still maps to the documented quality tier')
+    assert.equal(seen.json[0].response_format, 'b64_json',
+      'CloseAI must return bytes directly instead of a CDN URL the host may not reach')
 
     const dataUrl = `data:image/png;base64,${pngBytes.toString('base64')}`
     await host.generateImage(
@@ -992,14 +994,71 @@ await check('B1b2 the CloseAI preset sends exact ratio sizes without changing ot
     )
     assert.match(seen.edit, /name="size"[\s\S]*?\r\n\r\n3:4\r\n/, 'edits carry the same ratio')
     assert.match(seen.edit, /name="quality"[\s\S]*?\r\n\r\nhigh\r\n/, 'edits carry the mapped quality')
+    assert.match(seen.edit, /name="response_format"[\s\S]*?\r\n\r\nb64_json\r\n/,
+      'CloseAI edits ask for inline bytes too')
 
     await host.generateImage(
       { apiUrl: baseUrl, apiKey: 'sk-test' },
       { mode: 'text', model: 'gpt-image-2.6', prompt: 'ordinary gpt-image', size: '4:3', quality: '2k', n: 1, detail: '' },
     )
     assert.equal(seen.json[1].size, '1536x1024', 'a channel without the preset keeps the old pixel table')
+    assert.equal(seen.json[1].response_format, undefined, 'other OpenAI-compatible channels keep their default output')
   } finally {
     await new Promise(resolve => server.close(resolve))
+  }
+})
+
+await check('B1b3 a broken result URL resumes from the bytes already received', async () => {
+  let downloadRequests = 0
+  let resumeRange = ''
+  const half = Math.floor(pngBytes.length / 2)
+  const flaky = createServer(async (req, res) => {
+    const url = new URL(req.url ?? '/', 'http://127.0.0.1')
+    if (url.pathname === '/v1/images/generations') {
+      for await (const _chunk of req) { /* drain */ }
+      res.writeHead(200, { 'content-type': 'application/json' })
+      res.end(JSON.stringify({
+        data: [{ url: `http://127.0.0.1:${flaky.address().port}/image/flaky.png` }],
+      }))
+      return
+    }
+    if (url.pathname === '/image/flaky.png') {
+      downloadRequests += 1
+      if (downloadRequests === 1) {
+        // A CDN that closes a "complete" body halfway through leaves the host
+        // holding valid-looking bytes and no IEND. That used to turn a paid
+        // generation into a truncated image; the resume must ask for the tail.
+        res.writeHead(200, {
+          'content-type': 'image/png',
+          'content-length': String(half),
+        })
+        res.end(pngBytes.subarray(0, half))
+        return
+      }
+      resumeRange = String(req.headers.range ?? '')
+      assert.equal(resumeRange, `bytes=${half}-`, 'the retry must ask for the missing tail')
+      res.writeHead(206, {
+        'content-type': 'image/png',
+        'content-range': `bytes ${half}-${pngBytes.length - 1}/${pngBytes.length}`,
+        'content-length': String(pngBytes.length - half),
+      })
+      res.end(pngBytes.subarray(half))
+      return
+    }
+    res.writeHead(404)
+    res.end()
+  })
+  await new Promise(resolve => flaky.listen(0, '127.0.0.1', resolve))
+  try {
+    const result = await host.generateImage(
+      { apiUrl: `http://127.0.0.1:${flaky.address().port}/v1`, apiKey: 'sk-test' },
+      { mode: 'text', model: 'gpt-image-2', prompt: 'a resumed result', size: '1:1', quality: '4k', n: 1, detail: '' },
+    )
+    assert.equal(result.images[0].b64, pngBytes.toString('base64'))
+    assert.equal(downloadRequests, 2, 'the host retried the result URL after the body broke')
+    assert.equal(resumeRange, `bytes=${half}-`)
+  } finally {
+    await new Promise(resolve => flaky.close(resolve))
   }
 })
 
@@ -2886,14 +2945,31 @@ await check('C5 image model discovery and configured-model allow-list work', asy
   assert.deepEqual(fallbackDiscovered.body.models, ['glm-image', 'gpt-image-2', 'grok-imagine-image', 'nanobanana2', 'nanobanana2-lite'])
   const presets = await post('/api/dsh-imagegen/presets', {})
   assert.equal(presets.body.ok, true)
+  assert.ok(
+    presets.body.presets.every(preset => typeof preset.link === 'string' && /^https:\/\//.test(preset.link)),
+    'every preset carries an HTTPS provider page for the picker link',
+  )
+  assert.equal(presets.body.presets[0].id, 'yeahzi-closeai', 'CloseAI is the first provider in the picker')
+  assert.equal(presets.body.presets[1].id, 'nbility-minimax-h3', 'Nbility is the second provider in the picker')
   assert.deepEqual(presets.body.presets.find(preset => preset.id === 'openai-official').models, [{ alias: 'gpt-image-2.5', id: 'gpt-image-2.5' }, { alias: 'gpt-image-2', id: 'gpt-image-2' }])
+  assert.equal(presets.body.presets.find(preset => preset.id === 'openai-official').link, 'https://platform.openai.com/api-keys')
   assert.deepEqual(presets.body.presets.find(preset => preset.id === 'zhipu-official').models, [{ alias: 'glm-image', id: 'glm-image' }])
   const closeAiPreset = presets.body.presets.find(preset => preset.id === 'yeahzi-closeai')
   assert.equal(closeAiPreset.apiUrl, 'https://api.closeai.hk/v1')
+  assert.equal(closeAiPreset.name, 'CloseAI')
+  assert.equal(closeAiPreset.link, 'https://api.closeai.hk/sign-up?aff=xgJN')
   assert.deepEqual(
     closeAiPreset.models.map(model => model.id),
     ['gpt-image-2.6', 'gpt-image-2.5', 'gpt-image-2', 'chatgpt-image-latest'],
     'the CloseAI preset ships the documented image models',
+  )
+  const nbilityPreset = presets.body.presets.find(preset => preset.id === 'nbility-minimax-h3')
+  assert.equal(nbilityPreset.apiUrl, 'https://api.nbility.ai/v1')
+  assert.equal(nbilityPreset.link, 'https://nbility.ai/auth/register?aff=LTZe')
+  assert.deepEqual(
+    nbilityPreset.videoModels.map(model => model.id),
+    ['MiniMax-H3'],
+    'the Nbility preset ships the exact, case-sensitive model id',
   )
   // The Ark preset is the one that carries BOTH catalogs: a single channel has
   // to serve Seedream images and Seedance videos, and the ids have to be the

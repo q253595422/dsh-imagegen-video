@@ -18,6 +18,8 @@ export interface PresetProvider {
   name: string
   /** Official base URL prefilled into the channel. */
   apiUrl: string
+  /** Public provider page (console, keys or documentation) opened from the picker. */
+  link?: string
   /** One-line description shown in the picker. */
   hint: string
   /** Known model list prefilled into the channel's model catalog. */
@@ -32,9 +34,34 @@ export interface PresetProvider {
 
 export const IMAGE_PRESETS: PresetProvider[] = [
   {
+    id: 'yeahzi-closeai',
+    name: 'CloseAI',
+    apiUrl: 'https://api.closeai.hk/v1',
+    link: 'https://api.closeai.hk/sign-up?aff=xgJN',
+    hint: 'OpenAI 图片接口：gpt-image-2 / 2.5 / 2.6 与 chatgpt-image-latest；文生图走 /images/generations，参考图走 /images/edits；结果链接约 1 小时后失效，插件会立即转存。',
+    models: [
+      { alias: 'gpt-image-2.6', id: 'gpt-image-2.6' },
+      { alias: 'gpt-image-2.5', id: 'gpt-image-2.5' },
+      { alias: 'gpt-image-2', id: 'gpt-image-2' },
+      { alias: 'chatgpt-image-latest', id: 'chatgpt-image-latest' },
+    ],
+  },
+  {
+    id: 'nbility-minimax-h3',
+    name: 'Nbility · MiniMax-H3',
+    apiUrl: 'https://api.nbility.ai/v1',
+    link: 'https://nbility.ai/auth/register?aff=LTZe',
+    hint: 'Nbility 网关的 MiniMax-H3 视频：提交 POST /v1/videos，轮询 GET /v1/videos/{id}；固定 768P、1–15 秒，支持文生视频、首尾帧与最多 9 张参考图（本地图会先上传到 /v1/media/uploads）。',
+    models: [],
+    videoModels: [
+      { alias: 'MiniMax-H3', id: 'MiniMax-H3' },
+    ],
+  },
+  {
     id: 'volc-ark-seedream',
     name: '字节 · 火山方舟（Seedream / Seedance）',
     apiUrl: 'https://ark.cn-beijing.volces.com/api/v3',
+    link: 'https://console.volcengine.com/ark',
     hint: '字节跳动官方接口：Seedream 文生图/图生图 与 Seedance 文生视频/首尾帧；模型 ID 请用方舟控制台的 doubao-seedream-* / doubao-seedance-*（协议族按该 ID 判断）',
     models: [
       { alias: 'doubao-seedream-5-0-pro-260628', id: 'doubao-seedream-5-0-pro-260628' },
@@ -54,6 +81,7 @@ export const IMAGE_PRESETS: PresetProvider[] = [
     id: 'agnes-official',
     name: 'Agnes AI 官方',
     apiUrl: 'https://apihub.agnes-ai.com/v1',
+    link: 'https://agnes-ai.com',
     hint: 'Agnes 官方图像接口：agnes-image-2.5-flash / 2.1-flash / 2.0-flash；文生图与图生图共用 /images/generations（参考图走 extra_body.image，尺寸用 1K/2K/3K/4K 档位 + ratio）',
     models: [
       { alias: 'agnes-image-2.5-flash', id: 'agnes-image-2.5-flash' },
@@ -68,6 +96,7 @@ export const IMAGE_PRESETS: PresetProvider[] = [
     id: 'qihang-aigc',
     name: '启航AIGC（Wan 3.0）',
     apiUrl: 'https://qh.token6688.com/v1',
+    link: 'https://qh.token6688.com',
     hint: '启航AIGC 聚合网关：Wan 3.0 视频（提交 POST /v1/videos/generations，轮询 GET /v1/tasks/{id}）；密钥填「API 密钥」页创建的 sk-…。',
     models: [],
     videoModels: [
@@ -78,6 +107,7 @@ export const IMAGE_PRESETS: PresetProvider[] = [
     id: 'openai-official',
     name: 'OpenAI 官方',
     apiUrl: 'https://api.openai.com/v1',
+    link: 'https://platform.openai.com/api-keys',
     hint: 'OpenAI 官方图像生成接口（gpt-image-2.5 支持手绘草图生图）',
     models: [
       { alias: 'gpt-image-2.5', id: 'gpt-image-2.5' },
@@ -85,21 +115,10 @@ export const IMAGE_PRESETS: PresetProvider[] = [
     ],
   },
   {
-    id: 'yeahzi-closeai',
-    name: 'yeahzi 官逆图像（CloseAI）',
-    apiUrl: 'https://api.closeai.hk/v1',
-    hint: 'OpenAI 图片接口：gpt-image-2 / 2.5 / 2.6 与 chatgpt-image-latest；文生图走 /images/generations，参考图走 /images/edits；结果链接约 1 小时后失效，插件会立即转存。',
-    models: [
-      { alias: 'gpt-image-2.6', id: 'gpt-image-2.6' },
-      { alias: 'gpt-image-2.5', id: 'gpt-image-2.5' },
-      { alias: 'gpt-image-2', id: 'gpt-image-2' },
-      { alias: 'chatgpt-image-latest', id: 'chatgpt-image-latest' },
-    ],
-  },
-  {
     id: 'zhipu-official',
     name: '智谱 AI 官方',
     apiUrl: 'https://open.bigmodel.cn/api/paas/v4',
+    link: 'https://open.bigmodel.cn/',
     hint: '智谱官方 GLM-Image 图像生成接口',
     models: [
       { alias: 'glm-image', id: 'glm-image' },
@@ -109,6 +128,7 @@ export const IMAGE_PRESETS: PresetProvider[] = [
     id: 'aliyun-dashscope-qwen',
     name: '阿里云百炼（Qwen-Image）',
     apiUrl: 'https://dashscope.aliyuncs.com/api/v1',
+    link: 'https://bailian.console.aliyun.com/',
     hint: '阿里云百炼 DashScope 原生接口：通义千问 Qwen-Image 系列（该渠道不可复用于提示词增强）',
     models: [
       { alias: 'qwen-image-3.0-pro', id: 'qwen-image-3.0-pro' },
@@ -124,6 +144,7 @@ export const IMAGE_PRESETS: PresetProvider[] = [
     id: 'minimax-official',
     name: 'MiniMax 官方（国际站）',
     apiUrl: 'https://api.minimax.io/v1',
+    link: 'https://platform.minimax.io/',
     hint: 'MiniMax 原生 /image_generation 接口：image-01（国内站请把地址改为 https://api.minimaxi.com/v1；/models 不列出图片模型，请直接使用预填目录）',
     models: [
       { alias: 'image-01', id: 'image-01' },
@@ -133,6 +154,7 @@ export const IMAGE_PRESETS: PresetProvider[] = [
     id: 'xai-grok',
     name: 'xAI（Grok）',
     apiUrl: 'https://api.x.ai/v1',
+    link: 'https://console.x.ai/',
     hint: 'xAI 官方接口：Grok Imagine 系列',
     models: [
       { alias: 'grok-imagine-image', id: 'grok-imagine-image' },
@@ -146,6 +168,7 @@ export const IMAGE_PRESETS: PresetProvider[] = [
     id: 'google-gemini-native',
     name: 'Google Gemini 官方（原生）',
     apiUrl: 'https://generativelanguage.googleapis.com/v1beta',
+    link: 'https://aistudio.google.com/apikey',
     hint: 'Google Generative Language 原生 :generateContent 接口：密钥填 Google API Key，接口协议请手动选择「Google 原生」；Gemini 图像模型支持最多 5 张参考图',
     models: [
       { alias: 'gemini-3-pro-image', id: 'gemini-3-pro-image' },
@@ -156,6 +179,7 @@ export const IMAGE_PRESETS: PresetProvider[] = [
     id: 'snapgen',
     name: 'snapgen.ai',
     apiUrl: 'https://api.snapgen.ai',
+    link: 'https://snapgen.ai/',
     hint: 'snapgen.ai 视频接口（非 OpenAI 兼容）：密钥填 refresh_token，提交时还需要本机 CDP Chrome 换取 Turnstile',
     models: [],
     // Only the video half is wired: the endpoints speak multipart + a history
@@ -173,6 +197,7 @@ export const IMAGE_PRESETS: PresetProvider[] = [
     id: 'chatgpt-subscription',
     name: 'ChatGPT 订阅（实验）',
     apiUrl: '',
+    link: 'https://chatgpt.com/',
     hint: '浏览器授权登录后使用 gpt-image-2.5-flare；非官方 Codex 图像接口',
     models: [{ alias: DEFAULT_SUBSCRIPTION_MODELS['chatgpt-sub'], id: DEFAULT_SUBSCRIPTION_MODELS['chatgpt-sub'] }],
     subscription: 'chatgpt-sub',
@@ -182,6 +207,7 @@ export const IMAGE_PRESETS: PresetProvider[] = [
     id: 'grok-subscription',
     name: 'Grok 订阅',
     apiUrl: '',
+    link: 'https://grok.com/',
     hint: 'SuperGrok / X Premium 登录后使用 grok-imagine-image-2.0',
     models: [{ alias: DEFAULT_SUBSCRIPTION_MODELS['grok-sub'], id: DEFAULT_SUBSCRIPTION_MODELS['grok-sub'] }],
     subscription: 'grok-sub',
@@ -190,6 +216,7 @@ export const IMAGE_PRESETS: PresetProvider[] = [
     id: 'google-subscription',
     name: 'Google 订阅（实验）',
     apiUrl: '',
+    link: 'https://gemini.google.com/',
     hint: 'Google 授权登录后使用 gemini-3-pro-image；非官方 Antigravity 接口',
     models: [{ alias: DEFAULT_SUBSCRIPTION_MODELS['google-sub'], id: DEFAULT_SUBSCRIPTION_MODELS['google-sub'] }],
     subscription: 'google-sub',
@@ -199,6 +226,7 @@ export const IMAGE_PRESETS: PresetProvider[] = [
     id: 'openrouter-subscription',
     name: 'OpenRouter 账号',
     apiUrl: '',
+    link: 'https://openrouter.ai/',
     hint: 'OpenRouter 官方 OAuth 登录，使用 google/gemini-3-pro-image',
     models: [{ alias: DEFAULT_SUBSCRIPTION_MODELS['openrouter-sub'], id: DEFAULT_SUBSCRIPTION_MODELS['openrouter-sub'] }],
     subscription: 'openrouter-sub',
