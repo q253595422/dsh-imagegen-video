@@ -1500,7 +1500,7 @@
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  border-radius: var(--dsw-radius-md);
+  border-radius: var(--dsw-radius-sm);
   background: var(--dsw-alias-bg-module-platform);
   color: var(--dsw-alias-label-secondary);
 }
