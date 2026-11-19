@@ -19,7 +19,7 @@
  *    「已生成」，只把提示词和标题放好。
  */
 
-import type { CanvasConnection, CanvasNode, CanvasShot, CanvasStoryboard } from '../protocol.ts'
+import type { CanvasConnection, CanvasNode, CanvasShot, CanvasStoryboard, CanvasStoryboardSource } from '../protocol.ts'
 import { STORYBOARD_NODE_SIZE, IMAGE_NODE_SIZE } from './canvas/constants.ts'
 import {
   castNamesOf,
@@ -57,6 +57,8 @@ export interface CanvasLayoutPlan {
   /** 分镜节点的标题。 */
   title: string
   board: CanvasStoryboard
+  /** 这版板来自哪份剧集文档；没有就是「不是文档铺的」。 */
+  source?: CanvasStoryboardSource
   shots: PlacedShot[]
   /** `图片提示词.md` 的条目，铺成待填的图片节点。 */
   imagePrompts: ParsedImagePrompt[]
@@ -74,6 +76,8 @@ export interface LayoutOptions {
   resolution?: string
   /** 视频模型覆盖；缺省交给画布默认。 */
   model?: string
+  /** 来源标记；铺板时带上，重铺才能找回同一块板。 */
+  source?: CanvasStoryboardSource
   /**
    * 每秒最多铺多少镜。`CanvasStoryboard` 的上限是 40（`MAX_SHOTS`），而
    * 一集短剧常有 60–100 镜——超出的部分不静默丢掉，而是明确告诉用户
@@ -209,11 +213,13 @@ export function planCanvasLayout(input: {
     // 第二镜起全部变成关键帧模式，而且第一镜跑完之前每一镜都跑不了。
     continuity: 'cut',
     ...options.model === undefined || options.model === '' ? {} : { model: options.model },
+    ...options.source === undefined ? {} : { source: options.source },
   }
   if (shots.length === 0) warnings.push('没有铺出任何镜头。')
   return {
     title: options.title ?? input.storyboard.title,
     board,
+    ...options.source === undefined ? {} : { source: options.source },
     shots,
     imagePrompts: [...(input.images ?? [])],
     warnings,
@@ -248,11 +254,20 @@ export function layoutNodes(input: {
   plan: CanvasLayoutPlan
   at: { x: number, y: number }
   newId: (kind: 'node' | 'edge') => string
+  /**
+   * 重铺时板节点的 id。
+   *
+   * 单独给而不是从 `newId` 里分：板必须是旧 id，否则画布上会多出一块板；
+   * 而 `newId` 还要继续给图片节点发新 id。
+   */
+  boardId?: string
+  /** 重铺时按 `IMG-…` 编号登记的旧节点 id（沿用它们才能留住已跑的图）。 */
+  imageNodeIds?: Map<string, string>
 }): LayoutNodes {
-  const { plan, at, newId } = input
+  const { plan, at, newId, boardId, imageNodeIds } = input
   const warnings: string[] = [...plan.warnings]
   const boardNode: CanvasNode = {
-    id: newId('node'),
+    id: boardId ?? newId('node'),
     type: 'storyboard',
     title: plan.title,
     x: Math.round(at.x),
@@ -275,7 +290,7 @@ export function layoutNodes(input: {
     const column = index % perRow
     const row = Math.floor(index / perRow)
     const node: CanvasNode = {
-      id: newId('node'),
+      id: imageNodeIds?.get(item.imageId) ?? newId('node'),
       type: 'image',
       title: item.name === '' ? item.imageId : `${item.imageId} · ${item.name}`,
       x: Math.round(at.x + column * (IMAGE_NODE_SIZE.width + gapX)),

@@ -40,7 +40,8 @@ import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js'
 import type { CanvasPoseActor, CanvasPoseStage, CanvasStageProp } from '../../protocol.ts'
 import { POSE_GROUND_Y, solveRig, type PoseJoint } from './pose-rig.ts'
 import {
-  HUMANOID_EXTENSIONS, HUMANOID_FEET, HUMANOID_JOINT_CAPS, HUMANOID_SPANS,
+  HUMANOID_EXTENSIONS, HUMANOID_FEET, HUMANOID_HINGES, HUMANOID_JOINT_CAPS,
+  HUMANOID_SLEEVES, HUMANOID_SPANS,
   alignFoot, alignSpan, createHumanoidGeometry, disposeHumanoidGeometry,
   type HumanoidGeometry,
 } from './stage-humanoid.ts'
@@ -236,6 +237,8 @@ interface ActorMesh {
   group: Group
   /** 键来自 `HUMANOID_SPANS` / `HUMANOID_EXTENSIONS` / `HUMANOID_FEET` 的 `key`。 */
   parts: Map<string, Mesh>
+  /** 膝/肘的木铰链，键来自 `HUMANOID_HINGES`。 */
+  hinges: Map<string, Mesh>
   /** 补缝用的关节球，键是关节名。 */
   joints: Map<PoseJoint, Mesh>
   /** 角色名标签。只在 `scene.labels` 为真时可见；`null` 表示还没建过。 */
@@ -531,6 +534,7 @@ class StageSceneImpl implements StageScene {
     const group = new Group()
     group.name = actor.id
     const parts = new Map<string, Mesh>()
+    const hinges = new Map<string, Mesh>()
     const joints = new Map<PoseJoint, Mesh>()
     const pick: StagePick = { target: 'actor', id: actor.id }
     const add = (key: string, geometry: BufferGeometry): void => {
@@ -546,6 +550,7 @@ class StageSceneImpl implements StageScene {
     for (const span of HUMANOID_SPANS) add(span.key, this.humanoid[span.geometry])
     for (const extension of HUMANOID_EXTENSIONS) add(extension.key, this.humanoid[extension.geometry])
     for (const foot of HUMANOID_FEET) add(foot.key, this.humanoid[foot.geometry])
+    for (const sleeve of HUMANOID_SLEEVES) add(sleeve.key, this.humanoid[sleeve.geometry])
     for (const cap of HUMANOID_JOINT_CAPS) {
       const sphere = new Mesh(this.humanoid.joint, this.jointMaterial)
       sphere.userData.pick = pick
@@ -554,8 +559,16 @@ class StageSceneImpl implements StageScene {
       group.add(sphere)
       joints.set(cap.joint, sphere)
     }
+    for (const hinge of HUMANOID_HINGES) {
+      const mesh = new Mesh(this.humanoid.hinge, this.jointMaterial)
+      mesh.userData.pick = pick
+      mesh.castShadow = true
+      mesh.receiveShadow = true
+      group.add(mesh)
+      hinges.set(hinge.key, mesh)
+    }
     this.actorLayer.add(group)
-    const record: ActorMesh = { group, parts, joints, label: null, labelText: '', labelAspect: 3 }
+    const record: ActorMesh = { group, parts, hinges, joints, label: null, labelText: '', labelAspect: 3 }
     this.actors.set(actor.id, record)
     return record
   }
@@ -632,9 +645,40 @@ class StageSceneImpl implements StageScene {
       sphere.scale.setScalar(cap.radius)
     }
 
+    // 木铰链：轴向取两根骨所在平面的法线，圆柱沿这个轴躺倒。直腿时
+    // `cross` 退化为 0，用本地 +X（人体的左右轴）兜底。
+    for (const hinge of HUMANOID_HINGES) {
+      const part = mesh.hinges.get(hinge.key)
+      if (part === undefined) continue
+      const center = at(hinge.joint)
+      const parent = at(hinge.parent)
+      const child = at(hinge.child)
+      const axis = new Vector3().crossVectors(
+        new Vector3().subVectors(parent, center),
+        new Vector3().subVectors(child, center),
+      )
+      if (axis.lengthSq() < 1e-8) axis.set(1, 0, 0)
+      axis.normalize()
+      part.position.copy(center)
+      part.quaternion.setFromUnitVectors(new Vector3(0, 1, 0), axis)
+      // `hinge` 几何本身就是单位长度（t=0..1），所以 Y 直接乘长度。
+      part.scale.set(hinge.radius, hinge.length, hinge.radius)
+    }
+
     for (const span of HUMANOID_SPANS) {
       const part = mesh.parts.get(span.key)
       if (part !== undefined) alignSpan(part, at(span.from), at(span.to))
+    }
+    for (const sleeve of HUMANOID_SLEEVES) {
+      const part = mesh.parts.get(sleeve.key)
+      if (part === undefined) continue
+      const from = at(sleeve.from)
+      const to = at(sleeve.to)
+      const dir = new Vector3().subVectors(to, from)
+      const span = Math.min(sleeve.length, dir.length())
+      if (span < 1e-6) continue
+      dir.normalize()
+      alignSpan(part, from, from.clone().addScaledVector(dir, span))
     }
     for (const extension of HUMANOID_EXTENSIONS) {
       const part = mesh.parts.get(extension.key)

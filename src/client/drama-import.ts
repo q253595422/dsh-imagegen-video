@@ -66,6 +66,8 @@ export async function readDrama(api: ImageGenApi, input: DramaReadInput): Promis
     storyboard,
     ...motions === undefined ? {} : { motions: motions.items },
     ...images === undefined ? {} : { images: images.items },
+    // 来源跟着 plan 走，铺板时才能拿它找回同一块板（而不是再铺一块）。
+    options: { source: { root: input.root, projectPath: project.projectPath, episode: project.episode } },
   })
   const notes: string[] = [...project.notes]
   if (images === undefined) notes.push('没有《图片提示词.md》，设定板不会铺出来。')
@@ -153,9 +155,28 @@ export async function placeDrama(input: {
    * 就能在纯 Node 里被完整驱动，而不必为一个数字拉起 jsdom。
    */
   measure?: (dataUrl: string) => Promise<{ width: number, height: number }>
+  /**
+   * 重铺同一集时，原地接管上一版的节点 id。
+   *
+   * 给了它就只用这些 id：板用 `boardId`，`IMG-…` 按编号找旧的，参考图按
+   * 路径找旧的——找不到的才新建。没给就是首次铺板，全部新建。
+   */
+  reuse?: {
+    boardId: string
+    imageNodes: Map<string, CanvasNode>
+    castNodes: Map<string, CanvasNode>
+  }
 }): Promise<DramaPlacement> {
-  const { api, root, imported, at, newId, measure = imageSizeOf } = input
-  const base = layoutNodes({ plan: imported.plan, at, newId })
+  const { api, root, imported, at, newId, measure = imageSizeOf, reuse } = input
+  // 板 id：重铺用旧 id，于是画布上那一块被原地换掉，而不是多出一块。
+  const base = layoutNodes({
+    plan: imported.plan,
+    at,
+    newId,
+    ...reuse === undefined
+      ? {}
+      : { boardId: reuse.boardId, imageNodeIds: new Map([...reuse.imageNodes].map(([imageId, node]) => [imageId, node.id])) },
+  })
   const notes: string[] = [...base.warnings]
   const castNodes: CanvasNode[] = []
   const skippedImages: Array<{ relativePath: string, message: string }> = []
@@ -191,7 +212,9 @@ export async function placeDrama(input: {
         // （`首帧.png`），而 cast 的 name 会原样出现在提示词里。
         const name = reference.name !== '' ? reference.name : castNameFor(relativePath)
         castNodes.push({
-          id: newId('node'),
+          // 重铺时沿用旧参考图节点的 id：海报图、用户摆的位置、已生成的图和
+          // 钉住的身份都挂在这个 id 上，换 id 等于把它们全丢掉。
+          id: reuse?.castNodes.get(relativePath)?.id ?? newId('node'),
           type: 'image',
           title: name,
           x: Math.round(at.x + castNodes.length * (IMAGE_NODE_SIZE.width + 24)),

@@ -133,7 +133,9 @@ function stubApi (options = {}) {
     },
     async canvasUpload (dataUrl, width, height, meta) {
       calls.canvasUpload.push({ dataUrl, width, height, meta })
-      return { assetId: `asset-${calls.canvasUpload.length}`, url: `/asset/${calls.canvasUpload.length}`, mime: 'image/png', bytes: 100, width, height, origin: 'upload' }
+      // 真实 `canvasUpload` 会把 `originId` 记到资产上；参考图重铺时正是靠
+      // 它找回旧节点。桩不写回去，重铺就只能当新图铺第二遍。
+      return { assetId: `asset-${calls.canvasUpload.length}`, url: `/asset/${calls.canvasUpload.length}`, mime: 'image/png', bytes: 100, width, height, origin: 'upload', ...meta === undefined ? {} : { originId: meta.originId } }
     },
   }
   return { api, calls }
@@ -152,8 +154,8 @@ const TINY_PNG = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAIAAAACCAYAAACZ
 const MEASURE = async () => ({ width: 400, height: 600 })
 
 /** 单调递增的 id 发生器，与画布里的 `newId` 同形。 */
-function ids () {
-  let serial = 0
+function ids (start = 0) {
+  let serial = start
   return kind => `${kind}-${++serial}`
 }
 
@@ -283,6 +285,67 @@ await checkAsync('a reference still lands when the image size cannot be measured
   const placed = await placeDrama({ api, root: '/workspace', imported, at: { x: 0, y: 0 }, newId: ids() })
   assert.equal(placed.castNodes.length, 2)
   assert.ok(placed.castNodes.every(node => node.width > 0 && node.height > 0))
+})
+
+/**
+ * 重铺同一集：不得多出一份板。
+ *
+ * 真实界面上踩到过：第二次点「从短剧文档铺板」，节点从 8 个变成 13 个——
+ * 因为板节点 id 每次都是新 UUID。用户的片段、手工摆的位置、跑过的图都挂在
+ * 原来那套节点上，叠一份新的等于把它们变成孤儿。
+ */
+await checkAsync('a re-layout reuses the same board and attachment ids', async () => {
+  const { api } = stubApi()
+  const first = await readDrama(api, { root: '/workspace' })
+  assert.ok(first.plan.source !== undefined, 'plan 必须带上来源，否则重铺找不回这块板')
+  const placedFirst = await placeDrama({ api, root: '/workspace', imported: first, at: { x: 0, y: 0 }, newId: ids(), measure: MEASURE })
+  assert.match(placedFirst.boardNode.id, /^node-/, '首铺的板是新 id')
+
+  // 第二遍：把第一遍的结果交给复用入口，模拟「画布上已经有这套节点」。
+  // 第二遍故意从 node-100 起：板永远是第一个取 id 的节点，两边都从头开始
+  // 时坏版本也会碰巧给出同一个 `node-1`，这条断言就白写了。起点错开之后，
+  // 一旦复用没生效，id 必然不同。
+  const second = await readDrama(api, { root: '/workspace' })
+  const reuse = {
+    boardId: placedFirst.boardNode.id,
+    imageNodes: new Map(placedFirst.imageNodes.map(node => [node.title.split('·')[0].trim(), node])),
+    castNodes: new Map(placedFirst.castNodes.map(node => [node.metadata.asset.originId, node])),
+  }
+  const placedSecond = await placeDrama({ api, root: '/workspace', imported: second, at: { x: 0, y: 0 }, newId: ids(100), measure: MEASURE, reuse })
+
+  assert.equal(placedSecond.boardNode.id, placedFirst.boardNode.id, '重铺必须落在同一块板上')
+  assert.deepEqual(
+    placedSecond.imageNodes.map(node => node.id),
+    placedFirst.imageNodes.map(node => node.id),
+    'IMG-… 节点 id 必须沿用，否则已经跑出来的设定板会变成孤儿',
+  )
+  assert.deepEqual(
+    placedSecond.castNodes.map(node => node.id),
+    placedFirst.castNodes.map(node => node.id),
+    '参考图节点 id 必须沿用，否则钉住的身份会丢',
+  )
+  // 首次铺板的 id 仍然是新的——复用不能把「两次铺不同集」也合并掉。
+  assert.notEqual(placedSecond.connections[0].id, placedFirst.connections[0].id, '连线每次都是新的')
+})
+
+/**
+ * 同一集判等的依据是 `projectPath`，不是标题。
+ *
+ * 用户会改板标题，也可能同时铺两集；靠标题猜就会覆盖错板。
+ */
+await checkAsync('the episode, not the board title, decides what gets reused', async () => {
+  const { existingDramaBoardOf } = await import('../src/client/drama-reuse.ts')
+  const source = { root: '/workspace', projectPath: '剧集/EP001', episode: 'EP001' }
+  const node = (id, type, metadata) => ({ id, type, title: id, x: 0, y: 0, width: 100, height: 100, metadata })
+  const nodes = [
+    node('board-a', 'storyboard', { storyboard: { shots: [], aspectRatio: '9:16', resolution: '720P', continuity: 'cut', source } }),
+    node('board-b', 'storyboard', { storyboard: { shots: [], aspectRatio: '9:16', resolution: '720P', continuity: 'cut', source: { ...source, projectPath: '剧集/EP002', episode: 'EP002' } } }),
+    // 用户手画的分镜板：没有 source，绝不能因为同名就被覆盖。
+    node('board-hand', 'storyboard', { storyboard: { shots: [], aspectRatio: '9:16', resolution: '720P', continuity: 'cut' } }),
+  ]
+  const found = existingDramaBoardOf(nodes, [], source)
+  assert.equal(found?.board.id, 'board-a')
+  assert.equal(existingDramaBoardOf(nodes, [], undefined), undefined, '没有来源时一律不接管')
 })
 
 /**

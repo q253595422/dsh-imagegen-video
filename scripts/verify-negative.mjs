@@ -802,6 +802,16 @@ const CASES = [
   },
   // --------------------------------------------------------------- workflow
   {
+    // 重铺同一集时每块板都发新 id：画布上叠出第二块 22 镜的板，用户的片段、
+    // 手工摆的位置、跑过的图全留在旧那套节点上变成孤儿。真实界面踩到过。
+    name: 'a re-layout stacks a second board instead of updating the first',
+    runner: 'drama-import',
+    file: 'src/client/storyboard-layout.ts',
+    from: "    id: boardId ?? newId('node'),",
+    to: "    id: newId('node'),",
+    expect: /a re-layout reuses the same board and attachment ids/,
+  },
+  {
     // Treating a self-loop as "no dependency" makes the run start a node that
     // waits for its own product forever -- a hang the user cannot see, instead
     // of the cycle refusal. The planner has to call it a cycle by name.

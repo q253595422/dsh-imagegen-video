@@ -27,6 +27,7 @@ import { orderByPosition, orderIdsByPosition } from '../clip-order.ts'
 import { defaultStoryboard, MAX_SHOTS, nextShotId, shotNodeOf, shotProblem, shotState, shotVideoPlan, storyboardClipIds, storyboardOf, storyboardProgress, nextShotIndex, withAppendedShot, withMovedShot, withRemovedShot, withShot, withStaleDownstream, type ShotState } from './storyboard.ts'
 import { layoutSummary } from './storyboard-layout.ts'
 import { placeDrama, readDrama } from './drama-import.ts'
+import { existingDramaBoardOf } from './drama-reuse.ts'
 import { ImageGenApiError, type ImageGenApi } from './api.ts'
 import { errorMessage, tt } from './helpers.ts'
 import { mergeCanvasDocuments, type MergeConflict, type MergeSummary } from './canvas/canvas-merge.ts'
@@ -2617,25 +2618,57 @@ export function CanvasWorkspace(props: CanvasWorkspaceProps): React.JSX.Element 
         setError(imported.notes.join(' ') || tt('canvas.drama.noShots'))
         return
       }
-      const at = canvasCenter()
+      // 重铺同一集时原地更新：找回旧板、旧附件、旧连线。看的是当前画布，
+      // 不是 React 缓存的快照——用户可能刚删了一块板。
+      const existing = existingDramaBoardOf(
+        document?.nodes ?? [],
+        document?.connections ?? [],
+        imported.plan.source,
+      )
+      // 板的位置跟着原来的：重铺不该把用户排好的版面跳到视口中心。
+      const at = existing === undefined
+        ? canvasCenter()
+        : { x: existing.board.x + STORYBOARD_NODE_SIZE.width / 2, y: existing.board.y }
       const placed = await placeDrama({
         api,
         root,
         imported,
         at: { x: Math.round(at.x - STORYBOARD_NODE_SIZE.width / 2), y: Math.round(at.y) },
         newId,
+        ...existing === undefined ? {} : { reuse: { boardId: existing.board.id, imageNodes: existing.imageNodes, castNodes: existing.castNodes } },
       })
       // 一次用户动作 = 一条撤销记录。整批节点与连线在同一帧写入，Ctrl+Z 一次
       // 退回铺板前，而不是「按一次退一个节点」。
       mutate(previous => {
-        const nodes = [...previous.nodes, placed.boardNode, ...placed.imageNodes, ...placed.castNodes]
-        const known = new Set(nodes.map(node => node.id))
-        const connections = [...previous.connections, ...placed.connections.filter(edge => known.has(edge.fromNodeId) && known.has(edge.toNodeId))]
-        return { ...previous, nodes, connections }
+        if (existing === undefined) {
+          const nodes = [...previous.nodes, placed.boardNode, ...placed.imageNodes, ...placed.castNodes]
+          const known = new Set(nodes.map(node => node.id))
+          const connections = [...previous.connections, ...placed.connections.filter(edge => known.has(edge.fromNodeId) && known.has(edge.toNodeId))]
+          return { ...previous, nodes, connections }
+        }
+        // 重铺：旧板、旧设定板原地换内容，旧连线整批换成新的。
+        // 旧板上那些“本次仍存在”的附件保留原 id，于是它们生成的图、
+        // 用户摆的位置、钉住的身份都还在。
+        const replaced = new Map<string, CanvasNode>()
+        for (const node of [...placed.imageNodes, ...placed.castNodes]) replaced.set(node.id, node)
+        const kept = previous.nodes.filter(node => node.id === existing.board.id || !replaced.has(node.id))
+        const nodes = kept.map(node => node.id === existing.board.id ? placed.boardNode : node)
+        const dropped = new Set([
+          ...existing.imageNodes.values(),
+          ...existing.castNodes.values(),
+        ].filter(node => !replaced.has(node.id)).map(node => node.id))
+        const survivors = nodes.filter(node => !dropped.has(node.id))
+        const boardIds = new Set(survivors.map(node => node.id))
+        // 旧板的连线全不要（附件可能被文档删了），新的全要。
+        const untouched = previous.connections.filter(edge =>
+          !(edge.fromNodeId === existing.board.id || edge.toNodeId === existing.board.id)
+          && !existing.connections.some(old => old.id === edge.id))
+        const connections = [...untouched, ...placed.connections.filter(edge => boardIds.has(edge.fromNodeId) && boardIds.has(edge.toNodeId))]
+        return { ...previous, nodes: survivors, connections }
       })
       const summary = layoutSummary(imported.plan)
       const extra = placed.warnings.length > 0 ? ` ${placed.warnings.slice(0, 3).join(' ')}` : ''
-      setNotice(tt('canvas.drama.placed', { count: imported.plan.shots.length }) + (summary.length > 0 ? ` ${summary.join(' ')}` : '') + extra)
+      setNotice(tt(existing === undefined ? 'canvas.drama.placed' : 'canvas.drama.replaced', { count: imported.plan.shots.length }) + (summary.length > 0 ? ` ${summary.join(' ')}` : '') + extra)
       // 只有真读到并铺成了才记住这个目录：选错一次不该把下次的默认值带歪。
       setLastDramaDirectory(root)
       setDramaPicker(null)
@@ -2644,7 +2677,7 @@ export function CanvasWorkspace(props: CanvasWorkspaceProps): React.JSX.Element 
     } finally {
       setDramaBusy(false)
     }
-  }, [api, dramaBusy, canvasCenter, newId, mutate])
+  }, [api, dramaBusy, canvasCenter, newId, mutate, document])
 
   /**
    * 底栏实底 `+` 的菜单分发。

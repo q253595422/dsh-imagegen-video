@@ -2297,6 +2297,22 @@ export interface CanvasNodeMetadata {
   shot?: CanvasShotOrigin
 }
 
+/**
+ * 一块分镜板来自哪份剧集文档。
+ *
+ * 用它判断「这是同一集的板」：`projectPath` 已经归一化成相对工作区的
+ * 形式（`剧集/EP001`），所以工作区换位置也不影响判断。`episode` 单独留着
+ * 是给界面显示用的，判等只看 `projectPath`。
+ */
+export interface CanvasStoryboardSource {
+  /** 读文档时用的工作区绝对路径；只作溯源展示，不参与判等。 */
+  root: string
+  /** 剧集目录，相对工作区，如 `剧集/EP001`。 */
+  projectPath: string
+  /** 剧集名，如 `EP001`。 */
+  episode: string
+}
+
 /** A storyboard node's whole editable state. */
 export interface CanvasStoryboard {
   /** Shots in play order; the list itself is the film's running order. */
@@ -2312,6 +2328,16 @@ export interface CanvasStoryboard {
   /** Shared model override; absent means the canvas default video model. */
   model?: string
   channelId?: string
+  /**
+   * 这块板是从哪份剧集文档铺出来的。
+   *
+   * WHY 记在板上：铺板动作是幂等的——同一部剧的同一集再铺一次，该更新
+   * 原来那块板，而不是在画布上叠第二块 22 镜的板。没有这个标记就只能靠
+   * 标题猜，而用户可以改标题、也可能同时铺两集。
+   *
+   * 老文档没有它，读出来就是「不是从文档铺的」，不需要迁移。
+   */
+  source?: CanvasStoryboardSource
 }
 
 export interface CanvasNode {

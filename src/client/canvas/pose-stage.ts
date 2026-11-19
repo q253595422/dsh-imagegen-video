@@ -23,7 +23,7 @@ import type {
   CanvasStageProp, CanvasStagePropKind,
 } from '../../protocol.ts'
 import { timelineOf } from './stage-timeline.ts'
-import { DEFAULT_CAMERA, emptyRig, type PoseCamera } from './pose-rig.ts'
+import { DEFAULT_CAMERA, emptyRig, solveRig, type PoseCamera } from './pose-rig.ts'
 
 /** 默认场景：深色天空 + 略亮的地面，和 LibTV 导演台的观感一致。
  *
@@ -148,6 +148,62 @@ export function addProp(stage: CanvasPoseStage, kind: CanvasStagePropKind): Canv
     scaleZ: 1,
   }
   return { ...stage, props: [...props, prop] }
+}
+
+/** 面板「预设姿势」按钮收到的最小形状。 */
+export interface PosePresetLike {
+  rig: CanvasPoseRig
+  /** 这个姿势需要一块支撑面（目前是坐姿）。 */
+  seat?: boolean
+}
+
+/**
+ * 把一条预设写到某个角色上，并维护它需要的支撑面。
+ *
+ * 坐姿不是「把腿弯起来」就成立的：`solveRig` 会把骨盆落在约 0.5m 的高度，
+ * 在没有椅子的画面上看起来就是悬空。这里按骨盆底缘自动放一块普通 cube
+ * 坐箱（用户可以拖动/删除），换到其他预设时再收掉它。
+ *
+ * 之所以放在 `pose-stage` 而不是面板里：坐下、换姿势、老文档读回都要得到
+ * 同一份结果；只在 React 回调里算一次，测试就只能测到面板的 DOM。
+ */
+export function withPosePreset(
+  stage: CanvasPoseStage,
+  actorId: string,
+  preset: PosePresetLike,
+): CanvasPoseStage {
+  const actor = stage.actors.find(item => item.id === actorId)
+  if (actor === undefined) return stage
+  const actors = stage.actors.map(item => (item.id === actorId ? { ...item, rig: preset.rig } : item))
+  const seatId = `seat-${actorId}`
+  const props = stage.props ?? []
+  if (preset.seat === true) {
+    const scale = actor.scale ?? 1
+    const height = Math.max(0.2, (solveRig(preset.rig).hips[1] - 0.06) * scale)
+    const seat: CanvasStageProp = {
+      id: seatId,
+      name: '坐箱',
+      kind: 'cube',
+      x: actor.x,
+      y: height / 2,
+      z: actor.z,
+      rotateY: actor.rotation ?? 0,
+      scaleX: 0.55 * scale,
+      scaleY: height,
+      scaleZ: 0.45 * scale,
+    }
+    const existing = props.some(prop => prop.id === seatId)
+    return {
+      ...stage,
+      actors,
+      props: existing
+        ? props.map(prop => (prop.id === seatId ? seat : prop))
+        : [...props, seat],
+    }
+  }
+  // 只收自动加的坐箱；用户自己摆的同名道具不碰。
+  if (!props.some(prop => prop.id === seatId)) return { ...stage, actors }
+  return { ...stage, actors, props: props.filter(prop => prop.id !== seatId) }
 }
 
 /** 改一个道具的字段；id 指不到时原样返回。 */

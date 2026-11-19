@@ -162,7 +162,7 @@ export function emptyRig(): PoseRig { return { joints: {}, facing: 0 } }
  *
  * 数值取整到 5 的倍数，方便用户接着用滑杆微调而不是面对一堆 37.4°。
  */
-export const POSE_PRESETS: ReadonlyArray<{ id: string; labelKey: string; rig: PoseRig }> = [
+export const POSE_PRESETS: ReadonlyArray<{ id: string; labelKey: string; rig: PoseRig; seat?: boolean }> = [
   {
     id: 'stand', labelKey: 'canvas.pose.presetStand',
     // 自然站立：手臂略离身，肘微屈。
@@ -191,6 +191,8 @@ export const POSE_PRESETS: ReadonlyArray<{ id: string; labelKey: string; rig: Po
   {
     id: 'sit', labelKey: 'canvas.pose.presetSit',
     // 坐姿：大腿前折不沉，小腿垂下，手搭在腿上。
+    // `seat` 不是姿势的一部分，是给面板的信号：这个姿势需要一块支撑面。
+    // 面板会按 hips 高度放一个坐箱；没有它，人就会悬在一张不存在的椅子上。
     rig: {
       joints: {
         hipL: a(-88, 0, 0), kneeL: a(88, 0, 0), hipR: a(-88, 0, 0), kneeR: a(88, 0, 0),
@@ -198,6 +200,7 @@ export const POSE_PRESETS: ReadonlyArray<{ id: string; labelKey: string; rig: Po
       },
       facing: 0,
     },
+    seat: true,
   },
   {
     id: 'crouch', labelKey: 'canvas.pose.presetCrouch',
@@ -346,6 +349,95 @@ export function solveRig(rig: PoseRig): Record<PoseJoint, [number, number, numbe
 const GROUND_Y = 0.02
 
 /**
+ * 脚掌的放样剖面。
+ *
+ * **这一份是脚底接触和 3D 网格的唯一事实来源。** `stage-humanoid.ts` 的
+ * 脚部几何从这里取环，`footSolePoints()` 也从这里取底面；两处各写一套时，
+ * 3D 看到的脚和落地算出来的脚会差几毫米，坐下/迈步时就会一只脚贴地、一只
+ * 脚悬空。
+ *
+ * `t` 是沿脚长（踝 → 脚尖）的比例，`rz` 是脚掌中心线到脚底的距离。脚不是
+ * 一根圆柱：踝处窄而高，脚背处宽而低，脚尖收薄。
+ */
+export const FOOT_PROFILE: ReadonlyArray<{ t: number; rx: number; rz: number }> = [
+  { t: 0, rx: 0.034, rz: 0.032 },
+  { t: 0.28, rx: 0.048, rz: 0.040 },
+  { t: 0.62, rx: 0.051, rz: 0.031 },
+  { t: 0.86, rx: 0.047, rz: 0.023 },
+  { t: 1, rx: 0.032, rz: 0.013 },
+]
+
+/** 脚掌长度（米），与 `stage-humanoid.ts` 的 `HUMANOID_FEET` 共用。 */
+export const FOOT_LENGTH = 0.155
+
+type Vec3 = [number, number, number]
+
+function unit(v: Vec3): Vec3 {
+  const length = Math.hypot(v[0], v[1], v[2])
+  return length < 1e-8 ? [0, 0, 0] : [v[0] / length, v[1] / length, v[2] / length]
+}
+
+function cross(a: Vec3, b: Vec3): Vec3 {
+  return [
+    a[1] * b[2] - a[2] * b[1],
+    a[2] * b[0] - a[0] * b[2],
+    a[0] * b[1] - a[1] * b[0],
+  ]
+}
+
+/**
+ * 脚掌的局部基：`forward` 沿脚长，`up` 从小腿指向脚踝，`side` 为脚宽。
+ *
+ * 与 `stage-humanoid.ts` 的 `alignFoot()` 必须用同一套基，否则 2D 回退里
+ * 的脚会和 3D 里的脚朝不同方向。`alignFoot` 用 `makeBasis(side, forward, up)`，
+ * 即本地 X = side、Y = forward、Z = up；这里逐项对上。
+ */
+export function footFrame(ankle: Vec3, knee: Vec3): { forward: Vec3; up: Vec3; side: Vec3 } {
+  // 脚掌的「上」是从踝指向膝，不是反过来：`alignFoot()` 之前用
+  // `ankle - knee` 当 up，结果 local +Z 朝地，脚底接触点被算到了脚背上方。
+  // 脚部放样绕 Z 对称，翻一次不影响外形；但接地求解必须知道真正的上方。
+  const up = unit([knee[0] - ankle[0], knee[1] - ankle[1], knee[2] - ankle[2]])
+  const upSafe = up[0] === 0 && up[1] === 0 && up[2] === 0 ? [0, 1, 0] as Vec3 : up
+  // 默认朝 +z（相机前方）。小腿几乎水平时 +z 可能与 up 共线，换 +x。
+  let forward: Vec3 = [0, 0, 1]
+  if (Math.abs(forward[0] * upSafe[0] + forward[1] * upSafe[1] + forward[2] * upSafe[2]) > 0.98) {
+    forward = [1, 0, 0]
+  }
+  // 投影到与 up 垂直的平面里，脚才不会歪着插进小腿。
+  const dot = forward[0] * upSafe[0] + forward[1] * upSafe[1] + forward[2] * upSafe[2]
+  forward = unit([forward[0] - upSafe[0] * dot, forward[1] - upSafe[1] * dot, forward[2] - upSafe[2] * dot])
+  const side = unit(cross(forward, upSafe))
+  return { forward, up: upSafe, side }
+}
+
+/**
+ * 脚底接触点：脚掌中心线下方、脚宽两侧各取一列。
+ *
+ * 取两侧而不是只取中线，是为了让脚掌侧翻（迈步、蹲下时）也能正确落地：
+ * 只取中线时，脚侧翻会得到「脚尖着地、脚跟悬空」的错误答案。
+ */
+export function footSolePoints(ankle: Vec3, knee: Vec3): Vec3[] {
+  const { forward, up, side } = footFrame(ankle, knee)
+  const points: Vec3[] = []
+  for (const ring of FOOT_PROFILE) {
+    const center: Vec3 = [
+      ankle[0] + forward[0] * ring.t * FOOT_LENGTH - up[0] * ring.rz,
+      ankle[1] + forward[1] * ring.t * FOOT_LENGTH - up[1] * ring.rz,
+      ankle[2] + forward[2] * ring.t * FOOT_LENGTH - up[2] * ring.rz,
+    ]
+    points.push(center)
+    for (const sign of [-1, 1]) {
+      points.push([
+        center[0] + side[0] * ring.rx * 0.78 * sign,
+        center[1] + side[1] * ring.rx * 0.78 * sign,
+        center[2] + side[2] * ring.rx * 0.78 * sign,
+      ])
+    }
+  }
+  return points
+}
+
+/**
  * 落地：让**形体**的最低点贴地，而不是关节点的最低点。
  *
  * 早先只取关节 y 的最小值对齐 `GROUND_Y`。那等于把「脚踝的中心」放在地面上
@@ -353,13 +445,22 @@ const GROUND_Y = 0.02
  * （只剩两根杆子插进地里）。这是看图的唯一解释，用数值也能对上：
  * 踝 y=0.020、GROUND_Y=0.020、半径 0.030 → 球底在 -0.010。
  *
- * 现在每个关节都按它自己的半径外扩一格再取最小值。JUINT_RADIUS 与
- * SITE_RADII 里各段的端点半径一致，所以这样算出来的就是形体的最低表面。
+ * 现在每个关节都按它自己的半径外扩一格再取最小值；脚掌例外，按
+ * `footSolePoints()` 的真实脚底剖面取最低点。**不能**再拿 `footL` 的关节
+ * 半径当脚底：脚掌是从踝向前伸出的一段，坐下时踝在椅面高度、脚尖却在
+ * 地板高度，用一颗踝球算出来的「最低点」会让整个人悬在椅子上。
  */
 function groundRig(world: Record<PoseJoint, [number, number, number]>): Record<PoseJoint, [number, number, number]> {
   let lowest = Infinity
   for (const joint of Object.keys(world) as PoseJoint[]) {
+    // 脚掌不走关节球：它的最低点由脚底剖面决定，见下面。
+    if (joint === 'footL' || joint === 'footR') continue
     lowest = Math.min(lowest, world[joint][1] - JOINT_RADIUS[joint])
+  }
+  for (const side of ['L', 'R'] as const) {
+    const ankle = world[`foot${side}` as PoseJoint]
+    const knee = world[`knee${side}` as PoseJoint]
+    for (const point of footSolePoints(ankle, knee)) lowest = Math.min(lowest, point[1])
   }
   const shift = GROUND_Y - lowest
   if (Math.abs(shift) < 1e-6) return world
@@ -673,30 +774,25 @@ export function buildSpheres(rig: PoseRig, world: Record<PoseJoint, [number, num
     }
   }
 
-  /* 脚掌：脚踝之外再补一颗朝前的球。
+  /* 脚掌：沿脚踝 → 脚尖的方向铺一串球。
    *
-   * 只靠脚踝那颗球，脚就是一截横切的柱子——导出图上脚完全消失，人像
-   * 两根杆子插在地上。真实脚掌是从踝向前伸出的一段，所以按踝的位置向
-   * +z（相机前方）偏移补一颗扁球，长度约 0.09、半径略小于踝。
+   * 旧实现把三颗球硬钉在 y=GROUND_Y 上，等于无论怎么摆姿势脚掌都躺在地上：
+   * 坐下时踝在椅面高度、脚却还留在地板，腿和脚中间被拉成一根橡皮管；迈步时
+   * 也会出现一只脚贴地、另一只脚跟着踝悬空的错觉。现在脚掌跟着小腿的方向
+   * 走，落地交给 `groundRig()` 的脚底剖面统一处理。
    *
    * 这是「补形」而不是新关节：脚踝仍然是唯一的骨骼端点，摆姿自由度不变。
    */
   for (const side of ['L', 'R'] as const) {
     const ankle = world[`foot${side}` as PoseJoint]
-    /* 三颗球从踝向前铺成脚掌，每颗的**底**都压在地面常量上。
-     *
-     * 这里必须自己算底面，不能只按踝的高度平移：groundRig 是按脚踝半径
-     * (0.040) 把踝抬到 y=0.060 的，脚掌球若照「踝 + 0.014」放，它的底会
-     * 停在 0.042——脚悬在地面上方 22mm，导出图上等于没有脚。
-     */
-    for (let step = 0; step < 3; step += 1) {
-      const t = step / 2
-      const r = 0.034 - 0.004 * t
+    const knee = world[`knee${side}` as PoseJoint]
+    const { forward } = footFrame(ankle, knee)
+    for (const ring of FOOT_PROFILE) {
+      const r = Math.max(ring.rx, ring.rz)
       spheres.push({
-        x: ankle[0],
-        // 底面 = GROUND_Y，向上留 1mm 以免与地面网格打架。
-        y: GROUND_Y + 0.001 + r,
-        z: ankle[2] + 0.075 * t,
+        x: ankle[0] + forward[0] * ring.t * FOOT_LENGTH,
+        y: ankle[1] + forward[1] * ring.t * FOOT_LENGTH,
+        z: ankle[2] + forward[2] * ring.t * FOOT_LENGTH,
         r,
       })
     }

@@ -37,7 +37,7 @@ import type { ImageGenKey } from '../locales.ts'
 import { ToolbarIcon } from './dock-controls.tsx'
 import {
   addActor, addCamera, addProp, actorTransform, cameraFromSpec, currentCamera,
-  currentRenderCamera, frameCameraSpec, patchProp, removeProp,
+  currentRenderCamera, frameCameraSpec, patchProp, removeProp, withPosePreset,
 } from './pose-stage.ts'
 import { POSE_PRESETS, makeProjector, solveRig, type PoseCamera, type PoseJoint } from './pose-rig.ts'
 import { drawScene, renderSceneToCanvas } from './pose-scene-render.ts'
@@ -968,9 +968,9 @@ export function PoseStagePanel(props: PoseStagePanelProps): React.JSX.Element {
     writeTimeline(removeKeyframe(working(), 'actor', selectedActor.id, time))
   }
 
-  const applyPreset = (rig: CanvasPoseActor['rig']): void => {
+  const applyPreset = (preset: typeof POSE_PRESETS[number]): void => {
     if (selectedActor === undefined) return
-    patchActor(selectedActor.id, { rig })
+    props.onStageChange(withPosePreset(stage, selectedActor.id, preset))
   }
 
   /** 时长：先按整数夹到 2–15，再让时间轴里的关键帧跟着裁一遍。 */
@@ -1625,7 +1625,7 @@ export function PoseStagePanel(props: PoseStagePanelProps): React.JSX.Element {
                 key={preset.id}
                 type="button"
                 className={css.presetChip}
-                onClick={() => applyPreset(preset.rig)}
+                onClick={() => applyPreset(preset)}
               >{tt(preset.labelKey as ImageGenKey)}</button>)}
             </div>
           </section>

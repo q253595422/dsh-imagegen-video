@@ -26,7 +26,7 @@ import {
   BufferGeometry, Float32BufferAttribute, Matrix4, SphereGeometry, Vector3,
   type Material, type Object3D,
 } from 'three'
-import type { PoseJoint } from './pose-rig.ts'
+import { FOOT_LENGTH, FOOT_PROFILE, type PoseJoint } from './pose-rig.ts'
 
 /** 一段骨头上的一环：t 是沿骨长的位置（0 = 起点关节，1 = 终点关节）。 */
 export interface LoftRing {
@@ -152,6 +152,18 @@ export interface HumanoidGeometry {
   thigh: BufferGeometry
   shin: BufferGeometry
   foot: BufferGeometry
+  /**
+   * 髋部过桥：从骨盆包到大腿根的一小段。
+   *
+   * 骨盆和腿是两段独立的放样，髋关节只靠一颗球补。腿往前一抬（坐、迈步），
+   * 大腿根的平口就从骨盆底下转出来，正面看是胯下两道断开的台阶。这一小段
+   * 跟着大腿走、上口比大腿根更宽，把台阶盖在骨盆里。
+   */
+  thighSleeve: BufferGeometry
+  /** 肩部三角肌套筒：从肩关节往大臂铺一小段，盖住胸廓与大臂之间的缝。 */
+  shoulderSleeve: BufferGeometry
+  /** 木铰链：膝/肘的圆角圆柱，替代一颗正球。 */
+  hinge: BufferGeometry
   joint: BufferGeometry
 }
 
@@ -174,9 +186,10 @@ export function createHumanoidGeometry(): HumanoidGeometry {
     // 单独套了一条尿布）。
     pelvis: bone([
       { t: -0.58, rx: 0.012, rz: 0.010, oz: 0 },
-      { t: -0.44, rx: 0.048, rz: 0.038, oz: -0.004 },
-      { t: -0.28, rx: 0.082, rz: 0.064, oz: -0.010 },
-      { t: -0.10, rx: 0.106, rz: 0.090, oz: -0.016 },
+      { t: -0.48, rx: 0.052, rz: 0.043, oz: -0.003 },
+      { t: -0.36, rx: 0.084, rz: 0.068, oz: -0.007 },
+      { t: -0.22, rx: 0.102, rz: 0.084, oz: -0.012 },
+      { t: -0.10, rx: 0.110, rz: 0.094, oz: -0.016 },
       { t: 0.02, rx: 0.114, rz: 0.100, oz: -0.018 },
       { t: 0.32, rx: 0.112, rz: 0.102, oz: -0.014 },
       { t: 0.68, rx: 0.102, rz: 0.090, oz: -0.004 },
@@ -257,13 +270,38 @@ export function createHumanoidGeometry(): HumanoidGeometry {
     ]),
     // 脚：脚踝根部圆，脚背最高，脚尖收圆。早先末环是 rx 0.044 × rz 0.018 的
     // 平切面，侧面看是一块带钝头的踏板——多给一档收才圆得起来。
-    foot: bone([
-      { t: 0, rx: 0.034, rz: 0.032 },
-      { t: 0.28, rx: 0.048, rz: 0.040 },
-      { t: 0.62, rx: 0.051, rz: 0.031 },
-      { t: 0.86, rx: 0.047, rz: 0.023 },
-      { t: 1, rx: 0.032, rz: 0.013 },
-    ], 14),
+    // 脚掌剖面与接地求解共用 `pose-rig.ts` 的 `FOOT_PROFILE`：两边各写
+    // 一套时，3D 看到的脚和 `groundRig()` 算出来的脚会差几毫米。
+    foot: bone(FOOT_PROFILE, 14),
+    // 髋部过桥：上口伸进骨盆内部，髋线处略宽，往下收到与大腿同粗。
+    // 上口不能比骨盆还宽，否则会从胯侧鼓出一圈「短裤」边；下口必须
+    // 收到大腿在该处的半径，否则会在腿中段留一道台阶。
+    thighSleeve: bone([
+      { t: -0.18, rx: 0.060, rz: 0.068 },
+      { t: 0, rx: 0.068, rz: 0.076 },
+      { t: 0.35, rx: 0.066, rz: 0.072 },
+      { t: 0.70, rx: 0.062, rz: 0.066 },
+      { t: 1, rx: 0.059, rz: 0.062 },
+    ], 18),
+    // 肩部套筒：起点比大臂根（0.054）宽一点，压住三角肌与胸廓的接缝；
+    // 下口收到上臂在该处的半径，避免看起来像套了一件短袖。
+    shoulderSleeve: bone([
+      { t: -0.15, rx: 0.048, rz: 0.052 },
+      { t: 0, rx: 0.056, rz: 0.060 },
+      { t: 0.35, rx: 0.053, rz: 0.055 },
+      { t: 0.70, rx: 0.050, rz: 0.052 },
+      { t: 1, rx: 0.047, rz: 0.049 },
+    ], 16),
+    // 轴沿 Y、长度 1 的木铰链：以关节为中心（t=-0.5..0.5），两端收窄的
+    // 桶形，不再是一根平口圆柱。平口圆柱在近景里像两个易拉罐；桶形两端
+    // 有收分，读起来才是木销。
+    hinge: bone([
+      { t: -0.5, rx: 0.55, rz: 0.55 },
+      { t: -0.38, rx: 0.88, rz: 0.88 },
+      { t: 0, rx: 1, rz: 1 },
+      { t: 0.38, rx: 0.88, rz: 0.88 },
+      { t: 0.5, rx: 0.55, rz: 0.55 },
+    ], 16),
     // 关节球：单位球，按关节半径缩放。
     joint: new SphereGeometry(1, 18, 14),
   }
@@ -336,6 +374,27 @@ export interface HumanoidFoot {
   length: number
 }
 
+/** 一段套筒：从关节 `from` 沿 `to` 的方向铺 `length` 米。 */
+export interface HumanoidSleeve {
+  key: string
+  geometry: HumanoidGeometryKey
+  from: PoseJoint
+  to: PoseJoint
+  length: number
+}
+
+/** 一个木铰链：轴垂直于两根骨所在的平面。 */
+export interface HumanoidHinge {
+  key: string
+  /** 放在哪个关节上。 */
+  joint: PoseJoint
+  /** 铰链两侧的关节，用来求弯曲轴。 */
+  parent: PoseJoint
+  child: PoseJoint
+  radius: number
+  length: number
+}
+
 /** 躯干与四肢：从哪个关节到哪个关节。左右共用同一份几何，靠变换区分。 */
 export const HUMANOID_SPANS: readonly HumanoidSpan[] = [
   { key: 'pelvis', geometry: 'pelvis', from: 'hips', to: 'spine' },
@@ -360,8 +419,36 @@ export const HUMANOID_EXTENSIONS: readonly HumanoidExtension[] = [
 
 /** 脚：踝之后朝正前方。 */
 export const HUMANOID_FEET: readonly HumanoidFoot[] = [
-  { key: 'footL', geometry: 'foot', ankle: 'footL', knee: 'kneeL', length: 0.155 },
-  { key: 'footR', geometry: 'foot', ankle: 'footR', knee: 'kneeR', length: 0.155 },
+  { key: 'footL', geometry: 'foot', ankle: 'footL', knee: 'kneeL', length: FOOT_LENGTH },
+  { key: 'footR', geometry: 'foot', ankle: 'footR', knee: 'kneeR', length: FOOT_LENGTH },
+]
+
+/**
+ * 髋/肩的过桥套筒。
+ *
+ * 这两处不是「补一颗更大的球」能解决的：球越大越像护肩/尿布，仍然会在
+ * 旋转时和大腿/胸廓之间露出平口。套筒沿骨的方向放样，上口宽、下口收，
+ * 跟着肢体转，接缝就落在骨盆/胸廓内部。
+ */
+export const HUMANOID_SLEEVES: readonly HumanoidSleeve[] = [
+  { key: 'thighSleeveL', geometry: 'thighSleeve', from: 'hipL', to: 'kneeL', length: 0.13 },
+  { key: 'thighSleeveR', geometry: 'thighSleeve', from: 'hipR', to: 'kneeR', length: 0.13 },
+  { key: 'shoulderSleeveL', geometry: 'shoulderSleeve', from: 'shoulderL', to: 'elbowL', length: 0.11 },
+  { key: 'shoulderSleeveR', geometry: 'shoulderSleeve', from: 'shoulderR', to: 'elbowR', length: 0.11 },
+]
+
+/**
+ * 膝/肘的木铰链。
+ *
+ * 木偶人偶的膝肘不是球，是一根横着的木销：弯曲轴就是两根骨所在平面的法线。
+ * `radius` 必须盖住相邻两段放样的管口（H8 的同类断言守住），否则弯到极限
+ * 时会从铰链两侧看到孔洞。
+ */
+export const HUMANOID_HINGES: readonly HumanoidHinge[] = [
+  { key: 'elbowHingeL', joint: 'elbowL', parent: 'shoulderL', child: 'handL', radius: 0.046, length: 0.105 },
+  { key: 'elbowHingeR', joint: 'elbowR', parent: 'shoulderR', child: 'handR', radius: 0.046, length: 0.105 },
+  { key: 'kneeHingeL', joint: 'kneeL', parent: 'hipL', child: 'footL', radius: 0.053, length: 0.115 },
+  { key: 'kneeHingeR', joint: 'kneeR', parent: 'hipR', child: 'footR', radius: 0.053, length: 0.115 },
 ]
 
 /**
@@ -374,10 +461,8 @@ export const HUMANOID_FEET: readonly HumanoidFoot[] = [
  */
 export const HUMANOID_JOINT_CAPS: readonly { joint: PoseJoint, radius: number }[] = [
   { joint: 'shoulderL', radius: 0.056 }, { joint: 'shoulderR', radius: 0.056 },
-  { joint: 'elbowL', radius: 0.047 }, { joint: 'elbowR', radius: 0.047 },
   { joint: 'handL', radius: 0.032 }, { joint: 'handR', radius: 0.032 },
-  { joint: 'hipL', radius: 0.070 }, { joint: 'hipR', radius: 0.070 },
-  { joint: 'kneeL', radius: 0.056 }, { joint: 'kneeR', radius: 0.056 },
+  { joint: 'hipL', radius: 0.066 }, { joint: 'hipR', radius: 0.066 },
   { joint: 'footL', radius: 0.038 }, { joint: 'footR', radius: 0.038 },
 ]
 
@@ -409,7 +494,10 @@ export function alignSpan(mesh: Object3D, from: Vector3, to: Vector3): void {
  * 三者构成右手系，所以 X 由 Y×Z 得到，不能反过来。
  */
 export function alignFoot(mesh: Object3D, ankle: Vector3, knee: Vector3, length: number): void {
-  const up = new Vector3().subVectors(ankle, knee)
+  // `up` 必须从踝指向膝。脚部放样绕 Z 对称，所以这个符号不影响外形；
+  // 但它决定了脚底接触点在哪一侧——`pose-rig.ts` 的 `footSolePoints()`
+  // 用同一套 `up`，两边必须一致。
+  const up = new Vector3().subVectors(knee, ankle)
   if (up.lengthSq() < 1e-8) up.set(0, 1, 0)
   up.normalize()
   const forward = new Vector3(0, 0, 1)

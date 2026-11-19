@@ -31,6 +31,7 @@ import assert from 'node:assert/strict'
 const ROOT = dirname(dirname(fileURLToPath(import.meta.url)))
 const results = []
 const check = createCheckHarness({ results })
+const poseRig = await import(join(ROOT, 'src/client/canvas/pose-rig.ts'))
 
 const outIndex = process.argv.indexOf('--out')
 const outDir = outIndex === -1 ? null : process.argv[outIndex + 1]
@@ -319,6 +320,40 @@ await check('V5 a motion path moves the actor between frames', async () => {
   assert.ok(Math.abs(first.a - (-2.5)) < 1e-6, `t=0 should be at the path start, got ${first.a}`)
   assert.ok(first.b > first.a + 1, `t=3 should have moved right, got ${first.b}`)
 })
+
+// ------------------------------------------------------- V6 近景人形
+//
+// 导演台的默认机位把整个人放在画面里，脚尖和胯下的接缝只有几个像素，
+// 放大图里才看得出「膝盖是两颗球」「坐下时胯下断层」。这三张不是像素
+// 断言，而是把同一份几何在近景下留档，方便人眼复核；`fingerprint` 至少
+// 守住它们不是空白/纯色。
+
+const closeCamera = {
+  id: 'camera-1', name: '近景', x: 0.95, y: 1.25, z: 2.9,
+  targetX: 0, targetY: 0.82, targetZ: 0, fov: 34,
+}
+
+for (const [name, presetId] of [['stand', 'stand'], ['sit', 'sit'], ['step', 'step']]) {
+  await check(`V6-${name} the close-up render is not a flat fill`, async () => {
+    const preset = poseRig.POSE_PRESETS.find(item => item.id === presetId)
+    assert.ok(preset !== undefined, `missing preset ${presetId}`)
+    const seatHeight = poseRig.solveRig(preset.rig).hips[1] - 0.06
+    const seat = name === 'sit'
+      ? [{
+          id: 'seat-actor-1', name: '坐箱', kind: 'cube', x: 0, y: seatHeight / 2, z: 0,
+          rotateY: 0, scaleX: 0.55, scaleY: seatHeight, scaleZ: 0.45,
+        }]
+      : []
+    const shot = await render(baseStage({
+      actors: [{ id: 'actor-1', name: 'A', rig: preset.rig, x: 0, z: 0 }],
+      cameras: [closeCamera],
+      cameraId: closeCamera.id,
+      ...seat.length > 0 ? { props: seat } : {},
+    }), 520, 760)
+    assert.ok(shot.fingerprint.distinct > 8, `${name}: expected a varied image, got ${shot.fingerprint.distinct} buckets`)
+    png.push([`v6-${name}.png`, shot.url])
+  })
+}
 
 // ---------------------------------------------------------------------- 收尾
 
