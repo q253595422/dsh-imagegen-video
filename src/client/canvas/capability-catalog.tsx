@@ -37,14 +37,18 @@ const FOCUSABLE = 'a[href], button:not(:disabled), input:not(:disabled), select:
  *
  * Unlike the other two, focus does NOT land on the container here: this dialog
  * exists to type into, so the search field takes the caret on open.
+ *
+ * @param focusSelector - element inside the dialog that receives focus on open.
+ *   Dialogs whose first control is not the catalog search pass their own; the
+ *   default keeps the catalog's behavior.
  */
-function useModalFocus (ref: RefObject<HTMLElement | null>, onClose: () => void): void {
+export function useModalFocus (ref: RefObject<HTMLElement | null>, onClose: () => void, focusSelector = '[data-catalog-search]'): void {
   const closeRef = useRef(onClose)
   closeRef.current = onClose
   useEffect(() => {
     const container = ref.current
     const opener = document.activeElement
-    container?.querySelector<HTMLElement>('[data-catalog-search]')?.focus()
+    container?.querySelector<HTMLElement>(focusSelector)?.focus()
     const onKey = (event: KeyboardEvent): void => {
       if (event.key === 'Escape') {
         // Capture phase: the canvas listens for Esc on window in the bubble
@@ -80,7 +84,7 @@ function useModalFocus (ref: RefObject<HTMLElement | null>, onClose: () => void)
         (opener as HTMLElement).focus()
       }
     }
-  }, [ref])
+  }, [ref, focusSelector])
 }
 
 export function CapabilityCatalog (props: {

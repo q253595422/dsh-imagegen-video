@@ -450,15 +450,33 @@ async function prepareConversationImage(image: GeneratedImage, index: number): P
   }
 }
 
-/** Follow the native session selection while the image panel stays mounted. */
+/**
+ * 画布所属的会话。
+ *
+ * 曾经的实现读 `sessions.list.getSnapshot().current`，而宿主的 `SessionListState`
+ * 根本没有 `current` 这个字段（只有 `ids` / `byId` / `phase` / `projectionsBySession`）
+ * ——选中态属于导航，插件拿不到。这条读的永远是 `undefined`，于是「视频加入
+ * 对话」总是落到 `conversation.noSession`。测试替身自己捏了一份 `{ current }`，
+ * 所以一直是绿的（假绿），用户那边已经坏了很久。
+ *
+ * 这里**不猜**：`ids` 是展示顺序，不是用户意图，拿 `ids[0]` 兜底会把一段视频
+ * 悄悄塞进一个用户没选过的历史会话（`session-target.ts` 已把这条写成约束）。
+ * 所以宿主不给就返回 `undefined`，让调用方报 `conversation.noSession`——把
+ * 「不知道该发到哪」变成用户看得见的一句话，而不是替他随手选一个。
+ */
+function currentSessionOf(sessions: ISessions | undefined): SessionId | undefined {
+  return sessions?.list.getSnapshot().current
+}
+
+/** Follow the host's authoritative session selection while the image panel stays mounted. */
 function useCurrentSessionId(sessions: ISessions | undefined): SessionId | undefined {
-  const [sessionId, setSessionId] = useState<SessionId | undefined>(() => sessions?.list.getSnapshot().current)
+  const [sessionId, setSessionId] = useState<SessionId | undefined>(() => currentSessionOf(sessions))
   useEffect(() => {
     if (sessions === undefined) {
       setSessionId(undefined)
       return
     }
-    const sync = (): void => { setSessionId(sessions.list.getSnapshot().current) }
+    const sync = (): void => { setSessionId(currentSessionOf(sessions)) }
     sync()
     return sessions.list.subscribe(sync)
   }, [sessions])
@@ -466,23 +484,24 @@ function useCurrentSessionId(sessions: ISessions | undefined): SessionId | undef
 }
 
 /**
- * 当前会话的工作区目录，即宿主里那个 `cwd`。
+ * 最近活跃会话的工作区目录，用作铺板卡的默认值。
  *
- * WHY 从会话列表取而不是存进画布文档：宿主已经在每一行会话上带了 `cwd`
- * （`SessionSummary.cwd`），再存一份到画布上就会出现「两边不一致」的第二种
- * 事实——用户换了工作区、画布还指着旧的。读的时候取当前值，永远只有一处。
- *
- * 取不到时返回 undefined，调用方必须把「不知道工作区在哪」当一件要说出来的
- * 事，而不是默默用某个默认目录。
+ * 它已经**不是**铺板的唯一来源：用户可以在卡上改成任何目录（见
+ * `host-directory.ts`）。宿主对「当前会话」没有权威投影（见 `currentSessionOf`），
+ * 所以只认一件宿主真实报出来的事：**有会话在跑**。那是唯一能说明「用户正在
+ * 那儿干活」的信号；没有就留空，让用户自己选目录——不拿 `ids[0]` 顶替。
  */
 function useCurrentWorkspace(sessions: ISessions | undefined): string | undefined {
   const read = (): string | undefined => {
     const snapshot = sessions?.list.getSnapshot()
-    if (snapshot === undefined || snapshot.current === undefined) return undefined
-    // `byId` 在某些宿主外壳的快照里是空的（例如只投影了 `current` 的测试
-    // harness）。缺字段只说明「现在不知道工作区在哪」，不能让它抛异常把整个
-    // 面板带崩——那是把「读不到路径」升级成了「画布打不开」。
-    const cwd = snapshot.byId?.[snapshot.current]?.cwd
+    if (snapshot === undefined) return undefined
+    const byId = snapshot.byId ?? {}
+    const ids = Array.isArray(snapshot.ids) ? snapshot.ids : []
+    const running = ids.find(id => byId[id]?.running === true)
+    if (running === undefined) return undefined
+    // `byId` 在某些外壳的快照里是空的；缺字段只说「不知道工作区在哪」，
+    // 不能让它抛异常把整个面板带崩。
+    const cwd = byId[running]?.cwd
     return typeof cwd === 'string' && cwd !== '' ? cwd : undefined
   }
   const [workspace, setWorkspace] = useState<string | undefined>(read)
@@ -1074,10 +1093,17 @@ export function ImageGenPanel(props: {
   scope: ImageGenScope
   sessions?: ISessions
   conversation?: ConversationService
+  /**
+   * 宿主的目录选择器（`ctx.uiWorkspace.pickDirectory`）。
+   *
+   * 可选：精简外壳不装载 workspace UI。缺席时铺板卡退回手输路径，而不是
+   * 把「从短剧文档铺板」整块拿掉。
+   */
+  pickDirectory?: () => Promise<string | null>
   /** The panel is visible; inactive panels keep state but defer optional work. */
   active?: boolean
 }) {
-  const { api, scope, sessions, conversation, active = true } = props
+  const { api, scope, sessions, conversation, pickDirectory, active = true } = props
   const config = useConfig(scope)
   // The plugin language follows the DSH interface (bridged from ctx.locale);
   // this tick re-renders the tree so every tt() switches live — the template
@@ -4424,6 +4450,7 @@ export function ImageGenPanel(props: {
               api={api}
               active={active && workspace === 'canvas'}
               workspaceRoot={currentWorkspace}
+              {...pickDirectory === undefined ? {} : { pickDirectory }}
               modelGroups={modelGroups}
               defaultChannelId={defaultChannelId}
               connected={connected}

@@ -94,6 +94,7 @@ import { EMPTY_RUN_MARKS, hasMarks, runMarksFrom, withoutFailed, type RunMarks }
 import { POSE_PRESETS } from './canvas/pose-rig.ts'
 import { emptyStage, stagePatch, stageOf } from './canvas/pose-stage.ts'
 import { CapabilityCatalog } from './canvas/capability-catalog.tsx'
+import { DramaDirectoryPicker } from './canvas/drama-picker.tsx'
 import { CAPABILITIES, type CapabilityContext, type CapabilityId } from './canvas/capability-catalog.ts'
 
 type CanvasTool = 'select' | 'pan'
@@ -266,11 +267,13 @@ interface CanvasWorkspaceProps {
   /**
    * 当前会话的工作区目录。
    *
-   * 从宿主会话列表的 `cwd` 来，不由画布文档存：它只是「去哪里找文档」的
-   * 输入，不是画布的一部分。取不到时「从短剧文档铺板」会说明这一点，
-   * 而不是默认到某个目录去读。
+   * 不再由「当前会话」得来：宿主没有这个概念（`SessionListState` 里没有
+   * `current`，见 `host-directory.ts`），它只做一件事——把用户上一次读过的
+   * 目录当默认值。真正的目录由用户在铺板卡上指定。
    */
   workspaceRoot?: string
+  /** 宿主的目录选择器；未装载的外壳里为 undefined，卡片退回手输路径。 */
+  pickDirectory?: () => Promise<string | null>
   modelGroups: ImageModelGroup[]
   defaultChannelId?: string
   connected: boolean
@@ -757,7 +760,7 @@ async function loadStagePano(url: string | null): Promise<HTMLImageElement | nul
 const DROP_IMAGE_MAX_COUNT = 20
 
 export function CanvasWorkspace(props: CanvasWorkspaceProps): React.JSX.Element {
-  const { api, workspaceRoot, modelGroups, defaultChannelId, connected, connectedChannelIds, promptReady = connected, history, gallery, tasks, videoGroups, videoTasks, videoHistory, importRequest, onImportRequestHandled, openCanvasId, onOpenCanvasHandled, onClipStored, onOpenSettings, active } = props
+  const { api, workspaceRoot, pickDirectory, modelGroups, defaultChannelId, connected, connectedChannelIds, promptReady = connected, history, gallery, tasks, videoGroups, videoTasks, videoHistory, importRequest, onImportRequestHandled, openCanvasId, onOpenCanvasHandled, onClipStored, onOpenSettings, active } = props
   const [projects, setProjects] = useState<ProjectSummary[]>([])
   const [document, setDocument] = useState<CanvasDocument | null>(null)
   const [selectedIds, setSelectedIds] = useState<Set<string>>(() => new Set())
@@ -2590,8 +2593,18 @@ export function CanvasWorkspace(props: CanvasWorkspaceProps): React.JSX.Element 
    *  - 文档不达标：解析器把缺的、看不懂的逐条写进 warnings，照样铺能铺的。
    */
   const [dramaBusy, setDramaBusy] = useState(false)
-  const layoutFromDrama = useCallback(async (projectPath?: string): Promise<void> => {
-    if (workspaceRoot === undefined || workspaceRoot === '') {
+  /**
+   * 铺板的目录选择卡是否开着，以及它该预填哪个目录。
+   *
+   * 不再是「点一下就默默去读当前工作区」：宿主没有「当前会话」这个概念
+   * （`SessionListState` 里没有 `current`），能拿到的只有会话列表本身。
+   * 读哪一部剧是用户的意图，所以这一步交回给他——`lastDramaDirectory`
+   * 记住上一次选的，同一部剧连着铺时只是确认一下。
+   */
+  const [dramaPicker, setDramaPicker] = useState<{ initial?: string } | null>(null)
+  const [lastDramaDirectory, setLastDramaDirectory] = useState<string | undefined>(undefined)
+  const layoutFromDrama = useCallback(async (root: string): Promise<void> => {
+    if (root === '') {
       setError(tt('canvas.drama.noWorkspace'))
       return
     }
@@ -2599,7 +2612,7 @@ export function CanvasWorkspace(props: CanvasWorkspaceProps): React.JSX.Element 
     setDramaBusy(true)
     setError(null)
     try {
-      const imported = await readDrama(api, { root: workspaceRoot, ...projectPath === undefined ? {} : { projectPath } })
+      const imported = await readDrama(api, { root })
       if (imported.plan.shots.length === 0) {
         setError(imported.notes.join(' ') || tt('canvas.drama.noShots'))
         return
@@ -2607,7 +2620,7 @@ export function CanvasWorkspace(props: CanvasWorkspaceProps): React.JSX.Element 
       const at = canvasCenter()
       const placed = await placeDrama({
         api,
-        root: workspaceRoot,
+        root,
         imported,
         at: { x: Math.round(at.x - STORYBOARD_NODE_SIZE.width / 2), y: Math.round(at.y) },
         newId,
@@ -2623,12 +2636,15 @@ export function CanvasWorkspace(props: CanvasWorkspaceProps): React.JSX.Element 
       const summary = layoutSummary(imported.plan)
       const extra = placed.warnings.length > 0 ? ` ${placed.warnings.slice(0, 3).join(' ')}` : ''
       setNotice(tt('canvas.drama.placed', { count: imported.plan.shots.length }) + (summary.length > 0 ? ` ${summary.join(' ')}` : '') + extra)
+      // 只有真读到并铺成了才记住这个目录：选错一次不该把下次的默认值带歪。
+      setLastDramaDirectory(root)
+      setDramaPicker(null)
     } catch (caught) {
       setError(errorMessage(caught))
     } finally {
       setDramaBusy(false)
     }
-  }, [api, workspaceRoot, dramaBusy, canvasCenter, newId, mutate])
+  }, [api, dramaBusy, canvasCenter, newId, mutate])
 
   /**
    * 底栏实底 `+` 的菜单分发。
@@ -2647,13 +2663,19 @@ export function CanvasWorkspace(props: CanvasWorkspaceProps): React.JSX.Element 
     if (kind === 'file') { setFileTargetNodeId(null); fileUploadRef.current?.click(); return }
     // 铺板不是「建一个节点」：它要读工作区文档、导图、写一整批节点，
     // 所以从这张表里分出去，而不是塞进下面的三元链。
-    if (kind === 'drama') { void layoutFromDrama(); return }
+    // 预填次序：上一次铺过的那部剧（最可能是同一部）→ 当前会话的工作区。
+    // 两个都没有就空着让用户选，而不是去猜某个目录。
+    if (kind === 'drama') {
+      const initial = lastDramaDirectory ?? workspaceRoot
+      setDramaPicker({ ...initial === undefined || initial === '' ? {} : { initial } })
+      return
+    }
     placeNewNode(kind === 'text' ? createTextNode()
       : kind === 'sketch' ? createSketchNode()
         : kind === 'pose' ? createPoseNode()
           : kind === 'storyboard' ? createStoryboardNode()
             : createConfigNode())
-  }, [placeNewNode, createTextNode, createSketchNode, createPoseNode, createStoryboardNode, createConfigNode, layoutFromDrama])
+  }, [placeNewNode, createTextNode, createSketchNode, createPoseNode, createStoryboardNode, createConfigNode, lastDramaDirectory, workspaceRoot])
 
   // --------------------------------------------------------- skills / files
 
@@ -8185,6 +8207,15 @@ export function CanvasWorkspace(props: CanvasWorkspaceProps): React.JSX.Element 
       onJump={(stepsBack, nodeIds) => { setHistoryOpen(false); jumpToHistoryStep(stepsBack, nodeIds) }}
       onHover={setHistoryPreviewIds}
       onClose={() => { setHistoryOpen(false); setHistoryPreviewIds(null) }}
+    /> : null}
+    {/* 铺板的目录卡。读取期间（`dramaBusy`）不关它：那一步的成败要落回同一张卡
+        上，用户才好看到一个错就重选一个目录，而不是关掉重走一遭菜单。 */}
+    {dramaPicker !== null ? <DramaDirectoryPicker
+      {...pickDirectory === undefined ? {} : { pickDirectory }}
+      {...dramaPicker.initial === undefined ? {} : { initialDirectory: dramaPicker.initial }}
+      busy={dramaBusy}
+      onConfirm={root => { void layoutFromDrama(root) }}
+      onClose={() => { setDramaPicker(null); setError(null) }}
     /> : null}
   </section>
 }

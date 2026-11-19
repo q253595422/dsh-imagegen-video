@@ -28,6 +28,7 @@ import { mountSidebarEntry } from './sidebar-entry.ts'
 import { ImageGenSettingsSection, ImageGenSettingsCardController } from './SettingsCard.tsx'
 import { IMAGE_GEN_SECTION_ID, OPEN_IMAGE_GEN_CONFIG_EVENT } from './config-entry.tsx'
 import { bindImageGenScope, type ImageGenScope } from './settings-scope.ts'
+import { hostDirectoryPicker } from './host-directory.ts'
 import { registerImageToolviews, type ImageToolViewOwnerProps } from './image-toolview.tsx'
 import type { ConversationService } from './conversation-sync.ts'
 
@@ -219,6 +220,11 @@ export function apply(ctx: ClientContext): void {
     const api = new ImageGenApi()
     const sessions = ctx.get('sessions') as ISessions | undefined
     const conversation = ctx.get('conversation') as ConversationService | undefined
+    // 「从短剧文档铺板」要用户指定一次目录：**宿主没有「当前会话」**
+    // （`SessionListState` 只有 ids / byId / phase / projectionsBySession），
+    // 所以拿不到「当前会话的 cwd」。有 workspace UI 就用它的系统目录框，
+    // 没有（headless / 精简外壳）就让用户手输路径。
+    const { pickDirectory } = hostDirectoryPicker(ctx)
     const disposers: Array<() => void> = []
     try {
       disposers.push(mountSidebarEntry(
@@ -228,7 +234,7 @@ export function apply(ctx: ClientContext): void {
         tt('entry.image'),
         tt('entry.tooltip'),
       ))
-      disposers.push(mountPanel(controller, api, scope, { sessions, conversation }))
+      disposers.push(mountPanel(controller, api, scope, { sessions, conversation, pickDirectory }))
       // The imperative sidebar tabs render their labels once; relabel them on
       // every DSH language switch so the entry follows the interface too.
       disposers.push(ctx.locale.subscribe(() => {

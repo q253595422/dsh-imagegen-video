@@ -12,6 +12,9 @@
  */
 
 import assert from 'node:assert/strict'
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
 import { readDrama, placeDrama } from '../src/client/drama-import.ts'
 
 const results = []
@@ -281,5 +284,44 @@ await checkAsync('a reference still lands when the image size cannot be measured
   assert.equal(placed.castNodes.length, 2)
   assert.ok(placed.castNodes.every(node => node.width > 0 && node.height > 0))
 })
+
+/**
+ * 目录入口的**真磁盘**用例。
+ *
+ * 上面所有用例都喂桩 API——测的是接线。这一条不同：它把用户会选的三种目录
+ * （项目根 / `剧集/` / 某一集本身）真的喂给宿主的 `readDramaProject`，因为
+ * 「选哪一层都能读到」不是接线问题，是路径拼接问题，桩永远测不出来。
+ *
+ * 曾经的缺陷：`findEpisodeDirectory` 返回「剧集目录 + 集名」两半，调用方又
+ * 拼一次，用户直接选 `剧集/EP001` 时路径成了 `EP001/EP001/分镜.md`——三份
+ * 文档全部读到 0 字节，界面只说「没找到」。而这个入口正是卡片的文案承诺的
+ * （「或者直接选某一集」）。
+ */
+const dramaRoot = mkdtempSync(join(tmpdir(), 'gal-drama-entry-'))
+const episodeDir = join(dramaRoot, '让你管账号', '剧集', 'EP001')
+mkdirSync(episodeDir, { recursive: true })
+writeFileSync(join(episodeDir, '分镜.md'), '## SHOT-EP001-001 · 3s\n\n### 首帧提示词\n\n> 一个人走进房间\n')
+writeFileSync(join(episodeDir, '图片提示词.md'), '## REF-A1 · 林默\n')
+writeFileSync(join(episodeDir, '视频提示词.md'), '## MOTION-EP001-001\n')
+const { readDramaProject } = await import('../src/drama-project.ts')
+
+for (const [label, root, requested] of [
+  ['项目根', join(dramaRoot, '让你管账号'), undefined],
+  ['剧集目录', join(dramaRoot, '让你管账号', '剧集'), undefined],
+  ['某一集本身', join(dramaRoot, '让你管账号', '剧集', 'EP001'), undefined],
+  ['相对 projectPath', join(dramaRoot, '让你管账号'), '剧集/EP001'],
+]) {
+  await checkAsync(`a drama reads from the ${label}, with real bytes`, async () => {
+    const project = await readDramaProject(root, requested)
+    assert.ok(project !== undefined, `${label}: 应当找到这一集`)
+    // 关键断言：不是「找到了目录」，而是**文档真的读到了内容**。拼接错一层
+    // 时目录照样找得到，只有 bytes 全是 0。
+    const storyboard = project.documents.find(document => document.key === 'storyboard')
+    assert.ok((storyboard?.bytes ?? 0) > 0, `${label}: 分镜.md 读成了空文件（projectPath=${project.projectPath}）`)
+    assert.ok((storyboard?.text ?? '').includes('SHOT-EP001-001'))
+    assert.equal(project.episode, 'EP001')
+  })
+}
+rmSync(dramaRoot, { recursive: true, force: true })
 
 console.log(results.join('\n'))

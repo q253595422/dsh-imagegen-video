@@ -234,6 +234,8 @@ export function mountPanel(
   services: {
     sessions?: ISessions
     conversation?: ConversationService
+    /** 宿主目录选择器；精简外壳没有，铺板卡会说用手输路径。 */
+    pickDirectory?: () => Promise<string | null>
   } = {},
 ): () => void {
   let root: Root | undefined

@@ -109,6 +109,12 @@ async function readDocument(
  *
  * 用户传进来的可能是项目根（含 `剧集/`），也可能是某一集本身。两种都认，
  * 因为两种人都有：有人从项目根打开，有人直接打开 `剧集/EP001`。
+ *
+ * @returns `projectPath` **已经是剧集目录本身**（如 `剧集/EP001`，根目录本身
+ *   就是那一集时为 `.`），调用方直接在里面找文档，**不要再拼一层 episode**。
+ *   返回值的形状曾经是「剧集目录 + 集名」两半，调用方拼了一遍就变成
+ *   `EP001/EP001/分镜.md`——用户直接选某一集时三份文档全部读不到，而界面
+ *   只报「没找到」。别把集名再从 `projectPath` 里拼一次。
  */
 export async function findEpisodeDirectory(root: string, requested: string | undefined): Promise<{ projectPath: string, episode: string } | undefined> {
   const candidates: string[] = []
@@ -126,10 +132,14 @@ export async function findEpisodeDirectory(root: string, requested: string | und
     // 这个目录自己就是某一集：直接含 分镜.md。
     if (await exists(path.join(resolved, DRAMA_DOCUMENTS.storyboard))) {
       return { projectPath: path.posix.normalize(candidate).replace(/^\.\/?/, '') || '.', episode: path.basename(resolved) }
-    }
-    // 这个目录下有 `剧集/<EP>`：取第一集（一集一块板）。
+    }    // 这个目录下有 `剧集/<EP>`：取第一集（一集一块板）。
     const direct = await firstEpisodeUnder(resolved, path.posix.normalize(candidate).replace(/^\.\/?/, ''))
     if (direct !== undefined) return direct
+    // 这个目录本身就是「剧集」那一层：`剧集/EP001` 被直接选中时，下面直接
+    // 就是含《分镜.md》的 EP001，没有第二层「剧集」。卡片文案允许用户选这一层，
+    // 所以它也算一个入口。
+    const asEpisodes = await firstEpisodeIn(resolved, path.posix.normalize(candidate).replace(/^\.\/?/, ''))
+    if (asEpisodes !== undefined) return asEpisodes
     // 工作区通常不是某一部剧，而是「放好几部剧的目录」——`drama/<项目>/剧集/EP001`。
     // 这里只下探一层：再深就是用户自己的目录结构，靠猜不如让他选。
     let children: Array<{ name: string, isDirectory: () => boolean }> = []
@@ -152,7 +162,19 @@ export async function findEpisodeDirectory(root: string, requested: string | und
  * @param base - 同一目录的项目相对路径（`''` 表示根目录本身）。
  */
 async function firstEpisodeUnder(resolved: string, base: string): Promise<{ projectPath: string, episode: string } | undefined> {
-  const episodesRoot = path.join(resolved, '剧集')
+  const relative = base === '' || base === '.' ? '剧集' : `${base}/剧集`
+  return firstEpisodeIn(path.join(resolved, '剧集'), relative)
+}
+
+/**
+ * 在一个「剧集目录」里找第一集。
+ *
+ * @param episodesRoot - 装各集的那个目录（项目根下的 `剧集`，或用户直接选中的 `剧集`）。
+ * @param relativeRoot - 同一个目录的项目相对路径（如 `剧集`、`短剧/让你管账号/剧集`）。
+ *   **由调用方拼好完整前缀**：这里只接一层集名。之前它自己再拼一次「剧集」，
+ *   用户直接选「剧集」这一层时就变成了 `剧集/剧集/EP001`，文档全读成空。
+ */
+async function firstEpisodeIn(episodesRoot: string, relativeRoot: string): Promise<{ projectPath: string, episode: string } | undefined> {
   let entries: string[] = []
   try { entries = await readdir(episodesRoot) } catch { return undefined }
   for (const entry of entries.sort()) {
@@ -160,8 +182,12 @@ async function firstEpisodeUnder(resolved: string, base: string): Promise<{ proj
     const episodeDir = path.join(episodesRoot, entry)
     try { if (!(await stat(episodeDir)).isDirectory()) continue } catch { continue }
     if (!(await exists(path.join(episodeDir, DRAMA_DOCUMENTS.storyboard)))) continue
-    const prefix = base === '' || base === '.' ? '' : `${base}/`
-    return { projectPath: `${prefix}剧集`, episode: entry }
+    // 返回的必须已经是剧集目录本身（`剧集/<EP>`）：`readDramaProject` 不再拼
+    // 第二层集名。只给「剧集」再加集名也行不通——调用方不知道要不要拼。
+    // 前缀为空（用户直接把「剧集」那一层当 root 选）时不能拼成 `/EP001`：
+    // 那是绝对路径，会被 `path.resolve(root, …)` 当成根以外的位置。
+    const projectPath = relativeRoot === '' || relativeRoot === '.' ? entry : `${relativeRoot}/${entry}`
+    return { projectPath, episode: entry }
   }
   return undefined
 }
@@ -177,9 +203,12 @@ async function exists(target: string): Promise<boolean> {
  * @param root - 工作区根目录，绝对路径。
  * @param requested - 用户给的项目/剧集相对路径；缺省在根目录下找。
  */
-export async function readDramaProject(root: string, requested: string | undefined): Promise<DramaProjectRead | undefined> {  const found = await findEpisodeDirectory(root, requested)
+export async function readDramaProject(root: string, requested: string | undefined): Promise<DramaProjectRead | undefined> {
+  const found = await findEpisodeDirectory(root, requested)
   if (found === undefined) return undefined
-  const episodeDir = found.projectPath === '.' ? found.episode : `${found.projectPath}/${found.episode}`
+  // `projectPath` 已经是剧集目录本身（`.` 表示根目录就是那一集）：直接用它，
+  // **不要再拼集名**。多拼一层会让用户直接选某一集时所有文档都找不到。
+  const episodeDir = found.projectPath
   const notes: string[] = []
   const documents: DramaDocument[] = []
   for (const [key, fileName] of Object.entries(DRAMA_DOCUMENTS) as Array<[DramaDocumentKey, string]>) {

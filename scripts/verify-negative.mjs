@@ -779,6 +779,27 @@ const CASES = [
     to: "  if (typeof Image === 'undefined') throw new Error('no Image')",
     expect: /still lands when the image size cannot be measured/,
   },
+  {
+    // 把「剧集目录 + 集名」两半让调用方再拼一次：用户直接选某一集时路径成
+    // `EP001/EP001/分镜.md`，三份文档全读成 0 字节，界面只说「没找到」。
+    // 这正是卡片文案承诺的入口（「或者直接选某一集」），坏在没有任何报错。
+    name: 'the episode folder is joined twice, so picking an episode reads nothing',
+    runner: 'drama-import',
+    file: 'src/drama-project.ts',
+    from: '  const episodeDir = found.projectPath\n',
+    to: '  const episodeDir = found.projectPath === "." ? found.episode : `${found.projectPath}/${found.episode}`\n',
+    expect: /reads from the 某一集本身/,
+  },
+  {
+    // 用户选中「剧集」这一层时，把它当成项目根去找「剧集/剧集」：路径成了
+    // `剧集/剧集/EP001`。目录既不是项目根也不是某一集，只有这一个入口坏。
+    name: 'the episodes folder itself is not accepted as an entry point',
+    runner: 'drama-import',
+    file: 'src/drama-project.ts',
+    from: "    const asEpisodes = await firstEpisodeIn(resolved, path.posix.normalize(candidate).replace(/^\\.\\/?/, ''))\n    if (asEpisodes !== undefined) return asEpisodes\n",
+    to: '',
+    expect: /reads from the 剧集目录/,
+  },
   // --------------------------------------------------------------- workflow
   {
     // Treating a self-loop as "no dependency" makes the run start a node that

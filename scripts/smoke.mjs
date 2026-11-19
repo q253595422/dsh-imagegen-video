@@ -7207,9 +7207,34 @@ await check('E1 client apply mounts the sidebar entry and studio (jsdom)', async
       }),
     },
   }
-  /** Minimal session list feed: the panel only reads `current` and `scope`. */
+  /**
+   * Session-list feed in the host's REAL snapshot shape, plus one deliberate
+   * extra.
+   *
+   * `SessionListState` is `{ ids, byId, phase, projectionsBySession }` — it has
+   * no `current`, so the old stub's `{ current: 'session-smoke' }` was inventing
+   * a field no host has. That made this suite green while "add to conversation"
+   * was unreachable in the app.
+   *
+   * The `current` below is NOT a host field: it is the stub's stand-in for
+   * "there is a reachable session to target", which the real host does expose
+   * through a different door (the `main`-slot session binding, not
+   * `sessions.list`). The panel still reads `current`; with it absent the flow
+   * degrades to the picker and every assertion here would be testing the
+   * degrade path instead. Pinned by `session-picker` assertions below, and
+   * flagged in `src/client/session-target.ts` as the open gap.
+   */
   const sessionsStub = {
-    list: { getSnapshot: () => ({ current: 'session-smoke' }), subscribe: () => () => {} },
+    list: {
+      getSnapshot: () => ({
+        ids: ['session-smoke'],
+        byId: { 'session-smoke': { sessionId: 'session-smoke', cwd: '/tmp/session-smoke', running: false, blank: false, agentAvailable: true, updatedAt: 0, displayTitle: 'smoke session' } },
+        phase: 'ready',
+        projectionsBySession: {},
+        current: 'session-smoke',
+      }),
+      subscribe: () => () => {},
+    },
     scope: () => ({ sessionId: 'session-smoke' }),
   }
   const ctx = {

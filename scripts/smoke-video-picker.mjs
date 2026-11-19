@@ -324,7 +324,13 @@ await check('C1 the dock menu offers 添加视频 and the picker opens with thre
     get(name) {
       if (name === 'connection') return { isLoopback: true }
       if (name === 'conversation') return conversationStub
-      if (name === 'sessions') return { list: { getSnapshot: () => ({ current: 'session-smoke' }), subscribe: () => () => {} }, scope: () => ({ sessionId: 'session-smoke' }) }
+      if (name === 'sessions') return { list: { getSnapshot: () => ({
+        // 宿主快照的真实形状（SessionListState）：**没有** `current`。
+        // 原来这里写的是 `{ current: 'session-smoke' }`，宿主根本没这个字段，
+        // 于是面板永远拿不到会话、测试却全绿——那是替身替真实代码圆了谎。
+        ids: ['session-smoke'],
+        byId: { 'session-smoke': { sessionId: 'session-smoke', cwd: '/tmp/session-smoke', running: false, blank: false, agentAvailable: true, updatedAt: 0 } },
+      }), subscribe: () => () => {} }, scope: () => ({ sessionId: 'session-smoke' }) }
       return undefined
     },
     locale: {
