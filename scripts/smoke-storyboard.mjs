@@ -202,6 +202,26 @@ await check('P1 a fresh board has one blank row and normalizes every field', asy
   assert.equal(normalized.resolution, '720P')
 })
 
+// `storyboardOf` 是白名单式重建：它逐字段抄进一个新对象，所以任何新加的
+// 字段都得在这里显式列一遍，漏了就是「存进去了但读不出来」。
+// 「从文档铺出来的板」唯一的标记是 `source`，而板底那个「写回文档」按钮
+// 只在 `source` 存在时渲染——这里漏一次，22 镜的板也不会有按钮，
+// 而且没有任何报错可查。反向用例：去掉 `storyboardOf` 里那一行必须变红。
+await check('P1b a board laid out from docs keeps its source through storyboardOf', async () => {
+  const source = { root: '/workspace', projectPath: '剧集/EP001', episode: 'EP001' }
+  const board = state.storyboardOf({
+    id: 'b', type: 'storyboard', title: '', x: 0, y: 0, width: 1, height: 1,
+    metadata: { storyboard: { shots: [{ id: 'shot-1', prompt: 'a cat', seconds: 5 }], aspectRatio: '9:16', resolution: '720P', continuity: 'cut', source } },
+  })
+  assert.deepEqual(board.source, source, 'a laid-out board must still know which episode it came from')
+  // 手画的板没有这个字段，读数必须是 undefined 而不是空对象——按钮靠它判空。
+  const handDrawn = state.storyboardOf({
+    id: 'm', type: 'storyboard', title: '', x: 0, y: 0, width: 1, height: 1,
+    metadata: { storyboard: { shots: [], aspectRatio: '16:9', resolution: '720P', continuity: 'cut' } },
+  })
+  assert.equal(handDrawn.source, undefined, 'a hand-drawn board has no output folder')
+})
+
 await check('P2 shot state follows the produced node, never a stored copy', async () => {
   const blank = shot('s1', 'a cat')
   assert.equal(state.shotState(blank, []), 'empty', 'no node means not produced')

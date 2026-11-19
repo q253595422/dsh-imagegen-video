@@ -580,6 +580,19 @@ const CASES = [
     expect: /分镜要取被钉住的参考图/,
   },
   {
+    // 「从文档铺出来的板」唯一可靠的标记是 `storyboard.source`，而板底那个
+    // 「写回文档」按钮只在它存在时渲染。`storyboardOf` 是白名单式重建——
+    // 它逐字段抄进一个新对象——所以漏抄一次，存进去的 source 就读不出来，
+    // 按钮永远不出现，而且没有任何报错：用户看到的是「22 镜都铺好了，但没有
+    // 写回按钮」，无从下手。只有 P1b 能看见这一层，因为它断言的是读数。
+    name: 'a laid-out board loses the episode it came from',
+    runner: 'storyboard',
+    file: 'src/client/storyboard.ts',
+    from: "    ...stored.source === undefined ? {} : { source: stored.source },\n",
+    to: '',
+    expect: /must still know which episode it came from/,
+  },
+  {
     // Same defect, one layer out and much more dangerous: the reference nodes
     // are collected and then thrown away, so the request still says
     // `mode: reference` and carries no image. A static check cannot tell the

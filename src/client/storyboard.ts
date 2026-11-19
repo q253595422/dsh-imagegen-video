@@ -219,6 +219,10 @@ export function storyboardOf(node: CanvasNode): CanvasStoryboard {
     continuity: stored.continuity === 'carry' ? 'carry' : 'cut',
     ...stored.model === undefined || stored.model === '' ? {} : { model: stored.model },
     ...stored.channelId === undefined || stored.channelId === '' ? {} : { channelId: stored.channelId },
+    // `source` 必须原样带出来：它是「这块板是从文档铺的」唯一的标记，回写
+    // 按钮靠它决定出不出现。这里漏一次，所有板的 `source` 都读成 undefined，
+    // 按钮就再也不渲染了。
+    ...stored.source === undefined ? {} : { source: stored.source },
   }
 }
 
