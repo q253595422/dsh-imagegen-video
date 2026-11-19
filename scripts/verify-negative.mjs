@@ -800,6 +800,16 @@ const CASES = [
     to: '',
     expect: /reads from the 剧集目录/,
   },
+  {
+    // 重铺时被复用的附件没放回节点表：文档里这次仍然存在的 4 个设定板节点
+    // 整个消失。铺板返回值看着全对，所以只有断言画布的那条用例能抓到。
+    name: 're-merging drops the reused attachments instead of replacing them',
+    runner: 'drama-import',
+    file: 'src/client/drama-merge.ts',
+    from: "      nodes.push(replacement)\n      fresh.delete(node.id)\n",
+    to: "      fresh.delete(node.id)\n",
+    expect: /re-merging into the canvas keeps the board and its attachments/,
+  },
   // --------------------------------------------------------------- workflow
   {
     // 重铺同一集时每块板都发新 id：画布上叠出第二块 22 镜的板，用户的片段、

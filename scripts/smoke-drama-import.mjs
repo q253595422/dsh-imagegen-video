@@ -349,6 +349,65 @@ await checkAsync('the episode, not the board title, decides what gets reused', a
 })
 
 /**
+ * 重铺合并进画布之后，节点表还得是完整的。
+ *
+ * 上面那条只断言 `placeDrama` 返回的 id；真正写到画布上的是合并这一步。
+ * 曾经合并写成「先按 id 排除再追加」，而 `placed` 复用的正是旧 id——旧节点
+ * 被排除、新节点没被追加，重铺一次 4 个设定板节点整个消失，而铺板结果本身
+ * 看起来完全正常。所以这一条断言的是**画布**，不是返回值。
+ */
+await checkAsync('re-merging into the canvas keeps the board and its attachments', async () => {
+  const { mergeDramaPlacement } = await import('../src/client/drama-merge.ts')
+  const { existingDramaBoardOf } = await import('../src/client/drama-reuse.ts')
+  const { api } = stubApi()
+  const first = await readDrama(api, { root: '/workspace' })
+  const placedFirst = await placeDrama({ api, root: '/workspace', imported: first, at: { x: 0, y: 0 }, newId: ids(), measure: MEASURE })
+  // 画布上先放一个不相干的节点，确认合并不会顺手把它弄丢。
+  const outsider = { id: 'outsider', type: 'text', title: '别人的节点', x: 900, y: 900, width: 100, height: 60 }
+  const canvas1 = mergeDramaPlacement({
+    previous: { nodes: [outsider], connections: [] },
+    placed: placedFirst,
+  })
+  assert.equal(canvas1.nodes.length, 1 + 1 + placedFirst.imageNodes.length + placedFirst.castNodes.length)
+
+  const existing = existingDramaBoardOf(canvas1.nodes, canvas1.connections, first.plan.source)
+  assert.ok(existing !== undefined, '铺完就该能按同一集找回来')
+  const second = await readDrama(api, { root: '/workspace' })
+  const placedSecond = await placeDrama({
+    api, root: '/workspace', imported: second, at: { x: 0, y: 0 }, newId: ids(100), measure: MEASURE,
+    reuse: { boardId: existing.board.id, imageNodes: existing.imageNodes, castNodes: existing.castNodes },
+  })
+  const canvas2 = mergeDramaPlacement({ previous: canvas1, placed: placedSecond, existing })
+
+  assert.equal(canvas2.nodes.length, canvas1.nodes.length, '重铺后画布节点数必须不变，一个都不能少')
+  assert.ok(canvas2.nodes.some(node => node.id === 'outsider'), '不相干的节点必须留着')
+  assert.equal(canvas2.nodes.filter(node => node.id === existing.board.id).length, 1, '板上只能有一块')
+  assert.equal(canvas2.nodes.filter(node => node.type === 'storyboard').length, 1, '不许铺出第二块板')
+})
+
+/** 文档里删掉的条目，重铺后要跟着消失——否则铺板结果和文档越差越远。 */
+await checkAsync('a prompt dropped from the document leaves the canvas on re-layout', async () => {
+  const { mergeDramaPlacement } = await import('../src/client/drama-merge.ts')
+  const { existingDramaBoardOf } = await import('../src/client/drama-reuse.ts')
+  const { api } = stubApi()
+  const first = await readDrama(api, { root: '/workspace' })
+  const placedFirst = await placeDrama({ api, root: '/workspace', imported: first, at: { x: 0, y: 0 }, newId: ids(), measure: MEASURE })
+  const canvas1 = mergeDramaPlacement({ previous: { nodes: [], connections: [] }, placed: placedFirst })
+  const existing = existingDramaBoardOf(canvas1.nodes, canvas1.connections, first.plan.source)
+  assert.ok(existing !== undefined)
+
+  // 第二次的文档少了那个 IMG 条目：手工把它从 plan 里去掉。
+  const second = await readDrama(api, { root: '/workspace' })
+  const trimmed = { ...second, plan: { ...second.plan, imagePrompts: [] } }
+  const placedSecond = await placeDrama({
+    api, root: '/workspace', imported: trimmed, at: { x: 0, y: 0 }, newId: ids(100), measure: MEASURE,
+    reuse: { boardId: existing.board.id, imageNodes: existing.imageNodes, castNodes: existing.castNodes },
+  })
+  const canvas2 = mergeDramaPlacement({ previous: canvas1, placed: placedSecond, existing })
+  assert.equal(canvas2.nodes.filter(node => /IMG-/.test(node.title)).length, 0, '文档里没有的设定板不该留在画布上')
+})
+
+/**
  * 目录入口的**真磁盘**用例。
  *
  * 上面所有用例都喂桩 API——测的是接线。这一条不同：它把用户会选的三种目录
