@@ -77,7 +77,15 @@ async function loadReference(reference: OutfitReference): Promise<Blob> {
     }
   } finally { reader.releaseLock() }
   if (size === 0) throw new Error(`“${reference.title}”的图片内容为空`)
-  return new Blob(chunks, { type: mime })
+  // TypeScript 7 narrows typed-array buffers to ArrayBufferLike, while BlobPart
+  // requires an ArrayBuffer-backed view. Copy each chunk so the returned buffer
+  // is a concrete ArrayBuffer and cannot retain a SharedArrayBuffer type.
+  const parts = chunks.map(chunk => {
+    const copy = new Uint8Array(chunk.byteLength)
+    copy.set(chunk)
+    return copy.buffer
+  })
+  return new Blob(parts, { type: mime })
 }
 
 /** FileReader 负责把真实缓存图片变成已有 generate API 所接受的 data URI。 */
