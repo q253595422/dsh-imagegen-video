@@ -1271,6 +1271,13 @@ async function requestOneImage(
     authorization: `Bearer ${upstream.apiKey.trim()}`,
     ...(modelScope ? { 'X-ModelScope-Async-Mode': 'true' } : {}),
   }
+  const toBlobPart = (bytes: Buffer): ArrayBuffer => {
+    const copy = new Uint8Array(bytes.byteLength)
+    copy.set(bytes)
+    return copy.buffer
+  }
+  const primaryBlob = (bytes: Buffer, mime: string): Blob => new Blob([toBlobPart(bytes)], { type: mime })
+
   let body: BodyInit
   if (request.mode === 'edit') {
     if (typeof request.image !== 'string' || request.image === '') {
@@ -1317,7 +1324,7 @@ async function requestOneImage(
       // Nano Banana OpenAI-compatible gateways accept the standard multipart
       // edit upload, with the family's own aspect_ratio / image_size knobs.
       const form = new FormData()
-      form.append('image', new Blob([primary.bytes], { type: primary.mime }), primary.filename)
+      form.append('image', primaryBlob(primary.bytes, primary.mime), primary.filename)
       form.append('prompt', request.prompt)
       form.append('model', params.model)
       if (params.aspect_ratio !== undefined) form.append('aspect_ratio', params.aspect_ratio)
@@ -1363,10 +1370,10 @@ async function requestOneImage(
         // OpenAI-style multi-reference upload: repeat the image[] field so
         // every connected canvas reference reaches the gateway.
         for (const [index, reference] of [primary, ...extras].entries()) {
-          form.append('image[]', new Blob([reference.bytes], { type: reference.mime }), `reference-${index}.${extensionOf(reference.mime)}`)
+          form.append('image[]', primaryBlob(reference.bytes, reference.mime), `reference-${index}.${extensionOf(reference.mime)}`)
         }
       } else {
-        form.append('image', new Blob([primary.bytes], { type: primary.mime }), primary.filename)
+        form.append('image', primaryBlob(primary.bytes, primary.mime), primary.filename)
       }
       form.append('prompt', request.prompt)
       form.append('model', params.model)
