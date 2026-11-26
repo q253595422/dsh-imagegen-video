@@ -31,7 +31,7 @@ import { fileURLToPath } from 'node:url'
 import { canvasSourceText, readModuleSource } from './lib/canvas-source.mjs'
 import { tmpdir } from 'node:os'
 import { spawnSync } from 'node:child_process'
-import ts from 'typescript'
+import { createScanner, SyntaxKind, LanguageVariant } from 'typescript/unstable/ast'
 import { findChrome, launchChrome, openPage, skipWithoutChrome } from './lib/headless-chrome.mjs'
 import { ruleBodyOf } from './lib/css-rule.mjs'
 import { WCAG_CONTRAST_SOURCE } from './lib/wcag-contrast.mjs'
@@ -1700,6 +1700,7 @@ mkdirSync(themeModuleDir, { recursive: true })
 const TSC = join(projectRoot, 'node_modules/typescript/bin/tsc')
 const tsc = spawnSync(process.execPath, [TSC,
   join(projectRoot, 'src/client/surface-theme.ts'),
+  '--ignoreConfig',
   '--outDir', themeModuleDir,
   '--module', 'esnext', '--target', 'es2022', '--skipLibCheck',
 ], { cwd: projectRoot, encoding: 'utf8' })
@@ -1721,6 +1722,7 @@ const navModuleDir = join(tmpdir(), `dsh-gooey-nav-${process.pid}`)
 mkdirSync(navModuleDir, { recursive: true })
 const navTsc = spawnSync(process.execPath, [TSC,
   join(projectRoot, 'src/client/GooeyNav.tsx'),
+  '--ignoreConfig',
   '--outDir', navModuleDir,
   '--module', 'esnext', '--target', 'es2022', '--jsx', 'react-jsx',
   '--moduleResolution', 'bundler', '--skipLibCheck', '--noCheck',
@@ -3522,24 +3524,84 @@ if (unfindable.length > 0 || unreachable.length > 0) {
  * nothing" — matches the search for the defect, and a comment that explains the
  * fix matches the search for the fix. Checks that read code have to read code.
  *
- * `transpileModule` rather than a hand-rolled scanner: `//` inside a regex
- * literal (`/https?:\/\//`) is not a comment, and telling those apart needs the
- * real lexer. typescript is already a devDependency (the typecheck runs on it),
- * and `jsx: Preserve` keeps the JSX markup intact so the attributes under test
- * are still there to match.
+ * TypeScript 7 removes `ts.transpileModule` from the main entry, so use the
+ * real TS7 scanner (`typescript/unstable/ast`, `skipTrivia = false` with
+ * `LanguageVariant.JSX`) to find comment spans and slice them out of the
+ * original source. Slicing rather than re-emitting token text keeps string
+ * literals and JSX attributes (`data-preview-stage=""`) verbatim; rescanning
+ * template interpolations (`reScanTemplateToken`) and regex literals
+ * (`reScanSlashToken`, excluding `<` so `</div>` stays JSX) keeps backtick
+ * parity and `//` inside regexes from desyncing the scan.
  * @param {string} source - the file's text.
  * @returns {string} the text with its comments removed.
  */
+const REGEX_ALLOWED_AFTER = new Set([
+  SyntaxKind.Unknown,
+  SyntaxKind.TemplateHead, SyntaxKind.TemplateMiddle,
+  SyntaxKind.OpenParenToken, SyntaxKind.OpenBracketToken, SyntaxKind.OpenBraceToken,
+  SyntaxKind.CommaToken, SyntaxKind.SemicolonToken, SyntaxKind.ColonToken,
+  SyntaxKind.QuestionToken, SyntaxKind.ExclamationToken, SyntaxKind.TildeToken,
+  SyntaxKind.EqualsToken, SyntaxKind.PlusEqualsToken, SyntaxKind.MinusEqualsToken,
+  SyntaxKind.AsteriskEqualsToken, SyntaxKind.SlashEqualsToken, SyntaxKind.PercentEqualsToken,
+  SyntaxKind.AmpersandEqualsToken, SyntaxKind.BarEqualsToken, SyntaxKind.CaretEqualsToken,
+  SyntaxKind.EqualsEqualsToken, SyntaxKind.EqualsEqualsEqualsToken,
+  SyntaxKind.ExclamationEqualsToken, SyntaxKind.ExclamationEqualsEqualsToken,
+  SyntaxKind.AmpersandAmpersandToken, SyntaxKind.BarBarToken, SyntaxKind.QuestionQuestionToken,
+  SyntaxKind.EqualsGreaterThanToken, SyntaxKind.PlusToken, SyntaxKind.MinusToken,
+  SyntaxKind.AsteriskToken, SyntaxKind.PercentToken, SyntaxKind.AmpersandToken,
+  SyntaxKind.BarToken, SyntaxKind.CaretToken, SyntaxKind.ReturnKeyword,
+  SyntaxKind.CaseKeyword, SyntaxKind.ThrowKeyword, SyntaxKind.InKeyword,
+  SyntaxKind.OfKeyword, SyntaxKind.InstanceOfKeyword, SyntaxKind.TypeOfKeyword,
+  SyntaxKind.VoidKeyword, SyntaxKind.DeleteKeyword, SyntaxKind.NewKeyword,
+  SyntaxKind.YieldKeyword, SyntaxKind.AwaitKeyword, SyntaxKind.ElseKeyword,
+  SyntaxKind.DoKeyword,
+])
+
 function stripComments (source) {
-  return ts.transpileModule(source, {
-    compilerOptions: {
-      target: ts.ScriptTarget.Latest,
-      module: ts.ModuleKind.ESNext,
-      jsx: ts.JsxEmit.Preserve,
-      removeComments: true,
-    },
-    fileName: 'ImageGenPanel.tsx',
-  }).outputText
+  const scanner = createScanner(false, LanguageVariant.JSX, source)
+  const holes = []
+  const templateDepths = []
+  let braceDepth = 0
+  let lastSigKind = SyntaxKind.Unknown
+  for (;;) {
+    let kind = scanner.scan()
+    if (kind === SyntaxKind.EndOfFile) break
+    if (kind === SyntaxKind.SingleLineCommentTrivia || kind === SyntaxKind.MultiLineCommentTrivia) {
+      holes.push([scanner.getTokenStart(), scanner.getTokenEnd()])
+      continue
+    }
+    if (kind === SyntaxKind.WhitespaceTrivia || kind === SyntaxKind.NewLineTrivia) continue
+    if ((kind === SyntaxKind.SlashToken || kind === SyntaxKind.SlashEqualsToken) && REGEX_ALLOWED_AFTER.has(lastSigKind)) {
+      kind = scanner.reScanSlashToken()
+    } else if (kind === SyntaxKind.TemplateHead) {
+      templateDepths.push(braceDepth)
+      braceDepth++
+    } else if (kind === SyntaxKind.OpenBraceToken) {
+      braceDepth++
+    } else if (kind === SyntaxKind.CloseBraceToken) {
+      if (templateDepths.length > 0 && braceDepth - 1 === templateDepths[templateDepths.length - 1]) {
+        braceDepth--
+        kind = scanner.reScanTemplateToken(false)
+        if (kind === SyntaxKind.TemplateTail) {
+          templateDepths.pop()
+        } else if (kind === SyntaxKind.TemplateMiddle) {
+          braceDepth++
+        }
+      } else {
+        braceDepth = Math.max(0, braceDepth - 1)
+      }
+    }
+    lastSigKind = kind
+  }
+  let out = ''
+  let cursor = 0
+  for (const [start, end] of holes) {
+    out += source.slice(cursor, start)
+    // keep the newlines so two statements never fuse into one line
+    out += (source.slice(start, end).match(/\r?\n/g) ?? []).join('')
+    cursor = end
+  }
+  return out + source.slice(cursor)
 }
 
 const previewSource = stripComments(read('ImageGenPanel.tsx'))
