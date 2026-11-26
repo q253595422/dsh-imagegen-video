@@ -30,18 +30,26 @@
  */
 
 import {
-  AmbientLight, BoxGeometry, BufferGeometry, Color, DirectionalLight, Euler,
-  EquirectangularReflectionMapping, GridHelper, Group, HemisphereLight, Mesh,
+  AmbientLight, BoxGeometry, BufferGeometry, Color, ConeGeometry, DirectionalLight, Euler,
+  EquirectangularReflectionMapping, GridHelper, Group, HemisphereLight, Matrix4, Mesh,
   MeshBasicMaterial, MeshStandardMaterial, PCFSoftShadowMap, PerspectiveCamera,
   PlaneGeometry, Raycaster, Scene, SphereGeometry, Sprite, SpriteMaterial, Texture,
   Vector2, Vector3, WebGLRenderer, type Material, type Object3D,
 } from 'three'
 import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js'
-import type { CanvasPoseActor, CanvasPoseStage, CanvasStageProp } from '../../protocol.ts'
+import type {
+  CanvasFigureMaterial, CanvasPoseActor, CanvasPoseStage, CanvasStageProp,
+} from '../../protocol.ts'
 import { POSE_GROUND_Y, solveRig, type PoseJoint } from './pose-rig.ts'
+import { figureMaterialOf, FIGURE_PALETTES } from './figure-colors.ts'
+import { bodyOf } from './pose-stage.ts'
 import {
-  HUMANOID_EXTENSIONS, HUMANOID_FEET, HUMANOID_HINGES, HUMANOID_JOINT_CAPS,
-  HUMANOID_SLEEVES, HUMANOID_SPANS,
+  instantiateStandardBody, loadStandardBodyTemplate, poseStandardBody,
+  type StandardBodyRig,
+} from './standard-body.ts'
+import {
+  HUMANOID_EXTENSIONS, HUMANOID_FEET, HUMANOID_HINGES,
+  HUMANOID_JOINT_CAPS, HUMANOID_SLEEVES, HUMANOID_SPANS,
   alignFoot, alignSpan, createHumanoidGeometry, disposeHumanoidGeometry,
   type HumanoidGeometry,
 } from './stage-humanoid.ts'
@@ -94,26 +102,21 @@ export interface StageScene {
   resetView(stage: CanvasPoseStage): void
   /** 全景球（可选）。传 null 撤掉。图未加载完不阻塞渲染。 */
   setPanorama(image: HTMLImageElement | null): void
+  /** 等标准体的异步资产/克隆都落地；导出前用它避免第一帧还是木偶。 */
+  ready(): Promise<void>
   /** 释放 WebGL 资源。组件卸载必须调，否则每开一次面板漏一个上下文。 */
   dispose(): void
 }
 
 /* ------------------------------------------------------------------ 常量 */
 
-/** 人偶木身的材质色。 **/
-const MANNEQUIN_COLOR = '#d9b483'
-/**
- * 关节球的颜色：比木身深一档的胡桃色。
- *
- * 这一对配色比形体精度更能决定「这看着是不是木偶人」——浅木身 + 深关节是
- * 木制人偶的辨认特征，全身一个色时不管放样多准，看着都像一具石膏人体。
- * 参数取自 kernelCAD 那个 CC0 木偶模型的默认外观。
- */
-const JOINT_COLOR = '#a7814f'
 /** 道具的材质色。与人偶拉开距离，否则「盒子挡住腿」在截图上看不出来。 */
-const PROP_COLOR = '#d9a066'
+const PROP_COLOR = '#a58f78'
 /** 机位的指示块颜色。 */
 const CAMERA_COLOR = '#4d9de0'
+/** 挂在骨架上的人形识别件。都用共享单位球缩放，不新增几何。 */
+const FIGURE_FEATURES = ['nose', 'chin', 'earL', 'earR', 'thumbL', 'thumbR', 'toeL', 'toeR'] as const
+type FigureFeature = typeof FIGURE_FEATURES[number]
 /** 导演视角的默认取景角，与 `DEFAULT_CAMERA`（22°/6°）同一套。 */
 const DIRECTOR_YAW = 22
 const DIRECTOR_PITCH = 6
@@ -235,8 +238,12 @@ function colorOf(value: string | undefined, fallback: string): Color {
 /** 一个人偶的网格集合：每个零件一块网格，构造时建好复用。 */
 interface ActorMesh {
   group: Group
+  /** 标准蒙皮体；载入完成前为 undefined，此时继续显示程序化木偶。 */
+  standard?: StandardBodyRig
   /** 键来自 `HUMANOID_SPANS` / `HUMANOID_EXTENSIONS` / `HUMANOID_FEET` 的 `key`。 */
   parts: Map<string, Mesh>
+  /** 头/手/脚的识别件：鼻、耳、拇指、鞋头。 */
+  features: Map<FigureFeature, Mesh>
   /** 膝/肘的木铰链，键来自 `HUMANOID_HINGES`。 */
   hinges: Map<string, Mesh>
   /** 补缝用的关节球，键是关节名。 */
@@ -275,13 +282,32 @@ class StageSceneImpl implements StageScene {
 
   /** 复用的单位几何：半径/边长都是 1，尺寸全靠 scale。 */
   private readonly unitSphere = markShared(new SphereGeometry(1, 16, 12))
+  /** 鼻楔：四/六面锥，低模但比一颗球有方向。 */
+  private readonly noseGeometry = markShared(new ConeGeometry(1, 1, 6))
   /** 人形零件的几何表。整套只建一次，所有角色共用——见 `stage-humanoid.ts`。 */
   private readonly humanoid: HumanoidGeometry = createHumanoidGeometry()
   private readonly unitBox = markShared(new BoxGeometry(1, 1, 1))
-  private readonly sphereMaterial = markShared(new MeshStandardMaterial({ color: new Color(MANNEQUIN_COLOR), roughness: 0.55, metalness: 0 }))
-  /** 关节球单独一份材质：深一档的胡桃色，见 `JOINT_COLOR`。 */
-  private readonly jointMaterial = markShared(new MeshStandardMaterial({ color: new Color(JOINT_COLOR), roughness: 0.62, metalness: 0 }))
+  /**
+   * 两套人偶材质。灰白膜是默认；木色保留给「木制人偶」那一版观感。
+   * 白膜的粗糙度略高，避免高光把肩/髋的形体打平。
+   */
+  private readonly bodyMaterials: Readonly<Record<CanvasFigureMaterial, Material>> = {
+    clay: markShared(new MeshStandardMaterial({ color: new Color(FIGURE_PALETTES.clay.body), roughness: 0.74, metalness: 0 })),
+    wood: markShared(new MeshStandardMaterial({ color: new Color(FIGURE_PALETTES.wood.body), roughness: 0.55, metalness: 0 })),
+  }
+
+  private readonly jointMaterials: Readonly<Record<CanvasFigureMaterial, Material>> = {
+    clay: markShared(new MeshStandardMaterial({ color: new Color(FIGURE_PALETTES.clay.joint), roughness: 0.68, metalness: 0 })),
+    wood: markShared(new MeshStandardMaterial({ color: new Color(FIGURE_PALETTES.wood.joint), roughness: 0.62, metalness: 0 })),
+  }
   private readonly propMaterial = markShared(new MeshStandardMaterial({ color: new Color(PROP_COLOR), roughness: 0.92, metalness: 0 }))
+  /** 标准体的统一 clay 材质；不读写 GLB 自带的皮肤贴图。 */
+  private readonly standardMaterial = markShared(new MeshStandardMaterial({
+    color: new Color(FIGURE_PALETTES.clay.body), roughness: 0.68, metalness: 0,
+  }))
+  private readonly standardClothMaterial = markShared(new MeshStandardMaterial({
+    color: new Color(FIGURE_PALETTES.clay.joint), roughness: 0.78, metalness: 0,
+  }))
   private readonly cameraMaterial = markShared(new MeshBasicMaterial({ color: new Color(CAMERA_COLOR) }))
   /** 地面板；`sky` 是背景色，`ground` 是地板色，两者都在每帧跟着 stage 变。
    *
@@ -314,6 +340,8 @@ class StageSceneImpl implements StageScene {
   /** 最近一次 render 的 stage。GLB 异步回来时要据此重画一帧。 */
   private lastStage: CanvasPoseStage | undefined
   private disposed = false
+  /** 正在等待标准体挂载的任务；导出前 await 它们。 */
+  private readonly pendingStandard = new Set<Promise<void>>()
   /** 画布显式声明成字段而不是构造器参数属性：Node 跑 `.ts` 是「只剥类型、
    *  不生成代码」，参数属性要生成 `this.x = x`，属于被 strip-only 明确拒绝的
    *  语法，整个模块连 import 都会失败。 */
@@ -321,6 +349,17 @@ class StageSceneImpl implements StageScene {
 
   constructor(canvas: HTMLCanvasElement, options: StageSceneOptions = {}) {
     this.canvas = canvas
+    // The CC0 clothing meshes are shrink-wrapped to the body. Without a small
+    // normal offset they sit exactly on the skin and lose the depth test to the
+    // body mesh. Inflate the garment by 12 mm so the t-shirt/jeans/shoes have
+    // their own surface; this also gives the seams a readable thickness.
+    this.standardClothMaterial.onBeforeCompile = shader => {
+      shader.vertexShader = shader.vertexShader.replace(
+        '#include <begin_vertex>',
+        '#include <begin_vertex>\n  transformed += normalize(objectNormal) * 0.012;',
+      )
+    }
+    this.standardClothMaterial.customProgramCacheKey = () => 'stage-standard-cloth-inflate'
     this.ownRenderer = options.renderer === undefined
     this.renderer = options.renderer ?? new WebGLRenderer({
       canvas,
@@ -348,10 +387,12 @@ class StageSceneImpl implements StageScene {
     // 白——环境光 1.15 把所有暗面抬高，形体全靠轮廓线，看上去像贴纸。
     // 现在环境光只留一点点底，主光负责体积与影子，半球光给上下渐变
     // （天顶亮、地面反光暖），再补一盏冷色背光把剪影从背景里剥离。
-    this.scene.add(new AmbientLight(0xffffff, 0.22))
-    this.scene.add(new HemisphereLight(0xdfe8ff, 0x2b2f3a, 0.55))
+    // 灰白膜的反射率比木色高，主光沿用木色时的 2.1 会把胸腹打成一团纯白。
+    // 这里把主光压一档、环境光抬一点，让白膜保留体积，同时木色也不会太暗。
+    this.scene.add(new AmbientLight(0xffffff, 0.28))
+    this.scene.add(new HemisphereLight(0xdfe8ff, 0x2b2f3a, 0.60))
 
-    const key = new DirectionalLight(0xfff6e8, 2.1)
+    const key = new DirectionalLight(0xfff6e8, 1.8)
     key.position.set(-3, 6, 4)
     key.castShadow = true
     key.shadow.mapSize.set(1024, 1024)
@@ -448,6 +489,14 @@ class StageSceneImpl implements StageScene {
     this.repaint()
   }
 
+  async ready(): Promise<void> {
+    // A loader may attach another actor while this waits; loop until the set is
+    // empty rather than taking one snapshot.
+    while (this.pendingStandard.size > 0) {
+      await Promise.all([...this.pendingStandard])
+    }
+  }
+
   setPanorama(image: HTMLImageElement | null): void {
     if (image === null) {
       this.panoTexture?.dispose()
@@ -468,6 +517,10 @@ class StageSceneImpl implements StageScene {
   render(stage: CanvasPoseStage): void {
     if (this.disposed) return
     this.lastStage = stage
+    this.standardMaterial.color = new Color(FIGURE_PALETTES[figureMaterialOf(stage.scene.figure)].body)
+    this.standardClothMaterial.color = new Color(
+      figureMaterialOf(stage.scene.figure) === 'wood' ? FIGURE_PALETTES.wood.joint : '#8a99ad',
+    )
     // 首帧按实际包围盒取景，之后交给用户（滚轮 / 拖拽 / 重置视角）。
     if (!this.framed && this.mode === 'director') {
       this.framed = true
@@ -534,11 +587,12 @@ class StageSceneImpl implements StageScene {
     const group = new Group()
     group.name = actor.id
     const parts = new Map<string, Mesh>()
+    const features = new Map<FigureFeature, Mesh>()
     const hinges = new Map<string, Mesh>()
     const joints = new Map<PoseJoint, Mesh>()
     const pick: StagePick = { target: 'actor', id: actor.id }
     const add = (key: string, geometry: BufferGeometry): void => {
-      const mesh = new Mesh(geometry, this.sphereMaterial)
+      const mesh = new Mesh(geometry, this.bodyMaterials.clay)
       mesh.userData.pick = pick
       // 投影开、接收影也开：深色的关节球落在木身上时，两者之间有一道软阴影，
       // 接缝就不会看着像两块贴片。
@@ -552,7 +606,7 @@ class StageSceneImpl implements StageScene {
     for (const foot of HUMANOID_FEET) add(foot.key, this.humanoid[foot.geometry])
     for (const sleeve of HUMANOID_SLEEVES) add(sleeve.key, this.humanoid[sleeve.geometry])
     for (const cap of HUMANOID_JOINT_CAPS) {
-      const sphere = new Mesh(this.humanoid.joint, this.jointMaterial)
+      const sphere = new Mesh(this.humanoid.joint, this.jointMaterials.clay)
       sphere.userData.pick = pick
       sphere.castShadow = true
       sphere.receiveShadow = true
@@ -560,17 +614,57 @@ class StageSceneImpl implements StageScene {
       joints.set(cap.joint, sphere)
     }
     for (const hinge of HUMANOID_HINGES) {
-      const mesh = new Mesh(this.humanoid.hinge, this.jointMaterial)
+      const mesh = new Mesh(this.humanoid.hinge, this.jointMaterials.clay)
       mesh.userData.pick = pick
       mesh.castShadow = true
       mesh.receiveShadow = true
       group.add(mesh)
       hinges.set(hinge.key, mesh)
     }
+    for (const key of FIGURE_FEATURES) {
+      const mesh = new Mesh(key === 'nose' ? this.noseGeometry : this.unitSphere, this.bodyMaterials.clay)
+      mesh.userData.pick = pick
+      mesh.castShadow = true
+      mesh.receiveShadow = true
+      group.add(mesh)
+      features.set(key, mesh)
+    }
     this.actorLayer.add(group)
-    const record: ActorMesh = { group, parts, hinges, joints, label: null, labelText: '', labelAspect: 3 }
+    const record: ActorMesh = { group, parts, features, hinges, joints, label: null, labelText: '', labelAspect: 3 }
     this.actors.set(actor.id, record)
+    void this.attachStandardBody(record, actor)
     return record
+  }
+
+  /** 异步挂载 CC0 标准体；失败/未加载时继续显示程序化木偶。 */
+  private attachStandardBody(mesh: ActorMesh, actor: CanvasPoseActor): void {
+    const task = (async () => {
+      try {
+        const template = await loadStandardBodyTemplate()
+        if (this.disposed || this.actors.get(actor.id) !== mesh) return
+        const rig = instantiateStandardBody(
+          template, this.standardMaterial, this.standardClothMaterial,
+          { target: 'actor', id: actor.id },
+        )
+        mesh.standard = rig
+        mesh.group.add(rig.group)
+        this.refreshPickables()
+        if (this.lastStage !== undefined) this.render(this.lastStage)
+      } catch {
+        // The procedural body is already in the scene; a missing asset route or
+        // an offline host degrades to the lightweight mannequin.
+      }
+    })()
+    this.pendingStandard.add(task)
+    void task.finally(() => { this.pendingStandard.delete(task) })
+  }
+
+  /** 只切换零件/特征，不隐藏角色标签。 */
+  private setProceduralVisible(mesh: ActorMesh, visible: boolean): void {
+    for (const part of mesh.parts.values()) part.visible = visible
+    for (const feature of mesh.features.values()) feature.visible = visible
+    for (const hinge of mesh.hinges.values()) hinge.visible = visible
+    for (const joint of mesh.joints.values()) joint.visible = visible
   }
 
   /**
@@ -620,6 +714,13 @@ class StageSceneImpl implements StageScene {
   private updateActor(mesh: ActorMesh, stage: CanvasPoseStage, actor: CanvasPoseActor): void {
     // 场景变换 + 角色站位，与 `actorTransform()` 同一套顺序。
     const sceneScale = scaleFactor(stage.scene)
+    const figure = figureMaterialOf(stage.scene.figure)
+    const bodyMaterial = this.bodyMaterials[figure]
+    const jointMaterial = this.jointMaterials[figure]
+    for (const part of mesh.parts.values()) part.material = bodyMaterial
+    for (const feature of mesh.features.values()) feature.material = bodyMaterial
+    for (const part of mesh.hinges.values()) part.material = jointMaterial
+    for (const part of mesh.joints.values()) part.material = jointMaterial
     const rotation = (stage.scene.rotateY ?? 0) + (actor.rotation ?? 0)
     const rad = rotation * Math.PI / 180
     const [tx, ty, tz] = stage.scene.translate
@@ -628,6 +729,13 @@ class StageSceneImpl implements StageScene {
     mesh.group.position.set(rx * sceneScale + tx, ty, rz * sceneScale + tz)
     mesh.group.scale.setScalar(sceneScale * (actor.scale ?? 1))
     mesh.group.rotation.set(0, rad, 0)
+
+    const useStandard = bodyOf(stage.scene) === 'standard' && mesh.standard !== undefined
+    this.setProceduralVisible(mesh, !useStandard)
+    if (mesh.standard !== undefined) {
+      mesh.standard.group.visible = useStandard
+      if (useStandard) poseStandardBody(mesh.standard, actor.rig)
+    }
 
     // 骨架在角色局部坐标里求解（已落地），不需要再搬一次。
     const world = solveRig(actor.rig)
@@ -653,10 +761,12 @@ class StageSceneImpl implements StageScene {
       const center = at(hinge.joint)
       const parent = at(hinge.parent)
       const child = at(hinge.child)
-      const axis = new Vector3().crossVectors(
-        new Vector3().subVectors(parent, center),
-        new Vector3().subVectors(child, center),
-      )
+      const axis = hinge.axis === undefined
+        ? new Vector3().crossVectors(
+            new Vector3().subVectors(parent, center),
+            new Vector3().subVectors(child, center),
+          )
+        : new Vector3(...hinge.axis)
       if (axis.lengthSq() < 1e-8) axis.set(1, 0, 0)
       axis.normalize()
       part.position.copy(center)
@@ -694,7 +804,104 @@ class StageSceneImpl implements StageScene {
       const part = mesh.parts.get(foot.key)
       if (part !== undefined) alignFoot(part, at(foot.ankle), at(foot.knee), foot.length)
     }
+    this.updateFigureFeatures(mesh, world)
     this.updateLabel(mesh, actor, stage.scene.labels)
+  }
+
+  /**
+   * 头/手/脚的识别件。
+   *
+   * 这些不是五官，也不准备做成写实人脸：鼻和耳只负责让「正面」一眼可读，
+   * 拇指让手掌不再是一块圆头，鞋头让脚尖有方向。全部用共享单位球缩放，
+   * 不新增几何；换材质时和身体一起切。
+   */
+  private updateFigureFeatures(
+    mesh: ActorMesh,
+    world: Record<PoseJoint, [number, number, number]>,
+  ): void {
+    const at = (joint: PoseJoint): Vector3 => new Vector3(...world[joint])
+    const forwardOf = (up: Vector3): Vector3 => {
+      const forward = Math.abs(new Vector3(0, 0, 1).dot(up)) > 0.98
+        ? new Vector3(1, 0, 0)
+        : new Vector3(0, 0, 1)
+      return forward.addScaledVector(up, -forward.dot(up)).normalize()
+    }
+
+    // 头：以颈根到头的方向为上，把鼻放在正面、耳放在两侧。
+    const neck = at('neck')
+    const headJoint = at('head')
+    const headUp = new Vector3().subVectors(headJoint, neck)
+    if (headUp.lengthSq() > 1e-8) headUp.normalize()
+    else headUp.set(0, 1, 0)
+    const headForward = forwardOf(headUp)
+    const headSide = new Vector3().crossVectors(headForward, headUp).normalize()
+    const headCenter = neck.clone().addScaledVector(headUp, 0.045)
+    const headBasis = new Matrix4().makeBasis(headSide, headForward, headUp)
+
+    const nose = mesh.features.get('nose')
+    if (nose !== undefined) {
+      nose.position.copy(headCenter)
+        .addScaledVector(headForward, 0.052)
+        .addScaledVector(headUp, -0.008)
+      nose.quaternion.setFromRotationMatrix(headBasis)
+      // 锥的本地 Y 是前后方向：底面贴着面门，尖端朝前。
+      nose.scale.set(0.020, 0.055, 0.022)
+    }
+    const chin = mesh.features.get('chin')
+    if (chin !== undefined) {
+      chin.position.copy(headCenter)
+        .addScaledVector(headUp, -0.040)
+        .addScaledVector(headForward, 0.046)
+      chin.quaternion.setFromRotationMatrix(headBasis)
+      chin.scale.set(0.034, 0.020, 0.024)
+    }
+    for (const [key, sign] of [['earL', -1], ['earR', 1]] as const) {
+      const ear = mesh.features.get(key)
+      if (ear === undefined) continue
+      ear.position.copy(headCenter).addScaledVector(headSide, sign * 0.073).addScaledVector(headUp, 0.006)
+      ear.quaternion.setFromRotationMatrix(headBasis)
+      ear.scale.set(0.010, 0.018, 0.026)
+    }
+
+    // 手：沿肘→腕方向放一个拇指楔，朝身体一侧收，读成连指手套。
+    for (const [side, elbow, wrist] of [
+      ['L', 'elbowL', 'handL'],
+      ['R', 'elbowR', 'handR'],
+    ] as const) {
+      const hand = mesh.features.get(`thumb${side}`)
+      if (hand === undefined) continue
+      const dir = new Vector3().subVectors(at(wrist), at(elbow))
+      if (dir.lengthSq() < 1e-8) dir.set(0, -1, 0)
+      dir.normalize()
+      const forward = forwardOf(dir)
+      const handSide = new Vector3().crossVectors(dir, forward).normalize()
+      const basis = new Matrix4().makeBasis(handSide, dir, forward)
+      // 拇指朝身体一侧：左手在 -x，内缘是 +x；右手反过来。
+      const inward = side === 'L' ? -1 : 1
+      hand.position.copy(at(wrist))
+        .addScaledVector(dir, 0.035)
+        .addScaledVector(handSide, inward * 0.032)
+        .addScaledVector(forward, 0.004)
+      hand.quaternion.setFromRotationMatrix(basis)
+      hand.scale.set(0.016, 0.030, 0.018)
+    }
+
+    // 脚：在脚尖加一块扁圆鞋头，让脚掌有明确的前端。
+    for (const side of ['L', 'R'] as const) {
+      const toe = mesh.features.get(`toe${side}`)
+      if (toe === undefined) continue
+      const ankle = at(`foot${side}`)
+      const knee = at(`knee${side}`)
+      const up = new Vector3().subVectors(knee, ankle)
+      if (up.lengthSq() < 1e-8) up.set(0, 1, 0)
+      up.normalize()
+      const forward = forwardOf(up)
+      const footSide = new Vector3().crossVectors(forward, up).normalize()
+      const basis = new Matrix4().makeBasis(footSide, forward, up)
+      toe.position.copy(ankle).addScaledVector(forward, 0.105).addScaledVector(up, -0.002)
+      toe.quaternion.setFromRotationMatrix(basis)
+      toe.scale.set(0.036, 0.046, 0.022)
+    }
   }
 
   /** 道具：立方体、球体、GLB。 */
@@ -909,11 +1116,16 @@ class StageSceneImpl implements StageScene {
     this.disposed = true
     disposeSubtree(this.scene)
     this.unitSphere.dispose()
+    this.noseGeometry.dispose()
     disposeHumanoidGeometry(this.humanoid)
     this.unitBox.dispose()
-    this.sphereMaterial.dispose()
-    this.jointMaterial.dispose()
+    this.bodyMaterials.clay.dispose()
+    this.bodyMaterials.wood.dispose()
+    this.jointMaterials.clay.dispose()
+    this.jointMaterials.wood.dispose()
     this.propMaterial.dispose()
+    this.standardMaterial.dispose()
+    this.standardClothMaterial.dispose()
     this.cameraMaterial.dispose()
     this.groundPlaneMaterial.dispose()
     this.panoTexture?.dispose()
@@ -999,10 +1211,10 @@ function exportContext(width: number, height: number): typeof exportScene & obje
  *
  * `width/height` 是输出像素尺寸；`pano` 是已加载完的全景图（可选）。
  */
-export function renderStageToDataUrl(
+export async function renderStageToDataUrl(
   stage: CanvasPoseStage,
   options: { width: number; height: number; pano?: HTMLImageElement | null },
-): string {
+): Promise<string> {
   const width = Math.max(2, Math.round(options.width))
   const height = Math.max(2, Math.round(options.height))
   const context = exportContext(width, height)
@@ -1010,6 +1222,10 @@ export function renderStageToDataUrl(
   context.scene.setMode('camera')
   if (options.pano !== undefined) context.scene.setPanorama(options.pano)
   context.scene.setSize({ width, height })
+  context.scene.render(stage)
+  // First render starts the async standard-body load; wait for it before
+  // reading pixels, otherwise the first frame of an export is the mannequin.
+  await context.scene.ready()
   context.scene.render(stage)
   const url = context.canvas.toDataURL('image/png')
   if (exportIdleTimer !== undefined) clearTimeout(exportIdleTimer)

@@ -94,12 +94,14 @@ export interface NodeBodyState {
   /**
    * The video model the composer resolved as "the one a run would use".
    *
-   * A storyboard names no model of its own (there is no picker on the board), so
-   * `submitShot` falls back to this same resolution. Passing it down is what
-   * lets the board offer only the lengths and tiers that model accepts; without
-   * it the board is guessing at a model it cannot see.
+   * A storyboard that names no model of its own submits with this same
+   * resolution. Passing it down is what lets the board show the effective
+   * model and offer only the lengths and tiers it accepts; without it the
+   * board is guessing at a model it cannot see.
    */
   effectiveVideoModel: string
+  /** The composer's video channel; paired with `effectiveVideoModel`. */
+  effectiveVideoChannelId: string
   fileUploadRef: { current: HTMLInputElement | null }
   imageFileRef: { current: HTMLInputElement | null }
   connectRef: { current: unknown }
@@ -189,6 +191,13 @@ export interface NodeBodyActions {
   runStoryboard: (node: CanvasNode) => void
   submitShot: (node: CanvasNode, index: number) => void
   startStoryboardStitch: (ids: string[]) => void
+  /**
+   * 打开「写回文档」卡片。
+   *
+   * 只对有 `storyboard.source` 的板有意义；`StoryboardBody` 用这件事判断
+   * 要不要画出那个按钮。
+   */
+  openStoryboardWriteback: (node: CanvasNode) => void
   clearBrokenVideo: (nodeId: string) => void
   patchSketchStrokes: (nodeId: string, strokes: CanvasSketchStroke[]) => void
   patchSketchAsset: (nodeId: string, asset: CanvasAssetRef | undefined) => void
@@ -530,6 +539,9 @@ return <>
     ? <S.StoryboardBody
         node={node}
         nodes={S.canvasDocument?.nodes ?? []}
+        videoGroups={S.videoGroups ?? []}
+        defaultChannelId={S.defaultChannelId}
+        defaultVideoChannelId={S.effectiveVideoChannelId}
         defaultVideoModel={S.effectiveVideoModel}
         busy={busyLabel !== undefined}
         onChange={next => A.patchNode(node.id, { storyboard: next })}
@@ -537,6 +549,9 @@ return <>
         onRunShot={index => { void A.submitShot(node, index) }}
         onPreview={nodeId => A.setVideoPreviewNodeId(nodeId)}
         onStitch={ids => A.startStoryboardStitch(ids)}
+        // 只有从文档铺出来的板才有去向；手画的板 `source` 是 undefined，
+        // 这里就不传回调，按钮也就不出现。
+        onWriteback={S.storyboardOf(node).source === undefined ? undefined : () => { void A.openStoryboardWriteback(node) }}
       />
     : isVideo
     ? <div className={css.fileBody} data-video-body="">

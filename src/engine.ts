@@ -26,6 +26,14 @@ export interface UpstreamConfig {
   apiUrlFull?: boolean
   /** Request protocol; auto infers chat-completions from an exact chat URL. */
   protocol?: ChannelProtocolPreference
+  /**
+   * Preset id the channel was created from, when known. A preset can carry a
+   * documented wire quirk that is not inferable from the model id alone (the
+   * CloseAI gateway accepts ratio strings in `size`, official OpenAI does not).
+   */
+  preset?: string
+  /** Use the selected adapter's reference ceiling; false pins 5 images. */
+  autoReferenceLimit?: boolean
   /** Channel display name, recorded in diagnostics so a failure maps to a settings row. */
   channelName?: string
   /** Seedream 水印开关：缺省为开启，仅在 false 且上游支持时发送 watermark=false (#56)。 */
@@ -47,8 +55,17 @@ export class ImageGenError extends Error {
 /** Total budget for the upstream generation call (image models are slow). */
 const UPSTREAM_TIMEOUT_MS = 240_000
 
-/** Budget for downloading one result image URL. */
-const IMAGE_FETCH_TIMEOUT_MS = 60_000
+/** Total budget for downloading one result image URL, including retries. */
+const IMAGE_FETCH_TIMEOUT_MS = 180_000
+
+/** Budget for one attempt; a stalled CDN connection resumes with Range. */
+const IMAGE_FETCH_ATTEMPT_TIMEOUT_MS = 45_000
+
+/** A flaky result CDN may need several resumed attempts to finish. */
+const IMAGE_FETCH_MAX_ATTEMPTS = 6
+
+/** Pause before re-requesting a result URL. */
+const IMAGE_FETCH_RETRY_DELAY_MS = 500
 
 /** Cap on the reference image payload (edit mode), in bytes. */
 const MAX_EDIT_IMAGE_BYTES = 10 * 1024 * 1024
@@ -128,6 +145,23 @@ function isQwenImage(model: string): boolean {
 function isModelScopeInference(baseUrl: string): boolean {
   try {
     return new URL(baseUrl).hostname.toLowerCase() === 'api-inference.modelscope.cn'
+  } catch {
+    return false
+  }
+}
+
+/**
+ * The CloseAI-backed image gateway documented as `api.closeai.hk`.
+ *
+ * Its `size` field accepts an aspect ratio (`16:9`, `4:3`, `21:9`) in
+ * addition to WIDTHxHEIGHT. Official OpenAI endpoints only take their three
+ * pixel sizes, so the exact-ratio form is scoped to this gateway (or a
+ * channel created from its preset) instead of changing every gpt-image call.
+ */
+function isCloseAiImageGateway(upstream: UpstreamConfig): boolean {
+  if (upstream.preset === 'yeahzi-closeai') return true
+  try {
+    return new URL(upstream.apiUrl).hostname.toLowerCase() === 'api.closeai.hk'
   } catch {
     return false
   }
@@ -623,15 +657,25 @@ function effectiveParams(request: GenerateRequest, upstream: UpstreamConfig): {
   }
   // OpenAI-compatible endpoints: nearest pixel size, clarity tiers mapped to
   // the quality levels (1k→low / 2k→medium / 4k→high), detail passthrough.
+  const closeai = isCloseAiImageGateway(upstream)
   return {
     model,
-    ...request.size !== '' && request.size !== 'auto' && OPENAI_SIZE_BY_RATIO[request.size] !== undefined
-      ? { size: OPENAI_SIZE_BY_RATIO[request.size] }
+    ...request.size !== '' && request.size !== 'auto'
+      ? closeai
+        ? { size: request.size }
+        : OPENAI_SIZE_BY_RATIO[request.size] !== undefined
+          ? { size: OPENAI_SIZE_BY_RATIO[request.size] }
+          : {}
       : {},
     ...request.quality === '1k' ? { quality: 'low' } : {},
     ...request.quality === '2k' ? { quality: 'medium' } : {},
     ...request.quality === '4k' ? { quality: 'high' } : {},
     ...request.detail !== '' ? { detail: request.detail } : {},
+    // CloseAI's temporary result host (tuye.closeai.hk) is unreachable from
+    // some networks even though the generation itself succeeds. The gateway
+    // accepts b64_json for both generations and edits, so keep the bytes out
+    // of that CDN entirely.
+    ...closeai ? { response_format: 'b64_json' } : {},
   }
 }
 
@@ -644,6 +688,208 @@ function effectiveCount(request: GenerateRequest): number {
   if (request.outputFormat === 'gif') return 1
   if (model === 'dall-e-3') return 1
   return clampCount(request.n)
+}
+
+/** Parse `Content-Range` for a resumed result download. */
+function parseContentRange(value: string | null): { start?: number; total?: number } | undefined {
+  if (value === null || value.trim() === '') return undefined
+  const match = /^bytes\s+(?:(\d+)-(\d+)|\*)\/(\d+|\*)$/i.exec(value.trim())
+  if (match === null) return undefined
+  const total = match[3] === undefined || match[3] === '*' ? undefined : Number(match[3])
+  return {
+    ...match[1] === undefined ? {} : { start: Number(match[1]) },
+    ...total === undefined || !Number.isFinite(total) ? {} : { total },
+  }
+}
+
+/** Whether an HTTP status is worth retrying for a result download. */
+function retryableResultStatus(status: number): boolean {
+  return status === 408 || status === 425 || status === 429 || status >= 500
+}
+
+/** Wait between result-download attempts, but wake immediately on cancel. */
+async function waitForResultRetry(signal: AbortSignal | undefined): Promise<void> {
+  if (signal?.aborted === true) throw new ImageGenError('任务已取消', 'cancelled')
+  await new Promise<void>((resolve, reject) => {
+    const onAbort = (): void => {
+      clearTimeout(timer)
+      reject(new ImageGenError('任务已取消', 'cancelled'))
+    }
+    const timer = setTimeout(() => {
+      signal?.removeEventListener('abort', onAbort)
+      resolve()
+    }, IMAGE_FETCH_RETRY_DELAY_MS)
+    signal?.addEventListener('abort', onAbort, { once: true })
+  })
+}
+
+/** Reject a URL result that ended cleanly but is visibly a truncated image. */
+function resultLooksComplete(buffer: Buffer): boolean {
+  if (buffer.length === 0) return false
+  const mime = detectImageMime(buffer)
+  if (mime === 'image/png') {
+    return buffer.length >= 12 && buffer.subarray(-8, -4).toString('latin1') === 'IEND'
+  }
+  if (mime === 'image/webp') {
+    return buffer.length >= 12
+      && buffer.toString('latin1', 0, 4) === 'RIFF'
+      && buffer.readUInt32LE(4) + 8 === buffer.length
+  }
+  if (mime === 'image/jpeg') {
+    return buffer.length >= 2 && buffer[buffer.length - 2] === 0xff && buffer[buffer.length - 1] === 0xd9
+  }
+  if (mime === 'image/gif') return buffer[buffer.length - 1] === 0x3b
+  return true
+}
+
+/**
+ * Download one result URL with ranged retries.
+ *
+ * Gateways commonly return a pre-signed or CDN URL instead of base64. That URL
+ * can be slow or reset mid-body from some networks even while the generation
+ * itself succeeded. A plain `arrayBuffer()` turns that into a paid failure:
+ * every retry starts from byte zero, so a throttled 1.5 MB image never lands.
+ * This path keeps every byte it already has and asks for the remainder, and it
+ * turns a timeout into a diagnostic row instead of a raw `DOMException`.
+ */
+async function downloadResultImage(
+  url: string,
+  upstream: UpstreamConfig,
+  signal: AbortSignal | undefined,
+  context: AttemptContext,
+): Promise<{ buffer: Buffer; contentType: string | null }> {
+  const deadline = Date.now() + IMAGE_FETCH_TIMEOUT_MS
+  const chunks: Buffer[] = []
+  let received = 0
+  let total: number | undefined
+  let attempts = 0
+  let lastStatus: number | undefined
+  let lastBody: string | undefined
+  let lastError: unknown
+  let contentType: string | null = null
+  const forwardKey = upstream.apiKey !== ''
+    && !isPresignedUrl(url)
+    && isSameOriginAsApi(url, upstream.apiUrl)
+
+  while (attempts < IMAGE_FETCH_MAX_ATTEMPTS && Date.now() < deadline) {
+    attempts += 1
+    const remaining = deadline - Date.now()
+    const budget = requestSignal(signal, Math.max(1, Math.min(IMAGE_FETCH_ATTEMPT_TIMEOUT_MS, remaining)))
+    try {
+      let response: Response
+      try {
+        response = await fetch(url, {
+          headers: {
+            accept: 'image/*',
+            ...forwardKey ? { authorization: `Bearer ${upstream.apiKey}` } : {},
+            ...received > 0 ? { range: `bytes=${received}-` } : {},
+          },
+          signal: budget.signal,
+        })
+      } catch (error) {
+        lastError = error
+        if (signal?.aborted === true) throw new ImageGenError('任务已取消', 'cancelled')
+        await waitForResultRetry(signal)
+        continue
+      }
+
+      lastStatus = response.status
+      const contentRange = parseContentRange(response.headers.get('content-range'))
+      if (response.status === 416) {
+        // The server says the requested range starts at/after EOF. If the
+        // bytes already in hand cover its total, the download is complete.
+        if (received > 0 && contentRange?.total !== undefined && received >= contentRange.total) {
+          return { buffer: Buffer.concat(chunks, received), contentType }
+        }
+        lastError = new Error('result server rejected the resume range')
+        break
+      }
+      if (!response.ok) {
+        lastBody = await readResponseExcerpt(response)
+        lastError = new Error(`HTTP ${response.status}`)
+        if (!retryableResultStatus(response.status)) break
+        await waitForResultRetry(signal)
+        continue
+      }
+
+      // A 200 answer ignores Range and restarts the whole body; a 206 answer
+      // continues it. Any unexpected 206 offset is safer to restart than to
+      // append two different byte ranges together.
+      const resumed = response.status === 206
+      const rangeStart = contentRange?.start
+      if (resumed && rangeStart !== undefined && rangeStart !== received) {
+        lastError = new Error(`result server resumed at byte ${rangeStart}, expected ${received}`)
+        await waitForResultRetry(signal)
+        continue
+      }
+      if (!resumed) {
+        chunks.length = 0
+        received = 0
+      }
+      contentType = response.headers.get('content-type') ?? contentType
+      if (resumed) {
+        if (contentRange?.total !== undefined) total = contentRange.total
+      } else {
+        const length = Number(response.headers.get('content-length'))
+        total = Number.isFinite(length) && length > 0 ? length : undefined
+      }
+
+      const reader = response.body?.getReader()
+      if (reader === undefined) {
+        const buffer = Buffer.from(await response.arrayBuffer())
+        chunks.push(buffer)
+        received += buffer.length
+      } else {
+        try {
+          for (;;) {
+            const { done, value } = await reader.read()
+            if (done) break
+            if (value !== undefined) {
+              const chunk = Buffer.from(value)
+              chunks.push(chunk)
+              received += chunk.length
+            }
+          }
+        } catch (error) {
+          lastError = error
+          await reader.cancel().catch(() => undefined)
+          if (signal?.aborted === true) throw new ImageGenError('任务已取消', 'cancelled')
+          await waitForResultRetry(signal)
+          continue
+        }
+      }
+
+      if (total !== undefined && received < total) {
+        lastError = new Error(`result body ended early (${received}/${total} bytes)`)
+        await waitForResultRetry(signal)
+        continue
+      }
+      const buffer = Buffer.concat(chunks, received)
+      if (!resultLooksComplete(buffer)) {
+        lastError = new Error('downloaded image is incomplete')
+        await waitForResultRetry(signal)
+        continue
+      }
+      return { buffer, contentType }
+    } finally {
+      budget.dispose()
+    }
+  }
+
+  if (signal?.aborted === true) throw new ImageGenError('任务已取消', 'cancelled')
+  const network = lastError === undefined ? undefined : networkErrorFields(lastError)
+  const detail = [
+    lastStatus === undefined ? '' : `HTTP ${lastStatus}`,
+    network?.detail ?? (lastError === undefined ? 'no usable response' : ''),
+  ].filter(part => part !== '').join(' · ')
+  const progress = received > 0
+    ? ` after ${received}${total === undefined ? '' : `/${total}`} bytes`
+    : ''
+  const failure = new ImageGenError(
+    `failed to fetch the generated image url: ${detail === '' ? 'download failed' : detail}${progress} (${attempts} attempt${attempts === 1 ? '' : 's'})`,
+  )
+  recordFailure(context, failure, { status: lastStatus, bodyExcerpt: lastBody })
+  throw failure
 }
 
 /** Normalize one upstream data item into a base64 image. */
@@ -668,7 +914,6 @@ async function normalizeItem(
     if (parsed === undefined) throw new ImageGenError('upstream returned a malformed data: url')
     return { b64: parsed.base64, mime: detectImageMime(Buffer.from(parsed.base64, 'base64')) ?? parsed.mime, revisedPrompt }
   }
-  const budget = requestSignal(signal, IMAGE_FETCH_TIMEOUT_MS)
   const resultContext: AttemptContext = {
     phase: 'fetch-result',
     channel: upstream.channelName?.trim() || '默认渠道',
@@ -679,43 +924,12 @@ async function normalizeItem(
     hadAuth: upstream.apiKey !== '' && !isPresignedUrl(url) && isSameOriginAsApi(url, upstream.apiUrl),
     startedAt: Date.now(),
   }
-  try {
-    let response: Response
-    try {
-      // Forward the key only to the API's own origin, and never to a
-      // presigned object-storage URL (which carries its own credentials).
-      const forwardKey = upstream.apiKey !== ''
-        && !isPresignedUrl(url)
-        && isSameOriginAsApi(url, upstream.apiUrl)
-      response = await fetch(url, {
-        ...forwardKey
-          ? { headers: { authorization: `Bearer ${upstream.apiKey}` } }
-          : {},
-        signal: budget.signal,
-      })
-    } catch (error) {
-      // A gateway that accepts the job but hands back an unreachable result URL
-      // looks like a silent failure unless the URL is on the record.
-      const failure = new ImageGenError(`failed to fetch the generated image url: ${error instanceof Error ? error.message : String(error)}`)
-      recordFailure(resultContext, failure)
-      throw failure
-    }
-    if (!response.ok) {
-      const failure = new ImageGenError(`failed to fetch the generated image url: HTTP ${response.status}`)
-      recordFailure(resultContext, failure, { status: response.status, bodyExcerpt: await readResponseExcerpt(response) })
-      throw failure
-    }
-    // Budget stays armed through the body read so a stalled download cannot hang the task.
-    const buffer = Buffer.from(await response.arrayBuffer())
-    const contentType = response.headers.get('content-type')
-    const mime = detectImageMime(buffer)
-      ?? (contentType !== null && contentType !== ''
-      ? contentType.split(';')[0]!.trim()
-      : mimeOfExtension(url) ?? 'image/png')
-    return { b64: buffer.toString('base64'), mime, revisedPrompt }
-  } finally {
-    budget.dispose()
-  }
+  const { buffer, contentType } = await downloadResultImage(url, upstream, signal, resultContext)
+  const mime = detectImageMime(buffer)
+    ?? (contentType !== null && contentType !== ''
+    ? contentType.split(';')[0]!.trim()
+    : mimeOfExtension(url) ?? 'image/png')
+  return { b64: buffer.toString('base64'), mime, revisedPrompt }
 }
 
 /** Expand a provider image item whose URL may be a string or an array. */
@@ -1057,6 +1271,13 @@ async function requestOneImage(
     authorization: `Bearer ${upstream.apiKey.trim()}`,
     ...(modelScope ? { 'X-ModelScope-Async-Mode': 'true' } : {}),
   }
+  const toBlobPart = (bytes: Buffer): ArrayBuffer => {
+    const copy = new Uint8Array(bytes.byteLength)
+    copy.set(bytes)
+    return copy.buffer
+  }
+  const primaryBlob = (bytes: Buffer, mime: string): Blob => new Blob([toBlobPart(bytes)], { type: mime })
+
   let body: BodyInit
   if (request.mode === 'edit') {
     if (typeof request.image !== 'string' || request.image === '') {
@@ -1077,9 +1298,16 @@ async function requestOneImage(
       return { bytes, mime: parsed.mime, filename: `reference.${extensionOf(parsed.mime)}` }
     }
     const primary = decodeReference(request.image)
+    // The host ceiling follows the same switch the panel uses: 20 on the
+    // CloseAI gateway unless the channel pins the safe 5, and 5 elsewhere.
+    const referenceLimit = upstream.autoReferenceLimit === false
+      ? 5
+      : isCloseAiImageGateway(upstream)
+        ? 20
+        : 5
     const extras = (request.images ?? [])
       .filter(img => typeof img === 'string' && img !== '')
-      .slice(0, 4)
+      .slice(0, Math.max(0, referenceLimit - 1))
       .map(decodeReference)
     // Grok Imagine /images/edits takes a JSON image_url object (a base64 data
     // URI is accepted) instead of OpenAI's multipart form-data upload.
@@ -1096,7 +1324,7 @@ async function requestOneImage(
       // Nano Banana OpenAI-compatible gateways accept the standard multipart
       // edit upload, with the family's own aspect_ratio / image_size knobs.
       const form = new FormData()
-      form.append('image', new Blob([primary.bytes], { type: primary.mime }), primary.filename)
+      form.append('image', primaryBlob(primary.bytes, primary.mime), primary.filename)
       form.append('prompt', request.prompt)
       form.append('model', params.model)
       if (params.aspect_ratio !== undefined) form.append('aspect_ratio', params.aspect_ratio)
@@ -1142,16 +1370,17 @@ async function requestOneImage(
         // OpenAI-style multi-reference upload: repeat the image[] field so
         // every connected canvas reference reaches the gateway.
         for (const [index, reference] of [primary, ...extras].entries()) {
-          form.append('image[]', new Blob([reference.bytes], { type: reference.mime }), `reference-${index}.${extensionOf(reference.mime)}`)
+          form.append('image[]', primaryBlob(reference.bytes, reference.mime), `reference-${index}.${extensionOf(reference.mime)}`)
         }
       } else {
-        form.append('image', new Blob([primary.bytes], { type: primary.mime }), primary.filename)
+        form.append('image', primaryBlob(primary.bytes, primary.mime), primary.filename)
       }
       form.append('prompt', request.prompt)
       form.append('model', params.model)
       if (params.size !== undefined) form.append('size', params.size)
       if (params.quality !== undefined) form.append('quality', params.quality)
       if (params.detail !== undefined) form.append('detail', params.detail)
+      if (params.response_format !== undefined) form.append('response_format', params.response_format)
       body = form
     }
   } else {

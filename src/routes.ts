@@ -9,7 +9,8 @@ import type { IncomingMessage, ServerResponse } from 'node:http'
 import { createReadStream } from 'node:fs'
 import type { ReadStream } from 'node:fs'
 import { spawn } from 'node:child_process'
-import { mkdir as fsMkdir } from 'node:fs/promises'
+import { mkdir as fsMkdir, stat as fsStat } from 'node:fs/promises'
+import { fileURLToPath } from 'node:url'
 import { randomUUID } from 'node:crypto'
 import path from 'node:path'
 import type { WebRoute } from '@deepseek-ai/dsh-host-webserver'
@@ -40,18 +41,35 @@ import { clearDiagnostics, listDiagnostics } from './diagnostics-store.ts'
 import { allSignals, clearSignals, listSignals, promptBucketOf, recordSignal } from './signal-store.ts'
 import { buildReport, DEFAULT_WINDOW_DAYS } from './signal-report.ts'
 import { extractProductLink } from './link-extract.ts'
-import { MODEL_API, AGENT_IMAGE_API, CANVAS_API, CANVAS_SKILL_API, CODE_RENDER_API, CONVERSATION_IMAGE_API, DATA_FOLDER_API, DEFAULT_TEMPLATE_SOURCE_ID, DIAGNOSTICS_API, GALLERY_API, GENERATE_API, HISTORY_API, IMAGEGEN_SETTINGS_NAMESPACE, IMAGE_MODEL_API, LISTING_COPY_API, PRESETS_API, PROMPT_ENHANCE_API, SETTINGS_API, SIGNALS_API, STORAGE_API, SUBSCRIPTION_API, SUBSCRIPTION_PROVIDERS, TASK_API, TEMPLATE_FAVORITES_API, TEMPLATES_API, UPDATE_API, USAGE_API, VIDEO_API, isChannelProtocolPreference, isTemplateSourceId, type CanvasAssetRef, type CanvasDocument, type VideoDirectorPlan, type CanvasSkillCatalog, type CanvasSkillConfigApplyRequest, type CanvasSkillConfigApplyResult, type CanvasSkillConfigSaveRequest, type CanvasSkillConfigSaveResult, type CanvasSkillInstallRequest, type CanvasSkillInstallResult, type CanvasSkillLibrary, type CanvasSkillRemoveResult, type CanvasSkillRunRequest, type CanvasSkillTask, type ListingCopyRequest, type PptRunRequest, type PptRuntimeStatus, type GeneratedImage, type GenerateRequest, type HistoryEntry, type HistoryEntryInput, type ModelMapping, type PresetProviderView, type TemplateFavorite, type TemplateListResult, type TemplateRefreshResult, type TemplateSample, type CanvasVideoTaskMeta, type VideoGenerateRequest, type VideoHistoryEntry } from './protocol.ts'
+import { MODEL_API, AGENT_IMAGE_API, CANVAS_API, CANVAS_SKILL_API, CODE_RENDER_API, CONVERSATION_IMAGE_API, DATA_FOLDER_API, DEFAULT_TEMPLATE_SOURCE_ID, DIAGNOSTICS_API, GALLERY_API, GENERATE_API, HISTORY_API, IMAGEGEN_SETTINGS_NAMESPACE, IMAGE_MODEL_API, LISTING_COPY_API, PRESETS_API, PROMPT_ENHANCE_API, SETTINGS_API, SIGNALS_API, STAGE_ASSETS_API, STORAGE_API, SUBSCRIPTION_API, SUBSCRIPTION_PROVIDERS, TASK_API, TEMPLATE_FAVORITES_API, TEMPLATES_API, UPDATE_API, USAGE_API, VIDEO_API, isChannelProtocolPreference, isTemplateSourceId, type CanvasAssetRef, type CanvasDocument, type VideoDirectorPlan, type CanvasSkillCatalog, type CanvasSkillConfigApplyRequest, type CanvasSkillConfigApplyResult, type CanvasSkillConfigSaveRequest, type CanvasSkillConfigSaveResult, type CanvasSkillInstallRequest, type CanvasSkillInstallResult, type CanvasSkillLibrary, type CanvasSkillRemoveResult, type CanvasSkillRunRequest, type CanvasSkillTask, type ListingCopyRequest, type PptRunRequest, type PptRuntimeStatus, type GeneratedImage, type GenerateRequest, type HistoryEntry, type HistoryEntryInput, type ModelMapping, type PresetProviderView, type TemplateFavorite, type TemplateListResult, type TemplateRefreshResult, type TemplateSample, type CanvasVideoTaskMeta, type VideoGenerateRequest, type VideoHistoryEntry } from './protocol.ts'
 import { buildCanvasBundle, CANVAS_BUNDLE_API, MAX_CANVAS_BUNDLE_BYTES, parseCanvasBundle } from './canvas-bundle.ts'
 import { probeCodeRender } from './code-render-runtime.ts'
 import { makeOutfitRoutes } from './outfit-reference-routes.ts'
 import { stageEncodeSession, stagePutFrame } from './stage-encode.ts'
 import { readDramaProject, readProjectImage } from './drama-project.ts'
+import { writeDramaDocument, writeDramaOutput } from './drama-write.ts'
 
 /** Cap on JSON request bodies (settings ops and generate payloads are small). */
 const MAX_JSON_BODY_BYTES = 24 * 1024 * 1024
 
 /** Cap on history append bodies (base64 result images can be much larger). */
 const MAX_HISTORY_BODY_BYTES = 64 * 1024 * 1024
+
+/**
+ * 回写一条产出视频的上限：单条视频 50MB，base64 之后约 67MB，再加一层 JSON
+ * 包装。与 `MAX_HISTORY_BODY_BYTES` 分开是因为那是历史图的上限（64MB 对
+ * 67MB 的视频不够），两个上限背后的东西不同，别共用一个数字。
+ */
+const MAX_DRAMA_MEDIA_BODY_BYTES = 72 * 1024 * 1024
+
+/** The only GLBs the stage asset route will serve. */
+const STAGE_ASSET_FILES = new Set([
+  'base-body.glb',
+  'clothing-tshirt.glb',
+  'clothing-jeans.glb',
+  'clothing-shoes.glb',
+])
+const STAGE_ASSET_DIR = fileURLToPath(new URL('../assets/stage/', import.meta.url))
 
 /**
  * Cap on one canvas bundle request body.
@@ -905,6 +923,32 @@ export function makeRoutes(deps: ImageGenRoutesDeps): WebRoute[] {
     { kind: 'exact', path: MODEL_API.save, handler: async (req, res) => { if (!guard(req, res, 'POST')) return; try { const body = await readJsonBody(req, MAX_JSON_BODY_BYTES); const model = await saveModel({ name: String(body?.name ?? ''), data: String(body?.data ?? ''), mime: String(body?.mime ?? 'image/png') }); writeJson(res, 200, { ok: true, model }) } catch (error) { writeJson(res, 400, { ok: false, code: 'model-save-failed', message: messageOf(error) }) } } },
     { kind: 'prefix', path: MODEL_API.image, handler: async (req, res) => { if (!guard(req, res, 'GET')) return; const file = imageFileFrom(req.url, MODEL_API.image); const found = file === undefined ? undefined : await readModel(file); if (!found) { writeJson(res, 404, { error: 'not found' }); return } res.writeHead(200, { 'content-type': found.mime }); res.end(found.data) } },
   ]
+  const stageAssetRoutes: WebRoute[] = [{
+    kind: 'prefix',
+    path: STAGE_ASSETS_API,
+    handler: (req, res) => {
+      if (!guard(req, res, 'GET')) return
+      const pathname = new URL(req.url ?? '/', 'http://localhost').pathname
+      const name = decodeURIComponent(pathname.slice(STAGE_ASSETS_API.length + 1))
+      if (!STAGE_ASSET_FILES.has(name)) {
+        writeJson(res, 404, { ok: false, code: 'not-found' })
+        return
+      }
+      const file = path.join(STAGE_ASSET_DIR, name)
+      void fsStat(file).then(info => {
+        res.writeHead(200, {
+          'content-type': 'model/gltf-binary',
+          'content-length': info.size,
+          'cache-control': 'public, max-age=31536000, immutable',
+        })
+        const stream = createReadStream(file)
+        stream.on('error', () => res.destroy())
+        stream.pipe(res)
+      }).catch(() => {
+        writeJson(res, 404, { ok: false, code: 'not-found' })
+      })
+    },
+  }]
   const history = deps.history ?? {
     list: listHistory,
     append: appendHistory,
@@ -1174,6 +1218,8 @@ export function makeRoutes(deps: ImageGenRoutesDeps): WebRoute[] {
         }
       },
     },
+    // --------------------------------------------------- stage GLB assets
+    ...stageAssetRoutes,
     // ---------------------------------------------------------- presets
     {
       kind: 'exact',
@@ -1184,6 +1230,7 @@ export function makeRoutes(deps: ImageGenRoutesDeps): WebRoute[] {
           id: preset.id,
           name: preset.name,
           apiUrl: preset.apiUrl,
+          ...preset.link === undefined ? {} : { link: preset.link },
           hint: preset.hint,
           models: preset.models,
           ...preset.videoModels === undefined ? {} : { videoModels: preset.videoModels },
@@ -3190,6 +3237,78 @@ export function makeRoutes(deps: ImageGenRoutesDeps): WebRoute[] {
           })
         } catch (error) {
           writeJson(res, 200, { ok: false, code: 'drama-image-failed', message: messageOf(error) })
+        }
+      },
+    },
+    // ------------------------------------------------- drama project: write file
+    // 把画布做出来的一个文件写回 `剧集/<EP>/制作成果/`。
+    //
+    // 一个请求一个文件：视频经 base64 会膨胀到 67MB，与文档回写共用一条路由
+    // 等于把文本请求的内存上限也抬到同一个数。
+    //
+    // 默认不覆盖。产出是用户的作品，静默替换会把「再跑一次」变成「把上一次
+    // 的成品顶掉」；要覆盖时宿主先把它备份成 `.bak-<时间戳>`。
+    {
+      kind: 'exact',
+      path: CANVAS_API.dramaWriteFile,
+      handler: async (req, res) => {
+        if (!guard(req, res, 'POST')) return
+        const body = await readJsonBody(req, MAX_DRAMA_MEDIA_BODY_BYTES)
+        const root = typeof body?.root === 'string' ? body.root.trim() : ''
+        const projectPath = typeof body?.projectPath === 'string' ? body.projectPath.trim() : ''
+        const relativePath = typeof body?.path === 'string' ? body.path.trim() : ''
+        const dataUrl = typeof body?.dataUrl === 'string' ? body.dataUrl : ''
+        if (root === '' || !path.isAbsolute(root) || projectPath === '' || relativePath === '' || dataUrl === '') {
+          writeJson(res, 200, { ok: false, code: 'bad-request', message: '需要工作区路径、剧集目录、目标路径与内容。' })
+          return
+        }
+        try {
+          const outcome = await writeDramaOutput({
+            root,
+            projectPath,
+            relativePath,
+            dataUrl,
+            overwrite: body?.overwrite === true,
+          })
+          // 失败也回 200：这一族的每个失败都带一句能直接显示的话，而 HTTP
+          // 500 会让浏览器侧那条统一的错误处理把它变成「HTTP 500」。
+          writeJson(res, 200, outcome.ok
+            ? { ok: true, file: outcome }
+            : { ok: false, code: `drama-write-${outcome.reason}`, message: outcome.message, reason: outcome.reason })
+        } catch (error) {
+          writeJson(res, 200, { ok: false, code: 'drama-write-failed', message: messageOf(error) })
+        }
+      },
+    },
+    // ---------------------------------------------- drama project: write document
+    // 把改好的《分镜.md》写回去。
+    //
+    // 只认这一个文件名（`writeDramaDocument` 里定死），因为回写负责的是
+    // 「镜头的参考图与产出」，别的创作文档不属于这条链路。
+    //
+    // `expected` 是调用方读到的原文：文件在回写过程中被别人改过时拒绝写，
+    // 否则会用一份基于旧内容的改写把刚写的东西覆盖掉。
+    {
+      kind: 'exact',
+      path: CANVAS_API.dramaWriteDocument,
+      handler: async (req, res) => {
+        if (!guard(req, res, 'POST')) return
+        const body = await readJsonBody(req)
+        const root = typeof body?.root === 'string' ? body.root.trim() : ''
+        const projectPath = typeof body?.projectPath === 'string' ? body.projectPath.trim() : ''
+        const text = typeof body?.text === 'string' ? body.text : ''
+        const expected = typeof body?.expected === 'string' ? body.expected : undefined
+        if (root === '' || !path.isAbsolute(root) || projectPath === '' || text === '') {
+          writeJson(res, 200, { ok: false, code: 'bad-request', message: '需要工作区路径、剧集目录与文档内容。' })
+          return
+        }
+        try {
+          const outcome = await writeDramaDocument({ root, projectPath, text, ...expected === undefined ? {} : { expected } })
+          writeJson(res, 200, outcome.ok
+            ? { ok: true, document: outcome }
+            : { ok: false, code: `drama-write-${outcome.reason}`, message: outcome.message, reason: outcome.reason })
+        } catch (error) {
+          writeJson(res, 200, { ok: false, code: 'drama-write-failed', message: messageOf(error) })
         }
       },
     },

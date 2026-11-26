@@ -1570,10 +1570,10 @@ html[data-dsh-imagegen-active] .sidebarHistoryHost {
 .card {
   display: flex;
   flex-direction: column;
-  gap: 10px;
+  gap: 12px;
   padding: 12px;
-  background: var(--dsw-alias-bg-layer-2);
-  border: 1px solid var(--dsw-alias-border-l1);
+  background: var(--dsw-alias-settings-card-fill);
+  border: 0.5px solid var(--dsw-alias-settings-card-stroke);
   border-radius: var(--dsw-radius-md);
   flex: none;
 }
@@ -1581,12 +1581,12 @@ html[data-dsh-imagegen-active] .sidebarHistoryHost {
 .ecommerceWorkspace {
   display: flex;
   flex-direction: column;
-  gap: 18px;
+  gap: 16px;
   max-width: 760px;
   margin: 0 auto;
-  padding: 10px 8px 18px;
-  font-size: 12px;
-  line-height: 1.5;
+  padding: 0 0 16px;
+  font-size: 13px;
+  line-height: 20px;
 }
 
 /* Config cards in the 参考布局 style: elevated white cards, head row with a
@@ -1594,18 +1594,19 @@ html[data-dsh-imagegen-active] .sidebarHistoryHost {
 .ecommerceSection {
   display: flex;
   flex-direction: column;
-  gap: 10px;
-  padding: 14px 16px 16px;
-  border: 1px solid var(--dsw-alias-border-l1);
+  gap: 12px;
+  padding: 16px;
+  border: 0.5px solid var(--dsw-alias-settings-card-stroke);
   border-radius: var(--dsw-radius-lg);
-  background: var(--dsw-alias-bg-layer-1);
-  box-shadow: var(--dsw-shadow-lv1);
+  background: var(--dsw-alias-settings-card-fill);
+  box-shadow: none;
 }
 
 .ecommerceSection h3 {
   margin: 0 0 2px;
-  font-size: 14px;
-  font-weight: 650;
+  font-size: 15px;
+  font-weight: 600;
+  line-height: 22px;
   display: flex;
   align-items: baseline;
   gap: 7px;
@@ -1621,7 +1622,7 @@ html[data-dsh-imagegen-active] .sidebarHistoryHost {
 }
 
 .ecommerceSectionHint {
-  font-size: 11px;
+  font-size: 12px;
   font-weight: 400;
   color: var(--dsw-alias-label-tertiary);
   white-space: nowrap;
@@ -1649,10 +1650,11 @@ html[data-dsh-imagegen-active] .sidebarHistoryHost {
 .ecommerceCardCount {
   flex: none;
   font-size: 11px;
-  line-height: 16px;
-  padding: 1px 8px;
+  line-height: 18px;
+  padding: 0 7px;
+  border: 0.5px solid var(--dsw-alias-border-l2);
   border-radius: 999px;
-  background: var(--dsw-alias-bg-layer-3);
+  background: var(--dsw-alias-bg-layer-1);
   color: var(--dsw-alias-label-secondary);
 }
 
@@ -1677,28 +1679,30 @@ html[data-dsh-imagegen-active] .sidebarHistoryHost {
   border-radius: var(--dsw-radius-sm);
 }
 
-.ecommerceSection input:not([type="checkbox"]), .ecommerceSection [data-dsh-select], .ecommerceSection textarea { box-sizing: border-box; width: 100%; padding: 9px 11px; color: var(--dsw-alias-label-primary); background: var(--dsw-alias-bg-layer-3); border: 1px solid var(--dsw-alias-border-l2); border-radius: var(--dsw-radius-md); font: inherit; }
+.ecommerceSection input:not([type="checkbox"]), .ecommerceSection [data-dsh-select], .ecommerceSection textarea { box-sizing: border-box; width: 100%; color: var(--dsw-alias-label-primary); background: var(--dsw-alias-bg-layer-1); border: 0.5px solid var(--dsw-alias-border-l4); border-radius: var(--dsw-radius-md); font: inherit; font-size: 14px; line-height: 22px; }
+.ecommerceSection input:not([type="checkbox"]), .ecommerceSection [data-dsh-select] { height: 36px; padding: 0 10px; }
 .ecommerceSection input:not([type="checkbox"]):focus-visible, .ecommerceSection [data-dsh-select]:focus-visible, .ecommerceSection textarea:focus-visible { outline: 2px solid var(--dsw-alias-brand-primary); outline-offset: 1px; }
-.ecommerceSection textarea { min-height: 68px; resize: vertical; line-height: 1.5; }
+.ecommerceSection textarea { min-height: 80px; padding: 9px 12px; resize: vertical; }
 
 .ecommerceField {
   display: flex;
   flex-direction: column;
-  gap: 5px;
+  gap: 8px;
   min-width: 0;
 }
 
 .ecommerceFieldLabel {
-  font-size: 12px;
   color: var(--dsw-alias-label-secondary);
+  font-size: 13px;
+  line-height: 20px;
 }
 
 /* Quiet second line under a field. The ratio lock and the compliance hint are
    caveats rather than labels, so they sit below in the tertiary tone instead
    of competing with the field label above them. */
 .ecommerceFieldNote {
-  font-size: 11px;
-  line-height: 1.4;
+  font-size: 12px;
+  line-height: 18px;
   color: var(--dsw-alias-label-tertiary);
 }
 
@@ -1718,8 +1722,8 @@ html[data-dsh-imagegen-active] .sidebarHistoryHost {
   align-items: center;
   justify-content: center;
   gap: 4px;
-  min-height: 78px;
-  padding: 12px;
+  min-height: 96px;
+  padding: 14px;
   border: 1.5px dashed var(--dsw-alias-border-l2);
   border-radius: var(--dsw-radius-md);
   background: transparent;
@@ -1741,12 +1745,17 @@ html[data-dsh-imagegen-active] .sidebarHistoryHost {
 }
 
 .ecommerceUploadHero span {
-  font-size: 12px;
+  font-size: 13px;
+  line-height: 20px;
 }
 
 .ecommerceUploadHero small {
-  font-size: 11px;
+  font-size: 12px;
+  line-height: 18px;
   color: var(--dsw-alias-label-tertiary);
+  max-width: 100%;
+  white-space: normal;
+  overflow-wrap: anywhere;
 }
 
 .ecommerceStructureGrid {
@@ -1760,26 +1769,26 @@ html[data-dsh-imagegen-active] .sidebarHistoryHost {
   display: flex;
   align-items: center;
   justify-content: center;
-  height: 34px;
-  border: 1px solid var(--dsw-alias-border-l2);
-  border-radius: var(--dsw-radius-sm);
-  background: var(--dsw-alias-bg-layer-2);
+  height: 36px;
+  border: 0.5px solid var(--dsw-alias-border-l2);
+  border-radius: var(--dsw-radius-md);
+  background: transparent;
   color: var(--dsw-alias-label-primary);
   cursor: pointer;
   font: inherit;
-  font-size: 12px;
+  font-size: 13px;
   white-space: nowrap;
 }
 
 .ecommerceSlotCard:hover {
-  border-color: var(--dsw-alias-label-dimmed);
+  background: var(--dsw-alias-interactive-bg-hover);
 }
 
 .ecommerceSlotCard[data-active] {
-  background: var(--dsw-alias-label-primary);
-  border-color: var(--dsw-alias-label-primary);
-  color: var(--dsw-alias-bg-base);
-  font-weight: 600;
+  background: var(--dsw-alias-button-ghost-active-fill);
+  border-color: var(--dsw-alias-button-ghost-active-border);
+  color: var(--dsw-alias-label-primary);
+  font-weight: 500;
 }
 
 .ecommerceSlotCount {
@@ -1790,7 +1799,7 @@ html[data-dsh-imagegen-active] .sidebarHistoryHost {
   height: 16px;
   padding: 0 4px;
   border-radius: var(--dsw-radius-sm);
-  background: var(--dsw-alias-brand-primary);
+  background: var(--dsw-alias-button-primary-fill);
   color: var(--dsw-alias-label-primary-foreground);
   font-size: 10px;
   font-weight: 600;
@@ -1812,21 +1821,21 @@ html[data-dsh-imagegen-active] .sidebarHistoryHost {
 
 .ecommercePrimaryAction {
   width: 100%;
-  height: 38px;
-  border-radius: 999px;
+  height: 36px;
+  border-radius: var(--dsw-radius-md);
   font-size: 14px;
 }
 
 .previewBadge {
-  margin-left: 5px;
-  padding: 0 4px;
+  margin-left: 1px;
+  padding: 0 6px;
+  border: 0.5px solid var(--dsw-alias-border-l2);
   border-radius: var(--dsw-radius-xs);
-  background: var(--dsw-alias-brand-primary);
-  color: var(--dsw-alias-label-primary-foreground);
+  background: var(--dsw-alias-bg-layer-1);
+  color: var(--dsw-alias-label-tertiary);
   font-size: 10px;
-  font-weight: 700;
-  line-height: 13px;
-  letter-spacing: 0.02em;
+  font-weight: 500;
+  line-height: 16px;
 }
 
 .ecommercePlanNote {
@@ -1937,7 +1946,7 @@ html[data-dsh-imagegen-active] .sidebarHistoryHost {
   color: var(--dsw-alias-label-secondary);
   cursor: pointer;
   font: inherit;
-  font-size: 12px;
+  font-size: 13px;
 }
 
 .ecommerceAdvancedToggle:hover {
@@ -2009,13 +2018,13 @@ html[data-dsh-imagegen-active] .sidebarHistoryHost {
 .ecommerceResults {
   display: flex;
   flex-direction: column;
-  gap: 14px;
+  gap: 16px;
   width: 100%;
   margin: 0 auto;
-  padding: 16px 18px;
+  padding: 20px 24px;
   overflow-y: auto;
-  font-size: 12px;
-  line-height: 1.5;
+  font-size: 13px;
+  line-height: 20px;
 }
 
 .ecommerceResultsHeader {
@@ -2028,6 +2037,8 @@ html[data-dsh-imagegen-active] .sidebarHistoryHost {
 .ecommerceResultsHeader h3 {
   margin: 0;
   font-size: 15px;
+  font-weight: 600;
+  line-height: 22px;
 }
 
 .ecommerceResultsHeader > div:first-child {
@@ -2051,7 +2062,7 @@ html[data-dsh-imagegen-active] .sidebarHistoryHost {
   color: var(--dsw-alias-label-tertiary);
   font-size: 13px;
   text-align: center;
-  border: 1.5px dashed var(--dsw-alias-border-l2);
+  border: 1px dashed var(--dsw-alias-border-l2);
   border-radius: var(--dsw-radius-md);
 }
 
@@ -2065,18 +2076,18 @@ html[data-dsh-imagegen-active] .sidebarHistoryHost {
 .ecommercePromptPreview {
   display: flex;
   flex-direction: column;
-  gap: 14px;
+  gap: 16px;
   width: 100%;
   max-width: 760px;
   margin: 0 auto;
-  padding: 12px 8px 20px;
-  font-size: 12px;
-  line-height: 1.5;
+  padding: 20px 24px;
+  font-size: 13px;
+  line-height: 20px;
 }
 
 .ecommercePromptPreview .ecommerceResultsHeader h3 {
-  font-size: 14px;
-  font-weight: 650;
+  font-size: 15px;
+  font-weight: 600;
 }
 
 .ecommercePromptPreview .ecommerceResultsHeader > div > span {
@@ -2092,12 +2103,12 @@ html[data-dsh-imagegen-active] .sidebarHistoryHost {
 .ecommercePromptCard {
   display: flex;
   flex-direction: column;
-  gap: 8px;
-  padding: 14px 16px;
-  border: 1px solid var(--dsw-alias-border-l1);
+  gap: 12px;
+  padding: 16px;
+  border: 0.5px solid var(--dsw-alias-settings-card-stroke);
   border-radius: var(--dsw-radius-lg);
-  background: var(--dsw-alias-bg-layer-1);
-  box-shadow: var(--dsw-shadow-lv1);
+  background: var(--dsw-alias-settings-card-fill);
+  box-shadow: none;
   transition: border-color 0.15s ease;
 }
 
@@ -2116,17 +2127,19 @@ html[data-dsh-imagegen-active] .sidebarHistoryHost {
 .ecommercePromptBadge {
   display: inline-flex;
   align-items: center;
-  padding: 2px 10px;
+  padding: 0 8px;
+  border: 0.5px solid var(--dsw-alias-border-l2);
   border-radius: 999px;
-  background: color-mix(in srgb, var(--dsw-alias-brand-primary) 10%, transparent);
-  color: var(--dsw-alias-brand-primary);
+  background: var(--dsw-alias-bg-layer-1);
+  color: var(--dsw-alias-label-secondary);
   font-size: 12px;
-  font-weight: 650;
+  font-weight: 500;
   line-height: 18px;
 }
 
 .ecommercePromptAuto {
-  font-size: 11px;
+  font-size: 12px;
+  line-height: 18px;
   color: var(--dsw-alias-label-tertiary);
 }
 
@@ -2137,19 +2150,20 @@ html[data-dsh-imagegen-active] .sidebarHistoryHost {
 }
 
 .ecommercePromptPolish {
-  min-height: 26px;
-  padding: 0 9px;
-  border: 1px solid color-mix(in srgb, var(--dsw-alias-brand-primary) 35%, var(--dsw-alias-border-l2));
+  min-height: 28px;
+  padding: 0 10px;
+  border: 0.5px solid var(--dsw-alias-border-l3);
   border-radius: var(--dsw-radius-sm);
-  background: color-mix(in srgb, var(--dsw-alias-brand-primary) 7%, transparent);
-  color: var(--dsw-alias-brand-primary);
+  background: transparent;
+  color: var(--dsw-alias-label-secondary);
   font: inherit;
   font-size: 12px;
   cursor: pointer;
 }
 
 .ecommercePromptPolish:hover:not(:disabled) {
-  background: color-mix(in srgb, var(--dsw-alias-brand-primary) 13%, transparent);
+  color: var(--dsw-alias-label-primary);
+  background: var(--dsw-alias-interactive-bg-hover);
 }
 
 .ecommercePromptPolish:disabled {
@@ -2161,14 +2175,14 @@ html[data-dsh-imagegen-active] .sidebarHistoryHost {
   box-sizing: border-box;
   width: 100%;
   min-height: 104px;
-  padding: 11px 13px;
+  padding: 9px 12px;
   color: var(--dsw-alias-label-primary);
-  background: var(--dsw-alias-bg-layer-3);
-  border: 1px solid var(--dsw-alias-border-l2);
+  background: var(--dsw-alias-bg-layer-1);
+  border: 0.5px solid var(--dsw-alias-border-l4);
   border-radius: var(--dsw-radius-md);
   font: inherit;
-  font-size: 13px;
-  line-height: 1.7;
+  font-size: 14px;
+  line-height: 22px;
   resize: vertical;
 }
 
@@ -2237,19 +2251,22 @@ html[data-dsh-imagegen-active] .sidebarHistoryHost {
   display: inline-flex;
   align-items: center;
   gap: 4px;
-  padding: 3px 9px;
-  border: 1px solid color-mix(in srgb, var(--dsw-alias-brand-primary) 45%, transparent);
-  border-radius: 999px;
-  background: color-mix(in srgb, var(--dsw-alias-brand-primary) 10%, transparent);
-  color: var(--dsw-alias-brand-primary);
-  font-size: 11px;
-  line-height: 16px;
+  height: 28px;
+  padding: 0 10px;
+  border: 0.5px solid var(--dsw-alias-border-l3);
+  border-radius: var(--dsw-radius-sm);
+  background: transparent;
+  color: var(--dsw-alias-label-secondary);
+  font: inherit;
+  font-size: 12px;
+  line-height: 18px;
   cursor: pointer;
-  font-weight: 600;
+  font-weight: 500;
 }
 
 .ecommerceAiButton:hover {
-  background: color-mix(in srgb, var(--dsw-alias-brand-primary) 20%, transparent);
+  color: var(--dsw-alias-label-primary);
+  background: var(--dsw-alias-interactive-bg-hover);
 }
 
 .ecommerceAiButton:disabled {
@@ -2422,41 +2439,20 @@ html[data-dsh-imagegen-active] .sidebarHistoryHost {
   gap: 10px;
 }
 
-/* Wrapper around GooeyNav. Desktop: `display: contents` — the nav's own root
- * stays a direct flex child of the header exactly as before the wrapper
- * existed. Mobile (see the 760px block at the bottom): the wrapper becomes a
- * real box so `order`/`flex-basis` can promote the nav onto its own
- * full-width, horizontally scrollable row under the title. */
+/* The module switcher owns a real scroll box. It must be able to shrink inside
+ * the header without pushing the chat/connection actions off screen; the nav
+ * itself scrolls horizontally once nine labels no longer fit. */
 .panelNav {
-  display: contents;
+  display: flex;
+  flex: 1 1 auto;
+  min-width: 0;
 }
 
 .chatToggle {
-  display: inline-flex;
-  align-items: center;
-  gap: 5px;
-  height: 26px;
-  padding: 0 10px;
   /* Without these two the header's flex row squeezed the label onto two lines
      (「对」/「话」) before the nav gave up any width of its own. */
   flex: none;
   white-space: nowrap;
-  border: 1px solid var(--dsw-alias-border-l2);
-  border-radius: 999px;
-  background: var(--dsw-alias-bg-layer-2);
-  color: var(--dsw-alias-label-secondary);
-  cursor: pointer;
-  font: inherit;
-  font-size: 12px;
-}
-
-.chatToggle:hover {
-  color: var(--dsw-alias-label-primary);
-}
-
-.chatToggle[data-open='true'] {
-  color: var(--dsw-alias-brand-primary);
-  border-color: var(--dsw-alias-brand-primary);
 }
 
 /* Drop the conversation column entirely while the chat toggle is collapsed. */
@@ -2500,24 +2496,8 @@ html[data-dsh-imagegen-chat-collapsed] [data-dsh-imagegen-chat-resizer] {
 
 /* --- generation sub-modes (inside the normal workspace) ------------------------ */
 
-.modeRow {
-  display: flex;
-  gap: 8px;
-  align-items: center;
-}
-
-.modePill {
-  flex: 1;
-  justify-content: center;
-  height: 28px;
-  font-size: 12px;
-}
-
-.modePill,
-.modePill span,
-.modePill div {
-  white-space: nowrap;
-  min-width: 0;
+.modeTabs {
+  width: 100%;
 }
 
 /* --- reference image upload (edit mode) ---------------------------------------- */
@@ -2596,12 +2576,12 @@ html[data-dsh-imagegen-chat-collapsed] [data-dsh-imagegen-chat-resizer] {
      max keeps a pasted 5k-char prompt from pushing the generate button off screen. */
   field-sizing: content;
   max-height: 46vh;
-  padding: 10px 12px;
-  font-size: 13px;
-  line-height: 1.6;
+  padding: 9px 12px;
+  font-size: 14px;
+  line-height: 22px;
   color: var(--dsw-alias-label-primary);
-  background: var(--dsw-alias-bg-layer-3);
-  border: 1px solid var(--dsw-alias-border-l2);
+  background: var(--dsw-alias-bg-layer-1);
+  border: 0.5px solid var(--dsw-alias-border-l4);
   border-radius: var(--dsw-radius-md);
   outline: none;
   resize: vertical;
@@ -2628,57 +2608,16 @@ html[data-dsh-imagegen-chat-collapsed] [data-dsh-imagegen-chat-resizer] {
 }
 
 .templatesButton {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  height: 26px;
-  padding: 0 12px;
-  border: 1px solid var(--dsw-alias-brand-primary);
-  border-radius: 999px;
-  background: linear-gradient(135deg, color-mix(in srgb, var(--dsw-alias-brand-primary) 14%, transparent), color-mix(in srgb, var(--dsw-alias-brand-primary) 5%, transparent));
-  color: var(--dsw-alias-brand-primary);
-  font-size: 12px;
-  font-weight: 600;
-  font-family: inherit;
-  cursor: pointer;
-  box-shadow: 0 1px 0 color-mix(in srgb, var(--dsw-alias-brand-primary) 22%, transparent);
-  transition: transform 0.12s ease, box-shadow 0.12s ease, background 0.12s ease;
+  flex: none;
 }
 
 .templatesButton svg {
   flex: none;
 }
 
-.templatesButton:hover {
-  background: linear-gradient(135deg, color-mix(in srgb, var(--dsw-alias-brand-primary) 24%, transparent), color-mix(in srgb, var(--dsw-alias-brand-primary) 8%, transparent));
-  color: var(--dsw-alias-brand-primary);
-  transform: translateY(-1px);
-  box-shadow: 0 2px 6px color-mix(in srgb, var(--dsw-alias-brand-primary) 30%, transparent);
-}
-
-.templatesButton:active {
-  transform: translateY(0);
-}
-
 .enhanceButton {
-  height: 26px;
   margin-left: auto;
-  padding: 0 11px;
-  border: 1px solid var(--dsw-alias-border-l2);
-  border-radius: 999px;
-  color: var(--dsw-alias-label-secondary);
-  background: var(--dsw-alias-bg-layer-2);
-  font: inherit;
-  font-size: 12px;
-  cursor: pointer;
 }
-
-.enhanceButton:hover:not(:disabled) {
-  color: var(--dsw-alias-brand-primary);
-  border-color: var(--dsw-alias-brand-primary);
-}
-
-.enhanceButton:disabled { opacity: 0.5; cursor: default; }
 
 .promptCount {
   font-size: 11px;
@@ -2702,8 +2641,9 @@ html[data-dsh-imagegen-chat-collapsed] [data-dsh-imagegen-chat-resizer] {
 }
 
 .paramLabel {
-  font-size: 12px;
-  font-weight: 600;
+  font-size: 13px;
+  font-weight: 500;
+  line-height: 20px;
   color: var(--dsw-alias-label-secondary);
 }
 
@@ -2727,15 +2667,14 @@ html[data-dsh-imagegen-chat-collapsed] [data-dsh-imagegen-chat-resizer] {
    `disabled` to its button but carries no disabled styling of its own, so the
    locked state would otherwise look clickable; opacity and cursor say it
    without introducing a colour literal. */
-.modePill:disabled,
 .optionPill:disabled {
   opacity: 0.45;
   cursor: not-allowed;
 }
 
 .paramHint {
-  font-size: 11px;
-  line-height: 1.45;
+  font-size: 12px;
+  line-height: 18px;
   color: var(--dsw-alias-label-tertiary);
 }
 
@@ -2801,11 +2740,11 @@ html[data-dsh-imagegen-chat-collapsed] [data-dsh-imagegen-chat-resizer] {
  * sets. */
 .modelLifecycleNotice {
   margin: 0;
-  padding: 7px 10px;
-  border: 1px solid var(--dsw-alias-state-warn-primary);
-  border-radius: var(--dsw-radius-xs);
-  font-size: 11px;
-  line-height: 1.6;
+  padding: 8px 10px;
+  border: 0.5px solid var(--dsw-alias-state-warn-primary);
+  border-radius: var(--dsw-radius-sm);
+  font-size: 12px;
+  line-height: 18px;
   color: var(--dsw-alias-state-warn-primary);
   background: var(--dsw-alias-bg-layer-1);
 }
@@ -2823,11 +2762,11 @@ html[data-dsh-imagegen-chat-collapsed] [data-dsh-imagegen-chat-resizer] {
   justify-content: space-between;
   gap: 8px;
   padding: 0 12px;
-  font-size: 13px;
+  font-size: 14px;
   color: var(--dsw-alias-label-primary);
-  background: var(--dsw-alias-bg-layer-2);
-  border: 1px solid var(--dsw-alias-border-l2);
-  border-radius: var(--dsw-radius-xl);
+  background: var(--dsw-alias-bg-layer-1);
+  border: 0.5px solid var(--dsw-alias-border-l4);
+  border-radius: var(--dsw-radius-md);
   outline: none;
   font-family: inherit;
   cursor: pointer;
@@ -3681,46 +3620,49 @@ html[data-dsh-imagegen-chat-collapsed] [data-dsh-imagegen-chat-resizer] {
 .config[data-gallery='true'] .configScroll { display: flex; flex: none; overflow: visible; order: 1; }
 .config[data-gallery='true'] .galleryFilters { order: 2; flex: 1; min-height: 0; }
 .galleryFilters { padding: 18px 14px; overflow-y: auto; overflow-x: hidden; }
-.galleryFilterHeading { margin: 0 4px 10px; color: var(--dsw-alias-label-tertiary); font-size: 12px; font-weight: 600; }
-.galleryFilter { display: flex; align-items: center; justify-content: space-between; width: 100%; min-height: 34px; padding: 0 10px; border: 0; border-radius: var(--dsw-radius-md); color: var(--dsw-alias-label-secondary); background: transparent; cursor: pointer; text-align: left; }
-.galleryFilter:hover, .galleryFilter[data-active] { color: var(--dsw-alias-brand-primary); background: color-mix(in srgb, var(--dsw-alias-brand-primary) 10%, transparent); }
-.galleryFilterCount { min-width: 20px; padding: 1px 6px; border-radius: 999px; color: var(--dsw-alias-label-tertiary); background: var(--dsw-alias-bg-layer-2); font-size: 11px; text-align: center; }
-.galleryFilterDivider { height: 1px; margin: 18px 4px; background: var(--dsw-alias-border-l1); }
+.galleryFilterHeading { margin: 0 4px 10px; color: var(--dsw-alias-label-tertiary); font-size: 12px; font-weight: 600; line-height: 18px; }
+.galleryFilter { display: flex; align-items: center; justify-content: space-between; width: 100%; min-height: 32px; padding: 0 10px; border: 0; border-radius: var(--dsw-radius-md); color: var(--dsw-alias-label-secondary); background: transparent; cursor: pointer; font: inherit; font-size: 13px; text-align: left; }
+.galleryFilter:hover { color: var(--dsw-alias-label-primary); background: var(--dsw-alias-interactive-bg-hover); }
+.galleryFilter[data-active] { color: var(--dsw-alias-label-primary); background: var(--dsw-alias-bg-module-platform); font-weight: 500; }
+.galleryFilterCount { min-width: 20px; padding: 0 6px; border: 0.5px solid var(--dsw-alias-border-l2); border-radius: 999px; color: var(--dsw-alias-label-tertiary); background: var(--dsw-alias-bg-layer-1); font-size: 11px; line-height: 16px; text-align: center; }
+.galleryFilterDivider { height: 0.5px; margin: 18px 4px; background: var(--dsw-alias-border-l2); }
 .galleryRatioList { display: flex; flex-wrap: wrap; gap: 6px; }
-.galleryRatio { padding: 6px 10px; border: 0; border-radius: 999px; color: var(--dsw-alias-label-secondary); background: var(--dsw-alias-bg-layer-2); cursor: pointer; font-size: 12px; }
-.galleryRatio[data-active] { color: var(--dsw-alias-brand-primary); background: color-mix(in srgb, var(--dsw-alias-brand-primary) 13%, transparent); }
+.galleryRatio { min-height: 28px; padding: 0 10px; border: 0.5px solid var(--dsw-alias-border-l2); border-radius: var(--dsw-radius-sm); color: var(--dsw-alias-label-secondary); background: transparent; cursor: pointer; font: inherit; font-size: 12px; line-height: 18px; }
+.galleryRatio:hover { color: var(--dsw-alias-label-primary); background: var(--dsw-alias-interactive-bg-hover); }
+.galleryRatio[data-active] { border-color: var(--dsw-alias-button-ghost-active-border); color: var(--dsw-alias-label-primary); background: var(--dsw-alias-button-ghost-active-fill); }
 .galleryTagFilterList { display: flex; flex-wrap: wrap; gap: 6px; }
-.galleryTagFilter { display: inline-flex; align-items: center; gap: 5px; min-width: 0; max-width: 100%; min-height: 27px; padding: 0 8px; border: 1px solid var(--dsw-alias-border-l1); border-radius: var(--dsw-radius-sm); color: var(--dsw-alias-label-secondary); background: var(--dsw-alias-bg-layer-2); cursor: pointer; font: inherit; font-size: 11px; }
+.galleryTagFilter { display: inline-flex; align-items: center; gap: 5px; min-width: 0; max-width: 100%; min-height: 28px; padding: 0 9px; border: 0.5px solid var(--dsw-alias-border-l2); border-radius: var(--dsw-radius-sm); color: var(--dsw-alias-label-secondary); background: transparent; cursor: pointer; font: inherit; font-size: 12px; }
 .galleryTagFilter span:first-child { overflow: hidden; max-width: 112px; text-overflow: ellipsis; white-space: nowrap; }
 .galleryTagFilter span:last-child { color: var(--dsw-alias-label-tertiary); font-size: 10px; }
-.galleryTagFilter:hover, .galleryTagFilter[data-active] { color: var(--dsw-alias-brand-primary); background: color-mix(in srgb, var(--dsw-alias-brand-primary) 10%, transparent); }
-.galleryFilterNote { margin: 20px 4px 0; color: var(--dsw-alias-label-caption); font-size: 11px; line-height: 1.5; }
-.galleryWorkspace { position: absolute; inset: 0; display: flex; width: 100%; height: 100%; min-width: 0; min-height: 0; flex-direction: column; overflow-x: hidden; overflow-y: auto; padding: 22px 24px 26px; box-sizing: border-box; scrollbar-width: thin; scrollbar-color: var(--dsw-alias-border-l2) transparent; }
+.galleryTagFilter:hover { color: var(--dsw-alias-label-primary); background: var(--dsw-alias-interactive-bg-hover); }
+.galleryTagFilter[data-active] { border-color: var(--dsw-alias-button-ghost-active-border); color: var(--dsw-alias-label-primary); background: var(--dsw-alias-button-ghost-active-fill); }
+.galleryFilterNote { margin: 20px 4px 0; color: var(--dsw-alias-label-caption); font-size: 12px; line-height: 18px; }
+.galleryWorkspace { position: absolute; inset: 0; display: flex; width: 100%; height: 100%; min-width: 0; min-height: 0; flex-direction: column; overflow-x: hidden; overflow-y: auto; padding: 20px 24px 24px; box-sizing: border-box; scrollbar-width: thin; scrollbar-color: var(--dsw-alias-border-l2) transparent; }
 .galleryWorkspace::-webkit-scrollbar { width: 8px; }
 .galleryWorkspace::-webkit-scrollbar-thumb { background: var(--dsw-alias-border-l2); border-radius: 999px; }
 .galleryToolbar { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 12px 16px; flex: none; min-width: 0; margin-bottom: 18px; }
 .galleryToolbar > div:first-child { flex: none; }
-.galleryHeading { display: inline; margin: 0; color: var(--dsw-alias-label-primary); font-size: 20px; font-weight: 700; }
-.galleryCount { margin-left: 8px; color: var(--dsw-alias-label-tertiary); font-size: 13px; }
+.galleryHeading { display: inline; margin: 0; color: var(--dsw-alias-label-primary); font-size: 18px; font-weight: 600; line-height: 26px; }
+.galleryCount { margin-left: 8px; color: var(--dsw-alias-label-tertiary); font-size: 13px; line-height: 20px; }
 .galleryToolbarActions { display: flex; flex: 1 1 720px; align-items: center; justify-content: flex-end; gap: 10px; min-width: 0; max-width: 100%; flex-wrap: wrap; }
 .galleryToolbarActions > * { flex-shrink: 0; }
-.galleryToolbarActions .gallerySearch { flex: 0 1 170px; max-width: 100%; }
-.galleryToolbarActions .gallerySort { width: auto; min-width: 96px; min-height: 30px; }
-.gallerySelectMode, .galleryBulkButton, .gallerySelectionClear { min-height: 30px; padding: 0 10px; border: 1px solid var(--dsw-alias-border-l1); border-radius: var(--dsw-radius-sm); color: var(--dsw-alias-label-secondary); background: var(--dsw-alias-bg-layer-1); cursor: pointer; font: inherit; font-size: 12px; }
-.gallerySelectMode:hover, .gallerySelectMode[data-active], .galleryBulkButton:hover:not(:disabled) { color: var(--dsw-alias-brand-primary); border-color: color-mix(in srgb, var(--dsw-alias-brand-primary) 38%, var(--dsw-alias-border-l1)); background: color-mix(in srgb, var(--dsw-alias-brand-primary) 11%, transparent); }
+.galleryToolbarActions .gallerySearch { flex: 0 1 180px; max-width: 100%; }
+.galleryToolbarActions .gallerySort { width: auto; min-width: 112px; min-height: 32px; }
+.gallerySelectMode, .galleryBulkButton, .gallerySelectionClear { min-height: 32px; padding: 0 12px; border: 0.5px solid var(--dsw-alias-border-l3); border-radius: var(--dsw-radius-md); color: var(--dsw-alias-label-secondary); background: transparent; cursor: pointer; font: inherit; font-size: 13px; }
+.gallerySelectMode:hover, .gallerySelectMode[data-active], .galleryBulkButton:hover:not(:disabled) { color: var(--dsw-alias-label-primary); border-color: var(--dsw-alias-border-l4); background: var(--dsw-alias-interactive-bg-hover); }
 .galleryBulkButton:disabled { cursor: not-allowed; opacity: .45; }
 .gallerySelectionBar { display: flex; align-items: center; gap: 10px; flex: none; min-width: 0; margin: -4px 0 16px; padding: 10px 12px; border: 1px solid color-mix(in srgb, var(--dsw-alias-brand-primary) 35%, var(--dsw-alias-border-l1)); border-radius: var(--dsw-radius-md); background: color-mix(in srgb, var(--dsw-alias-brand-primary) 7%, var(--dsw-alias-bg-layer-1)); }
 .gallerySelectionBar strong { flex: none; color: var(--dsw-alias-brand-primary); font-size: 12px; }
 .gallerySelectionClear { margin-left: auto; }
 .gallerySelectionClear:hover { color: var(--dsw-alias-label-primary); background: var(--dsw-alias-bg-layer-2); }
-.galleryTagInput, .gallerySearch { min-width: 0; height: 30px; padding: 0 10px; border: 1px solid var(--dsw-alias-border-l1); border-radius: var(--dsw-radius-sm); outline: none; color: var(--dsw-alias-label-primary); background: var(--dsw-alias-bg-layer-1); font: inherit; font-size: 12px; }
+.galleryTagInput, .gallerySearch { min-width: 0; height: 32px; padding: 0 10px; border: 0.5px solid var(--dsw-alias-border-l4); border-radius: var(--dsw-radius-md); outline: none; color: var(--dsw-alias-label-primary); background: var(--dsw-alias-bg-layer-1); font: inherit; font-size: 13px; }
 .galleryTagInput { flex: 1 1 190px; }
 .galleryTagInput:focus, .gallerySearch:focus { border-color: var(--dsw-alias-brand-primary); }
-.galleryViewToggle { display: flex; padding: 3px; border: 1px solid var(--dsw-alias-border-l1); border-radius: var(--dsw-radius-md); background: var(--dsw-alias-bg-layer-1); }
-.galleryViewToggle button, .gallerySort, .galleryClear { min-height: 30px; padding: 0 10px; border: 0; border-radius: var(--dsw-radius-sm); color: var(--dsw-alias-label-secondary); background: transparent; cursor: pointer; font: inherit; font-size: 12px; }
-.galleryViewToggle button[data-active], .galleryViewToggle button:hover, .gallerySort:hover, .galleryClear:hover { color: var(--dsw-alias-brand-primary); background: color-mix(in srgb, var(--dsw-alias-brand-primary) 11%, transparent); }
-.gallerySort { border: 1px solid var(--dsw-alias-border-l1); background: var(--dsw-alias-bg-layer-1); }
-.galleryClear { border: 1px solid var(--dsw-alias-border-l1); }
+.galleryViewToggle { display: flex; padding: 2px; border: 0.5px solid var(--dsw-alias-border-l2); border-radius: var(--dsw-radius-md); background: var(--dsw-alias-bg-module-platform); }
+.galleryViewToggle button, .gallerySort, .galleryClear { min-height: 28px; padding: 0 10px; border: 0; border-radius: var(--dsw-radius-sm); color: var(--dsw-alias-label-secondary); background: transparent; cursor: pointer; font: inherit; font-size: 12px; }
+.galleryViewToggle button[data-active], .galleryViewToggle button:hover, .gallerySort:hover, .galleryClear:hover { color: var(--dsw-alias-label-primary); background: var(--dsw-alias-interactive-bg-hover); }
+.gallerySort { border: 0.5px solid var(--dsw-alias-border-l3); background: transparent; }
+.galleryClear { border: 0.5px solid var(--dsw-alias-border-l3); }
 .compareControl { display: flex; flex-direction: column; gap: 6px; margin: 0 0 10px; }
 .compareToggle, .compareModelChoices label { display: flex; align-items: center; gap: 6px; color: var(--dsw-alias-label-secondary); font-size: 12px; cursor: pointer; }
 .compareToggle input, .compareModelChoices input { accent-color: var(--dsw-alias-brand-primary); }

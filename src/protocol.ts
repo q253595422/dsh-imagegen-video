@@ -8,7 +8,7 @@
 export const IMAGEGEN_SETTINGS_NAMESPACE = 'dsh-imagegen'
 
 /** Published package version shared by the host updater and the client UI. */
-export const PLUGIN_VERSION = '1.34.0'
+export const PLUGIN_VERSION = '1.35.0'
 
 /** Same-origin route family (loopback-only, mirroring the dsh-ssh fence). */
 export const SETTINGS_API = {
@@ -117,6 +117,9 @@ export const IMAGE_MODEL_API = {
 
 /** Host-served built-in provider catalog (channels the user can instantiate). */
 export const PRESETS_API = '/api/dsh-imagegen/presets' as const
+
+/** Host-served static GLBs for the director's standard body. */
+export const STAGE_ASSETS_API = '/api/dsh-imagegen/stage-assets' as const
 
 /** Loopback-only image reader for Agent tool-result previews. */
 export const AGENT_IMAGE_API = '/api/dsh-imagegen/agent-image' as const
@@ -567,6 +570,18 @@ export const CANVAS_API = {
    * 一条上传通道，不是两条。
    */
   dramaImage: '/api/dsh-imagegen/canvas/drama/image',
+  /**
+   * 把画布做出来的一个产出文件写回 `剧集/<EP>/制作成果/`。
+   *
+   * 与 `dramaProject` / `dramaImage` 对称——那两条只读，这一条只写，分工
+   * 与读侧一致：浏览器算「要写什么」，宿主只管落盘与安全边界。
+   *
+   * 一次一个文件：单条视频上限 50MB，base64 之后约 67MB，与文档回写那条
+   * 共用路由会把文本请求也放开到同一个内存上限。
+   */
+  dramaWriteFile: '/api/dsh-imagegen/canvas/drama/write-file',
+  /** 把改好的《分镜.md》写回去（先备份，内容没变就不写）。 */
+  dramaWriteDocument: '/api/dsh-imagegen/canvas/drama/write-document',
 } as const
 
 /** 导演台逐帧导出的线上形状。 */
@@ -873,6 +888,9 @@ export type VideoModelFamily =
   // every reference must be uploaded to a public HTTPS URL first -- the family
   // exists because that upload leg has no analogue in the generic shape.
   | 'minimax'
+  // 启航AIGC's gateway: flat video parameters under `/v1/videos/generations`,
+  // then `GET /v1/tasks/{id}` with `is_final` / `output_url`.
+  | 'qihang'
   | 'unknown'
 
 /**
@@ -1931,6 +1949,19 @@ export interface CanvasPoseScene {
   sky: string
   /** 地面颜色；缺省由天空色推出来。 */
   ground?: string
+  /**
+   * 人偶材质。缺省 `clay`（灰白膜）。
+   *
+   * 木色是早期「木制人偶」的辨认特征，但 blocking 阶段更需要的是一块
+   * 中性、不参与画面冷暖的体块；木色留成可选，不改老文档的数据形状。
+   */
+  figure?: CanvasFigureMaterial
+  /**
+   * 角色底模。缺省 `standard`（标准蒙皮人形）；`procedural` 是轻量木偶回退。
+   *
+   * 标准体需要 three.js/WebGL；2D 回退永远画程序化木偶。
+   */
+  body?: CanvasFigureBody
   /** 整组平移（米）。 */
   translate: [number, number, number]
   /** 整组绕 y 旋转（度）。 */
@@ -1943,6 +1974,12 @@ export interface CanvasPoseScene {
   /** 角色头顶的名字标签。 */
   labels: boolean
 }
+
+/** 人偶材质：灰白膜（默认）或木色。 */
+export type CanvasFigureMaterial = 'clay' | 'wood'
+
+/** 角色底模：标准蒙皮人形或程序化木偶。 */
+export type CanvasFigureBody = 'standard' | 'procedural'
 
 /**
  * 导演台：多角色 + 多机位 + 场景。
@@ -2684,6 +2721,14 @@ export interface ChannelConfig {
    * document the field (#56).
    */
   watermark?: boolean
+  /**
+   * Automatically use the selected model's reference-image ceiling.
+   *
+   * Absent means true: legacy channels keep the adapter's automatic behavior.
+   * `false` pins the safe plugin default (5 images). This is per channel
+   * because two channels can serve the same model id with different gateways.
+   */
+  autoReferenceLimit?: boolean
   /** Request protocol; 'auto' infers chat-completions from an exact chat URL. */
   protocol?: ChannelProtocolPreference
   /** Authentication source; absent means the legacy API-key path. */
@@ -2706,6 +2751,8 @@ export interface PresetProviderView {
   id: string
   name: string
   apiUrl: string
+  /** Public provider page opened from the picker. */
+  link?: string
   hint: string
   models: ModelMapping[]
   /** Video model catalog prefilled alongside the image one. */

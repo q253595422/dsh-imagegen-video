@@ -173,19 +173,19 @@ export function apply(ctx: ClientContext): void {
           const trigger = [...document.querySelectorAll<HTMLButtonElement>('button[aria-haspopup="dialog"]')]
             .find(isSettingsTrigger)
           if (trigger === undefined) {
-            console.warn('[dsh-imagegen] Settings trigger not found; cannot open Image settings')
+            console.warn('[dsh-imagegen] Settings trigger not found; cannot open Image / Video settings')
             return
           }
           trigger.click()
           section = await waitForSectionButton(2500)
         }
         if (section === undefined) {
-          console.warn('[dsh-imagegen] Image settings section not found in the Settings dialog')
+          console.warn('[dsh-imagegen] Image / Video settings section not found in the Settings dialog')
           return
         }
         section.click()
       } catch (error) {
-        console.warn('[dsh-imagegen] failed to open Image settings:', error)
+          console.warn('[dsh-imagegen] failed to open Image / Video settings:', error)
       }
     }
     const onOpenConfig = (): void => { void openConfig() }

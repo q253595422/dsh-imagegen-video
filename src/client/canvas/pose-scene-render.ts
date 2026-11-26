@@ -21,6 +21,7 @@ import {
   type PoseCamera, type PoseJoint, type PoseSphere,
 } from './pose-rig.ts'
 import { actorTransform, currentRenderCamera, scaleFactor } from './pose-stage.ts'
+import { figurePaletteOf } from './figure-colors.ts'
 
 export interface SceneRenderOptions {
   size: number
@@ -107,6 +108,7 @@ function paintActorMask(
   spheres: PoseSphere[], size: number, fieldSize: number, fieldCell: number,
   project: (p: [number, number, number]) => [number, number, number] | null,
   focal: number,
+  body: readonly [number, number, number],
 ): HTMLCanvasElement | null {
   interface Disc { cx: number; cy: number; r: number }
   const discs: Disc[] = []
@@ -191,12 +193,12 @@ function paintActorMask(
       const nz = Math.sqrt(Math.max(0.05, 1 - nx * nx - ny * ny))
       const shade = nx * lx + ny * ly + nz * lz
       const tone = 0.94 + 0.14 * shade
-      // 与人偶的 3D 材质同一个木色（`MANNEQUIN_COLOR = #d9b483`）。两个渲染器
-      // 各写一个颜色时，没有 WebGL 的机器上人偶是灰的、有 WebGL 的是木色的——
-      // 同一台机器换台电脑，人会「换个颜色」。
-      image.data[i * 4] = Math.round(0xd9 * tone)
-      image.data[i * 4 + 1] = Math.round(0xb4 * tone)
-      image.data[i * 4 + 2] = Math.round(0x83 * tone)
+      // 与 3D 共用 `figure-colors.ts` 的色表。两个渲染器各写一个颜色时，
+      // 没有 WebGL 的机器上人偶是灰的、有 WebGL 的是木色的——同一台机器
+      // 换台电脑，人会「换个颜色」。
+      image.data[i * 4] = Math.round(body[0] * tone)
+      image.data[i * 4 + 1] = Math.round(body[1] * tone)
+      image.data[i * 4 + 2] = Math.round(body[2] * tone)
       image.data[i * 4 + 3] = Math.round(alpha * 255)
     }
   }
@@ -481,7 +483,10 @@ export function drawScene(ctx: CanvasRenderingContext2D, options: SceneRenderOpt
   }
 
   for (const shape of shapes) {
-    const mask = paintActorMask(shape.spheres, size, fieldSize, fieldCell, project, focal)
+    const mask = paintActorMask(
+      shape.spheres, size, fieldSize, fieldCell, project, focal,
+      figurePaletteOf(stage.scene.figure).bodyRgb,
+    )
     if (mask === null) continue
     const originX = Number(mask.dataset.originX ?? '0')
     const originY = Number(mask.dataset.originY ?? '0')

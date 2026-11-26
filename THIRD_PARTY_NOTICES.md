@@ -1,5 +1,14 @@
 # Third-Party Notices
 
+## MakeHuman / CharacterCreator stage assets
+
+- Source: https://github.com/kblood/CharacterCreator (`output/`)
+- Base body and clothing: MakeHuman system assets, CC0 1.0 Universal
+- Bundled in `assets/stage/` (`base-body.glb`, `clothing-tshirt.glb`,
+  `clothing-jeans.glb`, `clothing-shoes.glb`)
+- Only the generated CC0 GLB assets are included. The CharacterCreator
+  application code is GPLv3 and is not bundled or linked.
+
 The bundled prompt snapshots under `src/templates/` include material from the
 following projects. Image assets are not bundled; they are fetched on demand
 from the URLs recorded in the snapshot metadata, so how stable those URLs are

@@ -104,6 +104,23 @@ function startUpstream() {
       res.end(JSON.stringify(list[index]))
       return
     }
+    // 启航AIGC's shared task reader: every async submit polls the same
+    // `/v1/tasks/{id}` shape, with `is_final` + `output_url`.
+    if (req.method === 'GET' && url.pathname.startsWith('/v1/tasks/')) {
+      state.polls.push({ id: url.pathname.slice('/v1/tasks/'.length), authorization: req.headers.authorization })
+      const failures = state.script.pollFailures
+      const failure = Array.isArray(failures) ? failures[state.polls.length - 1] : undefined
+      if (typeof failure === 'number') {
+        res.writeHead(failure, { 'content-type': 'application/json' })
+        res.end(JSON.stringify({ error: { message: 'upstream hiccup' } }))
+        return
+      }
+      const list = state.script.polls
+      const index = Math.min(state.polls.length - 1, list.length - 1)
+      res.writeHead(200, { 'content-type': 'application/json' })
+      res.end(JSON.stringify(list[index]))
+      return
+    }
     if (req.method === 'GET' && url.pathname.startsWith('/v1/videos/') && url.pathname.endsWith('/content')) {
       // OpenAI's video API (and the relays copying it) serve the finished clip
       // here and never put a URL in the poll body (#9). This branch must come
@@ -545,6 +562,122 @@ await check('V1c6 a content fallback that 404s reports the download leg, not a s
   assert.match(entry.url, /\/v1\/videos\/task_gone\/content$/, 'the entry records the content address')
 })
 
+await check('V1c7 启航AIGC Wan 3.0 uses the flat submit + shared task reader', async () => {
+  // The model id is the gateway's `wan-3-0`. Detection must not fall through
+  // to the generic OpenAI-style `/videos` shape, and every reference has to
+  // ride the documented `images` array as a data URI.
+  const entry = host.describeVideoModel('wan-3-0')
+  assert.equal(entry.family, 'qihang', 'wan-3-0 has its own request-shaping family')
+  assert.deepEqual(entry.modes, ['text', 'image', 'keyframe', 'reference'])
+  assert.deepEqual(entry.resolutions, ['480P', '720P', '1080P'])
+  assert.deepEqual(entry.aspectRatios, ['16:9', '9:16', '1:1', '4:3', '3:4'])
+  assert.deepEqual(host.videoDurationsFor('wan-3-0'), [5, 10, 15, 20, 30])
+
+  const upstream = await startUpstream()
+  const png = 'data:image/png;base64,QUJD'
+  upstream.state.script = {
+    submit: { id: 'task_qh_1', object: 'video', task_id: 'task_qh_1', status: 'pending' },
+    polls: [
+      { id: 'task_qh_1', status: 'processing', is_final: false },
+      {
+        id: 'task_qh_1',
+        type: 'video',
+        status: 'completed',
+        is_final: true,
+        output_url: `http://127.0.0.1:${upstream.port}/out/wan.mp4`,
+        data: [{ url: `http://127.0.0.1:${upstream.port}/out/wan.mp4`, type: 'video' }],
+        duration: 15,
+      },
+    ],
+  }
+  try {
+    const result = await generateVideo(
+      { apiUrl: upstream.base, apiKey: 'sk-qihang' },
+      {
+        mode: 'reference',
+        model: 'wan-3-0',
+        prompt: '一只猫在雨后的巷子里奔跑',
+        aspectRatio: '9:16',
+        resolution: '1080P',
+        seconds: 15,
+        image: png,
+        images: [png],
+      },
+    )
+    const submit = upstream.state.submits[0]
+    assert.equal(submit.body.model, 'wan-3-0')
+    assert.equal(submit.body.mode, 'reference', 'the panel mode is translated to the gateway enum')
+    assert.equal(submit.body.duration, 15, 'duration is a top-level integer')
+    assert.equal(submit.body.resolution, '1080p', 'resolution uses the documented lowercase enum')
+    assert.equal(submit.body.aspect_ratio, '9:16')
+    assert.deepEqual(submit.body.images, [png, png], 'references ride in images as data URIs')
+    assert.ok(!('params' in submit.body), 'the flat endpoint must not receive the media-generate envelope')
+    assert.equal(submit.authorization, 'Bearer sk-qihang')
+    assert.equal(upstream.state.polls[0].id, 'task_qh_1', 'polling uses the shared /tasks reader')
+    assert.equal(upstream.state.polls[0].authorization, 'Bearer sk-qihang')
+    assert.equal(result.videos[0].bytes.length, MP4.length)
+    assert.equal(result.videos[0].duration, 15)
+
+    // A keyframe request with only a first frame is a first-frame render, not
+    // a two-frame one; the gateway would reject `first-last` without a tail.
+    upstream.state.polls.length = 0
+    upstream.state.submits.length = 0
+    upstream.state.script.polls = [{
+      id: 'task_qh_2',
+      status: 'completed',
+      is_final: true,
+      // No output_url: the documented `data[]` alias must still resolve.
+      data: [{ url: `http://127.0.0.1:${upstream.port}/out/wan-tail.mp4`, type: 'video' }],
+    }]
+    const single = await generateVideo(
+      { apiUrl: upstream.base, apiKey: 'sk-qihang' },
+      {
+        mode: 'keyframe',
+        model: 'wan-3-0',
+        prompt: '镜头缓慢推进',
+        aspectRatio: '16:9',
+        resolution: '720P',
+        seconds: 5,
+        firstFrame: png,
+      },
+    )
+    assert.equal(upstream.state.submits[0].body.mode, 'first-frame')
+    assert.deepEqual(upstream.state.submits[0].body.images, [png])
+    assert.equal(single.videos[0].bytes.length, MP4.length, 'data[0].url is accepted as the result address')
+  } finally {
+    await upstream.close()
+  }
+})
+
+await check('V1c8 启航AIGC failures keep the gateway error class', async () => {
+  const upstream = await startUpstream()
+  upstream.state.script = {
+    submit: { id: 'task_qh_fail', task_id: 'task_qh_fail', status: 'pending' },
+    polls: [{
+      id: 'task_qh_fail',
+      status: 'failed',
+      is_final: true,
+      error: { message: '内容审核未通过' },
+      error_class: 'content_blocked',
+    }],
+  }
+  try {
+    await assert.rejects(
+      () => generateVideo(
+        { apiUrl: upstream.base, apiKey: 'k' },
+        { mode: 'text', model: 'wan-3-0', prompt: 'p', aspectRatio: '16:9', resolution: '720P', seconds: 5 },
+      ),
+      (error) => {
+        assert.match(error.message, /内容审核未通过/)
+        assert.match(error.message, /content_blocked/, 'the machine-readable class is not dropped')
+        return true
+      },
+    )
+  } finally {
+    await upstream.close()
+  }
+})
+
 await check('V1d keyframe and reference modes send family-correct fields', async () => {
   const upstream = await startUpstream()
   upstream.state.script = {
@@ -906,6 +1039,7 @@ await check('V1l MiniMax-H3 speaks the Nbility content contract, 768P only', asy
     ['16:9', '9:16', '1:1', '4:3', '3:4', '21:9'],
     'six ratios documented as accepted',
   )
+  assert.deepEqual(host.videoDurationsFor('MiniMax-H3'), [5, 10, 15], 'the panel exposes the useful 1-15s steps')
   // A different model on the same gateway is NOT affected by the branch.
   assert.equal(host.describeVideoModel('doubao-seedance-2-0').family, 'seedance', 'the Seedance id keeps its own family')
   assert.deepEqual(host.describeVideoModel('kling-v2-master').resolutions, ['480P', '720P', '1080P'], 'a generic model keeps every tier')

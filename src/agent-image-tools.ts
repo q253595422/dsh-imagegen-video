@@ -70,17 +70,17 @@ const taskResultSchema = {
 const AGENT_GENERATION_TIMEOUT_MS = 300_000
 
 export function ensureAgentImageConfigured(config: AgentImageToolConfig): void {
-  if (!config.enabled) throw new ImageGenError('AI image generation is disabled. Open Settings → Image settings and enable it.', 'plugin-disabled')
-  if (!config.allowAgentImageGeneration) throw new ImageGenError('Agent image generation is disabled in Settings → Image settings.', 'agent-generation-disabled')
+  if (!config.enabled) throw new ImageGenError('AI image generation is disabled. Open Settings → Image / Video and enable it.', 'plugin-disabled')
+  if (!config.allowAgentImageGeneration) throw new ImageGenError('Agent image generation is disabled in Settings → Image / Video.', 'agent-generation-disabled')
   const usable = config.channels.some(channel => channel.apiUrl.trim() !== '' && channel.apiKey.trim() !== '')
-  if (!usable) throw new ImageGenError('Image API credentials are not configured. Open Settings → Image settings, add a channel and fill in its API URL and API key.', 'image-api-not-configured')
+  if (!usable) throw new ImageGenError('Image API credentials are not configured. Open Settings → Image / Video, add a model service and fill in its API URL and API key.', 'image-api-not-configured')
 }
 
 /** Resolve a configured image alias and its owning channel. */
 export function resolveAgentImageModel(config: AgentImageToolConfig, requested: unknown): { channel: RuntimeChannel; alias: string; upstream: string } {
   const entries = config.channels.flatMap(channel => channel.models.map(model => ({ channel, alias: model.alias, upstream: model.id })))
   if (entries.length === 0) {
-    throw new ImageGenError('No image models are configured. Open Settings → Image settings and add a channel with at least one model.', 'no-models-configured')
+    throw new ImageGenError('No image models are configured. Open Settings → Image / Video and add a service with at least one image model.', 'no-models-configured')
   }
   const wanted = typeof requested === 'string' && requested.trim() !== ''
     ? requested.trim()

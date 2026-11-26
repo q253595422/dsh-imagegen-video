@@ -21,7 +21,10 @@ const results = []
 const check = createCheckHarness({ results })
 
 const humanoid = await import(join(ROOT, 'src/client/canvas/stage-humanoid.ts'))
-const { createHumanoidGeometry, loft, HUMANOID_JOINT_CAPS, HUMANOID_SPANS } = humanoid
+const {
+  createHumanoidGeometry, loft, HUMANOID_HINGES, HUMANOID_JOINT_CAPS,
+  HUMANOID_SLEEVES, HUMANOID_SPANS,
+} = humanoid
 const rig = await import(join(ROOT, 'src/client/canvas/pose-rig.ts'))
 const { JOINT_REST, solveRig } = rig
 
@@ -215,6 +218,55 @@ await check('H9 the loft closes both ends and faces outward', () => {
 await check('H10 every span names a geometry the palette provides', () => {
   for (const span of HUMANOID_SPANS) {
     assert.ok(geometry[span.geometry] !== undefined, `${span.key} wants a missing geometry ${span.geometry}`)
+  }
+  for (const sleeve of HUMANOID_SLEEVES) {
+    assert.ok(geometry[sleeve.geometry] !== undefined, `${sleeve.key} wants a missing geometry ${sleeve.geometry}`)
+  }
+})
+
+await check('H12 every hinge covers the pipe mouths it joins', () => {
+  // 髋用大腿根、肘用大臂端 + 小臂根、膝用大腿端 + 小腿根。铰链的半径必须
+  // 盖住这些管口，否则弯到极限时从两侧能看到空心管口。
+  const byKind = {
+    hip: [{ part: 'thigh', end: 'start' }],
+    elbow: [{ part: 'upperArm', end: 'end' }, { part: 'forearm', end: 'start' }],
+    knee: [{ part: 'thigh', end: 'end' }, { part: 'shin', end: 'start' }],
+  }
+  for (const hinge of HUMANOID_HINGES) {
+    const kind = hinge.joint.replace(/[LR]$/, '')
+    const parts = byKind[kind]
+    assert.ok(parts !== undefined, `${hinge.key}: no part mapping for kind ${kind}`)
+    for (const part of parts) {
+      const rings = profiles(geometry[part.part])
+      const mouth = part.end === 'start' ? rings[0].rx : rings.at(-1).rx
+      assert.ok(hinge.radius >= mouth * 0.98,
+        `${hinge.key} radius ${hinge.radius.toFixed(3)} is thinner than ${part.part} ${part.end} (${mouth.toFixed(3)})`)
+    }
+  }
+})
+
+await check('H13 the foot mesh and the sole solver share one profile', () => {
+  const rings = profiles(geometry.foot)
+  assert.equal(rings.length, rig.FOOT_PROFILE.length,
+    `foot has ${rings.length} rings, the sole solver has ${rig.FOOT_PROFILE.length}`)
+  rings.forEach((ring, index) => {
+    const source = rig.FOOT_PROFILE[index]
+    assert.ok(Math.abs(ring.t - source.t) < 1e-6, `foot ring ${index}: t drifted`)
+    assert.ok(Math.abs(ring.rx - source.rx) < 1e-6, `foot ring ${index}: rx drifted`)
+    // 环上的顶点按 14 等分取角度，+Z 轴不一定正好落在某个顶点上，所以
+    // `max |z|` 会比解析半径小约 0.2%；这不是剖面漂移，是采样误差。
+    assert.ok(Math.abs(ring.rz - source.rz) < 0.003, `foot ring ${index}: rz drifted`)
+  })
+})
+
+await check('H14 the sleeves taper toward the limb instead of ending in a cuff', () => {
+  for (const sleeve of HUMANOID_SLEEVES) {
+    const rings = profiles(geometry[sleeve.geometry])
+    const end = rings.at(-1)
+    const widest = Math.max(...rings.map(ring => ring.rx))
+    assert.ok(widest > end.rx + 0.002,
+      `${sleeve.key} does not taper toward the limb (widest ${widest.toFixed(3)} end ${end.rx.toFixed(3)})`)
+    assert.ok(end.rx >= 0.04, `${sleeve.key} ends too thin to meet the limb (${end.rx})`)
   }
 })
 

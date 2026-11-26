@@ -580,6 +580,19 @@ const CASES = [
     expect: /分镜要取被钉住的参考图/,
   },
   {
+    // 「从文档铺出来的板」唯一可靠的标记是 `storyboard.source`，而板底那个
+    // 「写回文档」按钮只在它存在时渲染。`storyboardOf` 是白名单式重建——
+    // 它逐字段抄进一个新对象——所以漏抄一次，存进去的 source 就读不出来，
+    // 按钮永远不出现，而且没有任何报错：用户看到的是「22 镜都铺好了，但没有
+    // 写回按钮」，无从下手。只有 P1b 能看见这一层，因为它断言的是读数。
+    name: 'a laid-out board loses the episode it came from',
+    runner: 'storyboard',
+    file: 'src/client/storyboard.ts',
+    from: "    ...stored.source === undefined ? {} : { source: stored.source },\n",
+    to: '',
+    expect: /must still know which episode it came from/,
+  },
+  {
     // Same defect, one layer out and much more dangerous: the reference nodes
     // are collected and then thrown away, so the request still says
     // `mode: reference` and carries no image. A static check cannot tell the
@@ -820,6 +833,135 @@ const CASES = [
     from: "    id: boardId ?? newId('node'),",
     to: "    id: newId('node'),",
     expect: /a re-layout reuses the same board and attachment ids/,
+  },
+  // ----------------------------------------------------------- drama-writeback
+  {
+    // 起始帧登记成 mp4：上游 `REF-` 只收 png/jpg/webp，它读不了视频，校验也
+    // 会拒。界面上看着「登记成功」，交出去的文件却进不了下游。
+    name: 'the next shot is registered against the clip instead of a still frame',
+    runner: 'drama-writeback',
+    file: 'src/client/drama-writeback.ts',
+    from: "      path: framePath,\n      name: label,",
+    to: "      path: `${outputDirectoryOf(source.projectPath, 'video')}/${outputFileOf({ shotId: shot.id, kind: 'video' })}`,\n      name: label,",
+    expect: /起始帧必须指向 png/,
+  },
+  {
+    // 不切段落、只看字段名：`## 整集汇总` 底下那句「输入参考图：…」会被当成
+    // 第一镜的字段改掉，而用户真正的分镜字段一个字没动。
+    name: 'the reference rewrite edits a field under another heading',
+    runner: 'drama-writeback',
+    file: 'src/client/drama-writeback.ts',
+    from: "    if (/^##[ \\t]/.test(row)) { current = undefined; continue }\n    if (current === undefined) continue",
+    to: "    if (current === undefined) continue",
+    expect: /不该改动别的段落里的行/,
+  },
+  {
+    // 写成 `路径 / 《名称》`：上游解析器按中点切字段，斜杠会让路径被读成名称
+    // 的一部分，绑定直接错位——而文档表面看着完全正常。
+    name: 'the reference line separates the path with a slash',
+    runner: 'drama-writeback',
+    file: 'src/client/drama-writeback.ts',
+    from: '    return `REF-${binding.slot}（顺序：${binding.order}）· ${binding.path}《${binding.name}》（${parts.join(\'；\')}）`',
+    to: '    return `REF-${binding.slot}（顺序：${binding.order}） / ${binding.path}《${binding.name}》（${parts.join(\'；\')}）`',
+    expect: /路径前必须是中点/,
+  },
+  {
+    // 缺 `- 输入参考图：` 行时替用户补一行：等于替她写文档，而且补在哪一节
+    // 全靠猜。必须报 missing 让界面说清楚。
+    name: 'a missing reference field is filled in instead of reported',
+    runner: 'drama-writeback',
+    file: 'src/client/drama-writeback.ts',
+    from: "    const field = fieldOf(row)\n    if (field === undefined || field.name !== '输入参考图') continue",
+    to: "    const field = fieldOf(row)\n    if (field === undefined || field.name !== '输入参考图') { seen.add(current); continue }",
+    expect: /没有这一行时报 missing/,
+  },
+  {
+    // 覆盖产出时不备份：用户重跑一次，上一次的成品就被顶掉了，没有回去的路。
+    name: 'overwriting an output drops the previous take without a backup',
+    runner: 'drama-writeback',
+    file: 'src/drama-write.ts',
+    from: "      backup = `${target}.bak-${stamp()}`\n      await rename(target, backup)",
+    to: '      backup = undefined',
+    expect: /覆盖前必须留备份/,
+  },
+  {
+    // 写产出时不校验「只在制作成果之下」：这个接口就成了「按任意相对路径
+    // 写工作区」——用户的代码仓库和笔记全在它的射程里。
+    name: 'an output can be written anywhere in the workspace',
+    runner: 'drama-writeback',
+    file: 'src/drama-write.ts',
+    from: "    return { ok: false, reason: 'outside-project', message: `只能写进 ${prefix}` }",
+    to: "    void prefix",
+    expect: /拒绝写到制作成果之外/,
+  },
+  {
+    // 不检查 `expected`：调用方读完之后 Agent 刚改了文档，回写拿一份基于旧
+    // 内容的改写把新内容覆盖掉，而且没有任何提示。
+    name: 'a document edited mid-writeback is overwritten anyway',
+    runner: 'drama-writeback',
+    file: 'src/drama-write.ts',
+    from: "  if (input.expected !== undefined && current !== input.expected) {",
+    to: "  if (false) {",
+    expect: /被别人改过就拒绝写/,
+  },
+  {
+    // 内容没变也写、也备份：用户点一次回写，目录里就多一份一模一样的 .bak。
+    // 这类垃圾会长到用户不敢再按那个按钮。
+    name: 'a no-op document write still leaves a backup',
+    runner: 'drama-writeback',
+    file: 'src/drama-write.ts',
+    from: "  if (current === input.text) {\n    return { ok: true, relativePath: relative, bytes: Buffer.byteLength(input.text, 'utf8'), backup: '', changed: false }\n  }",
+    to: '',
+    expect: /内容没变时不写、不备份/,
+  },
+  {
+    // 根目录先按字面拼、再拿 `realpath(root)` 比：真实工作区是符号链接时
+    // （macOS 的 /var → /private/var 就够），每个正常写入都被判成越界。
+    name: 'a symlinked workspace root rejects every legitimate write',
+    runner: 'drama-writeback',
+    file: 'src/drama-write.ts',
+    from: '  const absolute = path.resolve(realRoot, relative)',
+    to: '  const absolute = path.resolve(root, relative)',
+    expect: /字节原样/,
+  },
+  {
+    // 备份路径用字面 root 算相对路径：macOS 的 `/var` → `/private/var` 就能让
+    // 它算成 `../../../../..`，界面上一显示就像把文件写到了项目外面。
+    name: 'the backup path is reported relative to the wrong root',
+    runner: 'drama-writeback',
+    file: 'src/drama-write.ts',
+    from: '      backup: projectRelative(input.root, backup),',
+    to: '      backup: path.relative(input.root, backup),',
+    expect: /备份回显应为项目相对路径/,
+  },
+  {
+    // 一条失败就整批 return：22 镜里第 3 镜坏了，后面 19 镜一个都不落盘，
+    // 用户重跑一次又是同样的结果，唯一的出路是自己去数哪条是第 3 镜。
+    name: 'one failed file aborts the rest of the batch',
+    runner: 'drama-writeback',
+    file: 'src/client/drama-writeback-run.ts',
+    from: "    } catch (error) {\n      const failure = error as { code?: string, message?: string }\n      return {",
+    to: "    } catch (error) {\n      const failure = error as { code?: string, message?: string }\n      if (failure.code === 'drama-write-failed') throw error\n      return {",
+    expect: /一条坏不带走其余/,
+  },
+  {
+    // 先改文档、后落产出：中途失败时文档已经声明「起始帧是这张 png」，而磁盘上
+    // 还没有它。上游拿这份文档去校验就会报参考图不存在，用户却看到「回写成功
+    // 了一部分」。文档必须是最后一步。
+    //
+    // 注入方式：把片子的循环挪到文档之后。用例数的是 `api.documents[0]` 出现时
+    // 已经写了几个文件——文档在前时那个数字是 0。
+    name: 'the document is written before the files it points at',
+    runner: 'drama-writeback',
+    file: 'src/client/drama-writeback-run.ts',
+    from: '  // 2. 片子\n  for (const video of plan.media) {',
+    to: '  // 2. 片子（搬到最后）\n  const mediaLater = plan.media\n  for (const video of []) {',
+    also: [{
+      file: 'src/client/drama-writeback-run.ts',
+      from: "    frames.push({ relativePath: '分镜.md', ok: false, code: 'drama-write-failed', message: failure.message ?? String(error) })",
+      to: "    frames.push({ relativePath: '分镜.md', ok: false, code: 'drama-write-failed', message: failure.message ?? String(error) })\n  }\n  for (const video of mediaLater) {\n    const node = byId.get(video.nodeId)\n    if (node !== undefined) {\n      try { files.push(await writeOne(video.relativePath, await dataUrlOfNode(node, api), video.relativePath)) } catch (error) { files.push({ relativePath: video.relativePath, ok: false, message: String(error) }) }\n    }",
+    }],
+    expect: /先写产出，最后才动文档/,
   },
   {
     // Treating a self-loop as "no dependency" makes the run start a node that
@@ -3378,6 +3520,10 @@ const RUNNERS = {
   // 「读→解析→落节点」的接线层：它与上面几条纯函数套件不同——它要盯的是
   // 桩 API 与节点之间那一段（参考图是否真的被钉住、一张图坏了会不会整批停）。
   'drama-import': { script: 'scripts/smoke-drama-import.mjs', build: false },
+  // 「画布 → 文档回写」是 A 案的镜像：一半是纯函数（路径、参考图行），另一半
+  // 在临时目录里真写文件（越界、覆盖、备份、并发改动）。真磁盘是必需的：
+  // 这一层最有价值的几条断言只在真文件系统上成立，桩掉 fs 就成了在测假 fs。
+  'drama-writeback': { script: 'scripts/smoke-drama-writeback.mjs', build: false },
   // The workflow planner and run loop are imported straight from source, so
   // this group needs no build: it is pure functions plus a promise loop.
   workflow: { script: 'scripts/smoke-workflow.mjs', build: false },

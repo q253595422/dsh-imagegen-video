@@ -186,8 +186,9 @@ export function createHumanoidGeometry(): HumanoidGeometry {
     // 单独套了一条尿布）。
     pelvis: bone([
       { t: -0.58, rx: 0.012, rz: 0.010, oz: 0 },
-      { t: -0.48, rx: 0.052, rz: 0.043, oz: -0.003 },
-      { t: -0.36, rx: 0.084, rz: 0.068, oz: -0.007 },
+      { t: -0.52, rx: 0.040, rz: 0.035, oz: -0.001 },
+      { t: -0.44, rx: 0.075, rz: 0.060, oz: -0.004 },
+      { t: -0.34, rx: 0.095, rz: 0.076, oz: -0.008 },
       { t: -0.22, rx: 0.102, rz: 0.084, oz: -0.012 },
       { t: -0.10, rx: 0.110, rz: 0.094, oz: -0.016 },
       { t: 0.02, rx: 0.114, rz: 0.100, oz: -0.018 },
@@ -246,11 +247,12 @@ export function createHumanoidGeometry(): HumanoidGeometry {
       { t: 0.30, rx: 0.040, rz: 0.040 },
       { t: 1, rx: 0.030, rz: 0.030 },
     ], 16),
-    // 手：扁的（前后薄、左右窄、沿骨长稍长）。
+    // 手：掌部更宽、前后更薄，读成一只连指手套而不是一根圆头桩。
     hand: bone([
-      { t: 0, rx: 0.030, rz: 0.026 },
-      { t: 0.55, rx: 0.036, rz: 0.028 },
-      { t: 1, rx: 0.026, rz: 0.021 },
+      { t: 0, rx: 0.030, rz: 0.024 },
+      { t: 0.42, rx: 0.040, rz: 0.026 },
+      { t: 0.82, rx: 0.038, rz: 0.022 },
+      { t: 1, rx: 0.028, rz: 0.016 },
     ], 14),
     // 大腿：胯下最粗，往膝收。根部取 0.066 而不是更粗——胯点 ±0.082 加上
     // 这个半径，外缘 0.148，与骨盆外缘 0.116 只差一档；再粗就在胯侧鼓出
@@ -277,9 +279,13 @@ export function createHumanoidGeometry(): HumanoidGeometry {
     // 上口不能比骨盆还宽，否则会从胯侧鼓出一圈「短裤」边；下口必须
     // 收到大腿在该处的半径，否则会在腿中段留一道台阶。
     thighSleeve: bone([
-      { t: -0.18, rx: 0.060, rz: 0.068 },
-      { t: 0, rx: 0.068, rz: 0.076 },
-      { t: 0.35, rx: 0.066, rz: 0.072 },
+      // 顶端做成圆顶，而不是一个藏在骨盆里的平口圆盘：平口与骨盆相交时
+      // 两个面几乎平行，低模上会留下锯齿状的缝；圆顶与骨盆以更陡的角度
+      // 相交，缝变成一条干净的曲线。
+      { t: -0.10, rx: 0.012, rz: 0.014 },
+      { t: -0.04, rx: 0.045, rz: 0.052 },
+      { t: 0.04, rx: 0.062, rz: 0.070 },
+      { t: 0.35, rx: 0.064, rz: 0.070 },
       { t: 0.70, rx: 0.062, rz: 0.066 },
       { t: 1, rx: 0.059, rz: 0.062 },
     ], 18),
@@ -391,6 +397,11 @@ export interface HumanoidHinge {
   /** 铰链两侧的关节，用来求弯曲轴。 */
   parent: PoseJoint
   child: PoseJoint
+  /**
+   * 明确的铰链轴（局部坐标）。缺省按 `parent → joint → child` 的弯曲平面
+   * 求法线；髋关节需要固定成左右轴，因为它两侧的骨几乎共线，叉积会退化。
+   */
+  axis?: [number, number, number]
   radius: number
   length: number
 }
@@ -445,6 +456,8 @@ export const HUMANOID_SLEEVES: readonly HumanoidSleeve[] = [
  * 时会从铰链两侧看到孔洞。
  */
 export const HUMANOID_HINGES: readonly HumanoidHinge[] = [
+  { key: 'hipHingeL', joint: 'hipL', parent: 'hips', child: 'kneeL', axis: [1, 0, 0], radius: 0.070, length: 0.12 },
+  { key: 'hipHingeR', joint: 'hipR', parent: 'hips', child: 'kneeR', axis: [1, 0, 0], radius: 0.070, length: 0.12 },
   { key: 'elbowHingeL', joint: 'elbowL', parent: 'shoulderL', child: 'handL', radius: 0.046, length: 0.105 },
   { key: 'elbowHingeR', joint: 'elbowR', parent: 'shoulderR', child: 'handR', radius: 0.046, length: 0.105 },
   { key: 'kneeHingeL', joint: 'kneeL', parent: 'hipL', child: 'footL', radius: 0.053, length: 0.115 },
@@ -462,7 +475,6 @@ export const HUMANOID_HINGES: readonly HumanoidHinge[] = [
 export const HUMANOID_JOINT_CAPS: readonly { joint: PoseJoint, radius: number }[] = [
   { joint: 'shoulderL', radius: 0.056 }, { joint: 'shoulderR', radius: 0.056 },
   { joint: 'handL', radius: 0.032 }, { joint: 'handR', radius: 0.032 },
-  { joint: 'hipL', radius: 0.066 }, { joint: 'hipR', radius: 0.066 },
   { joint: 'footL', radius: 0.038 }, { joint: 'footR', radius: 0.038 },
 ]
 

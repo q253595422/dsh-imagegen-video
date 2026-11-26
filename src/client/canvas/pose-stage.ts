@@ -19,7 +19,7 @@
  */
 
 import type {
-  CanvasPoseActor, CanvasPoseCamera, CanvasPoseRig, CanvasPoseScene, CanvasPoseStage,
+  CanvasFigureBody, CanvasPoseActor, CanvasPoseCamera, CanvasPoseRig, CanvasPoseScene, CanvasPoseStage,
   CanvasStageProp, CanvasStagePropKind,
 } from '../../protocol.ts'
 import { timelineOf } from './stage-timeline.ts'
@@ -33,6 +33,8 @@ import { DEFAULT_CAMERA, emptyRig, solveRig, type PoseCamera } from './pose-rig.
 export const DEFAULT_SCENE: CanvasPoseScene = {
   sky: '#060608',
   ground: '#12141c',
+  figure: 'clay',
+  body: 'standard',
   translate: [0, 0, 0],
   rotateY: 0,
   scale: 100,
@@ -60,6 +62,11 @@ export function scaleFactor(scene: CanvasPoseScene): number {
   const percent = Number.isFinite(scene.scale) ? scene.scale : 100
   // 0 会让整个世界塌成一个点，负值会把角色翻到地面以下；两端都夹住。
   return Math.max(0.05, Math.min(20, percent / 100))
+}
+
+/** 缺项按标准底模读；只有显式 `procedural` 才走木偶。 */
+export function bodyOf(scene: CanvasPoseScene): CanvasFigureBody {
+  return scene.body === 'procedural' ? 'procedural' : 'standard'
 }
 
 /** 把一台机位换算成 `pose-rig` 认识的环绕相机，供取景与投影复用。
@@ -158,6 +165,30 @@ export interface PosePresetLike {
 }
 
 /**
+ * 某个角色当前姿势需要的坐箱。
+ *
+ * 箱顶取骨盆底缘（髋中心往下约 6cm），所以角色坐下时箱面刚好贴住臀部；
+ * 角色缩放时箱子一起缩放。位置、朝向跟着角色走——否则拖走角色会留下一块
+ * 没人在坐的箱子。
+ */
+export function seatPropFor(actor: CanvasPoseActor): CanvasStageProp {
+  const scale = actor.scale ?? 1
+  const height = Math.max(0.2, (solveRig(actor.rig).hips[1] - 0.06) * scale)
+  return {
+    id: `seat-${actor.id}`,
+    name: '坐箱',
+    kind: 'cube',
+    x: actor.x,
+    y: height / 2,
+    z: actor.z,
+    rotateY: actor.rotation ?? 0,
+    scaleX: 0.55 * scale,
+    scaleY: height,
+    scaleZ: 0.45 * scale,
+  }
+}
+
+/**
  * 把一条预设写到某个角色上，并维护它需要的支撑面。
  *
  * 坐姿不是「把腿弯起来」就成立的：`solveRig` 会把骨盆落在约 0.5m 的高度，
@@ -178,20 +209,7 @@ export function withPosePreset(
   const seatId = `seat-${actorId}`
   const props = stage.props ?? []
   if (preset.seat === true) {
-    const scale = actor.scale ?? 1
-    const height = Math.max(0.2, (solveRig(preset.rig).hips[1] - 0.06) * scale)
-    const seat: CanvasStageProp = {
-      id: seatId,
-      name: '坐箱',
-      kind: 'cube',
-      x: actor.x,
-      y: height / 2,
-      z: actor.z,
-      rotateY: actor.rotation ?? 0,
-      scaleX: 0.55 * scale,
-      scaleY: height,
-      scaleZ: 0.45 * scale,
-    }
+    const seat = seatPropFor({ ...actor, rig: preset.rig })
     const existing = props.some(prop => prop.id === seatId)
     return {
       ...stage,
@@ -269,6 +287,14 @@ function sceneOf(raw: Partial<CanvasPoseScene> | undefined): CanvasPoseScene {
   return {
     sky: typeof raw?.sky === 'string' && raw.sky !== '' ? raw.sky : DEFAULT_SCENE.sky,
     ...raw?.ground === undefined ? { ground: DEFAULT_SCENE.ground } : { ground: raw.ground },
+    // 缺项不补：老文档没有这个字段时保持「没有」，存回去才不会被我们
+    // 单方面加一条 `figure: 'clay'`。渲染端把缺项当灰白膜。
+    ...(raw?.figure === 'clay' || raw?.figure === 'wood'
+      ? { figure: raw.figure }
+      : {}),
+    ...(raw?.body === 'standard' || raw?.body === 'procedural'
+      ? { body: raw.body }
+      : {}),
     translate: Array.isArray(translate) && translate.length === 3 && translate.every(item => Number.isFinite(item))
       ? [translate[0]!, translate[1]!, translate[2]!]
       : [0, 0, 0],

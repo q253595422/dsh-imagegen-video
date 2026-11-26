@@ -12,7 +12,7 @@ import {
   GitBranch, Keyboard, Layers, Magnet, Map as MapIcon, Maximize, Maximize2, MousePointer2, Palette, Pencil, Plus, Redo2, Scissors, SendHorizonal, Share2, Sparkles, Star,
   Shrink, SquareDashedMousePointer, Trash2, Type, Undo2, Upload, Video, Wand2, Wallpaper,
 } from 'lucide-react'
-import type { CanvasAnnotation, CanvasAssetRef, CanvasConnection, CanvasPromptSetItem, CanvasConnectionRole, CanvasDocument, CanvasProposal, CanvasFileKind, CanvasLayerInfo, CanvasLayerPlanItem, CanvasNode, CanvasRect, CanvasStoryboard, CanvasVideoRef, CanvasSkillConfigApplyResult, CanvasSkillConfigField, CanvasSkillConfigSaveResult, CanvasSkillConfigStep, CanvasSkillConfigView, CanvasSkillDescriptor, CanvasSkillLibrary, CanvasSkillOutput, CanvasSkillRunRequest, CanvasSkillTask, CanvasSketchStroke, CanvasPoseStage, CanvasPoseRig, GenerateRequest, GenerationTask, HistoryEntry, VideoGenerateRequest, VideoHistoryEntry, VideoTaskSummary, VideoMode, VideoResolution } from '../protocol.ts'
+import type { CanvasAnnotation, CanvasAssetRef, CanvasConnection, CanvasPromptSetItem, CanvasConnectionRole, CanvasDocument, CanvasProposal, CanvasFileKind, CanvasLayerInfo, CanvasLayerPlanItem, CanvasNode, CanvasRect, CanvasStoryboard, CanvasStoryboardSource, CanvasVideoRef, CanvasSkillConfigApplyResult, CanvasSkillConfigField, CanvasSkillConfigSaveResult, CanvasSkillConfigStep, CanvasSkillConfigView, CanvasSkillDescriptor, CanvasSkillLibrary, CanvasSkillOutput, CanvasSkillRunRequest, CanvasSkillTask, CanvasSketchStroke, CanvasPoseStage, CanvasPoseRig, GenerateRequest, GenerationTask, HistoryEntry, VideoGenerateRequest, VideoHistoryEntry, VideoTaskSummary, VideoMode, VideoResolution } from '../protocol.ts'
 import type { CanvasBundleUnresolved } from '../canvas-bundle.ts'
 import { describeVideoModel, durationsOf, VIDEO_RESOLUTIONS } from '../video-model-catalog.ts'
 // The stitch order is a SHARED rule: the host builds its ffmpeg concat list with
@@ -29,6 +29,9 @@ import { layoutSummary } from './storyboard-layout.ts'
 import { placeDrama, readDrama } from './drama-import.ts'
 import { existingDramaBoardOf } from './drama-reuse.ts'
 import { mergeDramaPlacement } from './drama-merge.ts'
+import { planDramaWriteback, type DramaWritePlan } from './drama-writeback.ts'
+import { writebackDrama } from './drama-writeback-run.ts'
+import { grabFrame } from './frame-grab.ts'
 import { ImageGenApiError, type ImageGenApi } from './api.ts'
 import { errorMessage, tt } from './helpers.ts'
 import { mergeCanvasDocuments, type MergeConflict, type MergeSummary } from './canvas/canvas-merge.ts'
@@ -97,6 +100,7 @@ import { POSE_PRESETS } from './canvas/pose-rig.ts'
 import { emptyStage, stagePatch, stageOf } from './canvas/pose-stage.ts'
 import { CapabilityCatalog } from './canvas/capability-catalog.tsx'
 import { DramaDirectoryPicker } from './canvas/drama-picker.tsx'
+import { DramaWritebackDialog } from './canvas/drama-writeback-dialog.tsx'
 import { CAPABILITIES, type CapabilityContext, type CapabilityId } from './canvas/capability-catalog.ts'
 
 type CanvasTool = 'select' | 'pan'
@@ -2663,6 +2667,115 @@ export function CanvasWorkspace(props: CanvasWorkspaceProps): React.JSX.Element 
     }
   }, [api, dramaBusy, canvasCenter, newId, mutate, document])
 
+  // ------------------------------------------------- 画布 → 文档回写（B 案）
+
+  /**
+   * 回写卡片开着的这一集，以及它算出来的计划。
+   *
+   * 计划在**打开卡片时**算一次、之后不再重算：卡片里那两个勾选会改变
+   * `useAsNextFrame`，而计划必须按当前勾选重算——所以 `openWriteback` 只
+   * 记住源头，勾选变化时由 `confirm` 用最新勾选重算一遍再执行。
+   */
+  const [writeback, setWriteback] = useState<{
+    board: CanvasNode
+    source: CanvasStoryboardSource
+    /** 打开时读到的《分镜.md》原文，用来算 diff 与做乐观锁。 */
+    storyboardText: string
+    plan: DramaWritePlan
+    progress?: { done: number; total: number, label: string }
+  } | null>(null)
+
+  /**
+   * 打开回写卡片：重新读一次文档，算出「这次会写什么」。
+   *
+   * 为什么重新读而不是复用铺板时读到的：用户从铺板到跑完片子之间可能改了
+   * 分镜（加镜、删镜、改参考图）。拿旧文本去算 diff，改写会作用在一份已经
+   * 不存在的文档上——宿主的 `expected` 会拒绝写，用户只看到「回写失败」。
+   */
+  const openWriteback = useCallback(async (node: CanvasNode): Promise<void> => {
+    const current = documentRef.current
+    const state = storyboardOf(node)
+    const source = state.source
+    if (current === null || source === undefined) return
+    setDramaBusy(true)
+    setError(null)
+    try {
+      const imported = await readDrama(api, { root: source.root, projectPath: source.projectPath })
+      const storyboardText = imported.project.documents.find(document => document.key === 'storyboard')?.text ?? ''
+      if (storyboardText === '') { setError(tt('canvas.drama.writebackNoDocument')); return }
+      // 板的镜号与文档对得上才有得写；对不上（用户在画布上手工加了一镜）
+      // 不算错，那些镜只是没有落点，计划里自然不会有它们。
+      const plan = planDramaWriteback({
+        source: imported.plan.source ?? source,
+        boardId: node.id,
+        board: { shots: state.shots, continuity: state.continuity },
+        nodes: current.nodes,
+        useAsNextFrame: false,
+      })
+      setWriteback({ board: node, source: imported.plan.source ?? source, storyboardText, plan })
+    } catch (caught) {
+      setError(errorMessage(caught))
+    } finally {
+      setDramaBusy(false)
+    }
+  }, [api])
+
+  /**
+   * 按卡片里的勾选真正写一次。
+   *
+   * 报告按「成了几条 / 已经有了几条 / 哪几条坏了」分开说。只报一句「完成」
+   * 会把「22 镜里有 3 镜已经存在所以没覆盖」藏起来，用户下次还会以为是自己
+   * 记错了。
+   */
+  const confirmWriteback = useCallback(async (options: { useAsNextFrame: boolean, overwrite: boolean }): Promise<void> => {
+    if (writeback === null) return
+    const current = documentRef.current
+    if (current === null) return
+    const state = storyboardOf(writeback.board)
+    const plan = planDramaWriteback({
+      source: writeback.source,
+      boardId: writeback.board.id,
+      board: { shots: state.shots, continuity: state.continuity },
+      nodes: current.nodes,
+      useAsNextFrame: options.useAsNextFrame,
+    })
+    setWriteback({ ...writeback, plan })
+    setDramaBusy(true)
+    setError(null)
+    try {
+      const report = await writebackDrama({
+        api,
+        plan,
+        nodes: current.nodes,
+        storyboardText: writeback.storyboardText,
+        overwrite: options.overwrite,
+        onProgress: (done, total, label) => setWriteback(previous => previous === null ? previous : { ...previous, progress: { done, total, label } }),
+      })
+      const written = report.files.filter(file => file.ok).length + report.frames.filter(file => file.ok).length
+      const existed = [...report.files, ...report.frames].filter(file => file.code === 'drama-write-exists').length
+      const failed = [...report.files, ...report.frames].filter(file => !file.ok && file.code !== 'drama-write-exists')
+      const extra: string[] = []
+      if (existed > 0) extra.push(tt('canvas.drama.writebackReportExists', { count: existed }))
+      if (report.missingField.length > 0) extra.push(tt('canvas.drama.writebackReportMissing', { count: report.missingField.length }))
+      if (report.skipped.length > 0) extra.push(tt('canvas.drama.writebackReportSkipped', { count: report.skipped.length }))
+      if (failed.length > 0) {
+        // 失败要说出第一条是什么：只报数量的话用户得自己去翻目录才知道哪里坏了。
+        setError(tt('canvas.drama.writebackReportFailed', { count: failed.length, first: failed[0]!.message ?? failed[0]!.relativePath }))
+      }
+      setNotice(tt('canvas.drama.writebackReportOk', { count: written }) + (extra.length > 0 ? ` ${extra.join(' ')}` : ''))
+      setWriteback(null)
+    } catch (caught) {
+      setError(errorMessage(caught))
+    } finally {
+      setDramaBusy(false)
+    }
+  }, [api, writeback])
+
+  /** 卡片与节点的入口：`StoryboardBody` 只发「哪块板」，读文档在这里。 */
+  const openStoryboardWriteback = useCallback((node: CanvasNode): void => {
+    void openWriteback(node)
+  }, [openWriteback])
+
   /**
    * 底栏实底 `+` 的菜单分发。
    *
@@ -4137,34 +4250,15 @@ export function CanvasWorkspace(props: CanvasWorkspaceProps): React.JSX.Element 
    * @param at - 'first' for the opening frame, 'last' for the closing one.
    */
   const frameFromClip = useCallback(async (url: string, at: 'first' | 'last'): Promise<string> => {
-    const video = globalThis.document.createElement('video')
-    video.src = url
-    video.muted = true
-    video.preload = 'auto'
-    await new Promise<void>((resolve, reject) => {
-      const fail = (): void => { reject(new Error(tt('canvas.videoGrabFailed'))) }
-      video.addEventListener('loadeddata', () => { resolve() }, { once: true })
-      video.addEventListener('error', fail, { once: true })
-      window.setTimeout(fail, 15_000)
+    // 算法在 `frame-grab.ts`，与文档回写抽帧共用；文案留在这里，因为失败
+    // 在用户眼里属于「这一镜没拍出来」。
+    return await grabFrame({
+      url,
+      at,
+      failure: tt('canvas.videoGrabFailed'),
+      // 原来超时与失败报的是同一句，这里保持不变。
+      timeoutFailure: tt('canvas.videoGrabFailed'),
     })
-    const duration = Number.isFinite(video.duration) && video.duration > 0 ? video.duration : 0
-    const target = at === 'last' && duration > 0 ? Math.max(0, duration - 0.06) : 0
-    if (target > 0) {
-      await new Promise<void>((resolve) => {
-        video.addEventListener('seeked', () => { resolve() }, { once: true })
-        video.currentTime = target
-      })
-    }
-    const width = video.videoWidth
-    const height = video.videoHeight
-    if (width === 0 || height === 0) throw new Error(tt('canvas.videoGrabFailed'))
-    const bitmap = globalThis.document.createElement('canvas')
-    bitmap.width = width
-    bitmap.height = height
-    const context = bitmap.getContext('2d')
-    if (context === null) throw new Error(tt('canvas.videoGrabFailed'))
-    context.drawImage(video, 0, 0, width, height)
-    return bitmap.toDataURL('image/png')
   }, [])
 
   /**
@@ -4262,7 +4356,17 @@ export function CanvasWorkspace(props: CanvasWorkspaceProps): React.JSX.Element 
     const problem = shotProblem(shot)
     if (problem !== undefined) { setError(tt(problem)); return false }
     const groups = videoGroups ?? []
-    const choice = resolveModelChoice(groups, { channelId: state.channelId, model: state.model }, defaultChannelId)
+    // 板自己选了模型就用板的；没选则用生成器当前的视频选择。分镜板上的
+    // 模型选择器与「这一镜会用哪个模型」的时长/分辨率收窄都读这一份解析，
+    // 提交必须走同一个入口——否则板上显示 A、请求里发 B，用户只能从失败
+    // 的 400 里发现。
+    const choice = resolveModelChoice(
+      groups,
+      (state.model ?? '').trim() !== ''
+        ? { channelId: state.channelId, model: state.model }
+        : { channelId: composerVideoChannelId, model: composerVideoModel },
+      defaultChannelId,
+    )
     if (choice.model === '') { setError(tt('canvas.videoNoModel')); onOpenSettings?.(); return false }
     if (!(choice.channelId === '' || channelIsConnected(choice.channelId))) { setError(tt('canvas.needApi')); onOpenSettings?.(); return false }
 
@@ -4401,7 +4505,7 @@ export function CanvasWorkspace(props: CanvasWorkspaceProps): React.JSX.Element 
       setError(errorMessage(caught))
       return false
     }
-  }, [api, castPromptOf, castRefsFor, channelIsConnected, clearBrokenVideo, defaultChannelId, frameFromClip, mutate, onOpenSettings, shotPlacement, videoGroups])
+  }, [api, castPromptOf, castRefsFor, channelIsConnected, clearBrokenVideo, composerVideoChannelId, composerVideoModel, defaultChannelId, frameFromClip, mutate, onOpenSettings, shotPlacement, videoGroups])
 
   /**
    * Run the board's next shot, or — in `cut` continuity — every shot that has
@@ -5593,6 +5697,9 @@ export function CanvasWorkspace(props: CanvasWorkspaceProps): React.JSX.Element 
       if (documentRef.current === null) return
       const mod = event.ctrlKey || event.metaKey
       if (event.key === 'Escape') {
+        // 原生 Modal 已经用 preventDefault 认领了 Esc；这里不能继续把
+        // 画布选区也清掉，否则弹窗关掉时背景会跟着闪一下状态。
+        if (event.defaultPrevented) return
         setContextMenu(null); setCreateMenu(null); setNodeAddMenu(null); setZoomMenuOpen(false)
         setColorPickerNodeId(null)
         // 找节点在最上面：与目录同一层，谁开着谁先收。
@@ -6739,6 +6846,7 @@ export function CanvasWorkspace(props: CanvasWorkspaceProps): React.JSX.Element 
     colorPickerNodeId, brokenVideoIds, polishBusy,
     api, modelGroups, videoGroups, defaultChannelId,
     effectiveVideoModel: composerVideoModel,
+    effectiveVideoChannelId: composerVideoChannelId,
     fileUploadRef, imageFileRef, connectRef,
     IconButton, ToolbarIcon, ModelPicker, SketchBoard, PoseBoard, StoryboardBody, CanvasFileBody,
     labelWithKeys,
@@ -6753,7 +6861,7 @@ export function CanvasWorkspace(props: CanvasWorkspaceProps): React.JSX.Element 
     // `composerVideoModel` 是分镜板收窄时长/分辨率所依据的「这一镜会用哪个模型」。
     // 漏掉它，切换模型后分镜板仍按旧模型给出选项——用户选了一个新模型，面板却
     // 还在列它不接受的值。
-    api, modelGroups, videoGroups, defaultChannelId, composerVideoModel, channelIsConnected, composerPrompt, composerPromptSet, runMarks])
+    api, modelGroups, videoGroups, defaultChannelId, composerVideoModel, composerVideoChannelId, channelIsConnected, composerPrompt, composerPromptSet, runMarks])
 
   const nodeBodyActions: NodeBodyActions = useMemo(() => ({
     patchNode, deleteNode, duplicateNode, downloadNode, downloadFileNode, downloadVideoNode,
@@ -6783,7 +6891,7 @@ export function CanvasWorkspace(props: CanvasWorkspaceProps): React.JSX.Element 
     handleConnectStart, handleResizeStart, beginAnnotationDrag, moveAnnotationDrag, endAnnotationDrag,
     toggleAnnotate, removeNodeBackground, splitLayers, retryGeneration, retryVideoGeneration,
     grabVideoFrame, continueFromClip, favoriteVideoNode, runStoryboard, submitShot,
-    startStoryboardStitch, clearBrokenVideo, patchSketchStrokes, patchSketchAsset, patchStageRig,
+    startStoryboardStitch, openStoryboardWriteback, clearBrokenVideo, patchSketchStrokes, patchSketchAsset, patchStageRig,
     openStage: (nodeId: string) => { setStageNodeId(nodeId) },
     reportError: (message: string) => { setError(message) },
     setColorPickerNodeId, setVideoPreviewNodeId, setFilePreviewNodeId, setFileTargetNodeId,
@@ -6793,7 +6901,7 @@ export function CanvasWorkspace(props: CanvasWorkspaceProps): React.JSX.Element 
     handleConnectStart, handleResizeStart, beginAnnotationDrag, moveAnnotationDrag, endAnnotationDrag,
     toggleAnnotate, removeNodeBackground, splitLayers, retryGeneration, retryVideoGeneration,
     grabVideoFrame, continueFromClip, favoriteVideoNode, runStoryboard, submitShot,
-    startStoryboardStitch, clearBrokenVideo, patchSketchStrokes, patchSketchAsset, patchStageRig, mutate])
+    startStoryboardStitch, openStoryboardWriteback, clearBrokenVideo, patchSketchStrokes, patchSketchAsset, patchStageRig, mutate])
 
   const renderNodeBody = (node: CanvasNode): React.JSX.Element =>
     <NodeBody node={node} S={nodeBodyState} A={nodeBodyActions} />
@@ -8233,6 +8341,13 @@ export function CanvasWorkspace(props: CanvasWorkspaceProps): React.JSX.Element 
       busy={dramaBusy}
       onConfirm={root => { void layoutFromDrama(root) }}
       onClose={() => { setDramaPicker(null); setError(null) }}
+    /> : null}
+    {writeback !== null ? <DramaWritebackDialog
+      plan={writeback.plan}
+      busy={dramaBusy}
+      progress={writeback.progress}
+      onConfirm={options => { void confirmWriteback(options) }}
+      onClose={() => { setWriteback(null); setError(null) }}
     /> : null}
   </section>
 }

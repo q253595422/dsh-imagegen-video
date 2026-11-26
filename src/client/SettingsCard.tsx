@@ -1,10 +1,10 @@
 /**
- * The dsh-imagegen settings card: channel management (list rows with status
- * dots, an editor dialog with the model-catalog alias → upstream mapping, and
- * built-in provider presets), plus the prompt-enhancement model and the plugin
- * switches. Registers as the Image settings page in the Settings dialog's
- * left navigation, independent of the dsh-web-ui family group, and binds to
- * the plugin's own bridge settings scope.
+ * The dsh-imagegen settings card. The first screen is a three-step newcomer
+ * path: connect a model service, choose the image and video catalogs
+ * separately, then save. Professional options stay in the advanced block.
+ * The service editor keeps the model-catalog alias → upstream mapping and
+ * built-in provider presets; image and video catalogs get their own tabs so a
+ * provider can expose one, the other, or both.
  *
  * The interaction mirrors the host's model-provider page: one row per channel
  * (status dot + edit/delete), two add buttons (built-in provider / custom),
@@ -227,6 +227,9 @@ interface UsageCounters {
 
 type SettingsSectionId = 'channels' | 'prompt' | 'storage' | 'skills' | 'ppt' | 'general' | null
 
+/** The two independent model catalogs a service can expose. */
+type ModelCatalogTab = 'image' | 'video'
+
 /** One mutually-exclusive settings group. */
 function SettingsSection(props: {
   id: Exclude<SettingsSectionId, null>
@@ -260,6 +263,71 @@ function SettingsSection(props: {
   )
 }
 
+/** Small, text-free mode mark so the two capabilities read differently at a glance. */
+function ModeMark(props: { mode: ModelCatalogTab }) {
+  return (
+    <span className={css.modeMark} data-mode={props.mode} aria-hidden="true">
+      <svg viewBox="0 0 20 20" width="14" height="14" fill="none" stroke="currentColor" strokeWidth="1.5">
+        {props.mode === 'image'
+          ? <><rect x="2.75" y="3.25" width="14.5" height="13.5" rx="2.25" /><circle cx="7.25" cy="7.5" r="1.35" /><path d="m4.25 14 3.8-3.55 2.65 2.4 2.05-1.85 3 3" /></>
+          : <><rect x="2.25" y="4.25" width="12.75" height="11.5" rx="2.25" /><path d="m15 8 3.25-1.85v7.7L15 12" /></>}
+      </svg>
+    </span>
+  )
+}
+
+/** One capability card inside the beginner setup path. */
+function ModeSetupCard(props: {
+  mode: ModelCatalogTab
+  title: string
+  hint: string
+  status: string
+  ready: boolean
+  groups: Array<{ id: string; name: string; models: string[] }>
+  value: string
+  defaultLabel: string
+  emptyLabel: string
+  configureLabel: string
+  disabled: boolean
+  onChange: (value: string) => void
+  onConfigure: () => void
+}) {
+  return (
+    <div className={css.modeCard} data-mode={props.mode} data-ready={props.ready ? '' : undefined}>
+      <div className={css.modeCardHead}>
+        <ModeMark mode={props.mode} />
+        <span className={css.modeCardTitle}>{props.title}</span>
+        <span className={css.modeStatus} data-ready={props.ready ? '' : undefined}>{props.status}</span>
+      </div>
+      <p className={css.modeHint}>{props.hint}</p>
+      {props.groups.length > 0
+        ? (
+          <label className={css.modeSelectRow}>
+            <span>{props.defaultLabel}</span>
+            <Select
+              className={css.modeSelect}
+              value={props.value}
+              disabled={props.disabled}
+              searchable
+              title={props.value}
+              aria-label={props.defaultLabel}
+              onChange={props.onChange}
+            >
+              {props.groups.map(group => <optgroup key={group.id} label={group.name}>
+                {group.models.map(model => <option key={`${group.id}:${model}`} value={model}>{model}</option>)}
+              </optgroup>)}
+            </Select>
+          </label>
+        )
+        : <p className={css.modeEmpty}>{props.emptyLabel}</p>}
+      <button type="button" className={css.modeConfigure} disabled={props.disabled} onClick={props.onConfigure}>
+        {props.configureLabel}
+        <span aria-hidden="true">→</span>
+      </button>
+    </div>
+  )
+}
+
 /**
  * Render the card.
  * @param props - locale copy, the card snapshot, and the form actions.
@@ -272,13 +340,23 @@ export function ImageGenSettingsSection(props: ImageGenSettingsSectionProps) {
   const t = tt
   useImageGenLanguageTick()
   const state = props.useImageGenSettingsCard(snapshot => snapshot)
+  const [initialSection] = useState(() => takeImageGenConfigSection())
   const [open, setOpen] = useState(true)
-  const [activeSection, setActiveSection] = useState<SettingsSectionId>(() => takeImageGenConfigSection() ?? 'channels')
+  const [activeSection, setActiveSection] = useState<SettingsSectionId>(() => initialSection ?? 'channels')
+  /** Professional options stay out of the first-run path until asked for. */
+  const [advancedOpen, setAdvancedOpen] = useState(initialSection !== undefined && initialSection !== 'channels')
+  /** Which catalog the service editor opens on. */
+  const [editorTab, setEditorTab] = useState<ModelCatalogTab>('image')
+  /** Capability filter for the provider picker launched from either mode card. */
+  const [presetPickerMode, setPresetPickerMode] = useState<ModelCatalogTab | 'all'>('all')
   // "Set up PPT" elsewhere in the panel jumps straight to this section.
   useEffect(() => {
     const open = (): void => {
       const section = takeImageGenConfigSection()
-      if (section !== undefined) setActiveSection(section)
+      if (section !== undefined) {
+        setActiveSection(section)
+        setAdvancedOpen(section !== 'channels')
+      }
     }
     window.addEventListener(OPEN_IMAGE_GEN_CONFIG_EVENT, open)
     return () => { window.removeEventListener(OPEN_IMAGE_GEN_CONFIG_EVENT, open) }
@@ -503,7 +581,7 @@ export function ImageGenSettingsSection(props: ImageGenSettingsSectionProps) {
     }
   }
 
-  const saveAll = async (): Promise<void> => {
+  const saveAll = async (): Promise<boolean> => {
     const blocking = Object.entries(state.channels.issues).find(([, list]) => list.length > 0)
     if (blocking !== undefined) {
       const [channelId, list] = blocking
@@ -520,14 +598,16 @@ export function ImageGenSettingsSection(props: ImageGenSettingsSectionProps) {
         field.scrollIntoView?.({ block: 'center' })
         field.focus?.()
       }
-      return
+      return false
     }
     setSaveNote(null)
     const [channels, card] = await Promise.all([props.channels.commit(), props.save()])
     const failure = channels.ok ? card : channels
-    setSaveNote(failure.ok
+    const ok = failure.ok
+    setSaveNote(ok
       ? { ok: true, text: t('settings.saved') }
       : { ok: false, text: t('settings.saveFailedReason', { error: failure.message ?? t('settings.saveFailed') }) })
+    return ok
   }
   const disabled = !state.writable
   const fieldProps = {
@@ -574,10 +654,29 @@ export function ImageGenSettingsSection(props: ImageGenSettingsSectionProps) {
   const modelGroups = channels
     .map(channel => ({ id: channel.id, name: channel.name.trim() || channel.id, models: [...new Set(channel.models.map(model => model.alias).filter(alias => alias !== ''))] }))
     .filter(group => group.models.length > 0)
+  const videoModelGroups = channels
+    .map(channel => ({ id: channel.id, name: channel.name.trim() || channel.id, models: [...new Set((channel.videoModels ?? []).map(model => model.alias).filter(alias => alias !== ''))] }))
+    .filter(group => group.models.length > 0)
   const modelAliases = [...new Set(modelGroups.flatMap(group => group.models))]
+  const videoModelAliases = [...new Set(videoModelGroups.flatMap(group => group.models))]
   const editing = editingId === null ? undefined : channels.find(channel => channel.id === editingId)
-  const readyChannels = channels.filter(channel => state.channels.keySet[channel.id] === true && channelModelCount(channel) > 0).length
-  const totalModels = channels.reduce((total, channel) => total + channel.models.length, 0)
+  const channelAuthReady = (channel: ChannelDraft): boolean => {
+    const provider = isSubscriptionProvider(channel.subscription) ? channel.subscription : undefined
+    return provider === undefined
+      ? state.channels.keySet[channel.id] === true
+      : subscriptionStatus[provider].state === 'logged-in'
+  }
+  const connectedChannels = channels.filter(channelAuthReady).length
+  const imageReadyChannels = channels.filter(channel => channelAuthReady(channel) && channel.models.length > 0)
+  const videoReadyChannels = channels.filter(channel => channelAuthReady(channel) && (channel.videoModels ?? []).length > 0)
+  const readyImageModels = [...new Set(imageReadyChannels.flatMap(channel => channel.models.map(model => model.alias).filter(alias => alias !== '')))].length
+  const readyVideoModels = [...new Set(videoReadyChannels.flatMap(channel => (channel.videoModels ?? []).map(model => model.alias).filter(alias => alias !== '')))].length
+  const imageReady = imageReadyChannels.length > 0
+  const videoReady = videoReadyChannels.length > 0
+  const imageConfigured = modelGroups.length > 0
+  const videoConfigured = videoModelGroups.length > 0
+  const overallReady = imageReady || videoReady
+  const readyChannels = channels.filter(channel => channelAuthReady(channel) && channelModelCount(channel) > 0).length
   const channelSummary = channels.length === 0
     ? t('settings.summaryNotConfigured')
     : t('settings.summaryChannels', { ready: readyChannels, total: channels.length })
@@ -585,18 +684,59 @@ export function ImageGenSettingsSection(props: ImageGenSettingsSectionProps) {
   const storageSummary = state.storageEnabled.text === 'true' ? t('settings.summaryEnabled') : t('settings.summaryDisabled')
   const skillsSummary = state.skillsEnabled.text === 'false' ? t('settings.summaryDisabled') : t('settings.summaryEnabled')
   const generalSummary = state.enabled.text === 'false' ? t('settings.summaryDisabled') : t('settings.summaryEnabled')
-  const overallReady = readyChannels > 0
   const headerDescription = channels.length === 0
     ? t('settings.headerNeedsChannel')
-    : t('settings.headerSummary', { channels: channels.length, models: totalModels })
-  const summaryItems: Array<{ id: Exclude<SettingsSectionId, null>; label: string; value: string; tone?: 'neutral' | 'ready' | 'attention' }> = [
-    { id: 'channels', label: t('settings.summaryChannelsLabel'), value: channelSummary, tone: readyChannels > 0 ? 'ready' : 'attention' },
-    { id: 'prompt', label: t('settings.summaryPromptLabel'), value: promptSummary },
-    { id: 'storage', label: t('settings.summaryStorageLabel'), value: storageSummary, tone: state.storageEnabled.text === 'true' ? 'ready' : 'neutral' },
-    { id: 'ppt', label: t('ppt.nav'), value: 'PPTX' },
-    { id: 'skills', label: t('settings.summarySkillsLabel'), value: skillsSummary, tone: state.skillsEnabled.text === 'false' ? 'neutral' : 'ready' },
-    { id: 'general', label: t('settings.summaryGeneralLabel'), value: generalSummary, tone: state.enabled.text === 'false' ? 'attention' : 'ready' },
-  ]
+    : t('settings.headerSummary', { channels: channels.length, image: new Set(modelAliases).size, video: new Set(videoModelAliases).size })
+  const pluginEnabled = state.enabled.text !== 'false'
+  const readinessLabel = !pluginEnabled
+    ? t('settings.pluginOff')
+    : imageReady && videoReady
+      ? t('settings.readyBoth')
+      : imageReady
+        ? t('settings.readyImage')
+        : videoReady
+          ? t('settings.readyVideo')
+          : t('settings.summaryNeedsSetup')
+  const imageStatus = imageReady
+    ? t('settings.modeReady', { n: readyImageModels })
+    : imageConfigured
+      ? t('settings.modeNeedsKey')
+      : t('settings.imageModeMissing')
+  const videoStatus = videoReady
+    ? t('settings.modeReady', { n: readyVideoModels })
+    : videoConfigured
+      ? t('settings.modeNeedsKey')
+      : t('settings.videoModeMissing')
+  const firstImageChannel = channels.find(channel => channelAuthReady(channel) && channel.models.length > 0)
+    ?? channels.find(channel => channel.models.length > 0)
+  const firstVideoChannel = channels.find(channel => channelAuthReady(channel) && (channel.videoModels ?? []).length > 0)
+    ?? channels.find(channel => (channel.videoModels ?? []).length > 0)
+  const openChannelEditor = (id: string, tab: ModelCatalogTab): void => {
+    setEditorTab(tab)
+    setEditingId(id)
+  }
+  const openModelPicker = (mode: ModelCatalogTab | 'all'): void => {
+    setPresetPickerMode(mode)
+    setPresetError(null)
+    setPresetPickerOpen(true)
+  }
+  const configureMode = (mode: ModelCatalogTab): void => {
+    if (mode === 'image' && firstImageChannel !== undefined) {
+      setActiveSection('channels')
+      openChannelEditor(firstImageChannel.id, 'image')
+      return
+    }
+    if (mode === 'video' && firstVideoChannel !== undefined) {
+      setActiveSection('channels')
+      openChannelEditor(firstVideoChannel.id, 'video')
+      return
+    }
+    openModelPicker(mode)
+  }
+  const configureServices = (): void => {
+    setActiveSection('channels')
+    if (channels.length === 0) openModelPicker('all')
+  }
 
   return (
     <section
@@ -647,31 +787,100 @@ export function ImageGenSettingsSection(props: ImageGenSettingsSectionProps) {
           <div className={css.body}>
             {!state.writable ? <p className={css.readOnly} role="status">{t('settings.readOnly')}</p> : null}
 
-            <section className={css.overview}>
-              <div className={css.overviewHead}>
-                <div>
-                  <h3 className={css.overviewTitle}>{t('settings.summaryTitle')}</h3>
-                  <p className={css.overviewHint}>{t('settings.summaryHint')}</p>
+            <section className={css.quickSetup} aria-labelledby="dsh-imagegen-quick-start-title">
+              <header className={css.quickHead}>
+                <div className={css.quickHeadText}>
+                  <span className={css.quickEyebrow}>{t('settings.quickStart')}</span>
+                  <h3 id="dsh-imagegen-quick-start-title" className={css.quickTitle}>{t('settings.quickStartTitle')}</h3>
+                  <p className={css.quickHint}>{t('settings.quickStartHint')}</p>
                 </div>
-                <span className={css.healthBadge} data-state={overallReady ? 'ready' : 'attention'}>
-                  {overallReady ? t('settings.summaryReady') : t('settings.summaryNeedsSetup')}
+                <span className={css.healthBadge} data-state={pluginEnabled && overallReady ? 'ready' : 'attention'}>
+                  {readinessLabel}
                 </span>
-              </div>
-              <div className={css.summaryGrid}>
-                {summaryItems.map(item => (
-                  <button
-                    key={item.id}
-                    type="button"
-                    className={css.summaryCard}
-                    data-active={activeSection === item.id ? '' : undefined}
-                    data-tone={item.tone ?? 'neutral'}
-                    onClick={() => { setActiveSection(activeSection === item.id ? null : item.id) }}
-                  >
-                    <span className={css.summaryLabel}>{item.label}</span>
-                    <strong className={css.summaryValue}>{item.value}</strong>
-                  </button>
-                ))}
-              </div>
+              </header>
+              <ol className={css.setupRows}>
+                <li className={css.setupRow}>
+                  <span className={css.stepNumber} aria-hidden="true">1</span>
+                  <div className={css.stepBody}>
+                    <strong className={css.stepTitle}>{t('settings.stepConnect')}</strong>
+                    <p className={css.stepHint}>{t('settings.stepConnectHint')}</p>
+                  </div>
+                  <div className={css.stepAside}>
+                    <span className={css.stepStatus} data-ready={connectedChannels > 0 ? '' : undefined}>
+                      {channels.length === 0
+                        ? t('settings.stepConnectEmpty')
+                        : connectedChannels > 0
+                          ? t('settings.stepConnectDone', { n: connectedChannels })
+                          : t('settings.stepConnectPending', { n: channels.length })}
+                    </span>
+                    <button type="button" className={css.stepAction} disabled={disabled} onClick={configureServices}>
+                      {channels.length === 0 ? t('settings.addService') : t('settings.manageService')}
+                    </button>
+                  </div>
+                </li>
+                <li className={css.setupRow} data-step="models">
+                  <span className={css.stepNumber} aria-hidden="true">2</span>
+                  <div className={css.stepBody}>
+                    <strong className={css.stepTitle}>{t('settings.stepModels')}</strong>
+                    <p className={css.stepHint}>{t('settings.stepModelsHint')}</p>
+                    <div className={css.modeGrid}>
+                      <ModeSetupCard
+                        mode="image"
+                        title={t('settings.imageMode')}
+                        hint={t('settings.imageModeHint')}
+                        status={imageStatus}
+                        ready={imageReady}
+                        groups={modelGroups}
+                        value={state.channels.defaultModel}
+                        defaultLabel={t('settings.imageDefault')}
+                        emptyLabel={t('settings.modeNoModels')}
+                        configureLabel={t('settings.imageModeConfigure')}
+                        disabled={disabled}
+                        onChange={value => { props.channels.setDefaultModel(value) }}
+                        onConfigure={() => { configureMode('image') }}
+                      />
+                      <ModeSetupCard
+                        mode="video"
+                        title={t('settings.videoMode')}
+                        hint={t('settings.videoModeHint')}
+                        status={videoStatus}
+                        ready={videoReady}
+                        groups={videoModelGroups}
+                        value={state.channels.defaultVideoModel}
+                        defaultLabel={t('settings.videoDefault')}
+                        emptyLabel={t('settings.modeNoModels')}
+                        configureLabel={t('settings.videoModeConfigure')}
+                        disabled={disabled}
+                        onChange={value => { props.channels.setDefaultVideoModel(value) }}
+                        onConfigure={() => { configureMode('video') }}
+                      />
+                    </div>
+                  </div>
+                </li>
+                <li className={css.setupRow}>
+                  <span className={css.stepNumber} aria-hidden="true">3</span>
+                  <div className={css.stepBody}>
+                    <strong className={css.stepTitle}>{t('settings.stepSave')}</strong>
+                    <p className={css.stepHint}>{t('settings.stepSaveHint')}</p>
+                  </div>
+                  <div className={css.stepAside}>
+                    <span className={css.stepStatus} data-ready={pluginEnabled && overallReady && !state.dirty ? '' : undefined}>
+                      {!pluginEnabled
+                        ? t('settings.pluginOff')
+                        : state.dirty
+                          ? t('settings.stepSaveDirty')
+                          : overallReady
+                            ? t('settings.stepSaveDone')
+                            : t('settings.stepSaveWaiting')}
+                    </span>
+                    {!pluginEnabled
+                      ? <button type="button" className={css.stepPrimary} onClick={() => { setAdvancedOpen(true); setActiveSection('general') }}>{t('settings.enablePlugin')}</button>
+                      : state.dirty
+                        ? <button type="button" className={css.stepPrimary} disabled={blocked} onClick={() => { void saveAll() }} data-quick-save="">{t('settings.save')}</button>
+                        : null}
+                  </div>
+                </li>
+              </ol>
             </section>
 
             <SettingsSection
@@ -691,8 +900,10 @@ export function ImageGenSettingsSection(props: ImageGenSettingsSectionProps) {
                       const keyHeld = state.channels.keySet[channel.id] === true
                       const subscriptionProvider = isSubscriptionProvider(channel.subscription) ? channel.subscription : undefined
                       const subscriptionState = subscriptionProvider === undefined ? undefined : subscriptionStatus[subscriptionProvider]
-                      const ready = subscriptionProvider === undefined ? keyHeld && channelModelCount(channel) > 0 : subscriptionState?.state === 'logged-in'
+                      const ready = channelAuthReady(channel) && channelModelCount(channel) > 0
                       const isDefault = channel.id === state.channels.defaultChannelId
+                      const imageCount = channel.models.length
+                      const videoCount = (channel.videoModels ?? []).length
                       if (confirmDeleteId === channel.id) {
                         return (
                           <li key={channel.id} className={css.channelRow} data-action>
@@ -705,17 +916,17 @@ export function ImageGenSettingsSection(props: ImageGenSettingsSectionProps) {
                       return (
                         <li key={channel.id} className={css.channelRow}>
                           <span className={ready ? css.channelDotReady : css.channelDotWarn} aria-hidden="true" title={t(ready ? 'channels.statusReady' : 'channels.statusIncomplete')} />
-                          <button type="button" className={css.channelMain} disabled={disabled} onClick={() => { setEditingId(channel.id) }}>
+                          <button type="button" className={css.channelMain} disabled={disabled} onClick={() => { openChannelEditor(channel.id, imageCount > 0 ? 'image' : 'video') }}>
                             <span className={css.channelName}>{isDefault ? `★ ${channel.name || t('channels.untitled')}` : (channel.name || t('channels.untitled'))}</span>
                             <span className={css.channelMeta}>
-                              <span className={css.channelBadge} data-warn={!ready ? '' : undefined}>
-                                {subscriptionProvider === undefined
-                                  ? <>{keyHeld ? t('channels.keySet') : t('channels.keyMissing')}{' · '}{channelModelCount(channel) > 0 ? t('channels.modelCount', { n: channelModelCount(channel) }) : t('channels.noModels')}</>
-                                  : <>{SUBSCRIPTION_PROVIDER_DISPLAY_NAMES[subscriptionProvider]}{' · '}{subscriptionState?.state === 'logged-in' ? t('settings.subscriptionLoggedIn') : t('settings.subscriptionLoggedOut')}</>}
-                              </span>
+                              {subscriptionProvider === undefined
+                                ? <span className={css.channelBadge} data-warn={keyHeld ? undefined : ''}>{keyHeld ? t('channels.keySet') : t('channels.keyMissing')}</span>
+                                : <span className={css.channelBadge} data-warn={subscriptionState?.state === 'logged-in' ? undefined : ''}>{SUBSCRIPTION_PROVIDER_DISPLAY_NAMES[subscriptionProvider]} · {subscriptionState?.state === 'logged-in' ? t('settings.subscriptionLoggedIn') : t('settings.subscriptionLoggedOut')}</span>}
+                              <span className={css.channelBadge} data-kind="image">{t('settings.channelImageCount', { n: imageCount })}</span>
+                              <span className={css.channelBadge} data-kind="video">{t('settings.channelVideoCount', { n: videoCount })}</span>
                             </span>
                           </button>
-                          <button type="button" className={css.channelAction} onClick={() => { setEditingId(channel.id) }}>{t('channels.edit')}</button>
+                          <button type="button" className={css.channelAction} onClick={() => { openChannelEditor(channel.id, imageCount > 0 ? 'image' : 'video') }}>{t('channels.edit')}</button>
                           <button type="button" className={css.channelAction} data-danger onClick={() => { setConfirmDeleteId(channel.id) }}>{t('channels.delete')}</button>
                         </li>
                       )
@@ -728,6 +939,7 @@ export function ImageGenSettingsSection(props: ImageGenSettingsSectionProps) {
                   t={t}
                   presets={presets}
                   error={presetError}
+                  mode={presetPickerMode}
                   disabled={state.writable === false}
                   onLoad={() => {
                     setPresetError(null)
@@ -739,54 +951,64 @@ export function ImageGenSettingsSection(props: ImageGenSettingsSectionProps) {
                       })
                       .catch(error => { setPresetError(error instanceof Error ? error.message : String(error)) })
                   }}
-                  onPick={(preset) => {
+                  onPick={(preset, preferredMode) => {
                     const existing = preset.subscription === undefined
                       ? undefined
                       : channels.find(channel => channel.subscription === preset.subscription)
                     const draft = existing ?? newChannelDraft(preset)
                     if (existing === undefined) props.channels.setChannels([...channels, draft])
                     setPresetPickerOpen(false)
+                    setEditorTab(preferredMode === 'video' || (preferredMode === 'all' && presetPickerMode === 'video')
+                      ? 'video'
+                      : preferredMode === 'image' || (preferredMode === 'all' && presetPickerMode === 'image')
+                        ? 'image'
+                        : preset.models.length > 0 ? 'image' : 'video')
                     setEditingId(draft.id)
                     if (preset.subscription !== undefined && subscriptionStatus[preset.subscription].state !== 'logged-in') {
                       void subscriptionLogin(preset.subscription)
                     }
                   }}
-                  onCustom={() => {
+                  onCustom={(preferredMode) => {
                     const draft = newChannelDraft(undefined)
                     props.channels.setChannels([...channels, draft])
                     setPresetPickerOpen(false)
+                    setEditorTab(preferredMode === 'video' || (preferredMode === 'all' && presetPickerMode === 'video') ? 'video' : 'image')
                     setEditingId(draft.id)
                   }}
                   onClose={() => { setPresetPickerOpen(false) }}
                 />
               ) : null}
 
-              {modelAliases.length > 0 ? (
-                <div className={css.defaultModelRow}>
-                  <label htmlFor="dsh-imagegen-default-model">
-                    <strong>{t('channels.defaultModel')}</strong>
-                    <small>{t('channels.defaultModelHint')}</small>
-                  </label>
-                  <Select
-                    id="dsh-imagegen-default-model"
-                    className={css.modelChoices}
-                    value={state.channels.defaultModel}
-                    disabled={disabled}
-                    onChange={value => { props.channels.setDefaultModel(value) }}
-                  >
-                    {modelGroups.map(group => <optgroup key={group.id} label={group.name}>
-                      {group.models.map(model => <option key={`${group.id}:${model}`} value={model}>{model}</option>)}
-                    </optgroup>)}
-                  </Select>
-                </div>
-              ) : null}
               <div className={css.channelAddRow}>
-                <button type="button" className={css.channelAdd} disabled={disabled} onClick={() => { setPresetError(null); setPresetPickerOpen(true) }}>+ {t('channels.addProvider')}</button>
-                <button type="button" className={css.channelAdd} disabled={disabled} onClick={() => { addCustomChannel(channels, props.channels, setEditingId) }}>+ {t('channels.addCustom')}</button>
+                <button type="button" className={css.channelAdd} data-primary="" disabled={disabled} onClick={() => { openModelPicker('all') }}>+ {t('channels.addProvider')}</button>
+                <button type="button" className={css.channelAdd} disabled={disabled} onClick={() => {
+                  const draft = newChannelDraft(undefined)
+                  props.channels.setChannels([...channels, draft])
+                  setEditorTab('image')
+                  setEditingId(draft.id)
+                }}>+ {t('channels.addCustom')}</button>
               </div>
               </div>
             </SettingsSection>
 
+            <div className={css.advancedBlock}>
+              <button
+                type="button"
+                className={css.advancedToggle}
+                aria-expanded={advancedOpen}
+                aria-controls="dsh-imagegen-advanced-settings"
+                onClick={() => { setAdvancedOpen(value => !value) }}
+              >
+                <span className={css.advancedToggleText}>
+                  <strong>{t('settings.advancedTitle')}</strong>
+                  <span>{t('settings.advancedHint')}</span>
+                </span>
+                <span className={css.advancedToggleAction}>
+                  {advancedOpen ? t('settings.advancedClose') : t('settings.advancedOpen')}
+                  <span aria-hidden="true">{advancedOpen ? '⌃' : '⌄'}</span>
+                </span>
+              </button>
+              {advancedOpen ? <div id="dsh-imagegen-advanced-settings" className={css.advancedContent}>
             <SettingsSection
               id="prompt"
               title={t('settings.promptEnhanceTitle')}
@@ -1174,6 +1396,8 @@ export function ImageGenSettingsSection(props: ImageGenSettingsSectionProps) {
               onReset={() => { props.resetField('allowAgentImageGeneration') }}
             />
             </SettingsSection>
+              </div> : null}
+            </div>
             <div className={css.footer}>
               {saveNote !== null ? (
                 <p className={saveNote.ok ? css.saved : css.failed} role="status">{saveNote.text}</p>
@@ -1204,11 +1428,14 @@ export function ImageGenSettingsSection(props: ImageGenSettingsSectionProps) {
           key={editing.id}
           t={t}
           channel={editing}
+          initialCatalog={editorTab}
           keyHeld={state.channels.keySet[editing.id] === true}
           usage={usage}
           otherChannels={channels.filter(channel => channel.id !== editing.id)}
           isDefault={editing.id === state.channels.defaultChannelId}
           writable={state.writable}
+          dirty={state.dirty}
+          saving={state.saving || state.channels.saving}
           onPatch={(patch) => { replaceChannel(channels, editing.id, patch, props.channels) }}
           onSetModels={(models) => { props.channels.setChannels(channels.map(channel => channel.id === editing.id ? { ...channel, models } : channel)) }}
           onSetVideoModels={(videoModels) => { props.channels.setChannels(channels.map(channel => channel.id === editing.id ? { ...channel, videoModels } : channel)) }}
@@ -1222,6 +1449,11 @@ export function ImageGenSettingsSection(props: ImageGenSettingsSectionProps) {
           onSubscriptionLogout={(provider) => { void subscriptionLogout(provider) }}
           onSetDefault={() => { props.channels.setDefaultChannel(editing.id) }}
           onRemove={() => { props.channels.setChannels(channels.filter(channel => channel.id !== editing.id)); if (editing.id === state.channels.defaultChannelId && channels.length > 1) { const next = channels.find(channel => channel.id !== editing.id); if (next !== undefined) props.channels.setDefaultChannel(next.id) } setEditingId(null) }}
+          onSaveAndClose={async () => {
+            const ok = await saveAll()
+            if (ok) setEditingId(null)
+            return ok
+          }}
           onClose={() => { setEditingId(null) }}
         />
       ) : null}
@@ -1248,6 +1480,7 @@ function newChannelDraft(preset: PresetProviderView | undefined): ChannelDraft {
     apiUrl: preset?.apiUrl ?? '',
     apiUrlFull: false,
     watermark: true,
+    autoReferenceLimit: true,
     protocol: 'auto',
     ...preset?.subscription === undefined ? {} : { auth: 'subscription' as const, subscription: preset.subscription },
     models: (preset?.models ?? []).map(model => ({ ...model })),
@@ -1266,12 +1499,6 @@ function catalogHasSeedream(models: ModelMapping[]): boolean {
   return models.some(model => modelFamily(model.id.trim() === '' ? model.alias : model.id) === 'seedream')
 }
 
-function addCustomChannel(channels: ChannelDraft[], form: ChannelsFormActions, openEditor: (id: string) => void): void {
-  const draft = newChannelDraft(undefined)
-  form.setChannels([...channels, draft])
-  openEditor(draft.id)
-}
-
 /** Patch one field (or models) of one staged channel. */
 function replaceChannel(channels: ChannelDraft[], id: string, patch: Partial<ChannelDraft>, form: ChannelsFormActions): void {
   form.setChannels(channels.map(channel => channel.id === id ? { ...channel, ...patch } : channel))
@@ -1287,16 +1514,18 @@ function PresetPicker(props: {
   t: (key: ImageGenKey, params?: Record<string, string | number>) => string
   presets: PresetProviderView[]
   error: string | null
+  mode: ModelCatalogTab | 'all'
   disabled: boolean
   onLoad: () => void
-  onPick: (preset: PresetProviderView) => void
-  onCustom: () => void
+  onPick: (preset: PresetProviderView, mode: ModelCatalogTab | 'all') => void
+  onCustom: (mode: ModelCatalogTab | 'all') => void
   onClose: () => void
 }) {
   const { t } = props
   const loadedRef = useRef(false)
   const [query, setQuery] = useState('')
   const [tab, setTab] = useState<'api-key' | 'subscription'>('api-key')
+  const [capability, setCapability] = useState<ModelCatalogTab | 'all'>(props.mode)
   useEffect(() => {
     if (loadedRef.current) return
     loadedRef.current = true
@@ -1308,10 +1537,18 @@ function PresetPicker(props: {
     return () => { window.removeEventListener('keydown', onKeyDown) }
   }, [props.onClose])
   const tabPresets = props.presets.filter(preset => tab === 'subscription' ? preset.subscription !== undefined : preset.subscription === undefined)
+  const capablePresets = tab === 'api-key' && capability !== 'all'
+    ? tabPresets.filter(preset => capability === 'image' ? preset.models.length > 0 : (preset.videoModels ?? []).length > 0)
+    : tabPresets
   const needle = query.trim().toLowerCase()
-  const visiblePresets = needle === '' ? tabPresets : tabPresets.filter(preset =>
+  const visiblePresets = needle === '' ? capablePresets : capablePresets.filter(preset =>
     preset.name.toLowerCase().includes(needle) || presetCatalogAliases(preset).some(alias => alias.toLowerCase().includes(needle)),
   )
+  const preferredMode = (preset: PresetProviderView): ModelCatalogTab | 'all' => {
+    if (tab === 'subscription') return 'image'
+    if (capability !== 'all') return capability
+    return preset.models.length > 0 && (preset.videoModels ?? []).length > 0 ? 'all' : preset.models.length > 0 ? 'image' : 'video'
+  }
   return (
     <div
       className={css.pickerOverlay}
@@ -1322,7 +1559,7 @@ function PresetPicker(props: {
         <header className={css.pickerHeader}>
           <div>
             <h3 className={css.pickerTitle}>{t('channels.presetPickerTitle')}</h3>
-            <p className={css.pickerHint}>{t(tab === 'subscription' ? 'channels.presetPickerSubscriptionHint' : 'channels.presetPickerApiKeyHint')}</p>
+            <p className={css.pickerHint}>{t(tab === 'subscription' ? 'channels.presetPickerSubscriptionHint' : 'channels.providerPickerHint')}</p>
           </div>
           <button type="button" className={css.editorClose} aria-label={t('preview.close')} onClick={props.onClose}>×</button>
         </header>
@@ -1348,16 +1585,46 @@ function PresetPicker(props: {
           aria-label={t('channels.presetSearch')}
           onChange={event => { setQuery(event.target.value) }}
         />
-        <div className={css.pickerList}>
-          {visiblePresets.map(preset => (
-            <button key={preset.id} type="button" className={css.presetRow} disabled={props.disabled} onClick={() => { props.onPick(preset) }}>
-              <span className={css.presetName}>{preset.name}</span>
-              <span className={css.presetMeta}>{presetCatalogAliases(preset).join(' · ')}</span>
-              {preset.subscription === undefined ? null : <span className={css.presetAction}>{t('channels.presetClickToLogin')}</span>}
-            </button>
+        {tab === 'api-key' ? <div className={css.capabilityFilter} role="group" aria-label={t('channels.providerCapability')}>
+          {([['all', 'channels.presetFilterAll'], ['image', 'channels.presetFilterImage'], ['video', 'channels.presetFilterVideo']] as const).map(([value, labelKey]) => (
+            <button
+              key={value}
+              type="button"
+              data-active={capability === value ? '' : undefined}
+              aria-pressed={capability === value}
+              onClick={() => { setCapability(value) }}
+            >{t(labelKey)}</button>
           ))}
+        </div> : null}
+        <div className={css.pickerList}>
+          {visiblePresets.map(preset => {
+            const mode = preferredMode(preset)
+            return (
+              <div key={preset.id} className={css.presetCard} data-disabled={props.disabled ? 'true' : undefined}>
+                <button type="button" className={css.presetPick} disabled={props.disabled} onClick={() => { props.onPick(preset, mode) }}>
+                  <span className={css.presetName}>{preset.name}</span>
+                  <span className={css.presetBadges}>
+                    {preset.models.length > 0 ? <span data-mode="image">{t('settings.channelImageCount', { n: preset.models.length })}</span> : null}
+                    {(preset.videoModels ?? []).length > 0 ? <span data-mode="video">{t('settings.channelVideoCount', { n: (preset.videoModels ?? []).length })}</span> : null}
+                    {preset.models.length === 0 && (preset.videoModels ?? []).length === 0 ? <span>{t('settings.videoMode')}</span> : null}
+                  </span>
+                  <span className={css.presetHint}>{preset.hint}</span>
+                </button>
+                {preset.link === undefined && preset.subscription === undefined ? null : (
+                  <div className={css.presetFoot}>
+                    {preset.link === undefined ? <span /> : (
+                      <a className={css.presetLink} href={preset.link} target="_blank" rel="noreferrer noopener">
+                        {t('channels.presetSite')} ↗
+                      </a>
+                    )}
+                    {preset.subscription === undefined ? null : <span className={css.presetAction}>{t('channels.presetClickToLogin')}</span>}
+                  </div>
+                )}
+              </div>
+            )
+          })}
           {visiblePresets.length === 0 && tabPresets.length > 0 ? <p className={css.pickerEmpty}>{t('channels.presetEmpty')}</p> : null}
-          {tab === 'api-key' ? <button type="button" className={css.presetRow} data-custom disabled={props.disabled} onClick={props.onCustom}>
+          {tab === 'api-key' ? <button type="button" className={css.presetRow} data-custom disabled={props.disabled} onClick={() => { props.onCustom(capability) }}>
             <span className={css.presetName}>+ {t('channels.addCustom')}</span>
             <span className={css.presetHint}>{t('channels.presetCustomHint')}</span>
           </button> : null}
@@ -1372,11 +1639,15 @@ function PresetPicker(props: {
 function ChannelEditor(props: {
   t: (key: ImageGenKey, params?: Record<string, string | number>) => string
   channel: ChannelDraft
+  /** Catalog the caller asked to work on (image vs video). */
+  initialCatalog: ModelCatalogTab
   keyHeld: boolean
   usage: UsageCounters | null
   otherChannels: ChannelDraft[]
   isDefault: boolean
   writable: boolean
+  dirty: boolean
+  saving: boolean
   onPatch: (patch: Partial<ChannelDraft>) => void
   onSetModels: (models: ModelMapping[]) => void
   /** Per-channel blocking problems, so the field that blocks the save says so. */
@@ -1392,11 +1663,15 @@ function ChannelEditor(props: {
   onSubscriptionLogout: (provider: SubscriptionProvider) => void
   onSetDefault: () => void
   onRemove: () => void
+  /** Commit staged edits and close only when the host accepted them. */
+  onSaveAndClose: () => Promise<boolean>
   onClose: () => void
 }) {
   const { t, channel } = props
   const subscription = isSubscriptionProvider(channel.subscription) ? channel.subscription : undefined
   const subscriptionMode = channel.auth === 'subscription' && subscription !== undefined
+  const [catalogTab, setCatalogTab] = useState<ModelCatalogTab>(() => props.initialCatalog)
+  const [advancedOpen, setAdvancedOpen] = useState(false)
   const [keyDraft, setKeyDraft] = useState('')
   const [candidates, setCandidates] = useState<string[] | null>(null)
   const [detecting, setDetecting] = useState(false)
@@ -1526,38 +1801,10 @@ function ChannelEditor(props: {
         <header className={css.editorHeader}>
           <div>
             <h3 className={css.sectionTitle}>{t('channels.editorTitle')} · {channel.name || t('channels.untitled')}</h3>
-            <p className={css.sectionHint}>{t('channels.editorSaveNote')}</p>
+            <p className={css.sectionHint}>{t('channels.editorIntro')}</p>
           </div>
           <button type="button" className={css.editorClose} aria-label={t('preview.close')} onClick={props.onClose}>×</button>
         </header>
-
-        <div className={css.editorGrid}>
-          <div className={css.editorField}>
-            <label className={css.label} htmlFor="dsh-imagegen-channel-name">{t('channels.displayName')}</label>
-            <input id="dsh-imagegen-channel-name" className={css.input} value={channel.name} placeholder={t('channels.untitled')} disabled={!props.writable} onChange={event => { props.onPatch({ name: event.target.value }) }} />
-          </div>
-          <div className={css.editorField}>
-            <label className={css.label} htmlFor="dsh-imagegen-channel-auth">{t('channels.authMode')}</label>
-            <Select
-              id="dsh-imagegen-channel-auth"
-              className={css.select}
-              value={channel.auth ?? 'api-key'}
-              disabled={!props.writable}
-              onChange={value => {
-                if (value === 'subscription') {
-                  const provider = subscription ?? 'grok-sub'
-                  const model = DEFAULT_SUBSCRIPTION_MODELS[provider]
-                  props.onPatch({ auth: 'subscription', subscription: provider, apiUrl: '', apiUrlFull: false, models: [{ alias: model, id: model }] })
-                } else {
-                  props.onPatch({ auth: 'api-key', subscription: undefined })
-                }
-              }}
-            >
-              <option value="api-key">{t('channels.authModeApiKey')}</option>
-              <option value="subscription">{t('channels.authModeSubscription')}</option>
-            </Select>
-          </div>
-        </div>
 
         {subscriptionMode ? (
           <div className={css.subscriptionBox}>
@@ -1571,6 +1818,20 @@ function ChannelEditor(props: {
               </div>
             </div>
             {EXPERIMENTAL_SUBSCRIPTION_PROVIDERS.has(subscription) ? <p className={css.subscriptionWarning}>{t('settings.subscriptionExperimental')}</p> : null}
+            <label className={css.editorField}>
+              <span className={css.label}>{t('channels.authMode')}</span>
+              <Select
+                className={css.select}
+                value="subscription"
+                disabled={!props.writable}
+                onChange={value => {
+                  if (value === 'api-key') props.onPatch({ auth: 'api-key', subscription: undefined })
+                }}
+              >
+                <option value="api-key">{t('channels.authModeApiKey')}</option>
+                <option value="subscription">{t('channels.authModeSubscription')}</option>
+              </Select>
+            </label>
             <label className={css.editorField}>
               <span className={css.label}>{t('channels.subscriptionProvider')}</span>
               <Select
@@ -1606,47 +1867,23 @@ function ChannelEditor(props: {
             <p className={css.fieldHint}>{t('settings.subscriptionIsolationHint')}</p>
           </div>
         ) : <>
-        <div className={css.editorGrid} data-connection>
-          <div className={css.editorField}>
-            <label className={css.label} htmlFor="dsh-imagegen-channel-url">{t('channels.apiUrl')}</label>
-            <input id="dsh-imagegen-channel-url" data-channel-url={props.channel.id} aria-invalid={props.issues.length > 0} aria-describedby={props.issues.length > 0 ? 'dsh-imagegen-channel-url-error' : undefined} className={css.input} value={channel.apiUrl} placeholder={channel.apiUrlFull ? 'https://api.example.com/v1/wand/si-image/generation' : 'https://api.example.com/v1'} disabled={!props.writable} onChange={event => {
-              const apiUrl = event.target.value
-              props.onPatch({ apiUrl, ...isChatCompletionsUrl(apiUrl) ? { apiUrlFull: true } : {} })
-            }} />
-            {props.issues.map(issue => (
-              <p key={issue.code} id="dsh-imagegen-channel-url-error" className={css.fieldError} role="alert">{t(`channels.${issue.code}` as never)}</p>
-            ))}
-          </div>
-          <div className={css.editorField}>
-            <label className={css.label} htmlFor="dsh-imagegen-channel-protocol">{t('channels.protocol')}</label>
-            <Select
-              id="dsh-imagegen-channel-protocol"
-              className={css.input}
-              value={channel.protocol ?? 'auto'}
-              disabled={!props.writable}
-              onChange={value => { props.onPatch({ protocol: value as ChannelDraft['protocol'] }) }}
-            >
-              <option value="auto">{t('channels.protocolAuto')}</option>
-              <option value="images">{t('channels.protocolImages')}</option>
-              <option value="chat-completions">{t('channels.protocolChat')}</option>
-              <option value="google-native">{t('channels.protocolGoogle')}</option>
-              <option value="qwen-draw">{t('channels.protocolQwenDraw')}</option>
-            </Select>
+        <div className={css.editorStageHead}>
+          <span className={css.editorStepNumber} aria-hidden="true">1</span>
+          <div>
+            <strong className={css.editorStageTitle}>{t('channels.connectionStep')}</strong>
+            <p className={css.editorStageHint}>{t('channels.connectionStepHint')}</p>
           </div>
         </div>
-        <p className={css.fieldHint}>{t('channels.protocolHint')}</p>
-        <label className={css.checkboxRow}>
-          <input type="checkbox" checked={channel.apiUrlFull} disabled={!props.writable} onChange={event => { props.onPatch({ apiUrlFull: event.target.checked }) }} />
-          <span>{t('channels.apiUrlFull')}</span>
-        </label>
-        {channel.apiUrlFull ? <p className={css.fieldHint}>{t('channels.apiUrlFullHint')}</p> : null}
-        {catalogHasSeedream(channel.models) ? <>
-          <label className={css.checkboxRow}>
-            <input type="checkbox" checked={channel.watermark !== false} disabled={!props.writable} onChange={event => { props.onPatch({ watermark: event.target.checked }) }} />
-            <span>{t('channels.watermark')}</span>
-          </label>
-          <p className={css.fieldHint}>{t('channels.watermarkHint')}</p>
-        </> : null}
+        <div className={css.editorField}>
+          <label className={css.label} htmlFor="dsh-imagegen-channel-url">{t('channels.apiUrl')}</label>
+          <input id="dsh-imagegen-channel-url" data-channel-url={props.channel.id} aria-invalid={props.issues.some(issue => issue.field === 'apiUrl')} aria-describedby={props.issues.some(issue => issue.field === 'apiUrl') ? 'dsh-imagegen-channel-url-error' : undefined} className={css.input} value={channel.apiUrl} placeholder={channel.apiUrlFull ? 'https://api.example.com/v1/wand/si-image/generation' : 'https://api.example.com/v1'} disabled={!props.writable} onChange={event => {
+            const apiUrl = event.target.value
+            props.onPatch({ apiUrl, ...isChatCompletionsUrl(apiUrl) ? { apiUrlFull: true } : {} })
+          }} />
+          {props.issues.filter(issue => issue.field === 'apiUrl').map(issue => (
+            <p key={issue.code} id="dsh-imagegen-channel-url-error" className={css.fieldError} role="alert">{t(`channels.${issue.code}` as never)}</p>
+          ))}
+        </div>
         <div className={css.editorField}>
           <div className={css.head}>
             <label className={css.label} htmlFor="dsh-imagegen-channel-key">{t('channels.apiKey')}</label>
@@ -1677,12 +1914,137 @@ function ChannelEditor(props: {
             </button>
           </div>
         </div>
+        <button
+          type="button"
+          className={css.editorAdvancedToggle}
+          aria-expanded={advancedOpen}
+          onClick={() => { setAdvancedOpen(value => !value) }}
+        >
+          <span>{t('channels.advancedOptions')}</span>
+          <small>{t('channels.advancedOptionsHint')}</small>
+          <span aria-hidden="true">{advancedOpen ? '⌃' : '⌄'}</span>
+        </button>
+        {advancedOpen ? <div className={css.editorAdvancedFields}>
+          <div className={css.editorGrid}>
+            <div className={css.editorField}>
+              <label className={css.label} htmlFor="dsh-imagegen-channel-name">{t('channels.displayName')}</label>
+              <input id="dsh-imagegen-channel-name" className={css.input} value={channel.name} placeholder={t('channels.untitled')} disabled={!props.writable} onChange={event => { props.onPatch({ name: event.target.value }) }} />
+            </div>
+            <div className={css.editorField}>
+              <label className={css.label} htmlFor="dsh-imagegen-channel-auth">{t('channels.authMode')}</label>
+              <Select
+                id="dsh-imagegen-channel-auth"
+                className={css.select}
+                value={channel.auth ?? 'api-key'}
+                disabled={!props.writable}
+                onChange={value => {
+                  if (value === 'subscription') {
+                    const provider = subscription ?? 'grok-sub'
+                    const model = DEFAULT_SUBSCRIPTION_MODELS[provider]
+                    props.onPatch({ auth: 'subscription', subscription: provider, apiUrl: '', apiUrlFull: false, models: [{ alias: model, id: model }] })
+                  } else {
+                    props.onPatch({ auth: 'api-key', subscription: undefined })
+                  }
+                }}
+              >
+                <option value="api-key">{t('channels.authModeApiKey')}</option>
+                <option value="subscription">{t('channels.authModeSubscription')}</option>
+              </Select>
+            </div>
+          </div>
+          <div className={css.editorGrid}>
+            <div className={css.editorField}>
+              <label className={css.label} htmlFor="dsh-imagegen-channel-protocol">{t('channels.protocol')}</label>
+              <Select
+                id="dsh-imagegen-channel-protocol"
+                className={css.input}
+                value={channel.protocol ?? 'auto'}
+                disabled={!props.writable}
+                onChange={value => { props.onPatch({ protocol: value as ChannelDraft['protocol'] }) }}
+              >
+                <option value="auto">{t('channels.protocolAuto')}</option>
+                <option value="images">{t('channels.protocolImages')}</option>
+                <option value="chat-completions">{t('channels.protocolChat')}</option>
+                <option value="google-native">{t('channels.protocolGoogle')}</option>
+                <option value="qwen-draw">{t('channels.protocolQwenDraw')}</option>
+              </Select>
+            </div>
+          </div>
+          <p className={css.fieldHint}>{t('channels.protocolHint')}</p>
+          <label className={css.checkboxRow}>
+            <input type="checkbox" checked={channel.apiUrlFull} disabled={!props.writable} onChange={event => { props.onPatch({ apiUrlFull: event.target.checked }) }} />
+            <span>{t('channels.apiUrlFull')}</span>
+          </label>
+          {channel.apiUrlFull ? <p className={css.fieldHint}>{t('channels.apiUrlFullHint')}</p> : null}
+          <label className={css.checkboxRow}>
+            <input type="checkbox" checked={channel.autoReferenceLimit !== false} disabled={!props.writable} onChange={event => { props.onPatch({ autoReferenceLimit: event.target.checked }) }} />
+            <span>{t('channels.autoReferenceLimit')}</span>
+          </label>
+          <p className={css.fieldHint}>{t('channels.autoReferenceLimitHint')}</p>
+          {catalogHasSeedream(channel.models) ? <>
+            <label className={css.checkboxRow}>
+              <input type="checkbox" checked={channel.watermark !== false} disabled={!props.writable} onChange={event => { props.onPatch({ watermark: event.target.checked }) }} />
+              <span>{t('channels.watermark')}</span>
+            </label>
+            <p className={css.fieldHint}>{t('channels.watermarkHint')}</p>
+          </> : null}
+        </div> : null}
 
         <div className={css.editorDivider} />
 
-        <div className={css.modelCatalog}>
+        <div className={css.editorStageHead}>
+          <span className={css.editorStepNumber} aria-hidden="true">2</span>
+          <div>
+            <strong className={css.editorStageTitle}>{t('channels.modelStep')}</strong>
+            <p className={css.editorStageHint}>{t('channels.modelStepHint')}</p>
+          </div>
+        </div>
+        <div className={css.catalogTabs} id={`dsh-imagegen-channel-models-${props.channel.id}`} role="tablist" aria-label={t('channels.modelStep')} tabIndex={-1}>
+          <button
+            type="button"
+            role="tab"
+            id={`dsh-imagegen-model-tab-image-${props.channel.id}`}
+            aria-controls={`dsh-imagegen-model-panel-image-${props.channel.id}`}
+            aria-selected={catalogTab === 'image'}
+            data-active={catalogTab === 'image' ? '' : undefined}
+            tabIndex={tabIndexFor(catalogTab === 'image')}
+            onKeyDown={event => { onTablistKeyDown(event, { count: 2, index: 0, select: next => { setCatalogTab(next === 0 ? 'image' : 'video') } }) }}
+            onClick={() => { setCatalogTab('image') }}
+          >
+            <ModeMark mode="image" />
+            {t('channels.modelTabImage', { n: channel.models.length })}
+          </button>
+          <button
+            type="button"
+            role="tab"
+            id={`dsh-imagegen-model-tab-video-${props.channel.id}`}
+            aria-controls={`dsh-imagegen-model-panel-video-${props.channel.id}`}
+            aria-selected={catalogTab === 'video'}
+            data-active={catalogTab === 'video' ? '' : undefined}
+            tabIndex={tabIndexFor(catalogTab === 'video')}
+            onKeyDown={event => { onTablistKeyDown(event, { count: 2, index: 1, select: next => { setCatalogTab(next === 0 ? 'image' : 'video') } }) }}
+            onClick={() => { setCatalogTab('video') }}
+          >
+            <ModeMark mode="video" />
+            {t('channels.modelTabVideo', { n: (channel.videoModels ?? []).length })}
+          </button>
+        </div>
+        {props.issues.filter(issue => issue.field === 'models').map(issue => (
+          <p key={issue.code} className={css.fieldError} role="alert">{t(`channels.${issue.code}` as never)}</p>
+        ))}
+
+        {catalogTab === 'image' ? (
+        <div
+          className={css.modelCatalog}
+          id={`dsh-imagegen-model-panel-image-${props.channel.id}`}
+          role="tabpanel"
+          aria-labelledby={`dsh-imagegen-model-tab-image-${props.channel.id}`}
+        >
         <div className={css.editorSectionHeader}>
-          <h4 className={css.label}>{t('channels.modelCatalogTitle')}</h4>
+          <div>
+            <h4 className={css.label}>{t('channels.imageCatalogTitle')}</h4>
+            <p className={css.sectionHint}>{t('channels.imageCatalogHint')}</p>
+          </div>
           <button type="button" className={css.modelFetch} disabled={!props.writable || detecting || !detectable} onClick={detect}>
             {detecting ? t('channels.detecting') : candidates === null && channel.models.length === 0 ? t('channels.detectFirst') : t('channels.detect')}
           </button>
@@ -1774,15 +2136,42 @@ function ChannelEditor(props: {
             })}
           </div>
         ) : null}
-        </div>
-
-        <div className={css.modelCatalog}>
-          <div className={css.editorSectionHeader}>
-            <h4 className={css.label}>{t('channels.videoCatalogTitle')}</h4>
+        <div className={css.editorTools}>
+          <div className={css.manualModelRow}>
+            <input className={css.input} value={manualId} placeholder={t('channels.manualAddPlaceholder')} disabled={!props.writable} onChange={event => { setManualId(event.target.value) }} onKeyDown={event => { if (event.key === 'Enter') { event.preventDefault(); addManual() } }} />
+            <button type="button" className={css.addModel} disabled={!props.writable || manualId.trim() === ''} onClick={addManual}>{t('channels.addModelConfirm')}</button>
           </div>
-          <p className={css.sectionHint}>{t('channels.videoCatalogHint')}</p>
+          {props.otherChannels.length > 0 ? (
+            <div className={css.manualModelRow}>
+              <Select className={css.modelChoices} value={copyFrom} disabled={!props.writable} onChange={value => { setCopyFrom(value) }} aria-label={t('channels.copyFrom')}>
+                <option value="">{t('channels.copyFrom')}</option>
+                {props.otherChannels.map(other => (
+                  <option key={other.id} value={other.id}>{other.name || t('channels.untitled')}</option>
+                ))}
+              </Select>
+              <button type="button" className={css.addModel} disabled={!props.writable || copyFrom === ''} onClick={copyFromChannel}>{t('channels.copyApply')}</button>
+            </div>
+          ) : null}
+        </div>
+        </div>
+        ) : (
+        <div
+          className={css.modelCatalog}
+          id={`dsh-imagegen-model-panel-video-${props.channel.id}`}
+          role="tabpanel"
+          aria-labelledby={`dsh-imagegen-model-tab-video-${props.channel.id}`}
+        >
+          <div className={css.editorSectionHeader}>
+            <div>
+              <h4 className={css.label}>{t('channels.videoCatalogTitle')}</h4>
+              <p className={css.sectionHint}>{t('channels.videoCatalogHint')}</p>
+            </div>
+          </div>
           {(channel.videoModels ?? []).length === 0
-            ? <p className={css.sectionHint}>{t('channels.noVideoModelsHint')}</p>
+            ? <div className={css.catalogEmpty}>
+              <strong>{t('channels.videoEmptyTitle')}</strong>
+              <p>{t('channels.videoEmptyHint')}</p>
+            </div>
             : (
               <ul className={css.modelRows}>
                 {(channel.videoModels ?? []).map((model, index) => {
@@ -1830,32 +2219,13 @@ function ChannelEditor(props: {
             <input className={css.input} value={manualVideoId} placeholder={t('channels.videoAddPlaceholder')} disabled={!props.writable} onChange={event => { setManualVideoId(event.target.value) }} onKeyDown={event => { if (event.key === 'Enter') { event.preventDefault(); addManualVideo() } }} />
             <button type="button" className={css.addModel} disabled={!props.writable || manualVideoId.trim() === ''} onClick={addManualVideo}>{t('channels.addModelConfirm')}</button>
           </div>
-          <button type="button" className={css.addModel} disabled={!props.writable} onClick={() => {
+          {channel.apiUrl.toLowerCase().includes('agnes') ? <button type="button" className={css.addModel} disabled={!props.writable} onClick={() => {
             const existing = new Set((channel.videoModels ?? []).map(model => model.alias))
             const additions = DEFAULT_VIDEO_MODELS.filter(model => !existing.has(model)).map(model => ({ alias: model, id: model }))
             if (additions.length > 0) props.onSetVideoModels([...(channel.videoModels ?? []), ...additions])
-          }}>{t('channels.videoAddPresets')}</button>
+          }}>{t('channels.videoAddPresets')}</button> : null}
         </div>
-
-        <div className={css.editorDivider} />
-
-        <div className={css.editorTools}>
-          <div className={css.manualModelRow}>
-            <input className={css.input} value={manualId} placeholder={t('channels.manualAddPlaceholder')} disabled={!props.writable} onChange={event => { setManualId(event.target.value) }} onKeyDown={event => { if (event.key === 'Enter') { event.preventDefault(); addManual() } }} />
-            <button type="button" className={css.addModel} disabled={!props.writable || manualId.trim() === ''} onClick={addManual}>{t('channels.addModelConfirm')}</button>
-          </div>
-          {props.otherChannels.length > 0 ? (
-            <div className={css.manualModelRow}>
-              <Select className={css.modelChoices} value={copyFrom} disabled={!props.writable} onChange={value => { setCopyFrom(value) }} aria-label={t('channels.copyFrom')}>
-                <option value="">{t('channels.copyFrom')}</option>
-                {props.otherChannels.map(other => (
-                  <option key={other.id} value={other.id}>{other.name || t('channels.untitled')}</option>
-                ))}
-              </Select>
-              <button type="button" className={css.addModel} disabled={!props.writable || copyFrom === ''} onClick={copyFromChannel}>{t('channels.copyApply')}</button>
-            </div>
-          ) : null}
-        </div>
+        )}
         </>}
 
         <div className={css.editorDivider} />
@@ -1864,7 +2234,6 @@ function ChannelEditor(props: {
           {props.isDefault ? <span className={css.channelBadge} data-default>{t('channels.defaultLabel')}</span> : (
             <button type="button" className={css.inlineDisclosure} disabled={!props.writable} onClick={props.onSetDefault}>{t('channels.setDefault')}</button>
           )}
-          <span className={css.spacer} />
           {removeOpen
             ? (
               <>
@@ -1875,6 +2244,17 @@ function ChannelEditor(props: {
             : (
               <button type="button" className={css.channelAction} data-danger onClick={() => { setRemoveOpen(true) }}>{t('channels.deleteThisChannel')}</button>
             )}
+          <span className={css.spacer} />
+          <button type="button" className={css.discard} onClick={props.onClose}>{t('preview.close')}</button>
+          <button
+            type="button"
+            className={css.save}
+            data-editor-save=""
+            disabled={!props.dirty || props.saving || !props.writable}
+            onClick={() => { void props.onSaveAndClose() }}
+          >
+            {props.saving ? t('settings.saving') : t('channels.saveAndClose')}
+          </button>
         </div>
       </div>
     </div>

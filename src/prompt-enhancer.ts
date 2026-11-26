@@ -405,7 +405,7 @@ export interface ChatOptions {
  */
 export async function chatComplete(config: PromptModelConfig, options: ChatOptions): Promise<string> {
   if (config.apiUrl.trim() === '' || config.model.trim() === '') {
-    throw new Error('chat model is not configured (left sidebar > Image settings > Prompt enhancement)')
+    throw new Error('chat model is not configured (Settings > Image / Video > Advanced settings > Prompt enhancement)')
   }
   const timeoutSignal = AbortSignal.timeout(CHAT_TIMEOUT_MS)
   const signal = options.signal === undefined ? timeoutSignal : AbortSignal.any([options.signal, timeoutSignal])

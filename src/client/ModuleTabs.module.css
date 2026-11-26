@@ -1,0 +1,72 @@
+/*
+ * Same visual grammar as DSH's settings tabs: a quiet 13px row, primary text
+ * for the active item, and a 2px bottom rule. The row scrolls instead of
+ * compressing labels, so nine modules remain legible in the centre column.
+ */
+
+.root {
+  display: flex;
+  flex: 1 1 auto;
+  min-width: 0;
+  justify-content: center;
+}
+
+.tabs {
+  display: flex;
+  align-items: flex-end;
+  gap: 22px;
+  min-width: 0;
+  max-width: 100%;
+  overflow-x: auto;
+  border-bottom: 0.5px solid var(--dsw-alias-border-l2);
+  scrollbar-width: none;
+  -ms-overflow-style: none;
+}
+
+.tabs::-webkit-scrollbar {
+  display: none;
+}
+
+.tab {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  flex: none;
+  height: 37px;
+  padding: 7px 1px 9px;
+  border: 0;
+  background: transparent;
+  color: var(--dsw-alias-label-tertiary);
+  font: inherit;
+  font-size: 13px;
+  line-height: 20px;
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+.tab:hover,
+.tab[aria-selected='true'] {
+  color: var(--dsw-alias-label-primary);
+}
+
+.tab[aria-selected='true'] {
+  box-shadow: inset 0 -2px 0 var(--dsw-alias-label-primary);
+}
+
+.tab:focus-visible {
+  color: var(--dsw-alias-label-primary);
+  outline: 2px solid var(--dsw-alias-state-business-primary);
+  outline-offset: 2px;
+  border-radius: var(--dsw-radius-xs);
+}
+
+@media (max-width: 760px) {
+  .root {
+    justify-content: flex-start;
+  }
+
+  .tabs {
+    gap: 18px;
+  }
+}

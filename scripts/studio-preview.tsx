@@ -191,6 +191,10 @@ const api = {
   canvasProposals: async () => ({ proposals: [], counts: {} }),
   pptTasks: async () => [],
   canvasSkillsList: async () => ({ skills: [], installed: [] }),
+  // PPT reads its saved OCR credentials before rendering the workspace. The
+  // preview has no host bridge, so answer with the empty library instead of
+  // letting an undefined stub crash the whole panel on tab switch.
+  canvasSkillLibrary: async () => ({ entries: [] }),
   pptRuntime: async () => ({ available: false, message: 'preview' }),
   videoPlan: async () => ({ shots: [], notes: '' }),
   openDataFolder: async () => ({ ok: true }),

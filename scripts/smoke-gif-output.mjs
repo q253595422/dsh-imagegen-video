@@ -3,7 +3,7 @@
 // 不需要网络、不需要密钥，也不会产生任何付费调用。
 import assert from 'node:assert/strict'
 import { generateImage } from '../src/engine.ts'
-import { supportsGifOutput } from '../src/model-catalog.ts'
+import { describeModel, supportsGifOutput } from '../src/model-catalog.ts'
 
 const calls = []
 const gifBytes = new Uint8Array([0x47, 0x49, 0x46, 0x38, 0x39, 0x61, 1, 2, 3, 4])
@@ -28,6 +28,8 @@ assert.equal(supportsGifOutput('gpt-image-2.6-flare'), true, '2.6 flare 应支�
 assert.equal(supportsGifOutput('gpt-image-2.5'), false, '2.5 不支持 GIF')
 assert.equal(supportsGifOutput('gpt-image-2'), false, '2 不支持 GIF')
 assert.equal(supportsGifOutput('gpt-image-2.6-vip'), false, '2.6 的 vip 档不出 GIF')
+assert.equal(describeModel('chatgpt-image-latest').family, 'gpt-image', 'chatgpt-image-latest 走 gpt-image 协议')
+assert.equal(supportsGifOutput('chatgpt-image-latest'), true, 'CloseAI 的 chatgpt-image-latest 在 GIF 模型清单里')
 
 // 2) 动图请求体：output_format / frame_count / frame_duration_ms，且走 generations 而不是 edits。
 {
@@ -43,6 +45,16 @@ assert.equal(supportsGifOutput('gpt-image-2.6-vip'), false, '2.6 的 vip 档不�
   assert.equal(body.quality, undefined, 'quality=auto 时不应发 quality')
   // 返回体是 GIF 字节，宿主识别成 image/gif 才能落成 .gif
   assert.equal(result.images[0].mime, 'image/gif', 'GIF 结果应以 image/gif 归一化')
+}
+
+// 2b) The CloseAI gateway's moving alias is documented as GIF-capable too.
+{
+  reset()
+  const result = await generateImage(upstream, { ...textRequest(), model: 'chatgpt-image-latest' })
+  const body = JSON.parse(calls[0].body)
+  assert.equal(body.model, 'chatgpt-image-latest')
+  assert.equal(body.output_format, 'gif')
+  assert.equal(result.images[0].mime, 'image/gif')
 }
 
 // 3) 帧数与每帧时长被夹紧到文档区间（2–16、≥20ms、按 10ms 取整）。

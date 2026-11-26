@@ -106,6 +106,7 @@ const REMOTE_CANCEL: Record<string, 'supported' | 'unsupported'> = {
   seedance: 'unsupported',
   xai: 'unsupported',
   minimax: 'unsupported',
+  qihang: 'unsupported',
   unknown: 'unsupported',  snapgen: 'unsupported',
   muse: 'unsupported',
 
@@ -212,6 +213,10 @@ const POLL_POLICY: Record<string, { intervalMs: number; deadlineMs: number }> = 
   // to poll every 5-10s, so the shared cadence with a longer ceiling covers a
   // queue slot without hammering the status endpoint.
   minimax: { intervalMs: 5_000, deadlineMs: 30 * 60_000 },
+  // 启航AIGC documents a 3s cadence and asks clients to keep polling for at
+  // least an hour; Wan renders queue for minutes and a long clip can take
+  // longer than the other families' ceilings.
+  qihang: { intervalMs: 3_000, deadlineMs: 60 * 60_000 },
   unknown: { intervalMs: 5_000, deadlineMs: 20 * 60_000 },
 }
 
@@ -297,6 +302,27 @@ function seedanceResolution(model: string, resolution: VideoResolution): string 
   return resolution.toLowerCase()
 }
 
+/** Wan 3.0 on 启航AIGC: integer seconds, 4-30 inclusive. */
+function qihangSeconds(seconds: number): number {
+  return Math.min(30, Math.max(4, Math.round(seconds)))
+}
+
+/** Map the panel's video mode onto 启航's mode vocabulary. */
+function qihangMode(mode: VideoMode, referenceCount: number): string {
+  if (mode === 'text') return 'text-to-video'
+  if (mode === 'reference') return 'reference'
+  if (mode === 'keyframe') {
+    // `first-last` is a two-frame mode; a keyframe request with only a first
+    // frame is a first-frame request, and sending it as first-last would make
+    // the gateway reject a render that has everything it needs.
+    return referenceCount >= 2 ? 'first-last' : 'first-frame'
+  }
+  return 'first-frame'
+}
+
+/** Wan 3.0 accepts at most ten reference images per request. */
+const MAX_QIHANG_REFERENCES = 10
+
 /** Map the panel's video mode onto a family's own mode vocabulary. */
 function familyMode(family: string, mode: VideoMode): string {
   if (family === 'agnes') {
@@ -328,6 +354,9 @@ const VIDEO_PATHS: Record<string, { submit: string; status: string }> = {
   xai: { submit: '/videos/generations', status: '/videos/{id}' },
   // Volcengine Ark's task API: create under the collection, read one by id.
   seedance: { submit: '/contents/generations/tasks', status: '/contents/generations/tasks/{id}' },
+  // 启航AIGC: flat parameters on submit, one shared task reader for every
+  // modality under `/tasks/{id}`.
+  qihang: { submit: '/videos/generations', status: '/tasks/{id}' },
 }
 
 /**
@@ -813,7 +842,15 @@ type PollOutcome =
 function readPoll(payload: Record<string, unknown>): PollOutcome {
   const status = String(payload.status ?? '').toLowerCase().trim()
   if (['failed', 'error', 'cancelled', 'canceled', 'expired'].includes(status)) {
-    return { kind: 'failed', message: errorTextOf(payload, status === 'expired' ? '视频任务已过期' : '视频生成失败') }
+    const message = errorTextOf(payload, status === 'expired' ? '视频任务已过期' : '视频生成失败')
+    // 启航 puts the machine-readable category beside the human message. Keep
+    // both: the panel can show one line, but "content_blocked" is what tells a
+    // caller whether editing the prompt is worth trying.
+    const errorClass = typeof payload.error_class === 'string' ? payload.error_class.trim() : ''
+    return {
+      kind: 'failed',
+      message: errorClass === '' || message.includes(errorClass) ? message : `${message}（${errorClass}）`,
+    }
   }
   const metadata = payload.metadata !== null && typeof payload.metadata === 'object'
     ? payload.metadata as Record<string, unknown>
@@ -829,7 +866,28 @@ function readPoll(payload: Record<string, unknown>): PollOutcome {
   const content = payload.content !== null && typeof payload.content === 'object'
     ? payload.content as Record<string, unknown>
     : undefined
-  const urlCandidates = [payload.url, payload.result_url, payload.video_url, content?.video_url, metadata?.url, video?.url]
+  // 启航's task reader puts the authoritative address in `output_url` and
+  // repeats it in `data[]` (and, for some task types, `result.videos[]`).
+  const result = payload.result !== null && typeof payload.result === 'object'
+    ? payload.result as Record<string, unknown>
+    : undefined
+  const firstData = Array.isArray(payload.data)
+    ? payload.data.find(row => row !== null && typeof row === 'object') as Record<string, unknown> | undefined
+    : undefined
+  const firstResultVideo = Array.isArray(result?.videos)
+    ? result.videos.find(row => row !== null && typeof row === 'object') as Record<string, unknown> | undefined
+    : undefined
+  const urlCandidates = [
+    payload.output_url,
+    payload.url,
+    payload.result_url,
+    payload.video_url,
+    firstData?.url,
+    firstResultVideo?.url,
+    content?.video_url,
+    metadata?.url,
+    video?.url,
+  ]
   const url = urlCandidates.find(candidate => typeof candidate === 'string' && candidate.trim() !== '')
   if (['completed', 'succeeded', 'success', 'done', 'finished'].includes(status)) {
     const duration = typeof payload.duration === 'number' ? payload.duration
@@ -1364,6 +1422,33 @@ function submitBody(
     if (entry.supportsSeed && request.seed !== undefined && Number.isFinite(request.seed)) {
       // Documented range is [-1, 2147483647] (-1 = random).
       body.seed = Math.max(-1, Math.min(2_147_483_647, Math.round(request.seed)))
+    }
+    return body
+  }
+
+  if (familyName === 'qihang') {
+    // 启航AIGC's flat video endpoint: every parameter is TOP-LEVEL (the
+    // `params` envelope belongs to `/v1/media/generate`, not this endpoint).
+    // References travel as data URIs in `images`; the gateway accepts base64
+    // image data directly, so no upload leg is needed.
+    if (request.prompt.trim() === '') {
+      // The gateway rejects an empty prompt with a 400 that does not say which
+      // field is missing, and the panel/tool boundary is the clearer place.
+      throw new VideoGenError('Wan 3.0 需要非空提示词', 'video-bad-prompt')
+    }
+    const body: Record<string, unknown> = {
+      model: request.upstream ?? request.model,
+      prompt: request.prompt,
+      mode: qihangMode(request.mode, references.all.length),
+      duration: qihangSeconds(seconds),
+      // The documented enum is lowercase 480p / 720p / 1080p.
+      resolution: resolution.toLowerCase(),
+    }
+    if (entry.aspectRatios.includes(request.aspectRatio)) body.aspect_ratio = request.aspectRatio
+    if (references.all.length > 0) {
+      body.images = references.all
+        .slice(0, MAX_QIHANG_REFERENCES)
+        .map(dataUrlOf)
     }
     return body
   }

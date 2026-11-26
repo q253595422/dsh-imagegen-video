@@ -188,7 +188,7 @@ async function render (stageJson, width, height, extra = '') {
   const script = `(async () => {
     const m = window.__mod
     const stage = ${stage}
-    const url = m.renderStageToDataUrl(stage, { width: ${width}, height: ${height} })
+    const url = await m.renderStageToDataUrl(stage, { width: ${width}, height: ${height} })
     const img = new Image()
     await new Promise((resolve, reject) => { img.onload = resolve; img.onerror = reject; img.src = url })
     const canvas = document.createElement('canvas')
@@ -352,6 +352,50 @@ for (const [name, presetId] of [['stand', 'stand'], ['sit', 'sit'], ['step', 'st
     }), 520, 760)
     assert.ok(shot.fingerprint.distinct > 8, `${name}: expected a varied image, got ${shot.fingerprint.distinct} buckets`)
     png.push([`v6-${name}.png`, shot.url])
+  })
+}
+
+await check('V6-wood the wood material is a real toggle, not the same render', async () => {
+  const preset = poseRig.POSE_PRESETS.find(item => item.id === 'stand')
+  assert.ok(preset !== undefined)
+  const body = {
+    actors: [{ id: 'actor-1', name: 'A', rig: preset.rig, x: 0, z: 0 }],
+    cameras: [closeCamera],
+    cameraId: closeCamera.id,
+  }
+  const clay = await render(baseStage(body), 520, 760)
+  const wood = await render(baseStage({
+    ...body,
+    scene: { ...baseStage().scene, figure: 'wood' },
+  }), 520, 760)
+  assert.notDeepEqual(wood.fingerprint, clay.fingerprint, 'switching to wood must change the render')
+  png.push(['v6-wood.png', wood.url])
+})
+
+// ------------------------------------------------- V7 头/手/脚的识别件
+//
+// 鼻、耳、拇指、鞋头都不该在远景里变成噪点，也不该在近景里变成写实五官。
+// 这里拍三张近景留档；断言只守住「不是空白」，形体由人眼复核。
+
+const standPreset = poseRig.POSE_PRESETS.find(item => item.id === 'stand')
+assert.ok(standPreset !== undefined)
+const standStage = baseStage({
+  actors: [{ id: 'actor-1', name: 'A', rig: standPreset.rig, x: 0, z: 0 }],
+})
+
+for (const [name, camera] of [
+  ['head', { id: 'camera-1', name: '头', x: 0.35, y: 1.58, z: 1.15, targetX: 0, targetY: 1.45, targetZ: 0, fov: 30 }],
+  ['hands', { id: 'camera-1', name: '手', x: 0.55, y: 0.95, z: 0.85, targetX: 0.15, targetY: 0.85, targetZ: 0, fov: 32 }],
+  ['feet', { id: 'camera-1', name: '脚', x: 0.2, y: 0.55, z: 1.15, targetX: 0, targetY: 0.1, targetZ: 0, fov: 30 }],
+]) {
+  await check(`V7-${name} the feature close-up renders`, async () => {
+    const shot = await render({
+      ...standStage,
+      cameras: [camera],
+      cameraId: camera.id,
+    }, 520, 520)
+    assert.ok(shot.fingerprint.distinct > 8, `${name}: expected a varied image, got ${shot.fingerprint.distinct} buckets`)
+    png.push([`v7-${name}.png`, shot.url])
   })
 }
 

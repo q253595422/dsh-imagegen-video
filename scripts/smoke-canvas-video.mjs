@@ -842,6 +842,20 @@ await check('W1-W3 a finished studio clip lands a referenced node and states are
     '@deepseek-ai/dsh-client-ui-primitives': {
       Button: ({ variant, size, className, children, ...rest }) => react.createElement('button', { type: 'button', className, ...rest }, children),
       Pill: ({ active, className, children, onClick, ...rest }) => react.createElement(onClick ? 'button' : 'span', { type: 'button', className, ...(onClick !== undefined ? { onClick } : {}), ...rest }, children),
+      SegmentedControl: ({ id, value, options, onChange, label, disabled = false, className }) =>
+        react.createElement('div', { role: 'tablist', 'aria-label': label, className },
+          options.map(option => react.createElement('button', {
+            key: option.value,
+            id: `${id}-${option.value}`,
+            type: 'button',
+            role: 'tab',
+            'aria-selected': option.value === value,
+            tabIndex: option.value === value ? 0 : -1,
+            disabled: disabled || option.disabled === true,
+            title: option.title,
+            onClick: () => { if (option.value !== value) onChange(option.value) },
+          }, option.label))),
+      IconListPenOutlineRegular: () => null,
     },
     '@deepseek-ai/dsh-client-store': {
       createSnapshotStore: (initial) => {
@@ -1143,13 +1157,13 @@ await check('SB1-SB4 the storyboard board renders and hands its clips to the sti
 
   // ---- SB6 the length picker narrows to the model this board will run on
   //
-  // WHY a RUNTIME check: the board has no model picker of its own, so its model
-  // comes from two places — the board's own `model` field, else the model the
-  // composer resolved. When neither reached the render, `catalog` was undefined
-  // on every real board and the picker offered all seven lengths no matter what
-  // the model accepts. Every source-level assertion stayed green: the narrowing
-  // function was still called, just always with `undefined`. Only the rendered
-  // <option> list can tell those two apart.
+  // WHY a RUNTIME check: the board's model comes from two places — the board's
+  // own `model` field, else the model the composer resolved. When neither
+  // reached the render, `catalog` was undefined on every real board and the
+  // picker offered all seven lengths no matter what the model accepts. Every
+  // source-level assertion stayed green: the narrowing function was still
+  // called, just always with `undefined`. Only the rendered <option> list can
+  // tell those two apart.
   //
   // Written as a document edit rather than a settings swap: settings are read
   // once when the panel mounts, so re-pointing them mid-run proves nothing. A
@@ -1237,6 +1251,52 @@ await check('SB1-SB4 the storyboard board renders and hands its clips to the sti
     .find(button => (button.getAttribute('aria-label') ?? '') === '取尾帧续拍')
   assert.ok(continueButton !== undefined, 'SB4: the clip offers 取尾帧续拍')
   assert.equal(continueButton.disabled, false, 'SB4: the action is live on a finished clip')
+
+  // ---- SB9 the board carries its own model/channel control
+  //
+  // The board used to have no picker at all: a user could only change the
+  // global default and never learned which model a saved board would run on.
+  // The control has to (a) exist on the board, (b) show the model that will
+  // actually be submitted when the board names none, and (c) write the choice
+  // back to the document so a reload keeps it.
+  const modelField = boardEl().querySelector('[data-storyboard-model]')
+  assert.ok(modelField !== null, 'SB9: the board renders a model/channel field')
+  const modelTrigger = modelField.querySelector('button[data-variant="toolbar"][aria-haspopup="menu"]')
+  assert.ok(modelTrigger !== null, 'SB9: the field is a real model picker')
+  const boardModelLabel = modelTrigger.getAttribute('aria-label') ?? ''
+  assert.match(boardModelLabel, /分镜使用的视频模型与渠道/, 'SB9: the picker says what it configures')
+  assert.match(
+    boardModelLabel,
+    /agnes-video-2\.5-flash/,
+    'SB9: a board that names no model shows the composer default it will submit with',
+  )
+
+  modelTrigger.dispatchEvent(new jsdomWindow.MouseEvent('click', { bubbles: true, cancelable: true }))
+  assert.ok(
+    await waitUntil(() => jsdomDocument.body.querySelector('[role="menu"] button[role="menuitemradio"]') !== null),
+    'SB9: the picker opens its channel list',
+  )
+  const boardChannelRow = jsdomDocument.body.querySelector('[role="menu"] button[role="menuitemradio"]')
+  boardChannelRow.dispatchEvent(new jsdomWindow.MouseEvent('click', { bubbles: true, cancelable: true }))
+  const proRow = await waitUntil(
+    () => [...jsdomDocument.body.querySelectorAll('[role="menu"] button[role="menuitemradio"]')]
+      .find(button => button.textContent === 'agnes-video-2.5-pro'),
+  )
+  assert.ok(proRow !== undefined, 'SB9: the picker reveals the channel’s models')
+  proRow.dispatchEvent(new jsdomWindow.MouseEvent('click', { bubbles: true, cancelable: true }))
+  assert.ok(
+    await waitUntil(() => boardEl()
+      .querySelector('[data-storyboard-model] button[data-variant="toolbar"]')
+      ?.getAttribute('aria-label')?.includes('agnes-video-2.5-pro') === true),
+    'SB9: the chosen model shows up on the board',
+  )
+  assert.ok(
+    await waitUntil(() => {
+      const saved = canvasSaves.at(-1)?.nodes.find(node => node.id === 'node-board')
+      return saved?.metadata?.storyboard?.model === 'agnes-video-2.5-pro'
+    }),
+    'SB9: choosing a model writes it into the board document',
+  )
 
   // ---- SB7 a carried shot says it will not carry the pinned identity
   //
