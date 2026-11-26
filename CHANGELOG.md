@@ -5,6 +5,16 @@ Attribution for third-party code is in [NOTICE](./NOTICE).
 
 ## Releases
 
+### 1.35.1 — 构建工具链换到 TypeScript 7，上传路径的字节更严格
+
+这一版没有新功能，也没有新协议。发出去的原因是：v1.35.0 之后主干上的改动会实际进入 tgz，而那批改动还没以发布产物交付过一次。
+
+- **上传图片先复制字节再交给 `Blob`**（`src/engine.ts` 的三个多部分上传点、`src/client/outfit-generation.ts` 的 `loadReference`）：TypeScript 7 把类型化数组的 buffer 收窄成 `ArrayBufferLike`，而 `BlobPart` 要求具体的 `ArrayBuffer`。行为不变、上传内容逐字节不变，代价是每张参考图多一次内存复制。
+- **依赖升级**：`typescript ~5.7.2 → ~7.0.2`（构建期）、`shiki 4.5.0 → 4.6.0`、`katex ^0.18.11 → ^0.19.1`、`@deepseek-ai/dsh-llm` 与 `@deepseek-ai/dsh-api-remotes` 从 `0.1.2-alpha.2` → `0.1.2-rc.1`（后两者只影响类型层，不进产物）。
+- **运行时 `dependencies` 未变**：`@xyflow/react ^12.12.1`、`lucide-react ^1.41.0`、`three ^0.187.0`。
+- **验证**：`frozen-lockfile` 安装、typecheck（TS 7.0.2）、build、完整 `pnpm test`、CI 的独立门禁组、`verify-pack` 全部通过；另装进独立 DSH 宿主实际启动，14 个入口加载正常。
+- **已知边界**：宿主 SDK 的版本矩阵仍是混的（rc.1 / alpha.2 / 0.1.7-rc.2 / 0.2.1-rc.2 并存），本版没有统一它。
+
 ### 1.35.0 — 生成出来的东西能走完最后一公里
 
 三件事都是「已经生成好了，却卡在最后一步」。
